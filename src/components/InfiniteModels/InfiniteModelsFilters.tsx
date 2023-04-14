@@ -241,7 +241,12 @@ export function InfiniteModelsFilter() {
               ))}
             </Chip.Group>
           )}
-          <Chip checked={earlyAccess} onChange={setEarlyAccess} {...chipProps}>
+          <Chip
+            checked={earlyAccess}
+            onChange={setEarlyAccess}
+            mt={user?.isModerator ? 4 : undefined}
+            {...chipProps}
+          >
             Early Access
           </Chip>
           <Divider label="Model types" labelProps={{ weight: 'bold' }} />

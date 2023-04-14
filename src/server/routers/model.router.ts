@@ -20,7 +20,6 @@ import {
   restoreModelHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
-  updateModelHandler,
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
@@ -142,11 +141,6 @@ export const modelRouter = router({
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
-  update: protectedProcedure
-    .input(modelSchema.extend({ id: z.number() }))
-    .use(isOwnerOrModerator)
-    .use(checkFilesExistence)
-    .mutation(updateModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)
     .use(isOwnerOrModerator)

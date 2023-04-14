@@ -39,14 +39,12 @@ export const getServerSideProps = createServerSideProps({
 
     const model = await dbRead.model.findUnique({
       where: { id: modelId },
-      select: { userId: true },
+      select: { userId: true, deletedAt: true },
     });
-    if (!model) return { notFound: true };
+    const isModerator = session.user?.isModerator ?? false;
+    if (!model || (model.deletedAt && !isModerator)) return { notFound: true };
 
     const isOwner = model.userId === session.user?.id;
-    const isModerator = session.user?.isModerator ?? false;
-
-    console.log({ isOwner, isModerator });
     if (!isOwner && !isModerator)
       return {
         redirect: {

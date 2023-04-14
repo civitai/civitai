@@ -1,10 +1,11 @@
 import { Card, Group, Rating, Stack, Text, Divider, Button } from '@mantine/core';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { trpc } from '~/utils/trpc';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { IconChevronDown } from '@tabler/icons';
 import { InputRTE, useForm, Form } from '~/libs/form';
 import { z } from 'zod';
+import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 
 type EditResourceReviewProps = {
   id?: number | null;
@@ -41,7 +42,12 @@ export function EditResourceReview({
   const { mutate, isLoading } = trpc.resourceReview.upsert.useMutation();
 
   const [editDetail, setEditDetail] = useState(false);
-  const toggleEditDetail = () => setEditDetail((state) => !state);
+  const toggleEditDetail = () => {
+    setEditDetail((state) => !state);
+    if (!editDetail) setTimeout(() => commentRef.current?.focus(), 100);
+  };
+  const commentRef = useRef<EditorCommandsRef | null>(null);
+
   const queryUtils = trpc.useContext();
 
   const handleRatingChange = (rating: number) => {
@@ -124,15 +130,21 @@ export function EditResourceReview({
                       includeControls={['formatting', 'link']}
                       hideToolbar
                       editorSize="sm"
-                      placeholder="Add review comments..."
+                      innerRef={commentRef}
+                      placeholder={`What did you think of ${modelName}?`}
                       styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
                       withLinkValidation
                     />
                     <Group grow spacing="xs">
-                      <Button variant="default" onClick={toggleEditDetail}>
+                      <Button size="xs" variant="default" onClick={toggleEditDetail}>
                         Cancel
                       </Button>
-                      <Button type="submit" loading={isLoading}>
+                      <Button
+                        size="xs"
+                        type="submit"
+                        loading={isLoading}
+                        variant={form.formState.isDirty ? undefined : 'outline'}
+                      >
                         Save
                       </Button>
                     </Group>

@@ -1,6 +1,6 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import { httpBatchLink, HTTPHeaders, httpLink, loggerLink, splitLink } from '@trpc/client';
+import { httpBatchLink, httpLink, loggerLink, splitLink, TRPCLink } from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
@@ -19,27 +19,29 @@ export const queryClient = new QueryClient({
   },
 });
 
+const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
+  return ({ next, op }) => {
+    // if (isAuthed && op.input) (op.input as any).authed = true;
+    return next(op);
+  };
+};
+
 export const trpc = createTRPCNext<AppRouter>({
   config() {
-    const headers = () => {
-      const headers: HTTPHeaders = {};
-      if (isAuthed) headers['Cache-Control'] = 'no-cache';
-      return headers;
-    };
-
     return {
       queryClient,
       transformer: superjson,
       links: [
+        authedCacheBypassLink,
         loggerLink({
           enabled: (opts) => isDev || (opts.direction === 'down' && opts.result instanceof Error),
         }),
         splitLink({
           condition: (op) => op.context.skipBatch === true,
           // when condition is true, use normal request
-          true: httpLink({ headers, url }),
+          true: httpLink({ url }),
           // when condition is false, use batching
-          false: httpBatchLink({ headers, url, maxURLLength: 2083 }),
+          false: httpBatchLink({ url, maxURLLength: 2083 }),
         }),
       ],
     };

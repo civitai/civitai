@@ -1,6 +1,6 @@
 import { MetricTimeframe } from '@prisma/client';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useFiltersContext } from '~/providers/FiltersProviderOld';
 import { splitUppercase } from '~/utils/string-helpers';
 
 const periodOptions = Object.values(MetricTimeframe);

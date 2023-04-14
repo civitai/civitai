@@ -1,9 +1,15 @@
 import { Session } from 'next-auth';
 import { SessionContext, SessionProvider, SessionProviderProps } from 'next-auth/react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 export let isAuthed = false;
-export function CivitaiSessionProvider({ children, session }: SessionProviderProps) {
+export function CivitaiSessionProvider({
+  children,
+  session: initialSession,
+}: SessionProviderProps) {
+  const [session, setSession] = useState(initialSession);
+  if (!session && initialSession) setSession(initialSession);
+
   if (session?.user) {
     isAuthed = true;
     return (

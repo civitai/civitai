@@ -18,6 +18,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { constants } from '~/server/common/constants';
+import useIsClient from '~/hooks/useIsClient';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -40,6 +41,8 @@ function Home() {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { username, favorites, hidden } = router.query;
+
+  const isClient = useIsClient();
 
   return (
     <>

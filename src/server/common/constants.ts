@@ -1,5 +1,5 @@
-import { BrowsingMode, ImageSort, ModelKind, PostSort, QuestionSort } from './enums';
-import { MetricTimeframe } from '@prisma/client';
+import { ImageSort, PostSort, QuestionSort, BrowsingMode, ModelKind } from './enums';
+import { MetricTimeframe, ModelStatus } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
 export const constants = {
@@ -68,6 +68,7 @@ export const constants = {
     model: 320,
     image: 320,
   },
+  modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

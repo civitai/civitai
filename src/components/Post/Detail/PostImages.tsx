@@ -18,7 +18,6 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trpc } from '~/utils/trpc';
 import { useState, useMemo } from 'react';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { useQueryImages } from '~/components/Image/image.utils';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 const maxWidth = 700;

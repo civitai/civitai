@@ -237,6 +237,11 @@ export function RichTextEditor({
         editorRef.current.commands.insertContentAt(currentPosition, value);
       }
     },
+    focus: () => {
+      if (editorRef.current && innerRef) {
+        editorRef.current.commands.focus('end');
+      }
+    },
   }));
 
   return (
@@ -335,7 +340,10 @@ export function RichTextEditor({
   );
 }
 
-export type EditorCommandsRef = { insertContentAtCursor: (value: string) => void };
+export type EditorCommandsRef = {
+  insertContentAtCursor: (value: string) => void;
+  focus: () => void;
+};
 
 type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions';
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &

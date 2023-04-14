@@ -33,7 +33,6 @@ import {
   publishModelById,
   restoreModelById,
   toggleLockModel,
-  updateModel,
   updateModelById,
   upsertModel,
 } from '~/server/services/model.service';
@@ -169,7 +168,6 @@ export const getModelsInfiniteHandler = async ({
       },
       modelVersions: {
         orderBy: { index: 'asc' },
-        where: { status: ModelStatus.Published },
         take: 1,
         select: {
           id: true,
@@ -320,36 +318,6 @@ export const upsertModelHandler = async ({
   }
 };
 
-export const updateModelHandler = async ({
-  ctx,
-  input,
-}: {
-  input: ModelInput & { id: number };
-  ctx: DeepNonNullable<Context>;
-}) => {
-  const { user } = ctx;
-  const { id, poi, nsfw } = input;
-
-  if (poi && nsfw) {
-    throw throwBadRequestError(
-      `Models or images depicting real people in NSFW contexts are not permitted.`
-    );
-  }
-
-  try {
-    const userId = user.id;
-    const model = await updateModel({ ...input, userId });
-    if (!model) {
-      throw throwNotFoundError(`No model with id ${id}`);
-    }
-
-    return model;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
 export const publishModelHandler = async ({
   input,
   ctx,
@@ -365,10 +333,8 @@ export const publishModelHandler = async ({
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const { isModerator } = ctx.user;
-    if (model.status === ModelStatus.UnpublishedViolation && !isModerator)
-      throw throwAuthorizationError(
-        'You are not authorized to publish this model because it has been reported as ToS Violation'
-      );
+    if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
+      throw throwAuthorizationError('You are not authorized to publish this model');
 
     const republishing = model.status !== ModelStatus.Draft;
     const { needsReview, unpublishedReason, unpublishedAt, ...meta } =

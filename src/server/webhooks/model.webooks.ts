@@ -66,10 +66,6 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
-      console.log(
-        lastSent,
-        results.map((x) => x.name)
-      );
       return results;
     },
   },
@@ -134,7 +130,6 @@ export const modelWebhooks = createWebhookProcessor({
           .filter((x) => x),
       }));
 
-      console.log(results.map((x) => x.name));
       return results;
     },
   },

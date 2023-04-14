@@ -12,6 +12,7 @@ const tagSchema = z.object({
   id: z.number().optional(),
   confidence: z.number(),
 });
+type IncomingTag = z.infer<typeof tagSchema>;
 const bodySchema = z.object({
   id: z.number(),
   isValid: z.boolean(),
@@ -53,11 +54,14 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   if (!incomingTags || incomingTags.length === 0) return res.status(200).json({ ok: true });
 
   // De-dupe incoming tags and keep tag with highest confidence
-  const tagMap: Record<string, (typeof incomingTags)[0]> = {};
+  const tagMap: Record<string, IncomingTag> = {};
   for (const tag of incomingTags) {
     if (!tagMap[tag.tag] || tagMap[tag.tag].confidence < tag.confidence) tagMap[tag.tag] = tag;
   }
   const tags = Object.values(tagMap);
+
+  // Add computed tags
+  addComputedTags(tags); // mutates array
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
@@ -165,3 +169,46 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
   res.status(200).json({ ok: true });
 });
+
+type ComputedTagTester = {
+  includesAll?: string[];
+  includesSome?: string[];
+  excludes?: string[];
+};
+const computedTagCombos: Record<string, ComputedTagTester> = {
+  'female swimwear or underwear': {
+    includesAll: ['female'],
+    includesSome: ['swimwear', 'underwear', 'lingerie', 'bikini'],
+    excludes: [
+      'dress',
+      'nudity',
+      'illustrated explicit nudity',
+      'partial nudity',
+      'sexual activity',
+      'graphic female nudity',
+    ],
+  },
+  'male swimwear or underwear': {
+    includesAll: ['male'],
+    includesSome: ['swimwear', 'underwear', 'lingerie'],
+    excludes: [
+      'dress',
+      'nudity',
+      'illustrated explicit nudity',
+      'partial nudity',
+      'sexual activity',
+      'graphic male nudity',
+    ],
+  },
+};
+const computedTagsCombosArray = Object.entries(computedTagCombos);
+function addComputedTags(tags: IncomingTag[]) {
+  if (!tags?.length) return;
+  for (const [toAdd, { includesAll, includesSome, excludes }] of computedTagsCombosArray) {
+    if (tags.some((x) => x.tag === toAdd)) continue;
+    if (includesAll && !includesAll.every((x) => tags.some((y) => y.tag === x))) continue;
+    if (includesSome && !includesSome.some((x) => tags.some((y) => y.tag === x))) continue;
+    if (excludes && excludes.some((x) => tags.some((y) => y.tag === x))) continue;
+    tags.push({ tag: toAdd, confidence: 70 });
+  }
+}

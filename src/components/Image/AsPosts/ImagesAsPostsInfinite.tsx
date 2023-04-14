@@ -1,40 +1,44 @@
-import { trpc } from '~/utils/trpc';
-import { createContext, useContext, useMemo, useState, useEffect } from 'react';
-import { useImageFilters } from '~/providers/FiltersProvider';
-import { removeEmpty } from '~/utils/object-helpers';
-import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import {
+  Button,
+  Center,
+  Group,
+  Loader,
+  LoadingOverlay,
   Paper,
   Stack,
   Text,
-  LoadingOverlay,
-  Button,
-  Group,
-  Title,
-  Center,
-  Loader,
   ThemeIcon,
+  Title,
 } from '@mantine/core';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { useInView } from 'react-intersection-observer';
-import { useRouter } from 'next/router';
-import { parseImagesQuery } from '~/components/Image/image.utils';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { NextLink } from '@mantine/next';
-import { IconPlus, IconCloudOff } from '@tabler/icons';
-import { SortFilter, PeriodFilter } from '~/components/Filters';
+import { IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
+import { useRouter } from 'next/router';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
+
+import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
+import { ImagePeriod } from '~/components/Image/Filters/ImagePeriod';
+import { ImageSort } from '~/components/Image/Filters/ImageSort';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
+import { useImageFilters } from '~/components/Image/image.utils';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
-  modelId?: number;
-  username?: string;
   modelVersions?: ModelVersionsProps[];
+  filters: {
+    modelId?: number;
+    username?: string;
+  } & Record<string, unknown>;
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
 export const useImagesAsPostsInfiniteContext = () => {
@@ -43,9 +47,11 @@ export const useImagesAsPostsInfiniteContext = () => {
   return context;
 };
 
-type ImagesAsPostsInfiniteProps = ImagesAsPostsInfiniteState & {
+type ImagesAsPostsInfiniteProps = {
   selectedVersionId?: number;
   modelId: number;
+  username?: string;
+  modelVersions?: ModelVersionsProps[];
 };
 
 const LIMIT = 50;
@@ -59,24 +65,23 @@ export default function ImagesAsPostsInfinite({
   const router = useRouter();
   const { ref, inView } = useInView();
   const isMobile = useIsMobile();
-  const globalFilters = useImageFilters();
+  // const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
-  const filters = removeEmpty({
-    ...globalFilters,
-    ...parseImagesQuery(router.query),
-    modelId,
-    username,
-    limit,
-  });
+
+  const imageFilters = useImageFilters('modelImages');
+  const filters = removeEmpty({ ...imageFilters, modelId, username });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
-    trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(filters, {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-      trpc: { context: { skipBatch: true } },
-      keepPreviousData: true,
-      // enabled: inView,
-    });
+    trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
+      { ...filters, limit },
+      {
+        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+        trpc: { context: { skipBatch: true } },
+        keepPreviousData: true,
+        // enabled: inView,
+      }
+    );
 
   const items = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
@@ -89,9 +94,12 @@ export default function ImagesAsPostsInfinite({
   // #endregion
 
   const isMuted = currentUser?.muted ?? false;
+  const addPostLink = `/posts/create?modelId=${modelId}${
+    selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
+  }&returnUrl=${router.asPath}`;
 
   return (
-    <ImagesAsPostsInfiniteContext.Provider value={{ modelId, username, modelVersions }}>
+    <ImagesAsPostsInfiniteContext.Provider value={{ filters, modelVersions }}>
       <MasonryProvider
         columnWidth={constants.cardSizes.image}
         maxColumnCount={6}
@@ -102,26 +110,37 @@ export default function ImagesAsPostsInfinite({
             <Group spacing="xs" align="flex-end">
               <Title order={2}>Gallery</Title>
               {!isMuted && (
-                <LoginRedirect reason="create-review">
-                  <Button
-                    component={NextLink}
-                    variant="outline"
-                    size="xs"
-                    leftIcon={<IconPlus size={16} />}
-                    href={`/posts/create?modelId=${modelId}${
-                      selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
-                    }&returnUrl=${router.asPath}`}
-                  >
-                    Add Post
-                  </Button>
-                </LoginRedirect>
+                <Group>
+                  <LoginRedirect reason="create-review">
+                    <Button
+                      component={NextLink}
+                      variant="outline"
+                      size="xs"
+                      leftIcon={<IconPlus size={16} />}
+                      href={addPostLink}
+                    >
+                      Add Post
+                    </Button>
+                  </LoginRedirect>
+                  <LoginRedirect reason="create-review">
+                    <Button
+                      component={NextLink}
+                      leftIcon={<IconStar size={16} />}
+                      href={addPostLink + '&reviewing=true'}
+                      variant="outline"
+                      size="xs"
+                    >
+                      Add Review
+                    </Button>
+                  </LoginRedirect>
+                </Group>
               )}
             </Group>
             {/* IMAGES */}
             <Group position="apart" spacing={0}>
-              <SortFilter type="image" />
+              <ImageSort type="modelImages" />
               <Group spacing={4}>
-                <PeriodFilter />
+                <ImagePeriod type="modelImages" />
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>

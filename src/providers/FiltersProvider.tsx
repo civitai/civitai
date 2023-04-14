@@ -1,94 +1,179 @@
-import { useRef, createContext, useContext, useEffect } from 'react';
-import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
-import { BrowsingMode, ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
+import { useRef, createContext, useContext } from 'react';
+import {
+  CheckpointType,
+  ImageGenerationProcess,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+} from '@prisma/client';
+import {
+  BrowsingMode,
+  ImageSort,
+  ModelSort,
+  PostSort,
+  QuestionSort,
+  QuestionStatus,
+} from '~/server/common/enums';
 import { setCookie } from '~/utils/cookies-helpers';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
-// import { immer } from 'zustand/middleware/immer';
 import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { mergeWith, isArray } from 'lodash-es';
+import { constants } from '~/server/common/constants';
 
-export const modelFilterSchema = z
-  .object({
-    sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
-    tags: z.number().array().nullish(),
-  })
-  .default({});
+type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
+const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
 
-export const postFilterSchema = z
-  .object({
-    sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
-    tags: z.number().array().nullish(),
-  })
-  .default({});
-
-export const imageFilterSchema = z
-  .object({
-    sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
-    // tags: z.number().array().nullish(),
-    generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-    // excludedTags: z.number().array().nullish(),
-  })
-  .default({});
-
-export const questionFilterSchema = z
-  .object({
-    sort: z.nativeEnum(QuestionSort).default(QuestionSort.Newest),
-    tags: z.number().array().nullish(),
-  })
-  .default({});
-
-type FilterEntityInput = z.infer<typeof filterEntitySchema>;
-export type FilterSubTypes = keyof FilterEntityInput;
-const filterEntitySchema = z.object({
-  model: modelFilterSchema,
-  post: postFilterSchema,
-  image: imageFilterSchema,
-  question: questionFilterSchema,
-});
-
-export type FiltersInput = z.infer<typeof filtersSchema>;
-const filtersSchema = filterEntitySchema.extend({
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
+const modelFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
+  types: z.nativeEnum(ModelType).array().optional(),
+  checkpointType: z.nativeEnum(CheckpointType).optional(),
+  baseModels: z.enum(constants.baseModels).array().optional(),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  status: z.nativeEnum(ModelStatus).array().optional(),
+  earlyAccess: z.boolean().optional(),
 });
 
-export const parseFiltersCookie = (cookies: Partial<{ [key: string]: string }>) => {
-  const cookieValue = cookies['filters'];
-  const parsedFilters = cookieValue ? JSON.parse(decodeURIComponent(cookieValue)) : {};
-  const result = filtersSchema.safeParse(parsedFilters);
-  if (result.success) return result.data;
-  else return filtersSchema.parse({});
+type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
+const questionFilterSchema = z.object({
+  sort: z.nativeEnum(QuestionSort).default(QuestionSort.MostLiked),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  status: z.nativeEnum(QuestionStatus).optional(),
+});
+
+type ImageFilterSchema = z.infer<typeof imageFilterSchema>;
+const imageFilterSchema = z.object({
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
+  generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+});
+
+type PostFilterSchema = z.infer<typeof postFilterSchema>;
+const postFilterSchema = z.object({
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
+});
+
+export type CookiesState = {
+  browsingMode: BrowsingModeSchema;
 };
 
-type FiltersState = FiltersInput & {
-  setFilters: (filters: DeepPartial<FiltersInput>) => void;
+type StorageState = {
+  models: ModelFilterSchema;
+  questions: QuestionFilterSchema;
+  images: ImageFilterSchema;
+  modelImages: ImageFilterSchema;
+  posts: PostFilterSchema;
 };
+
+type FilterState = CookiesState & StorageState;
+export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>;
+
+type StoreState = FilterState & {
+  setBrowsingMode: (browsingMode: BrowsingMode) => void;
+  setModelFilters: (filters: Partial<ModelFilterSchema>) => void;
+  setQuestionFilters: (filters: Partial<QuestionFilterSchema>) => void;
+  setImageFilters: (filters: Partial<ImageFilterSchema>) => void;
+  setModelImageFilters: (filters: Partial<ImageFilterSchema>) => void;
+  setPostFilters: (filters: Partial<PostFilterSchema>) => void;
+};
+
+type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
+const cookieKeys: CookieStorageSchema = {
+  browsingMode: { key: 'mode', schema: browsingModeSchema },
+};
+
+type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
+const localStorageSchemas: LocalStorageSchema = {
+  models: { key: 'model-filters', schema: modelFilterSchema },
+  questions: { key: 'question-filters', schema: questionFilterSchema },
+  images: { key: 'image-filters', schema: imageFilterSchema },
+  modelImages: { key: 'model-image-filters', schema: imageFilterSchema },
+  posts: { key: 'post-filters', schema: postFilterSchema },
+};
+
+export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
+  return Object.entries(cookieKeys).reduce<Record<string, unknown>>((acc, [key, storage]) => {
+    const cookieValue = cookies[storage.key];
+    const parsedValue = cookieValue ? deserializeJSON(cookieValue) : undefined;
+    const result = storage.schema.safeParse(parsedValue);
+    const value = result.success ? result.data : storage.schema.parse(undefined);
+    return { ...acc, [key]: value };
+  }, {}) as CookiesState;
+};
+
+const getInitialValues = <TSchema extends z.AnyZodObject>({
+  key,
+  schema,
+}: {
+  key: string;
+  schema: TSchema;
+}) => {
+  if (typeof window === 'undefined') return schema.parse({});
+  const storageValue = localStorage.getItem(key) ?? '{}';
+  const value = deserializeJSON(storageValue);
+  const result = schema.safeParse(value);
+  if (result.success) return result.data;
+  else {
+    // if the data failed to parse, get new defaults and update localstorage
+    const defaults = schema.parse({});
+    localStorage.setItem(key, serializeJSON(defaults));
+    return defaults;
+  }
+};
+
+const getInitialLocalStorageValues = () =>
+  Object.entries(localStorageSchemas).reduce<Record<string, unknown>>(
+    (acc, [key, value]) => ({
+      ...acc,
+      [key]: getInitialValues({ key: value.key, schema: value.schema }),
+    }),
+    {}
+  ) as StorageState;
+
+function handleLocalStorageChange<TKey extends keyof StorageState>({
+  key,
+  data,
+  state,
+}: {
+  key: TKey;
+  data: Record<string, unknown>;
+  state: StoreState;
+}) {
+  const values = { ...state[key], ...data };
+  localStorage.setItem(localStorageSchemas[key].key, serializeJSON(values));
+  return { [key]: values } as StoreState | Partial<StoreState>;
+}
 
 type FilterStore = ReturnType<typeof createFilterStore>;
-
-const createFilterStore = ({ initialValues }: { initialValues: FiltersInput }) => {
-  return createStore<FiltersState>()(
-    devtools((set, get) => {
-      return {
-        ...initialValues,
-        setFilters(filters) {
-          set((state) => {
-            const updatedFilters = filtersSchema.parse(mergeWith(state, filters, customizer));
-            setCookie('filters', updatedFilters);
-            return { ...updatedFilters };
-          });
-        },
-      };
-    })
+const createFilterStore = (initialValues: CookiesState) =>
+  createStore<StoreState>()(
+    devtools((set) => ({
+      ...initialValues,
+      ...getInitialLocalStorageValues(),
+      setBrowsingMode: (browsingMode) => {
+        setCookie(cookieKeys.browsingMode.key, browsingMode);
+        set({ browsingMode });
+      },
+      setModelFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'models', data, state })),
+      setQuestionFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'questions', data, state })),
+      setImageFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'images', data, state })),
+      setModelImageFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'modelImages', data, state })),
+      setPostFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'posts', data, state })),
+    }))
   );
-};
 
 const FiltersContext = createContext<FilterStore | null>(null);
-export function useFiltersContext<T>(selector: (state: FiltersState) => T) {
+export function useFiltersContext<T>(selector: (state: StoreState) => T) {
   const store = useContext(FiltersContext);
-  if (!store) throw new Error('Missing PostsFilterCtx.Provider in the tree');
+  if (!store) throw new Error('Missing FiltersContext.Provider in the tree');
   return useStore(store, selector);
 }
 
@@ -97,58 +182,30 @@ export const FiltersProvider = ({
   value,
 }: {
   children: React.ReactNode;
-  value: FiltersInput;
+  value: CookiesState;
 }) => {
   const currentUser = useCurrentUser();
   const storeRef = useRef<FilterStore>();
   if (!storeRef.current) {
     if (!currentUser?.showNsfw) value.browsingMode = BrowsingMode.SFW;
-    else value.browsingMode = BrowsingMode.NSFW;
-    storeRef.current = createFilterStore({ initialValues: value });
+    storeRef.current = createFilterStore({ ...value });
   }
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
 };
 
-const useSharedFilters = (type: FilterSubTypes) => {
-  const period = useFiltersContext((state) => state.period);
-  return { period };
-};
-
-export const useModelFilters = () => {
-  const shared = useSharedFilters('model');
-  const sort = useFiltersContext((state) => state.model.sort);
-  return { ...shared, sort };
-};
-
-export const usePostFilters = () => {
-  const shared = useSharedFilters('post');
-  const sort = useFiltersContext((state) => state.post.sort);
-  const tags = useFiltersContext((state) => state.post.tags);
-  return { ...shared, sort, tags };
-};
-
-export const useImageFilters = () => {
-  const shared = useSharedFilters('image');
-  const sort = useFiltersContext((state) => state.image.sort);
-  // const tags = useFiltersContext((state) => state.image.tags);
-  // const excludedTags = useFiltersContext((state) => state.image.excludedTags);
-  const generation = useFiltersContext((state) => state.image.generation);
-  return { ...shared, sort, generation };
-};
-
-export const useQuestionFilters = () => {
-  const shared = useSharedFilters('question');
-  const sort = useFiltersContext((state) => state.question.sort);
-  return { ...shared, sort };
-};
-
-// #region [merge logic]
-// issue with undefined values here: https://github.com/lodash/lodash/blob/2da024c3b4f9947a48517639de7560457cd4ec6c/.internal/assignMergeValue.js#L14
-const customizer = (objValue: unknown, srcValue: unknown) => {
-  // console.log({ objValue, srcValue });
-  if (isArray(objValue)) {
-    return srcValue;
+function serializeJSON<T>(value: T) {
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    throw new Error(`Failed to serialize the value`);
   }
-};
-// #endregion
+}
+
+function deserializeJSON(value: string) {
+  try {
+    return JSON.parse(decodeURIComponent(value));
+  } catch {
+    return value;
+  }
+}

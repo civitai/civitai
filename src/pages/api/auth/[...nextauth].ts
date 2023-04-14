@@ -20,12 +20,12 @@ import { refreshToken, invalidateSession } from '~/server/utils/session-helpers'
 import { getSessionUser, updateAccountScope } from '~/server/services/user.service';
 import { shortenIfAddress } from '~/utils/address';
 
-const setUserName = async (email: string) => {
+const setUserName = async (id: number, setTo: string) => {
   try {
     const { username } = await dbWrite.user.update({
-      where: { email },
+      where: { id },
       data: {
-        username: `${email.split('@')[0]}${getRandomInt(100, 999)}`,
+        username: `${setTo.split('@')[0]}${getRandomInt(100, 999)}`,
       },
       select: {
         username: true,
@@ -50,11 +50,10 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
   },
   events: {
     createUser: async ({ user }) => {
-      if (!user.email) throw new Error('There is no email associated with this account');
-
-      let username: string | undefined = undefined;
-      while (!username) {
-        username = await setUserName(user.email);
+      const startingUsername = user.email?.trim() ?? user.name?.trim() ?? `civ_`;
+      if (startingUsername) {
+        let username: string | undefined = undefined;
+        while (!username) username = await setUserName(Number(user.id), startingUsername);
       }
     },
   },

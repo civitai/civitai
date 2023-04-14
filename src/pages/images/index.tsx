@@ -1,14 +1,15 @@
 import { Stack, Group } from '@mantine/core';
-import { SortFilter, PeriodFilter } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { Announcements } from '~/components/Announcements/Announcements';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
+import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants } from '~/server/common/constants';
+import { ImageSort } from '~/components/Image/Filters/ImageSort';
+import { ImagePeriod } from '~/components/Image/Filters/ImagePeriod';
 
 export default function ImagesPage() {
   return (
@@ -31,10 +32,10 @@ export default function ImagesPage() {
           <Group position="apart" spacing={0}>
             <Group>
               <HomeContentToggle sx={hideMobile} />
-              <SortFilter type="image" />
+              <ImageSort type="images" />
             </Group>
             <Group spacing={4}>
-              <PeriodFilter />
+              <ImagePeriod type="images" />
               {/* <ImageFiltersDropdown /> */}
             </Group>
           </Group>
