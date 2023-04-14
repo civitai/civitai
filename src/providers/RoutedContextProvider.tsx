@@ -165,7 +165,7 @@ const registry = {
     Component: PostDetailModal,
     resolve: ({ postId, postSlug, ...args }: React.ComponentProps<typeof PostDetailModal>) => {
       const slug = Router.query.slug ?? 'placeholder';
-      let pathname = `/post/${postId}`;
+      let pathname = `/posts/${postId}`;
       if (postSlug) pathname += `/${postSlug}`;
       return [
         {
