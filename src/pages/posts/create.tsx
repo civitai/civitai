@@ -128,17 +128,25 @@ export default function PostCreate() {
             />
           )}
           {displayReview && version && (
-            <Input.Wrapper description="Review the resource before posting">
-              <Box mt={5}>
-                <EditUserResourceReview
-                  modelVersionId={version.id}
-                  modelId={version.model.id}
-                  modelName={version.model.name}
-                  resourceReview={currentUserReview}
-                  openedCommentBox
-                />
-              </Box>
-            </Input.Wrapper>
+            <>
+              <Input.Wrapper label="What did you think of this resource?">
+                <Box mt={5}>
+                  <EditUserResourceReview
+                    modelVersionId={version.id}
+                    modelId={version.model.id}
+                    modelName={version.model.name}
+                    modelVersionName={version.name}
+                    resourceReview={currentUserReview}
+                    openedCommentBox
+                  />
+                </Box>
+              </Input.Wrapper>
+              {currentUserReview && (
+                <Text size="sm" color="dimmed">
+                  {`We've saved your review. Now, consider adding images below to create a post showcasing the resource.`}
+                </Text>
+              )}
+            </>
           )}
           <ImageDropzone
             mt="md"
