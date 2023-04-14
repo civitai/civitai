@@ -17,7 +17,7 @@ import { useRouter } from 'next/router';
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const router = useRouter();
   const { classes } = useStyles();
-  const { modelId, postId, username, modelVersionId } = useImagesInfiniteContext();
+  const filters = useImagesInfiniteContext();
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -47,15 +47,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                             boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                           })}
                         />
-                        <RoutedContextLink
-                          modal="imageDetailModal"
-                          imageId={image.id}
-                          modelId={modelId}
-                          postId={postId}
-                          username={username}
-                          modelVersionId={modelVersionId}
-                          {...router.query}
-                        >
+                        <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                               <MediaHash {...image} />

@@ -2,7 +2,7 @@ import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { PostsCard } from '~/components/Post/Infinite/PostsCard';
 import { trpc } from '~/utils/trpc';
 import { createContext, useMemo, useContext } from 'react';
-import { usePostFilters } from '~/providers/FiltersProvider';
+import { usePostFilters } from '~/providers/FiltersProviderOld';
 import { useRouter } from 'next/router';
 import { Alert, Center, Loader } from '@mantine/core';
 import { QS } from '~/utils/qs';

@@ -1,5 +1,5 @@
 import { TagScroller } from '~/components/Tags/TagScroller';
-import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useFiltersContext } from '~/providers/FiltersProviderOld';
 import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 

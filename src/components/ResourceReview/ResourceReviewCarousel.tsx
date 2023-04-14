@@ -42,9 +42,10 @@ export function ResourceReviewCarousel({
     modelVersionId,
     sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
+    limit: 10,
   };
 
-  const { data, images } = useQueryImages({ ...filters, limit: 10 });
+  const { data, images } = useQueryImages(filters);
 
   // const images = data?.pages.flatMap((x) => x.items) ?? [];
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
