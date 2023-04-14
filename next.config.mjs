@@ -1,4 +1,5 @@
 // @ts-check
+import { withPlausibleProxy } from 'next-plausible';
 
 /**
  * Don't be scared of the generics here.
@@ -9,7 +10,10 @@
  * @constraint {{import('next').NextConfig}}
  */
 function defineNextConfig(config) {
-  return config;
+  return withPlausibleProxy({
+    scriptName: 'civit-eye',
+    customDomain: 'https://analytics.civitai.com',
+  })(config);
 }
 
 export default defineNextConfig({
