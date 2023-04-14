@@ -299,6 +299,11 @@ enum CheckpointType {
   Merge
 }
 
+enum ModelModifier {
+  Archived
+  TakenDown
+}
+
 model Model {
   id                  Int             @id @default(autoincrement())
   name                String          @db.Citext
@@ -324,6 +329,7 @@ model Model {
   locked              Boolean         @default(false)
   underAttack         Boolean         @default(false)
   earlyAccessDeadline DateTime?
+  mode                ModelModifier?
 
   // Licensing
   allowNoCredit         Boolean       @default(true)

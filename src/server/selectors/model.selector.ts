@@ -77,6 +77,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   allowCommercialUse: true,
   allowDerivatives: true,
   allowDifferentLicense: true,
+  mode: true,
   rank: {
     select: {
       downloadCountAllTime: true,

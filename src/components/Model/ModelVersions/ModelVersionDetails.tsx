@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { ModelStatus } from '@prisma/client';
+import { ModelModifier, ModelStatus } from '@prisma/client';
 import { IconDownload, IconHeart, IconLicense, IconMessageCircle2, IconGavel } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -124,6 +124,7 @@ export function ModelVersionDetails({
   };
 
   const tokenInfo = useTokenInfo(tokens);
+  const archived = model.mode === ModelModifier.Archived;
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
@@ -174,7 +175,9 @@ export function ModelVersionDetails({
           Download
         </Text>
       ),
-      visible: !!version.files?.find((file) => (file.type as ModelFileType) === 'Training Data'),
+      visible:
+        !!version.files?.find((file) => (file.type as ModelFileType) === 'Training Data') &&
+        !archived,
     },
     {
       label: 'Hash',
@@ -204,24 +207,32 @@ export function ModelVersionDetails({
   );
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
-  const downloadMenuItems = version.files.map((file) => (
-    <Menu.Item
-      key={file.id}
-      component="a"
-      py={4}
-      icon={<VerifiedText file={file} iconOnly />}
-      href={createModelFileDownloadUrl({
-        versionId: version.id,
-        type: file.type,
-        format: file.metadata.format,
-      })}
-      download
-    >
-      {`${startCase(file.type)}${
-        ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
-      } (${formatKBytes(file.sizeKB)})`}
-    </Menu.Item>
-  ));
+  const downloadMenuItems = version.files.map((file) =>
+    !archived ? (
+      <Menu.Item
+        key={file.id}
+        component="a"
+        py={4}
+        icon={<VerifiedText file={file} iconOnly />}
+        href={createModelFileDownloadUrl({
+          versionId: version.id,
+          type: file.type,
+          format: file.metadata.format,
+        })}
+        download
+      >
+        {`${startCase(file.type)}${
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+        } (${formatKBytes(file.sizeKB)})`}
+      </Menu.Item>
+    ) : (
+      <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
+        {`${startCase(file.type)}${
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+        } (${formatKBytes(file.sizeKB)})`}
+      </Menu.Item>
+    )
+  );
   const downloadFileItems = version.files.map((file) => (
     <Card
       key={file.id}
@@ -245,6 +256,7 @@ export function ModelVersionDetails({
               type: file.type,
               format: file.metadata.format,
             })}
+            disabled={archived}
             download
             compact
           >
@@ -280,14 +292,16 @@ export function ModelVersionDetails({
     <Grid gutter="xl">
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack>
-          <ModelCarousel
-            modelId={model.id}
-            nsfw={model.nsfw}
-            modelVersionId={version.id}
-            modelUserId={model.user.id}
-            limit={CAROUSEL_LIMIT}
-            mobile
-          />
+          {model.mode !== ModelModifier.TakenDown && (
+            <ModelCarousel
+              modelId={model.id}
+              nsfw={model.nsfw}
+              modelVersionId={version.id}
+              modelUserId={model.user.id}
+              limit={CAROUSEL_LIMIT}
+              mobile
+            />
+          )}
           {showRequestReview ? (
             <Button
               color="yellow"
@@ -337,7 +351,7 @@ export function ModelVersionDetails({
                         primary: true,
                       })}
                       leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile}
+                      disabled={!primaryFile || archived}
                       download
                     >
                       <Text align="center">
@@ -350,7 +364,7 @@ export function ModelVersionDetails({
               ) : (
                 <Stack sx={{ flex: 1 }} spacing={4}>
                   <JoinPopover>
-                    <Button leftIcon={<IconDownload size={16} />}>
+                    <Button leftIcon={<IconDownload size={16} />} disabled={archived}>
                       <Text align="center">
                         {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
                       </Text>
@@ -364,7 +378,7 @@ export function ModelVersionDetails({
                   <Menu position="bottom-end">
                     <Menu.Target>
                       <Tooltip label="Download options" withArrow>
-                        <Button px={0} w={36} variant="light">
+                        <Button px={0} w={36} variant="light" disabled={archived}>
                           <IconDownload />
                         </Button>
                       </Tooltip>
@@ -374,7 +388,7 @@ export function ModelVersionDetails({
                 ) : (
                   <JoinPopover>
                     <Tooltip label="Download options" withArrow>
-                      <Button px={0} w={36} variant="light">
+                      <Button px={0} w={36} variant="light" disabled={archived}>
                         <IconDownload />
                       </Button>
                     </Tooltip>
@@ -514,7 +528,7 @@ export function ModelVersionDetails({
                 borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
               })}
             >
-              <Accordion.Control>
+              <Accordion.Control disabled={archived}>
                 <Group position="apart">
                   {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
                   {isOwnerOrMod && (
@@ -687,14 +701,16 @@ export function ModelVersionDetails({
         })}
       >
         <Stack>
-          <ModelCarousel
-            modelId={model.id}
-            nsfw={model.nsfw}
-            modelVersionId={version.id}
-            modelUserId={model.user.id}
-            limit={CAROUSEL_LIMIT}
-            onBrowseClick={onBrowseClick}
-          />
+          {model.mode !== ModelModifier.TakenDown && (
+            <ModelCarousel
+              modelId={model.id}
+              nsfw={model.nsfw}
+              modelVersionId={version.id}
+              modelUserId={model.user.id}
+              limit={CAROUSEL_LIMIT}
+              onBrowseClick={onBrowseClick}
+            />
+          )}
           {model.description ? (
             <ContentClamp maxHeight={300}>
               <RenderHtml html={model.description} withMentions />

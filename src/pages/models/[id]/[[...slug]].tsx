@@ -20,7 +20,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { ModelStatus } from '@prisma/client';
+import { ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconBan,
   IconClock,
@@ -39,6 +39,9 @@ import {
   IconLockOff,
   IconMessageCircleOff,
   IconArrowsLeftRight,
+  IconArchive,
+  IconCircleMinus,
+  IconReload,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
@@ -91,6 +94,8 @@ import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { getAssignedTokens } from '~/server/services/model.service';
 import { parseBrowsingMode } from '~/server/createContext';
+import { ModelMeta } from '~/server/schema/model.schema';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -333,6 +338,34 @@ export default function ModelDetailsV2({
     });
   };
 
+  const changeModeMutation = trpc.model.changeMode.useMutation();
+  const handleChangeMode = async (mode: ModelModifier | null) => {
+    const prevModel = queryUtils.model.getById.getData({ id });
+    await queryUtils.model.getById.cancel({ id });
+
+    if (prevModel)
+      queryUtils.model.getById.setData(
+        { id },
+        { ...prevModel, mode, meta: (prevModel.meta as ModelMeta) ?? null }
+      );
+
+    changeModeMutation.mutate(
+      { id, mode },
+      {
+        async onSuccess() {
+          await queryUtils.model.getById.invalidate({ id });
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Unable to change mode',
+            error: new Error(error.message),
+          });
+          queryUtils.model.getById.setData({ id }, prevModel);
+        },
+      }
+    );
+  };
+
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
     const rawVersionId = router.query.modelVersionId;
@@ -529,6 +562,32 @@ export default function ModelDetailsV2({
                         >
                           Edit Model
                         </Menu.Item>
+                        {!model.mode ? (
+                          <>
+                            <Menu.Item
+                              icon={<IconArchive size={14} stroke={1.5} />}
+                              onClick={() => handleChangeMode(ModelModifier.Archived)}
+                            >
+                              Archive
+                            </Menu.Item>
+                            {isModerator && (
+                              <Menu.Item
+                                icon={<IconCircleMinus size={14} stroke={1.5} />}
+                                onClick={() => handleChangeMode(ModelModifier.TakenDown)}
+                              >
+                                Take Down
+                              </Menu.Item>
+                            )}
+                          </>
+                        ) : model.mode === ModelModifier.Archived ||
+                          (isModerator && model.mode === ModelModifier.TakenDown) ? (
+                          <Menu.Item
+                            icon={<IconReload size={14} stroke={1.5} />}
+                            onClick={() => handleChangeMode(null)}
+                          >
+                            Bring Back
+                          </Menu.Item>
+                        ) : null}
                       </>
                     )}
                     {(!currentUser || !isOwner || isModerator) && (
@@ -659,6 +718,13 @@ export default function ModelDetailsV2({
                   </Text>
                 </Group>
               </Alert>
+            )}
+            {(model.mode === ModelModifier.TakenDown || model.mode === ModelModifier.Archived) && (
+              <AlertWithIcon color="blue" icon={<IconExclamationMark />} size="md">
+                {model.mode === ModelModifier.Archived
+                  ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
+                  : 'This model has been taken off. You can still download it, but you would not be able to post any creation related to it with the community.'}
+              </AlertWithIcon>
             )}
           </Stack>
           <Group spacing={4} noWrap>
@@ -799,7 +865,7 @@ export default function ModelDetailsV2({
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
         ) : null}
       </Container>
-      {isClient && !loadingImages && !model.locked && (
+      {isClient && !loadingImages && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
             modelId={model.id}

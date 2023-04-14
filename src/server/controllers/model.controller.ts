@@ -1,11 +1,18 @@
 import { modelHashSelect } from './../selectors/modelHash.selector';
-import { ModelStatus, ModelHashType, Prisma, UserActivityType } from '@prisma/client';
+import {
+  ModelStatus,
+  ModelHashType,
+  Prisma,
+  UserActivityType,
+  ModelModifier,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
+  ChangeModelModifierSchema,
   DeleteModelSchema,
   GetAllModelsOutput,
   GetDownloadSchema,
@@ -44,7 +51,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { getGetUrl } from '~/utils/s3-utils';
@@ -62,7 +69,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       ...input,
       user: ctx.user,
-      select: { ...modelWithDetailsSelect, meta: true, earlyAccessDeadline: true },
+      select: { ...modelWithDetailsSelect, meta: true, earlyAccessDeadline: true, mode: true },
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
@@ -92,7 +99,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           : undefined;
         if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
           earlyAccessDeadline = undefined;
-        const canDownload = !earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator;
+        const canDownload =
+          model.mode !== ModelModifier.Archived &&
+          (!earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator);
 
         // sort version files by file type, 'Model' type goes first
         const files = [...version.files].sort((a, b) => {
@@ -157,6 +166,7 @@ export const getModelsInfiniteHandler = async ({
       publishedAt: true,
       locked: true,
       earlyAccessDeadline: true,
+      mode: true,
       rank: {
         select: {
           [`downloadCount${input.period}`]: true,
@@ -233,7 +243,10 @@ export const getModelsInfiniteHandler = async ({
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
-          image: image as (typeof images)[0] | undefined,
+          image:
+            model.mode !== ModelModifier.TakenDown
+              ? (image as (typeof images)[0] | undefined)
+              : undefined,
           // earlyAccess,
         };
       })
@@ -515,7 +528,7 @@ export const getDownloadCommandHandler = async ({
       select: {
         id: true,
         model: {
-          select: { id: true, name: true, type: true, status: true, userId: true },
+          select: { id: true, name: true, type: true, status: true, userId: true, mode: true },
         },
         images: {
           select: {
@@ -560,7 +573,10 @@ export const getDownloadCommandHandler = async ({
     const isMod = ctx.user?.isModerator;
     const userId = ctx.user?.id;
     const canDownload =
-      isMod || modelVersion?.model?.status === 'Published' || modelVersion.model.userId === userId;
+      modelVersion.model.mode !== ModelModifier.Archived &&
+      (isMod ||
+        modelVersion?.model?.status === 'Published' ||
+        modelVersion.model.userId === userId);
     if (!canDownload) throw throwNotFoundError();
 
     await dbWrite.userActivity.create({
@@ -751,6 +767,49 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
       meta: { ...meta, needsReview: true },
     });
 
+    return updatedModel;
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const changeModelModifierHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ChangeModelModifierSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id, mode } = input;
+    // If changing to takenDown, only moderators can do it
+    if (mode === ModelModifier.TakenDown && !ctx.user.isModerator) throw throwAuthorizationError();
+
+    const model = await getModel({ id, select: { id: true, meta: true, mode: true } });
+    if (!model) throw throwNotFoundError(`No model with id ${id}`);
+    if (model.mode === mode) throw throwBadRequestError(`Model is already ${mode}`);
+    // If removing mode, but model is taken down, only moderators can do it
+    if (model.mode === ModelModifier.TakenDown && mode === null && !ctx.user.isModerator)
+      throw throwAuthorizationError();
+
+    const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } =
+      (model.meta as ModelMeta | null) || {};
+    let updatedMeta: ModelMeta = {};
+    if (mode === ModelModifier.Archived)
+      updatedMeta = { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };
+    else if (mode === ModelModifier.TakenDown)
+      updatedMeta = {
+        ...restMeta,
+        takenDownAt: new Date().toISOString(),
+        takenDownBy: ctx.user.id,
+      };
+    else updatedMeta = restMeta;
+
+    const updatedModel = await updateModelById({
+      id,
+      data: { mode, meta: { ...updatedMeta } },
+    });
     return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) error;

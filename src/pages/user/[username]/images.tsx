@@ -1,14 +1,15 @@
+import { Group, Stack } from '@mantine/core';
 import { useRouter } from 'next/router';
 
-import { Group, Stack } from '@mantine/core';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
+import { userPageQuerySchema } from '~/server/schema/user.schema';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 export default function UserImages() {
   const router = useRouter();
@@ -16,7 +17,11 @@ export default function UserImages() {
   const currentUser = useCurrentUser();
 
   // currently not showing any content if the username is undefined
-  if (!username || (!currentUser?.isModerator && username !== currentUser?.username))
+  if (
+    !currentUser ||
+    !username ||
+    (!currentUser.isModerator && username !== postgresSlugify(currentUser.username))
+  )
     return <NotFound />;
 
   return (
