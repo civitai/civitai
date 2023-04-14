@@ -1,4 +1,4 @@
-import { ModelHashType } from '@prisma/client';
+import { ModelHashType, ModelModifier } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -36,6 +36,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     res.status(200).json({
       ...model,
+      mode: model.mode == null ? undefined : model.mode,
       creator: {
         username: user.username,
         image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
@@ -49,28 +50,37 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           const primaryFile = getPrimaryFile(castedFiles);
           if (!primaryFile) return null;
 
+          const includeDownloadUrl = model.mode !== ModelModifier.Archived;
+          const includeImages = model.mode !== ModelModifier.TakenDown;
+
           return {
             ...version,
-            files: castedFiles.map(({ hashes, ...file }) => ({
-              ...file,
-              name: getDownloadFilename({ model, modelVersion: version, file }),
-              hashes: hashesAsObject(hashes),
-              downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                versionId: version.id,
-                type: file.type,
-                format: file.metadata.format,
-                primary: primaryFile.id === file.id,
-              })}`,
-              primary: primaryFile.id === file.id ? true : undefined,
-            })),
-            images: images.map(({ url, id, ...image }) => ({
-              url: getEdgeUrl(url, { width: 450, name: id.toString() }),
-              ...image,
-            })),
-            downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-              versionId: version.id,
-              primary: true,
-            })}`,
+            files: includeDownloadUrl
+              ? castedFiles.map(({ hashes, ...file }) => ({
+                  ...file,
+                  name: getDownloadFilename({ model, modelVersion: version, file }),
+                  hashes: hashesAsObject(hashes),
+                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                    versionId: version.id,
+                    type: file.type,
+                    format: file.metadata.format,
+                    primary: primaryFile.id === file.id,
+                  })}`,
+                  primary: primaryFile.id === file.id ? true : undefined,
+                }))
+              : undefined,
+            images: includeImages
+              ? images.map(({ url, id, ...image }) => ({
+                  url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+                  ...image,
+                }))
+              : undefined,
+            downloadUrl: includeDownloadUrl
+              ? `${baseUrl}${createModelFileDownloadUrl({
+                  versionId: version.id,
+                  primary: true,
+                })}`
+              : undefined,
           };
         })
         .filter((x) => x),

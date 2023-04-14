@@ -1,4 +1,4 @@
-import { ModelType, Prisma, UserActivityType } from '@prisma/client';
+import { ModelModifier, ModelType, Prisma, UserActivityType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
@@ -78,6 +78,7 @@ export default RateLimitedEndpoint(
             publishedAt: true,
             status: true,
             userId: true,
+            mode: true,
           },
         },
         name: true,
@@ -114,6 +115,10 @@ export default RateLimitedEndpoint(
     // Handle non-published models
     const isMod = session?.user?.isModerator;
     const userId = session?.user?.id;
+    const archived = modelVersion.model.mode === ModelModifier.Archived;
+    if (archived)
+      return res.status(410).json({ error: 'Model archived, not available for download' });
+
     const canDownload =
       isMod ||
       modelVersion?.model?.status === 'Published' ||

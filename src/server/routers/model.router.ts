@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
 import {
+  changeModelModifierHandler,
   createModelHandler,
   deleteModelHandler,
   getDownloadCommandHandler,
@@ -25,6 +26,7 @@ import {
 import { dbRead } from '~/server/db/client';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
+  changeModelModifierSchema,
   deleteModelSchema,
   GetAllModelsOutput,
   getAllModelsSchema,
@@ -175,4 +177,8 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(requestReviewHandler),
+  changeMode: protectedProcedure
+    .input(changeModelModifierSchema)
+    .use(isOwnerOrModerator)
+    .mutation(changeModelModifierHandler),
 });

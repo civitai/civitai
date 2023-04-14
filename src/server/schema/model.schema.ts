@@ -4,6 +4,7 @@ import {
   MetricTimeframe,
   CommercialUse,
   CheckpointType,
+  ModelModifier,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -159,4 +160,14 @@ export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;
   needsReview: boolean;
   unpublishedAt: string;
+  archivedAt: string;
+  archivedBy: number;
+  takenDownAt: string;
+  takenDownBy: number;
 }>;
+
+export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;
+export const changeModelModifierSchema = z.object({
+  id: z.number(),
+  mode: z.nativeEnum(ModelModifier).nullable(),
+});
