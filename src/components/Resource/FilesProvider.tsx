@@ -462,9 +462,9 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     maxFiles: 2,
   },
   Controlnet: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
-    acceptedModelFiles: ['Model'],
-    maxFiles: 2,
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.yaml', '.yml'],
+    acceptedModelFiles: ['Model', 'Config'],
+    maxFiles: 3,
   },
   Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },

@@ -103,7 +103,13 @@ export function ProfileCard() {
 
   return (
     <Card withBorder>
-      <Form form={form} onSubmit={(data) => mutate({ ...data })}>
+      <Form
+        form={form}
+        onSubmit={(data) => {
+          const { id, username, nameplateId, badgeId, image } = data;
+          mutate({ id, username, nameplateId, image, badgeId });
+        }}
+      >
         <Stack>
           <Title order={2}>Profile</Title>
           {error && (
