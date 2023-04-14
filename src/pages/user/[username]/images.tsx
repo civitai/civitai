@@ -4,7 +4,6 @@ import { Group, Stack } from '@mantine/core';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { BrowsingMode } from '~/server/common/enums';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -13,9 +12,8 @@ import { constants } from '~/server/common/constants';
 
 export default function UserImages() {
   const router = useRouter();
-  const { username, id } = userPageQuerySchema.parse(router.query);
+  const { username } = userPageQuerySchema.parse(router.query);
   const currentUser = useCurrentUser();
-  const browsingMode = currentUser?.username === username ? BrowsingMode.All : undefined;
 
   // currently not showing any content if the username is undefined
   if (!username || (!currentUser?.isModerator && username !== currentUser?.username))
@@ -34,7 +32,7 @@ export default function UserImages() {
             <PeriodFilter />
           </Group>
           {/* <ImageCategories /> */}
-          <ImagesInfinite filters={{ username, browsingMode }} withTags />
+          <ImagesInfinite filters={{ username }} withTags />
         </Stack>
       </MasonryContainer>
     </MasonryProvider>
