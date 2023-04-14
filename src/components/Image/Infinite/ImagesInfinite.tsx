@@ -1,12 +1,10 @@
 import { Stack, Text, LoadingOverlay, Center, Loader, ThemeIcon } from '@mantine/core';
 import { createContext, useContext, useEffect } from 'react';
 
-import { useImageFilters } from '~/providers/FiltersProvider';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
 import { BrowsingMode } from '~/server/common/enums';
-import { useRouter } from 'next/router';
-import { useQueryImages, parseImagesQuery } from '~/components/Image/image.utils';
+import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { useInView } from 'react-intersection-observer';
 import { IconCloudOff } from '@tabler/icons';
@@ -17,9 +15,7 @@ type ImagesInfiniteState = {
   postId?: number;
   username?: string;
   reviewId?: number;
-
   prioritizedUserIds?: number[];
-  browsingMode?: BrowsingMode;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
@@ -37,15 +33,13 @@ export default function ImagesInfinite({
   withTags,
   filters: filterOverrides = {},
 }: ImagesInfiniteProps) {
-  const router = useRouter();
   const { ref, inView } = useInView();
-  const globalFilters = useImageFilters();
-  const parsedParams = parseImagesQuery(router.query);
-  const baseFilters = { ...parsedParams, ...filterOverrides };
-  const filters = removeEmpty({ ...baseFilters, ...globalFilters, withTags });
+  const imageFilters = useImageFilters('images');
+  const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
 
-  const { images, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    useQueryImages(filters, { keepPreviousData: true });
+  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(filters, {
+    keepPreviousData: true,
+  });
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -56,7 +50,7 @@ export default function ImagesInfinite({
   // #endregion
 
   return (
-    <ImagesInfiniteContext.Provider value={baseFilters}>
+    <ImagesInfiniteContext.Provider value={filters}>
       {isLoading ? (
         <Center p="xl">
           <Loader />

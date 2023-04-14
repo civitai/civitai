@@ -1,5 +1,5 @@
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { FilterSubTypes, useFiltersContext } from '~/providers/FiltersProvider';
+import { FilterSubTypes, useFiltersContext } from '~/providers/FiltersProviderOld';
 import { ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
 
 type SortFilterProps = {

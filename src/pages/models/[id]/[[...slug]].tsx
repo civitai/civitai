@@ -83,17 +83,18 @@ import { isNumber } from '~/utils/type-guards';
 import Router from 'next/router';
 import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { parseBrowsingMode } from '~/server/createContext';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, session }) => {
+  resolver: async ({ ssg, ctx, session = null }) => {
     const params = (ctx.params ?? {}) as { id: string; slug: string[] };
     const query = ctx.query as { modelVersionId: string };
     const id = Number(params.id);
@@ -111,6 +112,7 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
+          browsingMode: parseBrowsingMode(ctx.req.cookies, session),
         });
 
       await ssg.model.getById.prefetch({ id });

@@ -9,9 +9,7 @@ import {
   ActionIcon,
   Indicator,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import { IconEye, IconEyeOff, IconShield, IconShieldOff, TablerIconProps } from '@tabler/icons';
-import { useEffect } from 'react';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -30,9 +28,7 @@ const indicatorProps: TablerIconProps = { size: 12, strokeWidth: 4 };
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const currentUser = useCurrentUser();
-  const cookieMode = useFiltersContext((state) => state.browsingMode);
-
-  const [browsingMode] = useLocalStorage({ key: 'browsing-mode', defaultValue: cookieMode });
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
 
   if (!currentUser || !browsingMode) return null;
 
@@ -84,25 +80,16 @@ type BrowsingModeIconProps = {
 export function BrowsingModeMenu() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
-  const cookieMode = useFiltersContext((state) => state.browsingMode);
-  const setFilters = useFiltersContext((state) => state.setFilters);
-  const setBrowsingMode = (mode: BrowsingMode) => {
-    setFilters({ browsingMode: mode });
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const setBrowsingMode = useFiltersContext((state) => state.setBrowsingMode);
+
+  const handleChange = (mode: BrowsingMode) => {
+    setBrowsingMode(mode);
     invalidateModeratedContentDebounced(queryUtils);
-    setMode(mode);
   };
+
   const isMobile = useIsMobile();
-  const [browsingMode, setMode] = useLocalStorage({
-    key: 'browsing-mode',
-    defaultValue: cookieMode,
-  });
-
-  useEffect(() => {
-    if (!browsingMode)
-      setBrowsingMode(currentUser?.showNsfw ? BrowsingMode.NSFW : BrowsingMode.SFW);
-  }, [browsingMode, setBrowsingMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!currentUser || !browsingMode) return null;
+  if (!currentUser?.showNsfw) return null;
 
   const browsingModeColor = {
     [BrowsingMode.SFW]: 'blue',
@@ -119,7 +106,7 @@ export function BrowsingModeMenu() {
           <SegmentedControl
             data={options}
             value={browsingMode}
-            onChange={setBrowsingMode}
+            onChange={handleChange}
             my={5}
             size={isMobile ? 'sm' : 'xs'}
             color={browsingModeColor}

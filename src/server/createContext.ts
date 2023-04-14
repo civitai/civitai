@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
 import { env } from '~/env/server.mjs';
-import { parseFiltersCookie } from '~/providers/FiltersProvider';
+import { parseFilterCookies } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
@@ -11,10 +11,8 @@ export const parseBrowsingMode = (
 ) => {
   if (!session) return BrowsingMode.SFW;
   if (!session.user?.showNsfw) return BrowsingMode.SFW;
-  if (!session) return BrowsingMode.SFW;
-  if (!session.user?.showNsfw) return BrowsingMode.SFW;
-  const browsingMode = parseFiltersCookie(cookies)?.browsingMode;
-  return browsingMode ?? BrowsingMode.NSFW; // NSFW = "My Filters" and should be the default if a user is authed
+  const browsingMode = parseFilterCookies(cookies).browsingMode;
+  return browsingMode; // NSFW = "My Filters" and should be the default if a user is logged in
 };
 
 const origins = [env.NEXTAUTH_URL, ...(env.TRPC_ORIGINS ?? [])];

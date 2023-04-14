@@ -5,11 +5,10 @@ import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { useImageFilters } from '~/providers/FiltersProvider';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
-import { removeEmpty } from '~/utils/object-helpers';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 type ImageDetailState = {
   images: ImageV2Model[];
@@ -60,9 +59,14 @@ export function ImageDetailProvider({
   const { postId, modelId, modelVersionId, username } = filters;
 
   // #region [data fetching]
-  const { images, isLoading: imagesLoading } = useQueryImages(filters);
+  const shouldFetchMany = Object.keys(filters).length > 0;
+  const { images, isLoading: imagesLoading } = useQueryImages(
+    { ...filters },
+    {
+      enabled: shouldFetchMany,
+    }
+  );
 
-  // TODO.Briant - return to this
   const shouldFetchImage =
     !imagesLoading && !!images?.length && !images.find((x) => x.id === imageId);
   const { data: prefetchedImage, isLoading: imageLoading } = trpc.image.get.useQuery(

@@ -2,7 +2,7 @@ import { Divider, Stack, Chip, ChipProps, createStyles, MultiSelect, Button } fr
 import { ImageGenerationProcess } from '@prisma/client';
 import { FiltersDropdown } from '~/components/Filters/FiltersDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useFiltersContext } from '~/providers/FiltersProviderOld';
 import { IconFilterOff } from '@tabler/icons';
 
 export function ImageFiltersDropdown() {

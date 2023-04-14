@@ -16,6 +16,7 @@ import { useRouter } from 'next/router';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
+import { useQueryImages } from '~/components/Image/image.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
@@ -29,8 +30,7 @@ import { trpc } from '~/utils/trpc';
 export function PostDetail({ postId }: { postId: number }) {
   const router = useRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
-  const { data: { items: images } = { items: [] }, isLoading: imagesLoading } =
-    trpc.image.getInfinite.useQuery({ postId });
+  const { images, isLoading: imagesLoading } = useQueryImages({ postId });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
 
   if (postLoading) return <PageLoader />;
