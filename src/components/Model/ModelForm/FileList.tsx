@@ -25,6 +25,7 @@ const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
 };
 
 const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
+  App: [],
   TextualInversion: ['Model', 'Negative', 'Training Data'],
   LORA: ['Model', 'Text Encoder', 'Training Data'],
   LoCon: ['Model', 'Training Data'],

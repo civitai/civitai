@@ -1,14 +1,15 @@
 import { modelHashSelect } from './../selectors/modelHash.selector';
 import {
-  ModelStatus,
+  ModelApp,
   ModelHashType,
+  ModelModifier,
+  ModelStatus,
   Prisma,
   UserActivityType,
-  ModelModifier,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -88,6 +89,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
     return {
       ...model,
+      app: model.app as ModelApp | null,
       meta: model.meta as ModelMeta | null,
       modelVersions: model.modelVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel

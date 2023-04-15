@@ -17,7 +17,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelModifier, ModelStatus } from '@prisma/client';
-import { IconDownload, IconHeart, IconLicense, IconMessageCircle2, IconGavel } from '@tabler/icons';
+import { IconDownload, IconGavel, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash';
@@ -49,12 +49,12 @@ import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/Resou
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
-import { RoutedContextLink, openRoutedContext } from '~/providers/RoutedContextProvider';
+import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { useTokenInfo } from '~/hooks/useTokenInfo';
 import { useTokenInfoTable } from '~/hooks/useTokenInfoTable';
 import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
+import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { type TokensProps } from '~/types/mint';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -395,7 +395,7 @@ export function ModelVersionDetails({
                   </JoinPopover>
                 )
               ) : (
-                <RunButton modelVersionId={version.id} />
+                <RunButton app={model.app} modelVersionId={version.id} />
               )}
               <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                 <div>

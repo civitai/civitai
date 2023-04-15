@@ -41,6 +41,7 @@ export type ResourceType =
   | 'LoCon'
   | 'LORA'
   | 'Checkpoint'
+  | 'App'
   | 'CheckpointConfig'
   | 'TextualInversion'
   | 'Hypernetwork'
