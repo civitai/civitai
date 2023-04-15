@@ -4,8 +4,10 @@ import { authOptions } from '~/pages/api/auth/[...nextauth]';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { getRandomInt } from '~/utils/number-helpers';
 
 const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
+  const podname = process.env.PODNAME ?? getRandomInt(100, 999);
   const writeDbCheck = await dbWrite.user
     .update({
       where: { id: -1 },
@@ -22,7 +24,10 @@ const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse
   );
 
   // redis and session fail silenty (no exception)
-  const redisCheck = await redis.get('user:-1:hidden-tags');
+  const redisKey = 'system:health-check:' + podname;
+  await redis.set(redisKey, 'ok');
+  const redisCheck = await redis.get(redisKey);
+  await redis.del(redisKey);
   const session = await getServerSession(req, res, authOptions);
 
   // as we're forwarding the request to authenticate with, we may not always have a server session
@@ -30,11 +35,11 @@ const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse
   const healthy = writeDbCheck && readDbCheck && redisCheck;
 
   return res.status(healthy ? 200 : 500).json({
-    podname: process.env.PODNAME,
+    podname,
     healthy: healthy,
     writeDb: writeDbCheck,
     readDb: readDbCheck,
-    redis: redisCheck !== null,
+    redis: redisCheck === 'ok',
     session: session !== null,
   });
 });
