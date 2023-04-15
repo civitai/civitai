@@ -723,7 +723,7 @@ export default function ModelDetailsV2({
               <AlertWithIcon color="blue" icon={<IconExclamationMark />} size="md">
                 {model.mode === ModelModifier.Archived
                   ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
-                  : 'This model has been taken off. You can still download it, but you would not be able to post any creation related to it with the community.'}
+                  : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
               </AlertWithIcon>
             )}
           </Stack>
