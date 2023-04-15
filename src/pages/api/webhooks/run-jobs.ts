@@ -22,10 +22,12 @@ import { disabledVotedTags } from '~/server/jobs/disabled-voted-tags';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { isProd } from '~/env/other';
+import { updateMetricsModelJob } from '~/server/jobs/update-metrics-models';
 
 const jobs: Job[] = [
   scanFilesJob,
   updateMetricsJob,
+  updateMetricsModelJob,
   processImportsJob,
   sendNotificationsJob,
   sendWebhooksJob,
