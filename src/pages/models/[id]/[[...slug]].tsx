@@ -2,27 +2,30 @@ import {
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
+  Center,
   Container,
   createStyles,
   Divider,
   Group,
   Menu,
+  Paper,
   Rating,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Paper,
-  Center,
-  Box,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { ModelModifier, ModelStatus } from '@prisma/client';
 import {
+  IconArchive,
+  IconArrowsLeftRight,
   IconBan,
+  IconCircleMinus,
   IconClock,
   IconDotsVertical,
   IconDownload,
@@ -30,35 +33,30 @@ import {
   IconExclamationMark,
   IconFlag,
   IconHeart,
-  IconMessage,
-  IconPlus,
-  IconRecycle,
-  IconTagOff,
-  IconTrash,
   IconLock,
   IconLockOff,
+  IconMessage,
   IconMessageCircleOff,
-  IconArrowsLeftRight,
-  IconArchive,
-  IconCircleMinus,
+  IconPlus,
+  IconRecycle,
   IconReload,
+  IconTagOff,
+  IconTrash,
 } from '@tabler/icons';
 import truncate from 'lodash/truncate';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Collection } from '~/components/Collection/Collection';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
-import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -83,7 +81,6 @@ import { scrollToTop } from '~/utils/scroll-utils';
 import { removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import Router from 'next/router';
 import { QS } from '~/utils/qs';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageSort } from '~/server/common/enums';

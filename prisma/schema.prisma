@@ -241,6 +241,7 @@ model VerificationToken {
 
 enum ModelType {
   Checkpoint
+  App
   TextualInversion
   Hypernetwork
   AestheticGradient
@@ -330,6 +331,8 @@ model Model {
   underAttack         Boolean         @default(false)
   earlyAccessDeadline DateTime?
   mode                ModelModifier?
+  appId               Int?
+  app                 ModelApp?       @relation(fields: [appId], references: [id], onDelete: SetNull)
 
   // Licensing
   allowNoCredit         Boolean       @default(true)
@@ -366,6 +369,15 @@ model License {
   name   String
   url    String
   models Model[]
+}
+
+model ModelApp {
+  id    Int     @id @default(autoincrement())
+  name  String
+  url   String
+  Model Model[]
+
+  @@index([name], type: Hash)
 }
 
 model ModelInterest {
@@ -1076,7 +1088,7 @@ model Partner {
   homepage         String?
   tos              String?
   privacy          String?
-  startupTime      Int? //Seconds
+  startupTime      Int? // Seconds
   onDemand         Boolean
   onDemandStrategy String? // URL Template
   onDemandTypes    ModelType[]         @default([])

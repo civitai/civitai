@@ -96,6 +96,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
   const queryUtils = trpc.useContext();
 
   const id = useEditPostContext((state) => state.id);
+  const app = useEditPostContext((state) => state.app);
   const tags = useEditPostContext((state) => state.tags);
   const images = useEditPostContext((state) => state.images);
   const publishedAt = useEditPostContext((state) => state.publishedAt);
@@ -116,7 +117,7 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
 
   const canSave =
     tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
-  const canPublish = !isUploading && !!modelVersion?.files?.length;
+  const canPublish = !isUploading && (!!modelVersion?.files?.length || app);
 
   const handlePublish = () => {
     if (!currentUser || !modelVersion) return;
