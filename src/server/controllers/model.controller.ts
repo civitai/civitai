@@ -70,7 +70,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       ...input,
       user: ctx.user,
-      select: { ...modelWithDetailsSelect, meta: true, earlyAccessDeadline: true, mode: true },
+      select: {
+        ...modelWithDetailsSelect,
+        meta: true,
+        earlyAccessDeadline: true,
+        mode: true,
+        app: true,
+      },
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
