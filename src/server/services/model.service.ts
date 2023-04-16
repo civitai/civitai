@@ -224,13 +224,16 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     //     : undefined,
   };
 
-  const orderBy: Prisma.ModelOrderByWithRelationInput = { rank: { newRank: 'asc' } };
-  if (sort === ModelSort.HighestRated) orderBy.rank = { [`rating${period}Rank`]: 'asc' };
-  else if (sort === ModelSort.MostLiked) orderBy.rank = { [`favoriteCount${period}Rank`]: 'asc' };
+  let orderBy: Prisma.ModelOrderByWithRelationInput = {
+    lastVersionAt: { sort: 'desc', nulls: 'last' },
+  };
+  if (sort === ModelSort.HighestRated) orderBy = { rank: { [`rating${period}Rank`]: 'asc' } };
+  else if (sort === ModelSort.MostLiked)
+    orderBy = { rank: { [`favoriteCount${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostDownloaded)
-    orderBy.rank = { [`downloadCount${period}Rank`]: 'asc' };
+    orderBy = { rank: { [`downloadCount${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostDiscussed)
-    orderBy.rank = { [`commentCount${period}Rank`]: 'asc' };
+    orderBy = { rank: { [`commentCount${period}Rank`]: 'asc' } };
 
   const items = await dbRead.model.findMany({
     take,
