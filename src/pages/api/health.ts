@@ -23,7 +23,7 @@ const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse
     () => false
   );
 
-  // redis and session fail silenty (no exception)
+  // redis and session fail silently (no exception)
   const redisKey = 'system:health-check:' + podname;
   await redis.set(redisKey, 'ok');
   const redisCheck = await redis.get(redisKey);
