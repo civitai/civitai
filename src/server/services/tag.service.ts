@@ -281,8 +281,9 @@ export const addTagVotes = async ({
 
 export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
+  const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
   const tagSelector = isTagIds ? 'id' : 'name';
-  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
+  const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
 
   if (entityType === 'model') {
     await dbWrite.$executeRawUnsafe(`
@@ -319,7 +320,8 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
 
 export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
-  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
+  const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
+  const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
 
   if (entityType === 'model') {
     await dbWrite.$executeRawUnsafe(`
@@ -392,8 +394,9 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
 
 export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
+  const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
   const tagSelector = isTagIds ? 'id' : 'name';
-  const tagIn = (isTagIds ? tags : tags.map((tag) => `'${tag}'`)).join(', ');
+  const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
 
   await dbWrite.$executeRawUnsafe(`
     DELETE FROM "Tag"
