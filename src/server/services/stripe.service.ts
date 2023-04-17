@@ -127,7 +127,7 @@ export const createSubscribeSession = async ({
     customer: customerId,
   });
 
-  if (subscriptions.length > 0) {
+  if (subscriptions.filter((x) => x.status !== 'canceled').length > 0) {
     const { url } = await createManageSubscriptionSession({ customerId });
     await invalidateSession(user.id);
     return { sessionId: null, url };

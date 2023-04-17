@@ -47,7 +47,7 @@ export default function Pricing() {
     trpc.stripe.getUserSubscription.useQuery();
 
   const isLoading = productsLoading || subscriptionLoading;
-  const showSubscribeButton = !subscription;
+  const showSubscribeButton = !subscription || !!subscription.canceledAt;
 
   return (
     <>
@@ -118,7 +118,7 @@ export default function Pricing() {
                   ))}
                 </Grid>
               )}
-              {!!subscription && (
+              {!showSubscribeButton && (
                 <Center>
                   <ManageSubscriptionButton>
                     <Button>Manage your Membership</Button>

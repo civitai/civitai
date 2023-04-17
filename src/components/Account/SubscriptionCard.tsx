@@ -1,11 +1,12 @@
 import { Button, Card, Stack, Center, Loader, Title, Text, Group, Code } from '@mantine/core';
-import { IconSettings } from '@tabler/icons';
+import { IconRotateClockwise, IconSettings } from '@tabler/icons';
 import { upperFirst } from 'lodash';
 import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { trpc } from '~/utils/trpc';
 
 export function SubscriptionCard() {
@@ -64,11 +65,19 @@ export function SubscriptionCard() {
           <Title id="manage-subscription" order={2}>
             Membership
           </Title>
-          <ManageSubscriptionButton>
-            <Button compact variant="outline" rightIcon={<IconSettings size={16} />}>
-              Manage
-            </Button>
-          </ManageSubscriptionButton>
+          {data?.canceledAt ? (
+            <SubscribeButton priceId={data?.price.id}>
+              <Button compact variant="outline" rightIcon={<IconRotateClockwise size={16} />}>
+                Resume
+              </Button>
+            </SubscribeButton>
+          ) : (
+            <ManageSubscriptionButton>
+              <Button compact variant="outline" rightIcon={<IconSettings size={16} />}>
+                Manage
+              </Button>
+            </ManageSubscriptionButton>
+          )}
         </Group>
         {isLoading ? (
           <Center p="xl">
