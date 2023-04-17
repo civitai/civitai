@@ -16,6 +16,7 @@ import { getSessionUser, updateAccountScope } from '~/server/services/user.servi
 
 const setUserName = async (id: number, setTo: string) => {
   try {
+    setTo = setTo.replace(/[^A-Za-z0-9_]/g, '');
     const { username } = await dbWrite.user.update({
       where: { id },
       data: {
