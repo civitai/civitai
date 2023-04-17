@@ -22,9 +22,10 @@ export default function PaymentSuccess() {
   const { cid } = router.query as { cid: string };
   const { customerId, refresh } = useCurrentUser() ?? {};
 
+  // Only run once - otherwise we'll get an infinite loop
   useEffect(() => {
     refresh?.();
-  }, [refresh]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (cid !== customerId?.slice(-8)) {
     router.replace('/');
