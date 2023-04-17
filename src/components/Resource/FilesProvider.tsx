@@ -1,13 +1,13 @@
 import { constants, ModelFileType } from '~/server/common/constants';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelVersionById } from '~/types/router';
-import { useState, createContext, useContext } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { isDefined } from '~/utils/type-guards';
 import { bytesToKB } from '~/utils/number-helpers';
 import { randomId } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { Stack, Text, Anchor } from '@mantine/core';
+import { Anchor, Stack, Text } from '@mantine/core';
 import Link from 'next/link';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -431,6 +431,11 @@ type DropzoneOptions = {
 };
 
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
+  App: {
+    acceptedFileTypes: [],
+    acceptedModelFiles: [],
+    maxFiles: 0,
+  },
   Checkpoint: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Config', 'VAE', 'Training Data'],

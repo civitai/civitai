@@ -1,10 +1,10 @@
 import {
-  ModelType,
-  ModelStatus,
-  MetricTimeframe,
-  CommercialUse,
   CheckpointType,
+  CommercialUse,
+  MetricTimeframe,
   ModelModifier,
+  ModelStatus,
+  ModelType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -81,6 +81,13 @@ export const getAllModelsSchema = licensingSchema.extend({
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
+export type ModelApp = z.infer<typeof modelAppSchema>;
+export const modelAppSchema = z.object({
+  id: z.number().optional(),
+  name: z.string().min(1, 'Name cannot be empty.'),
+  url: z.string().url().min(1, 'URL cannot be empty.'),
+});
+
 export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
   id: z.number().optional(),
@@ -93,6 +100,7 @@ export const modelSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
+  app: modelAppSchema.nullish(),
   modelVersions: z
     .array(modelVersionUpsertSchema)
     .min(1, 'At least one model version is required.'),
@@ -128,7 +136,11 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
+  app: modelAppSchema.nullish(),
 });
+
+export type ModelAppUpsertInput = z.infer<typeof modelAppUpsertSchema>;
+export const modelAppUpsertSchema = modelAppSchema;
 
 export type ReorderModelVersionsSchema = z.infer<typeof reorderModelVersionsSchema>;
 export const reorderModelVersionsSchema = z.object({

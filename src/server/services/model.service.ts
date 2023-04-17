@@ -8,10 +8,8 @@ import {
   TagTarget,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { ManipulateType } from 'dayjs';
 import { constants } from 'ethers';
 import { isEmpty } from 'lodash-es';
-import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 import { factoryContract } from '~/contract';
 import { Factory__factory } from '~/contract/types';
@@ -20,8 +18,7 @@ import { env } from '~/env/server.mjs';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { Context } from '~/server/createContext';
-import { dbWrite, dbRead } from '~/server/db/client';
-import { playfab } from '~/server/playfab/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
@@ -30,18 +27,11 @@ import {
   PublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import {
-  imageSelect,
-  prepareCreateImage,
-  prepareUpdateImage,
-} from '~/server/selectors/image.selector';
-import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { ingestNewImages } from '~/server/services/image.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { getDefaultProvider } from '~/utils/chain-provider';
 
@@ -323,6 +313,7 @@ export const upsertModel = ({
   id,
   tagsOnModels,
   userId,
+  app,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
@@ -331,6 +322,14 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       select: { id: true },
       data: {
         ...data,
+        app: app
+          ? {
+              create: {
+                name: app.name,
+                url: app.url,
+              },
+            }
+          : undefined,
         userId,
         tagsOnModels: tagsOnModels
           ? {
@@ -355,6 +354,14 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       where: { id },
       data: {
         ...data,
+        app: app
+          ? {
+              create: {
+                name: app.name,
+                url: app.url,
+              },
+            }
+          : undefined,
         tagsOnModels: tagsOnModels
           ? {
               deleteMany: {
@@ -387,6 +394,7 @@ export const createModel = async ({
   modelVersions,
   userId,
   tagsOnModels,
+  app,
   ...data
 }: ModelInput & { userId: number }) => {
   const parsedModelVersions = prepareModelVersions(modelVersions);
@@ -412,6 +420,14 @@ export const createModel = async ({
         lastVersionAt: new Date(),
         nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
         userId,
+        app: app
+          ? {
+              create: {
+                name: app.name,
+                url: app.url,
+              },
+            }
+          : undefined,
         modelVersions: {
           create: parsedModelVersions.map(({ images, files, ...version }, versionIndex) => ({
             ...version,
