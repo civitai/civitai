@@ -42,6 +42,7 @@ import PlausibleProvider from 'next-plausible';
 import { Web3ModalProvider } from '~/providers/Web3ModalProvider';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
+import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -108,6 +109,7 @@ function MyApp(props: CustomAppProps) {
     <>
       <ClientHistoryStore />
       <RegisterCatchNavigation />
+      <RouterTransition />
       <CivitaiSessionProvider session={session}>
         <CookiesProvider value={cookies}>
           <FiltersProviderOld value={filtersOld}>

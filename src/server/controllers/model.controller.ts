@@ -216,7 +216,7 @@ export const getModelsInfiniteHandler = async ({
   const result = {
     nextCursor,
     items: items
-      .map(({ publishedAt, hashes, modelVersions, ...model }) => {
+      .map(({ hashes, modelVersions, rank, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
         const [image] = images.filter((i) => i.modelVersionId === version.id);
@@ -225,14 +225,6 @@ export const getModelsInfiniteHandler = async ({
           (input.user || input.username);
         if (!image && !showImageless) return null;
 
-        const rank = model.rank; // NOTE: null before metrics kick in
-        // const earlyAccess =
-        //   !version ||
-        //   isEarlyAccess({
-        //     versionCreatedAt: version.createdAt,
-        //     publishedAt,
-        //     earlyAccessTimeframe: version.earlyAccessTimeFrame,
-        //   });
         return {
           ...model,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
@@ -448,8 +440,13 @@ export const getModelsWithVersionsHandler = async ({
       count: rawResults.count,
       items: rawResults.items.map(({ rank, modelVersions, ...model }) => ({
         ...model,
-        modelVersions: modelVersions.map((modelVersion) => ({
+        modelVersions: modelVersions.map(({ rank, ...modelVersion }) => ({
           ...modelVersion,
+          stats: {
+            downloadCount: rank?.downloadCountAllTime ?? 0,
+            ratingCount: rank?.ratingCountAllTime ?? 0,
+            rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+          },
           images: images
             .filter((image) => image.modelVersionId === modelVersion.id)
             .map(({ modelVersionId, name, userId, ...image }) => ({

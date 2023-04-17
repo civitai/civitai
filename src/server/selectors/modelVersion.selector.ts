@@ -10,6 +10,13 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   baseModel: true,
   earlyAccessTimeFrame: true,
   description: true,
+  rank: {
+    select: {
+      downloadCountAllTime: true,
+      ratingCountAllTime: true,
+      ratingAllTime: true,
+    },
+  },
   files: {
     select: {
       name: true,

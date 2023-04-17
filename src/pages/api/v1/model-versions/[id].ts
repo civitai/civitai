@@ -40,7 +40,7 @@ export async function prepareModelVersionResponse(
   baseUrl: URL,
   images?: AsyncReturnType<typeof getImagesForModelVersion>
 ) {
-  const { files, model, ...version } = modelVersion;
+  const { files, model, rank, ...version } = modelVersion;
   const castedFiles = files as Array<
     Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
   >;
@@ -57,6 +57,11 @@ export async function prepareModelVersionResponse(
 
   return {
     ...version,
+    stats: {
+      downloadCount: rank?.downloadCountAllTime ?? 0,
+      ratingCount: rank?.ratingCountAllTime ?? 0,
+      rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+    },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl
       ? castedFiles.map(({ hashes, ...file }) => ({
@@ -71,13 +76,13 @@ export async function prepareModelVersionResponse(
             primary: primaryFile.id === file.id,
           })}`,
         }))
-      : undefined,
+      : [],
     images: includeImages
       ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
           url: getEdgeUrl(url, { width: 450, name: id.toString() }),
           ...image,
         }))
-      : undefined,
+      : [],
     downloadUrl: includeDownloadUrl
       ? `${baseUrl.origin}${createModelFileDownloadUrl({
           versionId: version.id,

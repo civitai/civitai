@@ -72,4 +72,37 @@ export const unpublishNotifications = createNotificationProcessor({
       FROM unpublished;
     `,
   },
+  'model-republish-declined': {
+    displayName: 'Model republish declined',
+    toggleable: false,
+    prepareMessage: ({ details }) => {
+      let message = `Your republish request for ${details.modelName} has been declined`;
+      if (details.reason) message += `: ${details.reason}`;
+      return {
+        message,
+        url: `/models/${details.modelId}/${slugit(details.modelName)}`,
+      };
+    },
+    prepareQuery: ({ lastSent }) => `
+      WITH declined AS (
+        SELECT DISTINCT
+          m."userId",
+          jsonb_build_object(
+            'modelId', m.id,
+            'modelName', m.name,
+            'reason', m.meta->>'declinedReason'
+          ) "details"
+        FROM "Model" m
+        WHERE jsonb_typeof(m.meta->'declinedReason') = 'string'
+          AND (m.meta->>'declinedAt')::timestamp > '${lastSent}'
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "userId",
+        'model-republish-declined' "type",
+        details
+      FROM declined;
+    `,
+  },
 });

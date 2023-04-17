@@ -22,6 +22,7 @@ import { shortenIfAddress } from '~/utils/address';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
+    setTo = setTo.replace(/[^A-Za-z0-9_]/g, '');
     const { username } = await dbWrite.user.update({
       where: { id },
       data: {

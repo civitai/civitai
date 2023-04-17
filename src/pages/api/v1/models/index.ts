@@ -80,13 +80,13 @@ export default MixedAuthEndpoint(async function handler(
                     })}`,
                     primary: primaryFile.id === file.id ? true : undefined,
                   }))
-                : undefined,
+                : [],
               images: includeImages
                 ? images.map(({ url, id, ...image }) => ({
                     url: getEdgeUrl(url, { width: 450, name: id.toString() }),
                     ...image,
                   }))
-                : undefined,
+                : [],
               downloadUrl: includeDownloadUrl
                 ? `${baseUrl.origin}${createModelFileDownloadUrl({
                     versionId: version.id,

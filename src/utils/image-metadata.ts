@@ -69,7 +69,7 @@ const hashesRegex = /, Hashes:\s*({[^}]+})/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
 const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
-const automaticSDKeyMap = new Map<string, keyof ImageMetaProps>([
+const automaticSDKeyMap = new Map<string, string>([
   ['Seed', 'seed'],
   ['CFG scale', 'cfgScale'],
   ['Sampler', 'sampler'],

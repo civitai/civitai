@@ -44,6 +44,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
@@ -321,8 +322,12 @@ export function AmbientModelCard({ data, width, height }: Props) {
     ]);
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
-  const isNew = data.createdAt > aDayAgo;
-  const isUpdated = !isNew && data.lastVersionAt && data.lastVersionAt > aDayAgo;
+  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
+  const isUpdated =
+    data.lastVersionAt &&
+    data.publishedAt &&
+    data.lastVersionAt > aDayAgo &&
+    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
   useEffect(() => {
     if (!modelId || modelId !== data.id) return;
@@ -338,7 +343,7 @@ export function AmbientModelCard({ data, width, height }: Props) {
           withBorder
           size={24}
           radius="sm"
-          label={isNew ? 'New' : 'Updated'}
+          label={isUpdated ? 'Updated' : 'New'}
           color="red"
           styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
           sx={{ opacity: isHidden ? 0.1 : undefined }}
