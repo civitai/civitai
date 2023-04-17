@@ -9,6 +9,7 @@ export type ModelById = ModelRouter['getById'];
 export type ModelGetAll = ModelRouter['getAll'];
 export type ModelGetVersions = ModelRouter['getVersions'];
 export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
+export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 
 type ModelVersionRouter = RouterOutput['modelVersion'];
 export type ModelVersionById = ModelVersionRouter['getById'];

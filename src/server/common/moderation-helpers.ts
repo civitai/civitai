@@ -1,3 +1,18 @@
+export const UnpublishReasons = [
+  'no-posts',
+  'no-versions',
+  'no-files',
+  'mature-real-person',
+  'mature-underage',
+  'photo-real-underage',
+  'hate-speech',
+  'non-generated-image',
+  'unintenteded-use',
+  'duplicate',
+  'spam',
+] as const;
+export type UnpublishReason = (typeof UnpublishReasons)[number];
+
 export const unpublishReasons: Record<
   UnpublishReason,
   { optionLabel: string; notificationMessage: string }
@@ -55,18 +70,3 @@ export const unpublishReasons: Record<
       'Spam or advertisements posing as a resource are not allowed under our TOS.',
   },
 };
-
-export const UnpublishReasons = [
-  'no-posts',
-  'no-versions',
-  'no-files',
-  'mature-real-person',
-  'mature-underage',
-  'photo-real-underage',
-  'hate-speech',
-  'non-generated-image',
-  'unintenteded-use',
-  'duplicate',
-  'spam',
-] as const;
-export type UnpublishReason = (typeof UnpublishReasons)[number];
