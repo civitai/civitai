@@ -68,13 +68,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
                   })}`,
                   primary: primaryFile.id === file.id ? true : undefined,
                 }))
-              : undefined,
+              : [],
             images: includeImages
               ? images.map(({ url, id, ...image }) => ({
                   url: getEdgeUrl(url, { width: 450, name: id.toString() }),
                   ...image,
                 }))
-              : undefined,
+              : [],
             downloadUrl: includeDownloadUrl
               ? `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
