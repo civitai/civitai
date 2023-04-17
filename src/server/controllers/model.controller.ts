@@ -440,8 +440,13 @@ export const getModelsWithVersionsHandler = async ({
       count: rawResults.count,
       items: rawResults.items.map(({ rank, modelVersions, ...model }) => ({
         ...model,
-        modelVersions: modelVersions.map((modelVersion) => ({
+        modelVersions: modelVersions.map(({ rank, ...modelVersion }) => ({
           ...modelVersion,
+          stats: {
+            downloadCount: rank?.downloadCountAllTime ?? 0,
+            ratingCount: rank?.ratingCountAllTime ?? 0,
+            rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+          },
           images: images
             .filter((image) => image.modelVersionId === modelVersion.id)
             .map(({ modelVersionId, name, userId, ...image }) => ({
