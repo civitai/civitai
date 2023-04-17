@@ -71,13 +71,13 @@ export async function prepareModelVersionResponse(
             primary: primaryFile.id === file.id,
           })}`,
         }))
-      : undefined,
+      : [],
     images: includeImages
       ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
           url: getEdgeUrl(url, { width: 450, name: id.toString() }),
           ...image,
         }))
-      : undefined,
+      : [],
     downloadUrl: includeDownloadUrl
       ? `${baseUrl.origin}${createModelFileDownloadUrl({
           versionId: version.id,
