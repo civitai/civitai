@@ -1,17 +1,18 @@
+import { createServerSideHelpers } from '@trpc/react-query/server';
 import { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
-import { createProxySSGHelpers } from '@trpc/react-query/ssg';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { appRouter } from '~/server/routers';
-import superjson from 'superjson';
 import { Session } from 'next-auth';
+import superjson from 'superjson';
+
 import { parseBrowsingMode } from '~/server/createContext';
+import { appRouter } from '~/server/routers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
   session: Session | null
 ) => {
-  const ssg = createProxySSGHelpers({
+  const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
       user: session?.user,
