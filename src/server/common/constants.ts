@@ -68,6 +68,9 @@ export const constants = {
     image: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
+  timeCutOffs: {
+    updatedModel: 2 * 60 * 60 * 1000,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;
