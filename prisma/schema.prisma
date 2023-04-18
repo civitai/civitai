@@ -337,25 +337,26 @@ model Model {
   allowDerivatives      Boolean       @default(true)
   allowDifferentLicense Boolean       @default(true)
 
-  modelVersions     ModelVersion[]
-  reviews           Review[]
-  tagsOnModels      TagsOnModels[]
-  tagsOnModelsVotes TagsOnModelsVote[]
-  tags              ModelTag[]
-  metrics           ModelMetric[]
-  saves             SavedModel[]
-  reports           ModelReport[]
-  engagements       ModelEngagement[]
-  comments          Comment[]
-  interests         ModelInterest[]
-  licenses          License[]
-  rank              ModelRank?
-  reportStats       ModelReportStat?
-  downloads         DownloadHistory[]
-  imageConnections  ImageConnection[]
-  hashes            ModelHash[]
-  threads           Thread[]
-  resourceReviews   ResourceReview[]
+  modelVersions           ModelVersion[]
+  reviews                 Review[]
+  tagsOnModels            TagsOnModels[]
+  tagsOnModelsVotes       TagsOnModelsVote[]
+  tags                    ModelTag[]
+  metrics                 ModelMetric[]
+  saves                   SavedModel[]
+  reports                 ModelReport[]
+  engagements             ModelEngagement[]
+  comments                Comment[]
+  interests               ModelInterest[]
+  licenses                License[]
+  rank                    ModelRank?
+  reportStats             ModelReportStat?
+  downloads               DownloadHistory[]
+  imageConnections        ImageConnection[]
+  hashes                  ModelHash[]
+  threads                 Thread[]
+  resourceReviews         ResourceReview[]
+  ModelMetricDailySummary ModelMetricDailySummary[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -416,19 +417,20 @@ model ModelVersion {
   meta                 Json        @default("{}")
   earlyAccessTimeFrame Int         @default(0)
 
-  reviews          Review[]
-  images           ImagesOnModels[]
-  metrics          ModelVersionMetric[]
-  files            ModelFile[]
-  runStrategies    RunStrategy[]
-  engagements      ModelVersionEngagement[]
-  rank             ModelVersionRank?
-  downloads        DownloadHistory[]
-  imageConnections ImageConnection[]
-  imageResources   ImageResource[]
-  posts            Post[]
-  resourceReviews  ResourceReview[]
-  hashes           ModelHash[]
+  reviews                        Review[]
+  images                         ImagesOnModels[]
+  metrics                        ModelVersionMetric[]
+  files                          ModelFile[]
+  runStrategies                  RunStrategy[]
+  engagements                    ModelVersionEngagement[]
+  rank                           ModelVersionRank?
+  downloads                      DownloadHistory[]
+  imageConnections               ImageConnection[]
+  imageResources                 ImageResource[]
+  posts                          Post[]
+  resourceReviews                ResourceReview[]
+  hashes                         ModelHash[]
+  ModelVersionMetricDailySummary ModelVersionMetricDailySummary[]
 
   @@index([modelId], type: Hash)
 }
@@ -1053,6 +1055,30 @@ model SavedModel {
   updatedAt DateTime @updatedAt
 
   @@id([modelId, userId])
+}
+
+enum MetricSnapshotType {
+  ModelDownload
+}
+
+model ModelMetricDailySummary {
+  modelId Int
+  model   Model              @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  type    MetricSnapshotType
+  date    DateTime           @db.Date
+  count   Int
+
+  @@id([modelId, type, date])
+}
+
+model ModelVersionMetricDailySummary {
+  modelVersionId Int
+  modelVersion   ModelVersion       @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type           MetricSnapshotType
+  date           DateTime           @db.Date
+  count          Int
+
+  @@id([modelVersionId, type, date])
 }
 
 model RunStrategy {
