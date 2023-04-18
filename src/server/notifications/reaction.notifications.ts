@@ -123,14 +123,19 @@ export const reactionNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       let message: string;
       if (details.version === 2) {
-        const displayModels = details.models.slice(0, 2);
-        const additionalModels = details.models.length - displayModels.length;
-        const modelList =
-          additionalModels > 0
-            ? displayModels.join(', ') + `, and ${additionalModels} more`
-            : humanizeList(displayModels);
+        let modelList: string | undefined;
+        if (details.models) {
+          const displayModels = details.models.slice(0, 2);
+          const additionalModels = details.models.length - displayModels.length;
+          modelList =
+            additionalModels > 0
+              ? displayModels.join(', ') + `, and ${additionalModels} more`
+              : humanizeList(displayModels);
+        }
 
-        message = `Your image using ${modelList} has received ${details.reactionCount} reactions`;
+        message = `Your image${modelList ? ` using ${modelList}` : ''} has received ${
+          details.reactionCount
+        } reactions`;
       } else {
         message = `Your ${details.reviewId ? 'review image' : 'example image'} on the ${
           details.modelName
