@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
-import { UnpublishReason, UnpublishReasons } from '~/server/common/moderation-helpers';
+import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -145,9 +145,10 @@ export const publishModelSchema = z.object({
 });
 
 export type UnpublishModelSchema = z.infer<typeof unpublishModelSchema>;
+const UnpublishReasons = Object.keys(unpublishReasons);
 export const unpublishModelSchema = z.object({
   id: z.number(),
-  reason: z.enum(UnpublishReasons).optional(),
+  reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as string)).optional(),
 });
 
 export type ToggleModelLockInput = z.infer<typeof toggleModelLockSchema>;

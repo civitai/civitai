@@ -40,6 +40,7 @@ Content containing nudity, sexual situations, provocative/revealing attire, bloo
   - graphic violence or bestiality
 - "Loli", "lolicon", "shota", "shotacon" content
 - Content depicting or intended to depict photorealistic minors, regardless of context.
+- Content depicting the excrement of "scat" or fecal matter.
 - Content that is disrespectful, offensive, or promotes hate speech, discrimination, or harassment based on, but not limited to:
   - Religion or religious beliefs
   - Nationality, ethnicity, or race
