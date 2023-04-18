@@ -210,50 +210,55 @@ export const updateMetricsModelJob = createJob(
           FROM ${viewName} m
           LEFT JOIN (
             SELECT
-                ms."${viewId}",
-                ms.download_count + COALESCE(ml.download_count, 0) AS download_count,
-                ms.year_download_count + COALESCE(ml.year_download_count, 0) AS year_download_count,
-                ms.month_download_count + COALESCE(ml.month_download_count, 0) AS month_download_count,
-                ms.week_download_count + COALESCE(ml.week_download_count, 0) AS week_download_count,
-                ms.day_download_count + COALESCE(ml.day_download_count, 0) AS day_download_count
-            FROM
-            (
-              SELECT
-                  sd."${viewId}",
-                  SUM(sd.count) AS download_count,
-                  SUM(CASE WHEN sd.date >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
-                  SUM(CASE WHEN sd.date >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
-                  SUM(CASE WHEN sd.date >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
-                  SUM(CASE WHEN sd.date >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count,
-                  MAX(sd.date + interval '1 day') AS liveStartDate
-              FROM (
-                SELECT 
-                  "${tableId}" AS ${viewId},
-                  *
-                FROM "${
-                  target === 'models' ? 'ModelMetricDailySummary' : 'ModelVersionMetricDailySummary'
-                }" sd
-              ) sd
-              GROUP BY sd."${viewId}"
-            ) ms
-            CROSS JOIN LATERAL (
+              ${viewId},
+              SUM(download_count) download_count,
+              SUM(year_download_count) year_download_count,
+              SUM(month_download_count) month_download_count,
+              SUM(week_download_count) week_download_count,
+              SUM(day_download_count) day_download_count
+            FROM (
+              (
                 SELECT
-                    COUNT(a.model_id) AS download_count,
-                    SUM(CASE WHEN a.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
-                    SUM(CASE WHEN a.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
-                    SUM(CASE WHEN a.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
-                    SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count
-                FROM (
+                  a.${viewId},
+                  COUNT(a.${viewId}) AS download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count
+                FROM
+                (
                   SELECT
-                    CAST(a.details ->> 'modelId' AS INT) AS model_id,
-                    CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
-                    a."createdAt" AS created_at
-                  FROM "UserActivity" a
-                  WHERE a.activity = 'ModelDownload'
+                    user_id,
+                    ${viewId},
+                    MAX(created_at) created_at
+                  FROM (
+                    SELECT
+                      COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
+                      CAST(a.details ->> 'modelId' AS INT) AS model_id,
+                      CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
+                      a."createdAt" AS created_at
+                    FROM "UserActivity" a
+                    WHERE a.activity = 'ModelDownload' AND a."createdAt" > current_date
+                  ) t
+                  JOIN "ModelVersion" mv ON mv.id = t.model_version_id
+                  GROUP BY user_id, model_id, model_version_id
                 ) a
-                WHERE a."created_at" > ms.liveStartDate
-                AND a.${viewId} = ms.${viewId}
-            ) ml
+                GROUP BY a.${viewId}
+              )
+              UNION ALL
+              (
+                SELECT
+                  "${tableId}" ${viewId},
+                  SUM(count) download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '365 days') THEN count ELSE 0 END) AS year_download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '30 days') THEN count ELSE 0 END) AS month_download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '7 days') THEN count ELSE 0 END) AS week_download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '1 days') THEN count ELSE 0 END) AS day_download_count
+                FROM "ModelMetricDaily"
+                GROUP BY "${tableId}"
+              )
+            ) agg
+            GROUP BY agg.${viewId}
           ) ds ON m.${viewId} = ds.${viewId}
           LEFT JOIN (
             SELECT

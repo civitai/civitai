@@ -1,56 +1,58 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
+import dayjs from 'dayjs';
 
 const log = createLogger('update-daily-metrics', 'blue');
-
-const METRIC_LAST_UPDATED_DAILY_KEY = 'last-daily-metrics';
 
 export const updateDailyMetricsJob = createJob(
   'update-daily-metrics',
   '0 0 * * *',
   async () => {
-    async function updateDailyMetrics(target: 'models' | 'versions') {
-      const [tableName, tableId, sourceTableName] =
-        target === 'models'
-          ? ['ModelMetricDailySummary', 'modelId', 'Model']
-          : ['ModelMetricVersionDailySummary', 'modelVersionId', 'ModelVersion'];
+    const lastRecord = await dbWrite.modelMetricDaily.aggregate({ _max: { date: true } });
+    const startDate = dayjs(lastRecord._max?.date ?? new Date(0))
+      .add(1, 'day')
+      .toDate();
 
-      const query = `
-        INSERT INTO "${tableName}" ("${tableId}", type, "date", "count")
+    await dbWrite.$executeRaw`
+      WITH user_model_downloads as (
         SELECT
-            m.id,
-            'ModelDownload'::"MetricSnapshotType",
-            b."date",
-            COUNT(*) AS "count"
-        FROM
-        (
-            SELECT
-              m.id,
-              COALESCE((
-                  SELECT MAX(date) FROM "${tableName}"
-              ), '2020-01-1'::date) "lastUpdateDate"
-            FROM "${sourceTableName}" m
-        ) m
-        CROSS JOIN LATERAL (
-            SELECT t.day::date AS date
-            FROM generate_series(m."lastUpdateDate", current_date - interval '1 day', interval '1 day') AS t(day)
-        ) b
-        JOIN "UserActivity" ua
-            ON  ua."createdAt" > b.date AND ua."createdAt" < (b.date + INTERVAL '1 day')
-            AND CAST(ua.details ->> '${tableId}' AS INT) = m.id
-        GROUP BY m.id, b.date
-        ON CONFLICT ("${tableId}", type, date) DO UPDATE
-          SET "count" = EXCLUDED."count"
-        `;
-
-      await dbWrite.$executeRawUnsafe(query);
-    }
-
-    // Update all affected metrics
-    // --------------------------------------------
-    await updateDailyMetrics('models');
-    await updateDailyMetrics('versions');
+          user_id,
+          model_id,
+          model_version_id,
+          MAX(created_at) created_at
+        FROM (
+          SELECT
+            COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
+            CAST(a.details ->> 'modelId' AS INT) AS model_id,
+            CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
+            a."createdAt" AS created_at
+          FROM "UserActivity" a
+          WHERE a.activity = 'ModelDownload'
+            AND a."createdAt" > ${startDate}::timestamp
+            AND a."createdAt" < current_date
+        ) t
+        JOIN "ModelVersion" mv ON mv.id = t.model_version_id
+        GROUP BY user_id, model_id, model_version_id
+      ), daily_downloads as (
+        SELECT
+          model_id,
+          model_version_id,
+          date_trunc('day', created_at) date,
+          count(*) count
+        FROM user_model_downloads
+        GROUP BY model_id, model_version_id, date_trunc('day', created_at)
+      )
+      INSERT INTO "ModelMetricDaily" ("modelId", "modelVersionId", type, date, count)
+      SELECT
+        model_id,
+        model_version_id,
+        'downloads',
+        date,
+        count
+      FROM daily_downloads
+      ON CONFLICT ("modelId", "modelVersionId", type, date) DO UPDATE SET count = excluded.count;
+    `;
     log('Updated daily metrics');
   },
   {
