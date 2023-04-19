@@ -48,11 +48,11 @@ async function getHiddenTags(userId: number) {
   }
 
   // Add hidden tags of hidden tags
-  // const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
-  //   where: { fromTagId: { in: [...moderatedTags] } },
-  //   select: { toTagId: true },
-  // });
-  // hiddenTags.push(...hiddenTagsOfHiddenTags.map((x) => x.toTagId));
+  const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
+    where: { fromTagId: { in: [...moderatedTags] } },
+    select: { toTagId: true },
+  });
+  hiddenTags.push(...hiddenTagsOfHiddenTags.map((x) => x.toTagId));
 
   log(`fetched hidden tags for user: ${userId}`);
   return {

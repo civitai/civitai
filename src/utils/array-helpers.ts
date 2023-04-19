@@ -35,3 +35,7 @@ export function indexOfOr<T>(array: T[], value: T, or: number) {
   const index = array.indexOf(value);
   return index === -1 ? or : index;
 }
+
+export function shuffle<T>(array: T[]) {
+  return array.sort(() => Math.random() - 0.5);
+}

@@ -33,6 +33,7 @@ export function PostsCard({
                   <ImageGuard.Content>
                     {({ safe }) => (
                       <>
+                        <ImageGuard.Report />
                         <ImageGuard.ToggleConnect
                           sx={(theme) => ({
                             backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),

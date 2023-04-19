@@ -1,4 +1,4 @@
-import { ActionIcon } from '@mantine/core';
+import { ActionIcon, Tooltip } from '@mantine/core';
 import { IconLayoutGrid, IconLayoutList } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -32,13 +32,19 @@ export function ViewToggle({ type }: Props) {
 
   return (
     <IsClient>
-      <ActionIcon color="dark" variant="transparent" sx={{ width: 40 }} onClick={toggleView}>
-        {view === 'categories' ? (
-          <IconLayoutGrid size={20} stroke={2.5} />
-        ) : (
-          <IconLayoutList size={20} stroke={2.5} />
-        )}
-      </ActionIcon>
+      <Tooltip
+        label={`View ${view === 'categories' ? 'feed' : 'categories'}`}
+        position="bottom"
+        withArrow
+      >
+        <ActionIcon color="dark" variant="transparent" sx={{ width: 40 }} onClick={toggleView}>
+          {view === 'categories' ? (
+            <IconLayoutGrid size={20} stroke={2.5} />
+          ) : (
+            <IconLayoutList size={20} stroke={2.5} />
+          )}
+        </ActionIcon>
+      </Tooltip>
     </IsClient>
   );
 }

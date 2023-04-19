@@ -3,6 +3,7 @@ import { CategoryList } from './CategoryList';
 import { PostCategoryCard } from './PostCategoryCard';
 import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
 import { removeEmpty } from '~/utils/object-helpers';
+import { IconArrowRight, IconPlus } from '@tabler/icons';
 
 type PostCategoriesState = {
   username?: string;
@@ -30,7 +31,20 @@ export function PostCategoriesInfinite({
       isLoading={isLoading}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      viewMoreHref={(tag) => `/posts?tags=${tag}&view=feed`}
+      actions={[
+        {
+          label: 'View more',
+          href: (category) => `/posts?tags=${category.id}&view=feed`,
+          icon: <IconArrowRight />,
+          inTitle: true,
+        },
+        {
+          label: 'Make post',
+          href: (category) => `/posts/create?tag=${category.id}`,
+          icon: <IconPlus />,
+          inTitle: true,
+        },
+      ]}
     />
   );
 }

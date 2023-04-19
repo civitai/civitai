@@ -16,6 +16,7 @@ import {
   Table,
   Text,
   Title,
+  SelectItem,
 } from '@mantine/core';
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
@@ -168,17 +169,29 @@ export default function Tags() {
         accessorKey: 'name',
         header: 'Name',
         size: 150,
+        enableColumnActions: false,
       },
       {
         id: 'type',
         header: 'Type',
         accessorFn: (x) => getDisplayName(x.type),
+        enableSorting: false,
+        enableColumnActions: false,
         maxSize: 150,
+        filterFn: 'equals',
+        filterVariant: 'select',
+        mantineFilterSelectProps: {
+          data: Object.values(TagType).map(
+            (x) => ({ label: getDisplayName(x), value: getDisplayName(x) } as SelectItem)
+          ) as any,
+        },
       },
       {
         id: 'stats',
         header: 'Stats',
         maxSize: 300,
+        enableSorting: false,
+        enableColumnActions: false,
         Cell: ({ row }) => {
           const tag = row.original;
           return (
@@ -206,6 +219,9 @@ export default function Tags() {
         id: 'labels',
         header: 'Labels',
         minSize: 500,
+        enableSorting: false,
+        enableColumnActions: false,
+        accessorFn: (x) => x.tags,
         Cell: ({ row }) => {
           const tag = row.original;
           return (
@@ -227,9 +243,20 @@ export default function Tags() {
             </Group>
           );
         },
+        enableColumnFilter: true,
+        filterFn: (row, id, filterValue) => {
+          if (!filterValue.length) return true;
+          if (!row.original.tags?.length) return false;
+          return row.original.tags.some((x) => filterValue.includes(x.name));
+        },
+        filterVariant: 'select',
+        mantineFilterSelectProps: {
+          searchable: true,
+          data: addableTags.map((x) => ({ label: x.name, value: x.name } as SelectItem)) as any,
+        },
       },
     ],
-    []
+    [addableTags]
   );
 
   return (
@@ -244,14 +271,18 @@ export default function Tags() {
           columns={columns}
           data={tags}
           enableSelectAll
-          rowVirtualizerProps={{ overscan: 5 }} //optionally customize the row virtualizer
+          rowVirtualizerProps={{ overscan: 2 }} //optionally customize the row virtualizer
           enableRowSelection
+          enableHiding={false}
           enableBottomToolbar={false}
-          enableGlobalFilterModes
+          enableGlobalFilter={false}
           enablePagination={false}
           enableRowVirtualization
           mantineTableContainerProps={{ sx: { maxHeight: '600px' } }}
           onSortingChange={setSorting}
+          initialState={{
+            density: 'sm',
+          }}
           state={{ isLoading, sorting }}
           getRowId={(x) => x.id?.toString()}
           renderTopToolbarCustomActions={({ table }) => {

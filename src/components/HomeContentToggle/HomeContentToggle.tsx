@@ -1,9 +1,33 @@
 import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
+const homeOptions = {
+  models: '/',
+  images: '/images',
+  posts: '/posts',
+} as const;
+type HomeOptions = keyof typeof homeOptions;
+
+export function useHomeSelection() {
+  const [home, setHome] = useLocalStorage<HomeOptions>({
+    key: 'home-selection',
+    defaultValue: 'models',
+  });
+
+  const url = homeOptions[home];
+  const set = (value: HomeOptions) => {
+    setHome(value);
+    return homeOptions[value];
+  };
+
+  return { home, url, set };
+}
+
 export function HomeContentToggle({ size, sx, ...props }: Props) {
   const router = useRouter();
+  const { set } = useHomeSelection();
   const features = useFeatureFlags();
 
   const data: SegmentedControlItem[] = [
@@ -27,20 +51,12 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
         },
       })}
       value={
-        router.pathname === '/images'
-          ? 'images'
-          : ['/posts', '/posts/feed'].includes(router.pathname)
-          ? 'posts'
-          : 'models'
+        router.pathname === '/images' ? 'images' : router.pathname === '/posts' ? 'posts' : 'models'
       }
       onChange={(value) => {
-        if (value === 'images') {
-          router.push('/images');
-        } else if (value === 'posts') {
-          router.push('/posts');
-        } else {
-          router.push('/');
-        }
+        const url = set(value as HomeOptions);
+        console.log(value, url);
+        router.push(url);
       }}
       data={data}
     />

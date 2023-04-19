@@ -1,5 +1,6 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { SessionUser } from 'next-auth';
+import { getSystemTags } from '~/server/services/system-cache';
 import { isNotImageResource } from './../schema/image.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
@@ -32,10 +33,9 @@ import {
   applyModRulesSql,
   applyUserPreferencesSql,
   getImagesForPosts,
-  userPreferencesToSql,
 } from '~/server/services/image.service';
 import { redis } from '~/server/redis/client';
-import { indexOfOr } from '~/utils/array-helpers';
+import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { hashifyObject } from '~/utils/string-helpers';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
@@ -163,9 +163,13 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
   };
 };
 
-export const createPost = async ({ userId, ...data }: PostCreateInput & { userId: number }) => {
+export const createPost = async ({
+  userId,
+  tag,
+  ...data
+}: PostCreateInput & { userId: number }) => {
   const result = await dbWrite.post.create({
-    data: { ...data, userId },
+    data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
     select: editPostSelect,
   });
   return {
@@ -355,8 +359,11 @@ export const getPostCategories = async ({
   if (categoriesCache) categories = JSON.parse(categoriesCache);
 
   if (!categories) {
+    const systemTags = await getSystemTags();
+    const categoryTag = systemTags.find((t) => t.name === 'post category');
+    if (!categoryTag) throw new Error('Post category tag not found');
     const categoriesRaw = await dbRead.tag.findMany({
-      where: { target: { has: TagTarget.Post }, isCategory: true },
+      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
       select: { id: true, name: true, color: true },
     });
     categories = categoriesRaw
@@ -366,7 +373,7 @@ export const getPostCategories = async ({
         priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
       }))
       .sort((a, b) => a.priority - b.priority);
-    await redis.set('system:categories:posts', JSON.stringify(categories));
+    if (categories.length) await redis.set('system:categories:posts', JSON.stringify(categories));
   }
 
   if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
@@ -418,7 +425,7 @@ export const getPostsByCategory = async ({
 }: GetPostsByCategoryInput & { userId?: number }) => {
   input.limit ??= 10;
 
-  const categories = await getPostCategories({
+  let categories = await getPostCategories({
     excludeIds: input.excludedTagIds,
     limit: input.limit + 1,
     cursor: input.cursor,
@@ -426,6 +433,7 @@ export const getPostsByCategory = async ({
 
   let nextCursor: number | null = null;
   if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
+  categories = shuffle(categories);
 
   const AND = [Prisma.sql`1 = 1`];
 
@@ -458,7 +466,7 @@ export const getPostsByCategory = async ({
   // Apply SFW filter
   if (input.browsingMode === BrowsingMode.SFW) AND.push(Prisma.sql`p."nsfw" = false`);
 
-  let orderBy = `p."publishedAt" DESC`;
+  let orderBy = `p."publishedAt" DESC NULLS LAST`;
   if (input.sort === PostSort.MostReactions)
     orderBy = `pm."likeCount"+pm."heartCount"+pm."laughCount"+pm."cryCount" DESC NULLS LAST, ${orderBy}`;
   else if (input.sort === PostSort.MostComments)

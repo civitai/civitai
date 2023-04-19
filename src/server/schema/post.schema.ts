@@ -33,6 +33,7 @@ export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().optional(),
   title: z.string().trim().optional(),
+  tag: z.number().optional(),
 });
 
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;

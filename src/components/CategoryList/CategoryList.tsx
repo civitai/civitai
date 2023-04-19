@@ -16,7 +16,14 @@ type Props<Item> = {
   isLoading?: boolean;
   fetchNextPage?: () => void;
   hasNextPage?: boolean;
-  viewMoreHref?: (tag: number) => string;
+  actions?: CategoryAction[];
+};
+
+type CategoryAction = {
+  label: string | ((category: { id: number; name: string }) => string);
+  href: string | ((category: { id: number; name: string }) => string);
+  icon?: React.ReactNode;
+  inTitle?: boolean;
 };
 
 export function CategoryList<Item>({
@@ -26,7 +33,7 @@ export function CategoryList<Item>({
   hasNextPage,
   isLoading,
   fetchNextPage,
-  viewMoreHref,
+  actions,
 }: Props<Item>) {
   const { ref, inView } = useInView();
   const { columnCount } = useMasonryContainerContext();
@@ -40,12 +47,17 @@ export function CategoryList<Item>({
       {data.map((category) => (
         <Box key={category.id}>
           <Stack spacing={6}>
-            <CategoryTitle id={category.id} name={category.name} viewMoreHref={viewMoreHref} />
+            <CategoryTitle
+              id={category.id}
+              name={category.name}
+              actions={actions?.filter((x) => x.inTitle)}
+            />
             <CategoryCarousel
               data={category}
               render={RenderComponent}
               itemId={itemId}
               slidesToScroll={columnCount}
+              actions={actions}
             />
           </Stack>
         </Box>
@@ -62,22 +74,29 @@ export function CategoryList<Item>({
 function CategoryTitle({
   id,
   name,
-  viewMoreHref,
+  actions,
 }: {
   id: number;
   name: string;
-  viewMoreHref?: (tag: number) => string;
+  actions?: CategoryAction[];
 }) {
   return (
     <Group spacing="xs">
       <Text weight="bold" tt="uppercase" size="lg" lh={1}>
         {name}
       </Text>
-      {viewMoreHref && (
-        <Button component={NextLink} size="xs" variant="outline" compact href={viewMoreHref(id)}>
-          View More
+      {actions?.map((action, index) => (
+        <Button
+          key={index}
+          component={NextLink}
+          href={typeof action.href === 'function' ? action.href({ id, name }) : action.href}
+          variant="outline"
+          size="xs"
+          compact
+        >
+          {typeof action.label === 'function' ? action.label({ id, name }) : action.label}
         </Button>
-      )}
+      ))}
     </Group>
   );
 }
@@ -87,12 +106,14 @@ type CategoryCarouselProps<Item> = {
   render: Props<Item>['render'];
   itemId?: Props<Item>['itemId'];
   slidesToScroll?: number;
+  actions?: CategoryAction[];
 };
 function CategoryCarousel<Item>({
   data,
   render: RenderComponent,
   itemId,
   slidesToScroll = 2,
+  actions,
 }: CategoryCarouselProps<Item>) {
   const { theme, classes } = useStyles();
   const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
@@ -105,9 +126,8 @@ function CategoryCarousel<Item>({
         breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 5 }]}
         slideGap="md"
         align="start"
-        withControls={data.items.length > slidesToScroll ? true : false}
+        withControls={data.items.length + (actions?.length ? 1 : 0) > slidesToScroll ? true : false}
         slidesToScroll={mobile ? 1 : slidesToScroll}
-        loop
       >
         {data.items.map((item, index) => {
           const key = itemId ? itemId(item) : index;
@@ -117,6 +137,27 @@ function CategoryCarousel<Item>({
             </Carousel.Slide>
           );
         })}
+        {actions && (
+          <Carousel.Slide key="view-more">
+            <Stack h="100%" spacing="md">
+              {actions.map((action, index) => (
+                <Button
+                  key={index}
+                  className={classes.moreActions}
+                  component={NextLink}
+                  href={typeof action.href === 'function' ? action.href(data) : action.href}
+                  variant="outline"
+                  fullWidth
+                  radius="md"
+                  size="lg"
+                  rightIcon={action.icon}
+                >
+                  {typeof action.label === 'function' ? action.label(data) : action.label}
+                </Button>
+              ))}
+            </Stack>
+          </Carousel.Slide>
+        )}
       </Carousel>
     </Box>
   );
@@ -133,6 +174,11 @@ const useStyles = createStyles((theme) => ({
         minHeight: 16,
       },
     },
+  },
+
+  moreActions: {
+    width: '100%',
+    flex: '1',
   },
 }));
 

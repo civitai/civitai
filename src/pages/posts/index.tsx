@@ -7,7 +7,6 @@ import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentTog
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
-import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
@@ -23,7 +22,6 @@ export default function PostsPage() {
   if (!features.posts) return <NotFound />;
 
   const view = queryView ?? storedView;
-  console.log(view);
   return (
     <MasonryProvider
       columnWidth={constants.cardSizes.image}
