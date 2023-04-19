@@ -33,8 +33,8 @@ export default function UserImages() {
       <MasonryContainer fluid>
         <Stack spacing="xs">
           <Group position="apart" spacing={0}>
-            <SortFilter type="image" />
-            <PeriodFilter />
+            <SortFilter type="images" />
+            <PeriodFilter type="images" />
           </Group>
           {/* <ImageCategories /> */}
           <ImagesInfinite filters={{ username }} withTags />

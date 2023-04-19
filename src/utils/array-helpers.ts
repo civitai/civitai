@@ -30,3 +30,8 @@ export function sortAlphabeticallyBy<T>(array: T[], fn: (item: T) => string) {
     return 0;
   });
 }
+
+export function indexOfOr<T>(array: T[], value: T, or: number) {
+  const index = array.indexOf(value);
+  return index === -1 ? or : index;
+}

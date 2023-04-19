@@ -73,7 +73,7 @@ export function Reactions({
         }}
         {...groupProps}
       >
-        {!hasAllReactions && (
+        {!hasAllReactions && !readonly && (
           <Button
             variant="subtle"
             size="xs"
@@ -121,6 +121,7 @@ function ReactionsList({
     hasReacted: boolean;
     count: number;
     reaction: ReviewReactions;
+    canClick: boolean;
   }) => React.ReactElement;
   readonly?: boolean;
 }) {
@@ -159,19 +160,30 @@ function ReactionBadge({
   hasReacted,
   count,
   reaction,
+  canClick,
 }: {
   hasReacted: boolean;
   count: number;
   reaction: ReviewReactions;
+  canClick: boolean;
 }) {
+  const color = hasReacted ? 'blue' : 'gray';
   return (
     <Button
       size="xs"
       radius="xs"
       variant="light"
+      sx={(theme) => ({
+        '&[data-disabled]': {
+          cursor: 'default',
+          color: theme.fn.variant({ variant: 'light', color }).color,
+          background: 'transparent !important',
+        },
+      })}
+      disabled={!canClick}
       pl={2}
       pr={3}
-      color={hasReacted ? 'blue' : 'gray'}
+      color={color}
       compact
     >
       <Group spacing={4} align="center">

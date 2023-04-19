@@ -1,75 +1,86 @@
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { PostsCard } from '~/components/Post/Infinite/PostsCard';
 import { trpc } from '~/utils/trpc';
-import { createContext, useMemo, useContext } from 'react';
-import { usePostFilters } from '~/providers/FiltersProviderOld';
+import { createContext, useMemo, useContext, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { Alert, Center, Loader } from '@mantine/core';
+import { Alert, Center, Loader, LoadingOverlay, Stack, ThemeIcon, Text } from '@mantine/core';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
+import { useInView } from 'react-intersection-observer';
+import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
+import { IconCloudOff } from '@tabler/icons';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 
 type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
   modelVersionId?: number; // not hooked up to service/schema yet
+  tags?: number[];
   username?: string;
 };
 const PostsInfiniteContext = createContext<PostsInfiniteState | null>(null);
 export const usePostsInfiniteState = () => {
   const context = useContext(PostsInfiniteContext);
-  if (!context) throw new Error('ImagesInfiniteContext not in tree');
+  if (!context) throw new Error('PostsInfiniteContext not in tree');
   return context;
 };
 
-type PostsInfiniteProps = PostsInfiniteState & { columnWidth?: number };
+type PostsInfiniteProps = {
+  filters?: PostsInfiniteState;
+};
 
-export default function PostsInfinite({
-  columnWidth = 300,
-  username,
-  modelId,
-  modelVersionId,
-}: PostsInfiniteProps) {
-  const router = useRouter();
-  const postId = router.query.post ? Number(router.query.post) : undefined;
-  const globalFilters = usePostFilters();
-  const filters = useMemo(
-    () => removeEmpty({ ...globalFilters, username, modelId, modelVersionId }),
-    [globalFilters, username, modelId, modelVersionId]
-  );
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.post.getInfinite.useInfiniteQuery(
-      { ...filters, tags: filters.tags ?? undefined },
-      {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-        trpc: { context: { skipBatch: true } },
-        keepPreviousData: true,
-      }
-    );
+export default function PostsInfinite({ filters: filterOverrides = {} }: PostsInfiniteProps) {
+  const { ref, inView } = useInView();
+  const postFilters = usePostFilters();
+  const filters = removeEmpty({ ...postFilters, ...filterOverrides });
 
-  const posts = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryPosts(filters, {
+    keepPreviousData: true,
+  });
+
+  // #region [infinite data fetching]
+  useEffect(() => {
+    if (inView) fetchNextPage?.();
+  }, [fetchNextPage, inView]);
+  // #endregion
 
   return (
-    <PostsInfiniteContext.Provider value={{ modelId, modelVersionId, username }}>
+    <PostsInfiniteContext.Provider value={filters}>
       {isLoading ? (
         <Center p="xl">
           <Loader />
         </Center>
       ) : !!posts.length ? (
-        <MasonryGrid2
-          data={posts}
-          hasNextPage={hasNextPage}
-          isRefetching={isRefetching}
-          isFetchingNextPage={isFetchingNextPage}
-          fetchNextPage={fetchNextPage}
-          columnWidth={columnWidth}
-          render={PostsCard}
-          filters={filters}
-          scrollToIndex={(data) => data.findIndex((x) => x.id === postId)}
-        />
+        <div style={{ position: 'relative' }}>
+          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+          <MasonryColumns
+            data={posts}
+            imageDimensions={(data) => {
+              const width = data?.image.width ?? 450;
+              const height = data?.image.height ?? 450;
+              return { width, height };
+            }}
+            maxItemHeight={600}
+            render={PostsCard}
+            itemId={(data) => data.id}
+          />
+          {hasNextPage && !isLoading && !isRefetching && (
+            <Center ref={ref} sx={{ height: 36 }} mt="md">
+              {inView && <Loader />}
+            </Center>
+          )}
+        </div>
       ) : (
-        <Center>
-          <Alert>There are no posts to display</Alert>
-        </Center>
+        <Stack align="center" py="lg">
+          <ThemeIcon size={128} radius={100}>
+            <IconCloudOff size={80} />
+          </ThemeIcon>
+          <Text size={32} align="center">
+            No results found
+          </Text>
+          <Text align="center">
+            {"Try adjusting your search or filters to find what you're looking for"}
+          </Text>
+        </Stack>
       )}
     </PostsInfiniteContext.Provider>
   );

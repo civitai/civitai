@@ -1,36 +1,32 @@
+import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { FilterSubTypes, useFiltersContext } from '~/providers/FiltersProviderOld';
+import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
 
 type SortFilterProps = {
   type: FilterSubTypes;
 };
 
-function getSortOptions(type: FilterSubTypes) {
-  switch (type) {
-    case 'model':
-      return ModelSort;
-    case 'post':
-      return PostSort;
-    case 'image':
-      return ImageSort;
-    case 'question':
-      return QuestionSort;
-    default:
-      throw new Error(`unhandled SortFilter type: ${type}`);
-  }
-}
+const sortOptions = {
+  models: Object.values(ModelSort),
+  posts: Object.values(PostSort),
+  images: Object.values(ImageSort),
+  modelImages: Object.values(ImageSort),
+  questions: Object.values(QuestionSort),
+};
 
 export function SortFilter({ type }: SortFilterProps) {
-  const sortOptions = Object.values(getSortOptions(type));
   const sort = useFiltersContext((state) => state[type].sort);
-  const setFilters = useFiltersContext((state) => state.setFilters);
+  const setFilters = useSetFilters(type);
+
   return (
-    <SelectMenu
-      label={sort}
-      options={sortOptions.map((x) => ({ label: x, value: x }))}
-      onClick={(sort) => setFilters({ [type]: { sort } })}
-      value={sort}
-    />
+    <IsClient>
+      <SelectMenu
+        label={sort}
+        options={sortOptions[type].map((x) => ({ label: x, value: x }))}
+        onClick={(sort) => setFilters({ sort: sort as any })}
+        value={sort}
+      />
+    </IsClient>
   );
 }

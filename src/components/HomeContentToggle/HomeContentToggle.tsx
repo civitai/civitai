@@ -27,7 +27,11 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
         },
       })}
       value={
-        router.pathname === '/images' ? 'images' : router.pathname === '/posts' ? 'posts' : 'models'
+        router.pathname === '/images'
+          ? 'images'
+          : ['/posts', '/posts/feed'].includes(router.pathname)
+          ? 'posts'
+          : 'models'
       }
       onChange={(value) => {
         if (value === 'images') {

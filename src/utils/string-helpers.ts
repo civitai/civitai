@@ -2,6 +2,7 @@ import truncate from 'lodash/truncate';
 import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
+import { toJson } from '~/utils/json-helpers';
 
 function getUrlDomain(url: string) {
   // convert url string into a URL object and extract just the domain, avoiding subdomains
@@ -123,4 +124,9 @@ export function hashify(str: string) {
     hash |= 0; // Convert to 32bit integer
   }
   return hash;
+}
+
+export function hashifyObject(obj: any) {
+  const str = toJson(obj);
+  return hashify(str);
 }

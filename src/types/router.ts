@@ -54,3 +54,7 @@ export type ResourceReviewInfiniteModel = ResourceReviewRouter['getInfinite']['i
 export type ResourceReviewRatingTotals = ResourceReviewRouter['getRatingTotals'];
 export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
 export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];
+
+type PostRouter = RouterOutput['post'];
+export type PostGetByCategoryModel = PostRouter['getPostsByCategory']['items'][number];
+export type PostGetByCategoryPostModel = PostGetByCategoryModel['items'][number];

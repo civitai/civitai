@@ -1,4 +1,4 @@
-import { useRef, createContext, useContext } from 'react';
+import { useRef, createContext, useContext, useCallback } from 'react';
 import {
   CheckpointType,
   ImageGenerationProcess,
@@ -24,6 +24,9 @@ import { constants } from '~/server/common/constants';
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
 
+export type ViewMode = z.infer<typeof viewModeSchema>;
+const viewModeSchema = z.enum(['categories', 'feed']).default('categories');
+
 type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
@@ -34,6 +37,7 @@ const modelFilterSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
+  view: viewModeSchema,
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
@@ -48,12 +52,14 @@ const imageFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  view: viewModeSchema,
 });
 
 type PostFilterSchema = z.infer<typeof postFilterSchema>;
 const postFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
+  view: viewModeSchema,
 });
 
 export type CookiesState = {
@@ -67,6 +73,8 @@ type StorageState = {
   modelImages: ImageFilterSchema;
   posts: PostFilterSchema;
 };
+export type FilterSubTypes = keyof StorageState;
+export type ViewAdjustableTypes = 'models' | 'images' | 'posts';
 
 type FilterState = CookiesState & StorageState;
 export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>;
@@ -208,4 +216,20 @@ function deserializeJSON(value: string) {
   } catch {
     return value;
   }
+}
+
+export function useSetFilters(type: FilterSubTypes) {
+  return useFiltersContext(
+    useCallback(
+      (state) =>
+        ({
+          models: state.setModelFilters,
+          posts: state.setPostFilters,
+          images: state.setImageFilters,
+          questions: state.setQuestionFilters,
+          modelImages: state.setModelImageFilters,
+        }[type]),
+      [type]
+    )
+  );
 }

@@ -1,19 +1,25 @@
 import { MetricTimeframe } from '@prisma/client';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { useFiltersContext } from '~/providers/FiltersProviderOld';
-import { splitUppercase } from '~/utils/string-helpers';
+import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+
+type PeriodFilterProps = {
+  type: FilterSubTypes;
+};
 
 const periodOptions = Object.values(MetricTimeframe);
-export function PeriodFilter() {
-  const period = useFiltersContext((state) => state.period);
-  const setFilters = useFiltersContext((state) => state.setFilters);
+export function PeriodFilter({ type }: PeriodFilterProps) {
+  const period = useFiltersContext((state) => state[type].period);
+  const setFilters = useSetFilters(type);
 
   return (
-    <SelectMenu
-      label={period && splitUppercase(period.toString())}
-      options={periodOptions.map((option) => ({ label: splitUppercase(option), value: option }))}
-      onClick={(period) => setFilters({ period })}
-      value={period}
-    />
+    <IsClient>
+      <SelectMenu
+        label={period}
+        options={periodOptions.map((x) => ({ label: x, value: x }))}
+        onClick={(period) => setFilters({ period: period as any })}
+        value={period}
+      />
+    </IsClient>
   );
 }
