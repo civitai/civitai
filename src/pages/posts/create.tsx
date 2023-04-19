@@ -87,7 +87,7 @@ export default function PostCreate() {
   let backButtonUrl = modelId ? `/models/${modelId}` : '/';
   if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
 
-  const loading = loadingCurrentUserReview || versionLoading;
+  const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 
   return (
     <Container size="xs">
