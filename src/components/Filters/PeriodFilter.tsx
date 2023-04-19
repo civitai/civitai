@@ -2,6 +2,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+import { getDisplayName } from '~/utils/string-helpers';
 
 type PeriodFilterProps = {
   type: FilterSubTypes;
@@ -16,7 +17,7 @@ export function PeriodFilter({ type }: PeriodFilterProps) {
     <IsClient>
       <SelectMenu
         label={period}
-        options={periodOptions.map((x) => ({ label: x, value: x }))}
+        options={periodOptions.map((x) => ({ label: getDisplayName(x), value: x }))}
         onClick={(period) => setFilters({ period: period as any })}
         value={period}
       />

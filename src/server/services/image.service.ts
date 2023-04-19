@@ -758,9 +758,8 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`i."nsfw" = ${nsfw}`);
   }
 
-  // TODO Briant: turn this back on when we have support for separate period filters
   // Limit to images created since period start
-  // if (period !== 'AllTime') AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+  if (period !== 'AllTime') AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {

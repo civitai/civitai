@@ -37,6 +37,8 @@ import {
 import { redis } from '~/server/redis/client';
 import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { hashifyObject } from '~/utils/string-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
+import { ManipulateType } from 'dayjs';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -61,10 +63,13 @@ export const getPostsInfinite = async ({
     AND.push({ userId: targetUser?.id });
   }
   if (modelVersionId) AND.push({ modelVersionId });
-  if (isOwnerRequest) {
-    orderBy.push({ id: 'desc' });
-  } else {
-    AND.push({ publishedAt: { not: null } });
+  if (!isOwnerRequest) {
+    AND.push({
+      publishedAt:
+        period === 'AllTime'
+          ? { not: null }
+          : { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) },
+    });
     if (query) AND.push({ title: { in: query } });
     if (!!excludedTagIds?.length) {
       AND.push({
@@ -79,14 +84,14 @@ export const getPostsInfinite = async ({
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-
-    // sorting
-    if (sort === PostSort.MostComments)
-      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
-    else if (sort === PostSort.MostReactions)
-      orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
-    orderBy.push({ publishedAt: 'desc' });
   }
+
+  // sorting
+  if (sort === PostSort.MostComments)
+    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostReactions)
+    orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+  orderBy.push({ publishedAt: 'desc' });
 
   const posts = await dbRead.post.findMany({
     take: limit + 1,
@@ -99,6 +104,16 @@ export const getPostsInfinite = async ({
       title: true,
       // user: { select: userWithCosmeticsSelect },
       publishedAt: true,
+      stats: {
+        select: {
+          [`commentCount${period}`]: true,
+          [`likeCount${period}`]: true,
+          [`dislikeCount${period}`]: true,
+          [`heartCount${period}`]: true,
+          [`laughCount${period}`]: true,
+          [`cryCount${period}`]: true,
+        },
+      },
     },
   });
 
@@ -121,8 +136,18 @@ export const getPostsInfinite = async ({
   return {
     nextCursor,
     items: posts
-      .map((post) => ({
+      .map(({ stats, ...post }) => ({
         ...post,
+        stats: stats
+          ? {
+              commentCount: stats[`commentCount${period}`],
+              likeCount: stats[`likeCount${period}`],
+              dislikeCount: stats[`dislikeCount${period}`],
+              heartCount: stats[`heartCount${period}`],
+              laughCount: stats[`laughCount${period}`],
+              cryCount: stats[`cryCount${period}`],
+            }
+          : undefined,
         image: images.find((x) => x.postId === post.id) as (typeof images)[0],
       }))
       .filter((x) => x.image !== undefined),

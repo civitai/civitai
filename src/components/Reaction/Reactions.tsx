@@ -34,6 +34,25 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   withinPortal?: boolean;
 };
 
+export function ReactionTotal({
+  metrics = {},
+  ...groupProps
+}: {
+  metrics?: ReactionMetrics;
+} & GroupProps) {
+  const total = Object.values(metrics).reduce((a, b) => a + b, 0);
+  if (total === 0) return null;
+
+  return (
+    <Group spacing={4} align="center" sx={{ cursor: 'default' }} {...groupProps}>
+      <IconMoodSmile size={20} strokeWidth={2} />
+      <Text size="sm" weight={500} pr={2}>
+        {total}
+      </Text>
+    </Group>
+  );
+}
+
 export function Reactions({
   reactions,
   metrics = {},

@@ -13,12 +13,12 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { isDefined } from '~/utils/type-guards';
-import { Center, createStyles, Paper } from '@mantine/core';
+import { Button, Center, createStyles, Paper } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 import { CSS } from '@dnd-kit/utilities';
-import { IconArrowsMaximize } from '@tabler/icons';
+import { IconArrowsMaximize, IconCheck } from '@tabler/icons';
 import { PostEditImage } from '~/server/controllers/post.controller';
 
 export function ReorderImages() {
@@ -37,24 +37,38 @@ export function ReorderImages() {
   const activeItem = items.find((x) => x.id === activeId);
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
-      onDragStart={handleDragStart}
-      onDragCancel={handleDragCancel}
-    >
-      <SortableContext items={items.map((x) => x.id)}>
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
-          {items.map((image) => (
-            <SortableImage key={image.id} image={image} sortableId={image.id} activeId={activeId} />
-          ))}
-        </div>
-      </SortableContext>
-      <DragOverlay adjustScale>
-        {activeItem && <SortableImage sortableId="selected" image={activeItem} />}
-      </DragOverlay>
-    </DndContext>
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+        onDragStart={handleDragStart}
+        onDragCancel={handleDragCancel}
+      >
+        <SortableContext items={items.map((x) => x.id)}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
+            {items.map((image) => (
+              <SortableImage
+                key={image.id}
+                image={image}
+                sortableId={image.id}
+                activeId={activeId}
+              />
+            ))}
+          </div>
+        </SortableContext>
+        <DragOverlay adjustScale>
+          {activeItem && <SortableImage sortableId="selected" image={activeItem} />}
+        </DragOverlay>
+      </DndContext>
+      <ReorderImagesButton>
+        {({ onClick, isLoading }) => (
+          <Button onClick={onClick} loading={isLoading} leftIcon={<IconCheck />}>
+            Done Rearranging
+          </Button>
+        )}
+      </ReorderImagesButton>
+    </>
   );
 
   function handleDragEnd(event: DragEndEvent) {

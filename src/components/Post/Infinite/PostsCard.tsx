@@ -8,11 +8,11 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { useState } from 'react';
-import { Reactions } from '~/components/Reaction/Reactions';
+import { Reactions, ReactionTotal } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 
 export function PostsCard({
-  data: { image, id, title },
+  data: { image, id, stats },
   height,
 }: {
   data: PostsInfiniteModel;
@@ -58,19 +58,15 @@ export function PostsCard({
                             />
                           )}
                         </RoutedContextLink>
-                        <Reactions
+                        <ReactionTotal
                           className={classes.reactions}
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
                           metrics={{
-                            likeCount: image.likeCount,
-                            dislikeCount: image.dislikeCount,
-                            heartCount: image.heartCount,
-                            laughCount: image.laughCount,
-                            cryCount: image.cryCount,
+                            likeCount: stats?.likeCount,
+                            dislikeCount: stats?.dislikeCount,
+                            heartCount: stats?.heartCount,
+                            laughCount: stats?.laughCount,
+                            cryCount: stats?.cryCount,
                           }}
-                          readonly
                         />
                       </>
                     )}

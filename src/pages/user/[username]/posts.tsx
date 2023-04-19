@@ -1,22 +1,42 @@
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-import { Container } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
-import { userPageQuerySchema } from '~/server/schema/user.schema';
+import { usePostQueryParams } from '~/components/Post/post.utils';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { constants } from '~/server/common/constants';
+import { Group, Stack } from '@mantine/core';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 export default function UserPosts() {
-  const router = useRouter();
-  const { id, username } = userPageQuerySchema.parse(router.query);
+  const filters = usePostQueryParams();
   const currentUser = useCurrentUser();
 
-  if (!username || (!currentUser?.isModerator && username !== currentUser?.username))
+  if (
+    !currentUser ||
+    !filters.username ||
+    (!currentUser?.isModerator && filters.username !== postgresSlugify(currentUser.username))
+  )
     return <NotFound />;
 
   return (
-    <Container fluid style={{ maxWidth: 2500 }}>
-      <PostsInfinite username={username} />
-    </Container>
+    <MasonryProvider
+      columnWidth={constants.cardSizes.image}
+      maxColumnCount={7}
+      maxSingleColumnWidth={450}
+    >
+      <MasonryContainer fluid>
+        <Stack spacing="xs">
+          <Group position="apart" spacing={0}>
+            <SortFilter type="posts" />
+            <PeriodFilter type="posts" />
+          </Group>
+          <PostsInfinite filters={filters} />
+        </Stack>
+      </MasonryContainer>
+    </MasonryProvider>
   );
 }

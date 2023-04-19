@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetPostsByCategoryInput, PostsQueryInput } from '~/server/schema/post.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, numericStringArray } from '~/utils/zod-helpers';
 
@@ -20,7 +21,11 @@ const postQueryParamSchema = z
     username: z.string(),
     view: z.enum(['categories', 'feed']),
   })
-  .partial();
+  .partial()
+  .transform((props) => {
+    props.username = props.username ? postgresSlugify(props.username) : undefined;
+    return removeEmpty(props);
+  });
 type PostQueryParams = z.output<typeof postQueryParamSchema>;
 export const usePostQueryParams = () => {
   const { query, pathname, replace } = useRouter();

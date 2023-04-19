@@ -4,7 +4,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { Reactions } from '~/components/Reaction/Reactions';
+import { Reactions, ReactionTotal } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { constants } from '~/server/common/constants';
 import { PostGetByCategoryPostModel } from '~/types/router';
@@ -54,11 +54,8 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                 </AspectRatio>
               </RoutedContextLink>
 
-              <Reactions
+              <ReactionTotal
                 className={classes.reactions}
-                entityId={data.id}
-                entityType="post"
-                reactions={[]}
                 metrics={{
                   likeCount: data.likeCount,
                   dislikeCount: data.dislikeCount,
@@ -66,7 +63,6 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                   laughCount: data.laughCount,
                   cryCount: data.cryCount,
                 }}
-                readonly={true}
               />
               {!image.hideMeta && image.meta && (
                 <ImageMetaPopover
