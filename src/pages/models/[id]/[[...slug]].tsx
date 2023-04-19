@@ -76,7 +76,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModelById } from '~/types/router';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { scrollToTop } from '~/utils/scroll-utils';
@@ -429,6 +429,7 @@ export default function ModelDetailsV2({
   const canDiscuss =
     !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
+  const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
 
   return (
     <>
@@ -487,7 +488,7 @@ export default function ModelDetailsV2({
                       </Text>
                     </IconBadge>
                   )}
-                  {model?.earlyAccessDeadline && (
+                  {inEarlyAccess && (
                     <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
                       Early Access
                     </IconBadge>
