@@ -113,7 +113,7 @@ export const getTags = async ({
       ${Prisma.raw(
         !categories && categoryTags.length
           ? `, EXISTS (
-              SELECT 1FROM "TagsOnTags"
+              SELECT FROM "TagsOnTags"
               WHERE "fromTagId" IN (${Prisma.join(categoryTags)})
               AND "toTagId" = t.id
             ) "isCategory"`

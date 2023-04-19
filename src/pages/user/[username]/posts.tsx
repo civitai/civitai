@@ -1,14 +1,14 @@
-import { useRouter } from 'next/router';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { Group, Stack } from '@mantine/core';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { UserProfileLayout } from '~/pages/user/[username]';
 import { constants } from '~/server/common/constants';
-import { Group, Stack } from '@mantine/core';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { postgresSlugify } from '~/utils/string-helpers';
 
 export default function UserPosts() {
@@ -40,3 +40,5 @@ export default function UserPosts() {
     </MasonryProvider>
   );
 }
+
+UserPosts.getLayout = UserProfileLayout;

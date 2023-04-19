@@ -57,12 +57,15 @@ import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants } from '~/server/common/constants';
+import { useRouter } from 'next/router';
+import { nestLayout } from '~/utils/layout-helpers';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.query);
-    if (id || username) await ssg?.user.getCreator.prefetch({ id, username });
+    if (id || username) await ssg?.user.getCreator.prefetch({ username });
 
     return {
       props: removeEmpty({
@@ -73,15 +76,18 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function UserPage({
-  id,
-  username,
-}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+function UserPage({ username }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  return null;
+}
+
+function NestedLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const { username } = router.query as { username?: string };
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
-  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ id, username });
+  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
 
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
@@ -95,10 +101,10 @@ export default function UserPage({
   });
   const toggleMuteMutation = trpc.user.toggleMute.useMutation({
     async onMutate() {
-      await queryUtils.user.getCreator.cancel({ id, username });
+      await queryUtils.user.getCreator.cancel({ username });
 
-      const prevUser = queryUtils.user.getCreator.getData({ id, username });
-      queryUtils.user.getCreator.setData({ id, username }, () =>
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
         prevUser
           ? {
               ...prevUser,
@@ -110,7 +116,7 @@ export default function UserPage({
       return { prevUser };
     },
     onError(_error, _vars, context) {
-      queryUtils.user.getCreator.setData({ id, username }, context?.prevUser);
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
       showErrorNotification({
         error: new Error('Unable to mute user, please try again.'),
       });
@@ -121,10 +127,10 @@ export default function UserPage({
   };
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
-      await queryUtils.user.getCreator.cancel({ id, username });
+      await queryUtils.user.getCreator.cancel({ username });
 
-      const prevUser = queryUtils.user.getCreator.getData({ id, username });
-      queryUtils.user.getCreator.setData({ id, username }, () =>
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
         prevUser
           ? {
               ...prevUser,
@@ -136,7 +142,7 @@ export default function UserPage({
       return { prevUser };
     },
     onError(_error, _vars, context) {
-      queryUtils.user.getCreator.setData({ id, username }, context?.prevUser);
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
       showErrorNotification({
         error: new Error('Unable to ban user, please try again.'),
       });
@@ -188,196 +194,211 @@ export default function UserPage({
           description="Learn more about this awesome creator on Civitai."
         />
       )}
-      <Tabs defaultValue="published" variant="outline">
+      <Tabs
+        defaultValue="images"
+        variant="outline"
+        onTabChange={(value) => router.push(`/user/${username}/${value}`)}
+      >
         {user && (
-          <Box className={classes.banner} mb="md">
-            <Container size="xl">
-              <Stack className={classes.wrapper}>
-                {user.image && (
-                  <div className={classes.outsideImage}>
-                    <AspectRatio ratio={1 / 1} className={classes.image}>
-                      <EdgeImage
-                        src={user.image}
-                        name={user.username}
-                        width={128}
-                        alt={user.username ?? ''}
-                      />
-                    </AspectRatio>
-                  </div>
-                )}
-                <Card radius="sm" className={classes.card}>
-                  <Group noWrap>
-                    {user.image && (
-                      <div className={classes.insideImage}>
-                        <AspectRatio ratio={1 / 1} className={classes.image}>
-                          <EdgeImage
-                            src={user.image}
-                            name={user.username}
-                            width={128}
-                            alt={user.username ?? ''}
-                          />
-                        </AspectRatio>
-                      </div>
-                    )}
-                    <Stack spacing="xs">
-                      <Group position="apart">
-                        <Title order={2}>
-                          <Username {...user} inherit />
-                        </Title>
-                        <Group spacing={4} noWrap>
-                          <FollowUserButton userId={user.id} size="md" compact />
+          <>
+            <Box className={classes.banner} mb="md">
+              <Container size="xl">
+                <Stack className={classes.wrapper}>
+                  {user.image && (
+                    <div className={classes.outsideImage}>
+                      <AspectRatio ratio={1 / 1} className={classes.image}>
+                        <EdgeImage
+                          src={user.image}
+                          name={user.username}
+                          width={128}
+                          alt={user.username ?? ''}
+                        />
+                      </AspectRatio>
+                    </div>
+                  )}
+                  <Card radius="sm" className={classes.card}>
+                    <Group noWrap>
+                      {user.image && (
+                        <div className={classes.insideImage}>
+                          <AspectRatio ratio={1 / 1} className={classes.image}>
+                            <EdgeImage
+                              src={user.image}
+                              name={user.username}
+                              width={128}
+                              alt={user.username ?? ''}
+                            />
+                          </AspectRatio>
+                        </div>
+                      )}
+                      <Stack spacing="xs">
+                        <Group position="apart">
+                          <Title order={2}>
+                            <Username {...user} inherit />
+                          </Title>
+                          <Group spacing={4} noWrap>
+                            <FollowUserButton userId={user.id} size="md" compact />
 
-                          {isMod && (
-                            <Menu position="left" withinPortal>
-                              <Menu.Target>
-                                <ActionIcon loading={removeContentMutation.isLoading}>
-                                  <IconDotsVertical />
-                                </ActionIcon>
-                              </Menu.Target>
-                              <Menu.Dropdown>
-                                <Menu.Item
-                                  color={user.bannedAt ? 'green' : 'red'}
-                                  icon={
-                                    !user.bannedAt ? (
-                                      <IconBan size={14} stroke={1.5} />
-                                    ) : (
-                                      <IconArrowBackUp size={14} stroke={1.5} />
-                                    )
-                                  }
-                                  onClick={handleToggleBan}
+                            {isMod && (
+                              <Menu position="left" withinPortal>
+                                <Menu.Target>
+                                  <ActionIcon loading={removeContentMutation.isLoading}>
+                                    <IconDotsVertical />
+                                  </ActionIcon>
+                                </Menu.Target>
+                                <Menu.Dropdown>
+                                  <Menu.Item
+                                    color={user.bannedAt ? 'green' : 'red'}
+                                    icon={
+                                      !user.bannedAt ? (
+                                        <IconBan size={14} stroke={1.5} />
+                                      ) : (
+                                        <IconArrowBackUp size={14} stroke={1.5} />
+                                      )
+                                    }
+                                    onClick={handleToggleBan}
+                                  >
+                                    {user.bannedAt ? 'Restore user' : 'Ban user'}
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    icon={
+                                      user.muted ? (
+                                        <IconMicrophone size={14} stroke={1.5} />
+                                      ) : (
+                                        <IconMicrophoneOff size={14} stroke={1.5} />
+                                      )
+                                    }
+                                    onClick={handleToggleMute}
+                                  >
+                                    {user.muted ? 'Unmute user' : 'Mute user'}
+                                  </Menu.Item>
+                                  <Menu.Item
+                                    color="red"
+                                    icon={<IconTrash size={14} stroke={1.5} />}
+                                    onClick={handleRemoveContent}
+                                  >
+                                    Remove all content
+                                  </Menu.Item>
+                                </Menu.Dropdown>
+                              </Menu>
+                            )}
+                          </Group>
+                        </Group>
+                        <Group spacing="xs">
+                          <RankBadge rank={user.rank?.leaderboardRank} size="lg" />
+                          {stats && (
+                            <>
+                              <IconBadge
+                                tooltip="Average Rating"
+                                sx={{ userSelect: 'none' }}
+                                size="lg"
+                                icon={
+                                  <Rating
+                                    size="sm"
+                                    value={stats.ratingAllTime}
+                                    readOnly
+                                    emptySymbol={
+                                      theme.colorScheme === 'dark' ? (
+                                        <IconStar
+                                          size={18}
+                                          fill="rgba(255,255,255,.3)"
+                                          color="transparent"
+                                        />
+                                      ) : undefined
+                                    }
+                                  />
+                                }
+                                variant={
+                                  theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
+                                    ? 'filled'
+                                    : 'light'
+                                }
+                              >
+                                <Text
+                                  size="sm"
+                                  color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
                                 >
-                                  {user.bannedAt ? 'Restore user' : 'Ban user'}
-                                </Menu.Item>
-                                <Menu.Item
-                                  icon={
-                                    user.muted ? (
-                                      <IconMicrophone size={14} stroke={1.5} />
-                                    ) : (
-                                      <IconMicrophoneOff size={14} stroke={1.5} />
-                                    )
-                                  }
-                                  onClick={handleToggleMute}
-                                >
-                                  {user.muted ? 'Unmute user' : 'Mute user'}
-                                </Menu.Item>
-                                <Menu.Item
-                                  color="red"
-                                  icon={<IconTrash size={14} stroke={1.5} />}
-                                  onClick={handleRemoveContent}
-                                >
-                                  Remove all content
-                                </Menu.Item>
-                              </Menu.Dropdown>
-                            </Menu>
+                                  {abbreviateNumber(stats.ratingCountAllTime)}
+                                </Text>
+                              </IconBadge>
+                              <IconBadge
+                                tooltip="Uploads"
+                                icon={<IconUpload size={16} />}
+                                color="gray"
+                                size="lg"
+                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                              >
+                                <Text size="sm">{abbreviateNumber(uploads)}</Text>
+                              </IconBadge>
+                              <IconBadge
+                                tooltip="Followers"
+                                icon={<IconUsers size={16} />}
+                                href={`${user.username}/followers`}
+                                color="gray"
+                                size="lg"
+                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                              >
+                                <Text size="sm">
+                                  {abbreviateNumber(stats.followerCountAllTime)}
+                                </Text>
+                              </IconBadge>
+                              <IconBadge
+                                tooltip="Favorites"
+                                icon={<IconHeart size={16} />}
+                                color="gray"
+                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                size="lg"
+                              >
+                                <Text size="sm">
+                                  {abbreviateNumber(stats.favoriteCountAllTime)}
+                                </Text>
+                              </IconBadge>
+                              <IconBadge
+                                tooltip="Downloads"
+                                icon={<IconDownload size={16} />}
+                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                size="lg"
+                              >
+                                <Text size="sm">
+                                  {abbreviateNumber(stats.downloadCountAllTime)}
+                                </Text>
+                              </IconBadge>
+                            </>
                           )}
                         </Group>
-                      </Group>
-                      <Group spacing="xs">
-                        <RankBadge rank={user.rank?.leaderboardRank} size="lg" />
-                        {stats && (
-                          <>
-                            <IconBadge
-                              tooltip="Average Rating"
-                              sx={{ userSelect: 'none' }}
-                              size="lg"
-                              icon={
-                                <Rating
-                                  size="sm"
-                                  value={stats.ratingAllTime}
-                                  readOnly
-                                  emptySymbol={
-                                    theme.colorScheme === 'dark' ? (
-                                      <IconStar
-                                        size={18}
-                                        fill="rgba(255,255,255,.3)"
-                                        color="transparent"
-                                      />
-                                    ) : undefined
-                                  }
-                                />
-                              }
-                              variant={
-                                theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
-                                  ? 'filled'
-                                  : 'light'
-                              }
-                            >
-                              <Text
-                                size="sm"
-                                color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
+                        {!!user.links?.length && (
+                          <Group spacing={0}>
+                            {sortDomainLinks(user.links).map((link, index) => (
+                              <ActionIcon
+                                key={index}
+                                component="a"
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                size="md"
                               >
-                                {abbreviateNumber(stats.ratingCountAllTime)}
-                              </Text>
-                            </IconBadge>
-                            <IconBadge
-                              tooltip="Uploads"
-                              icon={<IconUpload size={16} />}
-                              color="gray"
-                              size="lg"
-                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                            >
-                              <Text size="sm">{abbreviateNumber(uploads)}</Text>
-                            </IconBadge>
-                            <IconBadge
-                              tooltip="Followers"
-                              icon={<IconUsers size={16} />}
-                              href={`${user.username}/followers`}
-                              color="gray"
-                              size="lg"
-                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                            >
-                              <Text size="sm">{abbreviateNumber(stats.followerCountAllTime)}</Text>
-                            </IconBadge>
-                            <IconBadge
-                              tooltip="Favorites"
-                              icon={<IconHeart size={16} />}
-                              color="gray"
-                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                              size="lg"
-                            >
-                              <Text size="sm">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
-                            </IconBadge>
-                            <IconBadge
-                              tooltip="Downloads"
-                              icon={<IconDownload size={16} />}
-                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                              size="lg"
-                            >
-                              <Text size="sm">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
-                            </IconBadge>
-                          </>
+                                <DomainIcon domain={link.domain} size={22} />
+                              </ActionIcon>
+                            ))}
+                          </Group>
                         )}
-                      </Group>
-                      {!!user.links?.length && (
-                        <Group spacing={0}>
-                          {sortDomainLinks(user.links).map((link, index) => (
-                            <ActionIcon
-                              key={index}
-                              component="a"
-                              href={link.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              size="md"
-                            >
-                              <DomainIcon domain={link.domain} size={22} />
-                            </ActionIcon>
-                          ))}
-                        </Group>
-                      )}
-                    </Stack>
-                  </Group>
-                </Card>
-              </Stack>
-              {isSameUser && (
-                <Tabs.List className={classes.tabList}>
-                  <Tabs.Tab value="published">Published models</Tabs.Tab>
-                  <Tabs.Tab value="draft">Draft models</Tabs.Tab>
-                </Tabs.List>
-              )}
-            </Container>
-          </Box>
+                      </Stack>
+                    </Group>
+                  </Card>
+                </Stack>
+                {isSameUser && (
+                  <Tabs.List className={classes.tabList}>
+                    <Tabs.Tab value="images">Images</Tabs.Tab>
+                    <Tabs.Tab value="posts">Posts</Tabs.Tab>
+                    <Tabs.Tab value="models">Published models</Tabs.Tab>
+                    <Tabs.Tab value="draft">Draft models</Tabs.Tab>
+                  </Tabs.List>
+                )}
+              </Container>
+            </Box>
+            {children}
+          </>
         )}
-        <Tabs.Panel value="published">
+        <Tabs.Panel value="models">
           <MasonryProvider
             columnWidth={constants.cardSizes.model}
             maxColumnCount={7}
@@ -462,3 +483,13 @@ const useStyles = createStyles((theme) => ({
     zIndex: 1,
   },
 }));
+
+export const UserProfileLayout = (page: React.ReactElement) => (
+  <AppLayout>
+    <NestedLayout>{page}</NestedLayout>
+  </AppLayout>
+);
+
+UserPage.getLayout = UserProfileLayout;
+
+export default UserPage;

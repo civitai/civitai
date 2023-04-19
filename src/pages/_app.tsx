@@ -14,7 +14,7 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { getSession } from 'next-auth/react';
-import { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -98,7 +98,7 @@ function MyApp(props: CustomAppProps) {
   }, [colorScheme]);
 
   const getLayout = useMemo(
-    () => Component.getLayout ?? ((page: any) => <AppLayout>{page}</AppLayout>),
+    () => Component.getLayout ?? ((page: React.ReactElement) => <AppLayout>{page}</AppLayout>),
     [Component.getLayout]
   );
 
@@ -118,7 +118,9 @@ function MyApp(props: CustomAppProps) {
                   <CustomModalsProvider>
                     <NotificationsProvider>
                       <FreezeProvider>
-                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                        <TosProvider>
+                          <RootLayout Component={Component} pageProps={pageProps} />
+                        </TosProvider>
                       </FreezeProvider>
                       <RoutedContextProvider2 />
                     </NotificationsProvider>
@@ -238,6 +240,18 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       },
       ...appProps,
     };
+  }
+};
+
+const RootLayout = ({ Component, pageProps }: any) => {
+  if (Component.getLayout) {
+    return Component.getLayout(<Component {...pageProps} />);
+  } else {
+    return (
+      <AppLayout>
+        <Component {...pageProps} />
+      </AppLayout>
+    );
   }
 };
 

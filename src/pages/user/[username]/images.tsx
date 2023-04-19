@@ -7,6 +7,7 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { UserProfileLayout } from '~/pages/user/[username]';
 import { constants } from '~/server/common/constants';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -43,3 +44,5 @@ export default function UserImages() {
     </MasonryProvider>
   );
 }
+
+UserImages.getLayout = UserProfileLayout;
