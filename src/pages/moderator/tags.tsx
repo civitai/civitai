@@ -17,6 +17,8 @@ import {
   Text,
   Title,
   SelectItem,
+  Popover,
+  Input,
 } from '@mantine/core';
 import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
@@ -57,6 +59,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -74,6 +77,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Tags() {
   const queryUtils = trpc.useContext();
+  const [tagSearch, setTagSearch] = useState('');
   const [selected, setSelected] = useState({});
   const [sorting, setSorting] = useState<MRT_SortingState>([]);
 
@@ -81,8 +85,14 @@ export default function Tags() {
   const tags = useMemo(() => data ?? [], [data]);
   const addableTags = useMemo(() => {
     if (!tags) return [];
-    return tags.filter((x) => x.target.includes(TagTarget.Tag));
+    return tags
+      .filter((x) => x.target.includes(TagTarget.Tag))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [tags]);
+  const addableTagsOptions = useMemo(() => {
+    if (!addableTags) return [];
+    return addableTags.map((x) => ({ label: x.name, value: x.id }));
+  }, [addableTags]);
 
   const deleteTagsMutation = trpc.tag.deleteTags.useMutation({
     async onMutate({ tags }) {
@@ -148,21 +158,6 @@ export default function Tags() {
       entityType: 'tag',
     });
 
-  const handleClearAll = () => {
-    setSelected([]);
-  };
-
-  const handleRefresh = () => {
-    handleClearAll();
-    refetch();
-    showNotification({
-      id: 'refreshing',
-      title: 'Refreshing',
-      message: 'Grabbing the latest data...',
-      color: 'blue',
-    });
-  };
-
   const columns = useMemo<MRT_ColumnDef<(typeof tags)[number]>[]>(
     () => [
       {
@@ -170,6 +165,7 @@ export default function Tags() {
         header: 'Name',
         size: 150,
         enableColumnActions: false,
+        filterFn: 'startsWith',
       },
       {
         id: 'type',
@@ -189,8 +185,8 @@ export default function Tags() {
       {
         id: 'stats',
         header: 'Stats',
+        accessorFn: (x) => x.stats.imageCount + x.stats.modelCount + x.stats.postCount,
         maxSize: 300,
-        enableSorting: false,
         enableColumnActions: false,
         Cell: ({ row }) => {
           const tag = row.original;
@@ -214,6 +210,8 @@ export default function Tags() {
             </Group>
           );
         },
+        filterVariant: 'range',
+        filterFn: 'betweenInclusive',
       },
       {
         id: 'labels',
@@ -252,19 +250,18 @@ export default function Tags() {
         filterVariant: 'select',
         mantineFilterSelectProps: {
           searchable: true,
-          data: addableTags.map((x) => ({ label: x.name, value: x.name } as SelectItem)) as any,
+          data: addableTagsOptions as any,
         },
       },
     ],
-    [addableTags]
+    [addableTagsOptions]
   );
 
   return (
     <Container size="xl">
       <Stack>
-        <Stack spacing={0} mb="lg">
+        <Stack spacing={0}>
           <Title order={1}>Tags</Title>
-          <Text color="dimmed">These are tags used throughout the site.</Text>
         </Stack>
 
         <MantineReactTable
@@ -278,7 +275,7 @@ export default function Tags() {
           enableGlobalFilter={false}
           enablePagination={false}
           enableRowVirtualization
-          mantineTableContainerProps={{ sx: { maxHeight: '600px' } }}
+          mantineTableContainerProps={{ sx: { maxHeight: 'calc(100vh - 360px)' } }}
           onSortingChange={setSorting}
           initialState={{
             density: 'sm',
@@ -310,36 +307,20 @@ export default function Tags() {
 
             return (
               <Group noWrap spacing="xs">
-                <Menu withinPortal>
-                  <Menu.Target>
-                    <ActionIcon variant="outline">
-                      <IconTag size="1.25rem" />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown mah={400} sx={{ overflow: 'auto' }}>
-                    <Menu.Label>Add Tag</Menu.Label>
-                    {addableTags.map((tag) => (
-                      <Menu.Item key={tag.id} onClick={() => handleAddTagToSelected(tag.id)}>
-                        {tag.name}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
-                <Menu withinPortal>
-                  <Menu.Target>
-                    <ActionIcon variant="outline">
-                      <IconTagOff size="1.25rem" />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown mah={400} sx={{ overflow: 'auto' }}>
-                    <Menu.Label>Remove Tag</Menu.Label>
-                    {addableTags.map((tag) => (
-                      <Menu.Item key={tag.id} onClick={() => handleDisableTagOnSelected(tag.id)}>
-                        {tag.name}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
+                <ActionIconSelect
+                  items={addableTagsOptions}
+                  onSelect={(id) => handleAddTagToSelected(id)}
+                  withinPortal
+                >
+                  <IconTag size="1.25rem" />
+                </ActionIconSelect>
+                <ActionIconSelect
+                  items={addableTagsOptions}
+                  onSelect={(id) => handleDisableTagOnSelected(id)}
+                  withinPortal
+                >
+                  <IconTagOff size="1.25rem" />
+                </ActionIconSelect>
                 <PopConfirm
                   message={`Are you sure you want to delete these tags?`}
                   position="bottom-end"
@@ -355,78 +336,6 @@ export default function Tags() {
             );
           }}
         />
-
-        {/* {isLoading ? (
-          <Center py="xl">
-            <Loader size="xl" />
-          </Center>
-        ) : tags.length ? (
-
-          <Table striped highlightOnHover>
-            <thead>
-              <tr>
-                <th></th>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Stats</th>
-                <th>Labels</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tags.map((tag) => (
-                <tr key={tag.id}>
-                  <td>
-                    <Checkbox
-                      checked={selected.includes(tag.id)}
-                      onChange={(e) => handleSelect(tag.id, e.target.checked)}
-                    />
-                  </td>
-                  <td>{tag.name}</td>
-                  <td>{getDisplayName(tag.type)}</td>
-                  <td>
-                    <Group noWrap spacing={5}>
-                      {tag.target.includes(TagTarget.Image) && (
-                        <IconBadge icon={<IconPhoto size={14} />}>
-                          {abbreviateNumber(tag.stats.imageCount)}
-                        </IconBadge>
-                      )}
-                      {tag.target.includes(TagTarget.Model) && (
-                        <IconBadge icon={<IconBox size={14} />}>
-                          {abbreviateNumber(tag.stats.modelCount)}
-                        </IconBadge>
-                      )}
-                      {tag.target.includes(TagTarget.Post) && (
-                        <IconBadge icon={<IconAlbum size={14} />}>
-                          {abbreviateNumber(tag.stats.postCount)}
-                        </IconBadge>
-                      )}
-                    </Group>
-                  </td>
-                  <td>
-                    <Group spacing={5}>
-                      {tag.tags.map((t) => (
-                        <Badge key={t.id} variant="filled" color="gray" pr={0}>
-                          <Group spacing={0}>
-                            {t.name}
-                            <ActionIcon
-                              size="sm"
-                              variant="transparent"
-                              onClick={() => handleDisableTagOnEntity(tag.id, t.id)}
-                            >
-                              <IconX strokeWidth={3} size=".75rem" />
-                            </ActionIcon>
-                          </Group>
-                        </Badge>
-                      ))}
-                    </Group>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        ) : (
-          <NoContent mt="lg" message="There are no tags to manager" />
-        )} */}
       </Stack>
     </Container>
   );
