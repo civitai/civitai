@@ -33,13 +33,13 @@ export function CivitaiTabs(props: TabsProps) {
           },
 
           '&:first-of-type': {
-            borderTopLeftRadius: theme.radius.md,
-            borderBottomLeftRadius: theme.radius.md,
+            borderTopLeftRadius: theme.radius.sm,
+            borderBottomLeftRadius: theme.radius.sm,
           },
 
           '&:last-of-type': {
-            borderTopRightRadius: theme.radius.md,
-            borderBottomRightRadius: theme.radius.md,
+            borderTopRightRadius: theme.radius.sm,
+            borderBottomRightRadius: theme.radius.sm,
           },
 
           '&[data-active]': {
@@ -47,12 +47,20 @@ export function CivitaiTabs(props: TabsProps) {
             borderColor: theme.colors.blue[7],
             color: theme.white,
           },
+
+          [theme.fn.smallerThan('sm')]: {
+            padding: `${theme.spacing.xs}px ${theme.spacing.xs}px`,
+          },
         },
 
         tabIcon: {
           marginRight: theme.spacing.xs,
           display: 'flex',
           alignItems: 'center',
+
+          [theme.fn.smallerThan('sm')]: {
+            marginRight: theme.spacing.xs * 0.4, // 4px
+          },
         },
 
         tabsList: {
