@@ -1,5 +1,3 @@
-import { UserProfileLayout, UserImagesPage } from './';
+import { UserImagesPage } from './';
 
 export default UserImagesPage;
-
-UserImagesPage.getLayout = UserProfileLayout;
