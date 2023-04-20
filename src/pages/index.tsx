@@ -41,7 +41,7 @@ function Home() {
     <>
       <Meta
         title={`Civitai${
-          !currentUser ? ` | Stable Diffusion models, embeddings, hypernetworks and more` : ''
+          !currentUser ? ` | Stable Diffusion models, embeddings, LoRAs and more` : ''
         }`}
         description="Civitai is a platform for Stable Diffusion AI Art models. Browse a collection of thousands of models from a growing number of creators. Join an engaged community in reviewing models and sharing images with prompts to get you started."
       />
