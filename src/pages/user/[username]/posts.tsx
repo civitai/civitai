@@ -1,4 +1,4 @@
-import { Group, Stack } from '@mantine/core';
+import { Group, Stack, Tabs } from '@mantine/core';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
@@ -6,39 +6,34 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { UserProfileLayout } from '~/pages/user/[username]';
 import { constants } from '~/server/common/constants';
-import { postgresSlugify } from '~/utils/string-helpers';
 
-export default function UserPosts() {
+import { UserProfileLayout } from './';
+
+export default function UserPostsPage() {
   const filters = usePostQueryParams();
-  const currentUser = useCurrentUser();
 
-  if (
-    !currentUser ||
-    !filters.username ||
-    (!currentUser?.isModerator && filters.username !== postgresSlugify(currentUser.username))
-  )
-    return <NotFound />;
+  if (!filters.username) return <NotFound />;
 
   return (
-    <MasonryProvider
-      columnWidth={constants.cardSizes.image}
-      maxColumnCount={7}
-      maxSingleColumnWidth={450}
-    >
-      <MasonryContainer fluid>
-        <Stack spacing="xs">
-          <Group position="apart" spacing={0}>
-            <SortFilter type="posts" />
-            <PeriodFilter type="posts" />
-          </Group>
-          <PostsInfinite filters={filters} />
-        </Stack>
-      </MasonryContainer>
-    </MasonryProvider>
+    <Tabs.Panel value="/posts">
+      <MasonryProvider
+        columnWidth={constants.cardSizes.image}
+        maxColumnCount={7}
+        maxSingleColumnWidth={450}
+      >
+        <MasonryContainer fluid>
+          <Stack spacing="xs">
+            <Group position="apart" spacing={0}>
+              <SortFilter type="posts" />
+              <PeriodFilter type="posts" />
+            </Group>
+            <PostsInfinite filters={filters} />
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
+    </Tabs.Panel>
   );
 }
 
-UserPosts.getLayout = UserProfileLayout;
+UserPostsPage.getLayout = UserProfileLayout;

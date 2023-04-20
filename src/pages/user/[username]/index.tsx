@@ -3,9 +3,11 @@ import {
   AspectRatio,
   Box,
   Card,
+  Center,
   Container,
   createStyles,
   Group,
+  Loader,
   Menu,
   Rating,
   Stack,
@@ -34,10 +36,8 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { Meta } from '~/components/Meta/Meta';
-import { UserDraftModels } from '~/components/User/UserDraftModels';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -49,23 +49,14 @@ import { trpc } from '~/utils/trpc';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { constants } from '~/server/common/constants';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { useState } from 'react';
-import { ModelSort } from '~/server/common/enums';
-import { MetricTimeframe } from '@prisma/client';
-import { useModelQueryParams } from '~/components/Model/model.utils';
-import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useRouter } from 'next/router';
-import { nestLayout } from '~/utils/layout-helpers';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { UserImagesFeed } from '~/components/User/UserImagesFeed';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg, ctx }) => {
-    const { username, id } = userPageQuerySchema.parse(ctx.query);
+    const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (id || username) await ssg?.user.getCreator.prefetch({ username });
 
     return {
@@ -78,7 +69,11 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function UserPage({ username }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  return null;
+  return (
+    <Tabs.Panel value="/images">
+      <UserImagesFeed username={username} />
+    </Tabs.Panel>
+  );
 }
 
 function NestedLayout({ children }: { children: React.ReactNode }) {
@@ -87,9 +82,6 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
-  const { set, ...queryFilters } = useModelQueryParams();
-  const period = queryFilters.period ?? MetricTimeframe.AllTime;
-  const sort = queryFilters.sort ?? ModelSort.Newest;
 
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
 
@@ -176,7 +168,17 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
     });
   };
 
+  if (userLoading && !user)
+    return (
+      <Container>
+        <Center p="xl">
+          <Loader size="lg" />
+        </Center>
+      </Container>
+    );
   if (!userLoading && !user) return <NotFound />;
+
+  const activeTab = router.pathname.split('/[username]').pop()?.split('?').at(0) || '/images';
 
   return (
     <>
@@ -199,9 +201,9 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
         />
       )}
       <Tabs
-        defaultValue="images"
         variant="outline"
-        onTabChange={(value) => router.push(`/user/${username}/${value}`)}
+        value={activeTab}
+        onTabChange={(value) => router.push(`/user/${username}${value}`)}
       >
         {user && (
           <>
@@ -336,7 +338,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                               <IconBadge
                                 tooltip="Followers"
                                 icon={<IconUsers size={16} />}
-                                href={`${user.username}/followers`}
+                                href={`/user/${user.username}/followers`}
                                 color="gray"
                                 size="lg"
                                 variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -389,61 +391,17 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                     </Group>
                   </Card>
                 </Stack>
-                {isSameUser && (
-                  <Tabs.List className={classes.tabList}>
-                    <Tabs.Tab value="images">Images</Tabs.Tab>
-                    <Tabs.Tab value="posts">Posts</Tabs.Tab>
-                    <Tabs.Tab value="models">Published models</Tabs.Tab>
-                    <Tabs.Tab value="draft">Draft models</Tabs.Tab>
-                  </Tabs.List>
-                )}
+                <Tabs.List className={classes.tabList}>
+                  <Tabs.Tab value="/images">Images</Tabs.Tab>
+                  <Tabs.Tab value="/posts">Posts</Tabs.Tab>
+                  <Tabs.Tab value="/models">Published models</Tabs.Tab>
+                  {isSameUser && <Tabs.Tab value="/drafts">Draft models</Tabs.Tab>}
+                </Tabs.List>
               </Container>
             </Box>
             {children}
           </>
         )}
-        <Tabs.Panel value="published">
-          {user && user.username && (
-            <MasonryProvider
-              columnWidth={constants.cardSizes.model}
-              maxColumnCount={7}
-              maxSingleColumnWidth={450}
-            >
-              <MasonryContainer fluid>
-                <Stack spacing="xs">
-                  <Group position="apart">
-                    <SortFilter
-                      type="models"
-                      value={sort}
-                      onChange={(x) => set({ sort: x as any })}
-                    />
-                    <Group spacing="xs">
-                      <PeriodFilter value={period} onChange={(x) => set({ period: x })} />
-                      <ModelFiltersDropdown />
-                    </Group>
-                  </Group>
-                  <ModelsInfinite
-                    filters={{
-                      ...queryFilters,
-                      sort,
-                      period,
-                      username: user.username,
-                    }}
-                  />
-                </Stack>
-              </MasonryContainer>
-            </MasonryProvider>
-          )}
-        </Tabs.Panel>
-        <Tabs.Panel value="draft">
-          <Container size="xl">
-            <Stack spacing={0}>
-              <Title order={3}>Draft models</Title>
-              <Text color="dimmed">Incomplete models not yet published</Text>
-            </Stack>
-            <UserDraftModels enabled={!!currentUser && isSameUser} />
-          </Container>
-        </Tabs.Panel>
       </Tabs>
     </>
   );

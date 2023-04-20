@@ -118,9 +118,7 @@ function MyApp(props: CustomAppProps) {
                   <CustomModalsProvider>
                     <NotificationsProvider>
                       <FreezeProvider>
-                        <TosProvider>
-                          <RootLayout Component={Component} pageProps={pageProps} />
-                        </TosProvider>
+                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                       </FreezeProvider>
                       <RoutedContextProvider2 />
                     </NotificationsProvider>
@@ -240,18 +238,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       },
       ...appProps,
     };
-  }
-};
-
-const RootLayout = ({ Component, pageProps }: any) => {
-  if (Component.getLayout) {
-    return Component.getLayout(<Component {...pageProps} />);
-  } else {
-    return (
-      <AppLayout>
-        <Component {...pageProps} />
-      </AppLayout>
-    );
   }
 };
 
