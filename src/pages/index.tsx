@@ -43,7 +43,7 @@ function Home() {
         title={`Civitai${
           !currentUser ? ` | Stable Diffusion models, embeddings, hypernetworks and more` : ''
         }`}
-        description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."
+        description="Civitai is a platform for Stable Diffusion AI Art models. Browse a collection of thousands of models from a growing number of creators. Join an engaged community in reviewing models and sharing images with prompts to get you started."
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
