@@ -161,8 +161,11 @@ export const getPostsInfinite = async ({
 };
 
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const post = await dbRead.post.findUnique({
-    where: { id },
+  const post = await dbRead.post.findFirst({
+    where: {
+      id,
+      OR: user?.isModerator ? undefined : [{ publishedAt: { not: null } }, { userId: user?.id }],
+    },
     select: {
       id: true,
       nsfw: true,
