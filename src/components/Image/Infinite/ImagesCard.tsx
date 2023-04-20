@@ -15,7 +15,6 @@ import { IconInfoCircle } from '@tabler/icons';
 import { useRouter } from 'next/router';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
-  const router = useRouter();
   const { classes } = useStyles();
   const filters = useImagesInfiniteContext();
 

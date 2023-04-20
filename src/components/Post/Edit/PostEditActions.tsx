@@ -3,7 +3,7 @@ import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 
 import { ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
-import { IconTrash, IconArrowsSort } from '@tabler/icons';
+import { IconTrash, IconArrowsSort, IconCheck } from '@tabler/icons';
 
 export function PostEditActions() {
   const id = useEditPostContext((state) => state.id);
@@ -15,8 +15,8 @@ export function PostEditActions() {
             onClick={onClick}
             disabled={!canReorder}
             loading={isLoading}
-            variant="outline"
-            leftIcon={<IconArrowsSort />}
+            variant={!isReordering ? 'outline' : undefined}
+            leftIcon={isReordering ? <IconCheck /> : <IconArrowsSort />}
           >
             {isReordering ? 'Done Rearranging' : 'Rearrange'}
           </Button>

@@ -8,6 +8,7 @@ import { useImageFilters, useQueryImages } from '~/components/Image/image.utils'
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { useInView } from 'react-intersection-observer';
 import { IconCloudOff } from '@tabler/icons';
+import { MetricTimeframe } from '@prisma/client';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -16,6 +17,8 @@ type ImagesInfiniteState = {
   username?: string;
   reviewId?: number;
   prioritizedUserIds?: number[];
+  period?: MetricTimeframe;
+  sort?: ImageSort;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
@@ -37,16 +40,17 @@ export default function ImagesInfinite({
   const imageFilters = useImageFilters('images');
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
 
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(filters, {
-    keepPreviousData: true,
-  });
+  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+    useQueryImages(filters, {
+      keepPreviousData: true,
+    });
 
   // #region [infinite data fetching]
   useEffect(() => {
-    if (inView) {
+    if (inView && !isFetching) {
       fetchNextPage?.();
     }
-  }, [fetchNextPage, inView]);
+  }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
   return (

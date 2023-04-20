@@ -33,9 +33,8 @@ export function ResourceReviewCarousel({
   modelVersionId: number;
   reviewId: number;
 }) {
-  const theme = useMantineTheme();
+  const { classes, theme } = useStyles();
   const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
-  const { classes } = useStyles();
 
   const filters = {
     username,

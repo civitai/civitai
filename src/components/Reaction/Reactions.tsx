@@ -1,7 +1,7 @@
 import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconMoodSmile, IconPlus } from '@tabler/icons';
+import { IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons';
 import { capitalize } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
@@ -33,6 +33,37 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   readonly?: boolean;
   withinPortal?: boolean;
 };
+
+export function PostReactions({
+  metrics = {},
+  imageCount,
+  ...groupProps
+}: {
+  metrics?: ReactionMetrics;
+  imageCount?: number;
+} & GroupProps) {
+  const total = Object.values(metrics).reduce((a, b) => a + b, 0);
+  if (total === 0) return null;
+
+  return (
+    <Group spacing="xs" sx={{ cursor: 'default' }} {...groupProps}>
+      {imageCount && (
+        <Group spacing={4} align="center">
+          <IconPhoto size={20} strokeWidth={2} />
+          <Text size="sm" weight={500}>
+            {imageCount}
+          </Text>
+        </Group>
+      )}
+      <Group spacing={4} align="center">
+        <IconMoodSmile size={20} strokeWidth={2} />
+        <Text size="sm" weight={500} pr={2}>
+          {total}
+        </Text>
+      </Group>
+    </Group>
+  );
+}
 
 export function Reactions({
   reactions,
@@ -73,7 +104,7 @@ export function Reactions({
         }}
         {...groupProps}
       >
-        {!hasAllReactions && (
+        {!hasAllReactions && !readonly && (
           <Button
             variant="subtle"
             size="xs"
@@ -121,6 +152,7 @@ function ReactionsList({
     hasReacted: boolean;
     count: number;
     reaction: ReviewReactions;
+    canClick: boolean;
   }) => React.ReactElement;
   readonly?: boolean;
 }) {
@@ -159,19 +191,30 @@ function ReactionBadge({
   hasReacted,
   count,
   reaction,
+  canClick,
 }: {
   hasReacted: boolean;
   count: number;
   reaction: ReviewReactions;
+  canClick: boolean;
 }) {
+  const color = hasReacted ? 'blue' : 'gray';
   return (
     <Button
       size="xs"
       radius="xs"
       variant="light"
+      sx={(theme) => ({
+        '&[data-disabled]': {
+          cursor: 'default',
+          color: theme.fn.variant({ variant: 'light', color }).color,
+          background: 'transparent !important',
+        },
+      })}
+      disabled={!canClick}
       pl={2}
       pr={3}
-      color={hasReacted ? 'blue' : 'gray'}
+      color={color}
       compact
     >
       <Group spacing={4} align="center">

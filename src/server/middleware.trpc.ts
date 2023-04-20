@@ -3,8 +3,11 @@ import { middleware } from '~/server/trpc';
 import { z } from 'zod';
 import { BrowsingMode } from '~/server/common/enums';
 import { env } from '~/env/server.mjs';
+import { redis } from '~/server/redis/client';
+import { hashifyObject } from '~/utils/string-helpers';
+import { fromJson, toJson } from '~/utils/json-helpers';
 
-type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
+export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 const userPreferencesSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   excludedTagIds: z.array(z.number()).optional(),
@@ -62,3 +65,43 @@ export const applyBrowsingMode = <TInput extends BrowsingModeInput>() =>
       ctx: { user: ctx.user },
     });
   });
+
+type CacheItProps<TInput extends object> = {
+  key?: string;
+  ttl?: number;
+  excludeKeys?: (keyof TInput)[];
+};
+export function cacheIt<TInput extends object>({
+  key,
+  ttl,
+  excludeKeys,
+}: CacheItProps<TInput> = {}) {
+  ttl ??= 60 * 3;
+
+  return middleware(async ({ input, ctx, next, path }) => {
+    const _input = input as TInput;
+    const cacheKeyObj: Record<string, any> = {};
+    for (const [key, value] of Object.entries(_input)) {
+      if (excludeKeys?.includes(key as keyof TInput)) continue;
+      if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value.sort())];
+
+      if (value) cacheKeyObj[key] = value;
+    }
+    const cacheKey = `trpc:${key ?? path.replace('.', ':')}:${hashifyObject(cacheKeyObj)}`;
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      console.log(`cache hit: ${cacheKey}`);
+      const data = fromJson(cached);
+      return { ok: true, data, marker: 'fromCache' as any, ctx };
+    }
+
+    const result = await next();
+    if (result.ok) {
+      await redis.set(cacheKey, toJson(result.data), {
+        EX: ttl,
+      });
+    }
+
+    return result;
+  });
+}

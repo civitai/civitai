@@ -1,15 +1,13 @@
-import { Stack, Group } from '@mantine/core';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { Group, Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { constants } from '~/server/common/constants';
-import { ImageSort } from '~/components/Image/Filters/ImageSort';
-import { ImagePeriod } from '~/components/Image/Filters/ImagePeriod';
 
 export default function ImagesPage() {
   return (
@@ -32,10 +30,10 @@ export default function ImagesPage() {
           <Group position="apart" spacing={0}>
             <Group>
               <HomeContentToggle sx={hideMobile} />
-              <ImageSort type="images" />
+              <SortFilter type="images" />
             </Group>
             <Group spacing={4}>
-              <ImagePeriod type="images" />
+              <PeriodFilter type="images" />
               {/* <ImageFiltersDropdown /> */}
             </Group>
           </Group>

@@ -13,7 +13,7 @@ import {
   Loader,
 } from '@mantine/core';
 import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
-import { IconPlus, IconX } from '@tabler/icons';
+import { IconPlus, IconStar, IconX } from '@tabler/icons';
 import { useEffect, useState, useMemo } from 'react';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { showErrorNotification } from '~/utils/notifications';
@@ -247,7 +247,10 @@ function TagPicker() {
                   onClick={() => handleClick(index)}
                   p="sm"
                 >
-                  <Text size="sm">{tag.name}</Text>
+                  <Group spacing={4}>
+                    <Text size="sm">{tag.name}</Text>
+                    {tag.isCategory && <IconStar className={classes.categoryIcon} size={12} />}
+                  </Group>
                   <Text size="sm" color="dimmed">
                     {tag.postCount.toString()} posts
                   </Text>
@@ -265,5 +268,10 @@ const useDropdownContentStyles = createStyles((theme) => ({
   active: {
     background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
     cursor: 'pointer',
+  },
+  categoryIcon: {
+    strokeWidth: 0,
+    fill: theme.colors.blue[6],
+    marginTop: 1,
   },
 }));

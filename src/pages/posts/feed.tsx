@@ -1,27 +1,23 @@
-import { Container, Group, Stack } from '@mantine/core';
+import { Button, Group, Stack, useMantineTheme } from '@mantine/core';
+import { NextLink } from '@mantine/next';
+import { IconArrowLeft, IconChevronLeft } from '@tabler/icons';
+import { useRouter } from 'next/router';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { PostCategoriesInfinite } from '~/components/CategoryList/PostCategoriesInfinite';
-import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 
-export default function PostsPage() {
-  const features = useFeatureFlags();
-  const storedView = useFiltersContext((state) => state.posts.view);
-  const { view: queryView, ...filters } = usePostQueryParams();
-  // return <NotFound />;
-  if (!features.posts) return <NotFound />;
+export default function PostFeed() {
+  const filters = usePostQueryParams();
+  const theme = useMantineTheme();
 
-  const view = queryView ?? storedView;
   return (
     <MasonryProvider
       columnWidth={constants.cardSizes.image}
@@ -46,17 +42,24 @@ export default function PostsPage() {
             </Group>
             <Group spacing={4}>
               <PeriodFilter type="posts" />
-              <ViewToggle type="posts" />
             </Group>
           </Group>
-          {view === 'categories' ? (
-            <PostCategoriesInfinite filters={filters} />
-          ) : (
-            <>
-              <PostCategories />
-              <PostsInfinite filters={filters} />
-            </>
-          )}
+          <Group>
+            <Button
+              component={NextLink}
+              href="/posts"
+              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              color="gray"
+              pl={2}
+              compact
+            >
+              <Group spacing={4}>
+                <IconChevronLeft />
+                Back to Categories
+              </Group>
+            </Button>
+          </Group>
+          <PostsInfinite filters={filters} />
         </Stack>
       </MasonryContainer>
     </MasonryProvider>

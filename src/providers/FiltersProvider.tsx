@@ -1,4 +1,4 @@
-import { useRef, createContext, useContext } from 'react';
+import { useRef, createContext, useContext, useCallback } from 'react';
 import {
   CheckpointType,
   ImageGenerationProcess,
@@ -20,11 +20,15 @@ import { devtools } from 'zustand/middleware';
 import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
 
-type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
+export type ViewMode = z.infer<typeof viewModeSchema>;
+const viewModeSchema = z.enum(['categories', 'feed']).default('categories');
+
+export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
   sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
@@ -34,6 +38,7 @@ const modelFilterSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
+  view: viewModeSchema,
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
@@ -48,12 +53,14 @@ const imageFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+  view: viewModeSchema,
 });
 
 type PostFilterSchema = z.infer<typeof postFilterSchema>;
 const postFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
+  view: viewModeSchema,
 });
 
 export type CookiesState = {
@@ -67,6 +74,8 @@ type StorageState = {
   modelImages: ImageFilterSchema;
   posts: PostFilterSchema;
 };
+export type FilterSubTypes = keyof StorageState;
+export type ViewAdjustableTypes = 'models' | 'images' | 'posts';
 
 type FilterState = CookiesState & StorageState;
 export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>;
@@ -142,7 +151,7 @@ function handleLocalStorageChange<TKey extends keyof StorageState>({
   data: Record<string, unknown>;
   state: StoreState;
 }) {
-  const values = { ...state[key], ...data };
+  const values = removeEmpty({ ...state[key], ...data });
   localStorage.setItem(localStorageSchemas[key].key, serializeJSON(values));
   return { [key]: values } as StoreState | Partial<StoreState>;
 }
@@ -208,4 +217,20 @@ function deserializeJSON(value: string) {
   } catch {
     return value;
   }
+}
+
+export function useSetFilters(type: FilterSubTypes) {
+  return useFiltersContext(
+    useCallback(
+      (state) =>
+        ({
+          models: state.setModelFilters,
+          posts: state.setPostFilters,
+          images: state.setImageFilters,
+          questions: state.setQuestionFilters,
+          modelImages: state.setModelImageFilters,
+        }[type]),
+      [type]
+    )
+  );
 }

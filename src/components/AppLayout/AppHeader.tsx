@@ -20,21 +20,19 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
-  IconAlbum,
   IconCircleDashed,
   IconCrown,
-  IconFile,
   IconHeart,
   IconHistory,
   IconLogout,
   IconMoonStars,
   IconPalette,
-  IconPhoto,
   IconPlus,
   IconQuestionCircle,
   IconSettings,
   IconSun,
   IconUpload,
+  IconUser,
   IconUserCircle,
   IconUsers,
 } from '@tabler/icons';
@@ -57,6 +55,7 @@ import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
+import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
 
 const HEADER_HEIGHT = 70;
 
@@ -179,9 +178,9 @@ export function AppHeader() {
   const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const ref = useClickOutside(() => closeBurger());
+  const { url: homeUrl } = useHomeSelection();
 
   const isMuted = currentUser?.muted ?? false;
-  const features = useFeatureFlags();
 
   const links: MenuLink[] = useMemo(
     () => [
@@ -201,28 +200,8 @@ export function AppHeader() {
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconFile stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your models
-          </Group>
-        ),
-      },
-      {
-        href: `/user/${currentUser?.username}/posts`,
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your posts
-          </Group>
-        ),
-      },
-      {
-        href: `/user/${currentUser?.username}/images`,
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconPhoto stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your images
+            <IconUser stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your profile
           </Group>
         ),
       },
@@ -346,7 +325,7 @@ export function AppHeader() {
       <Grid className={classes.header} m={0} gutter="xs" align="center">
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
-            <Link href="/" passHref>
+            <Link href={homeUrl} passHref>
               <Anchor variant="text" onClick={() => closeBurger()}>
                 <Logo />
               </Anchor>

@@ -1,19 +1,42 @@
 import { MetricTimeframe } from '@prisma/client';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { useFiltersContext } from '~/providers/FiltersProviderOld';
-import { splitUppercase } from '~/utils/string-helpers';
+import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+import { getDisplayName } from '~/utils/string-helpers';
+
+type PeriodFilterProps = StatefulProps | DumbProps;
 
 const periodOptions = Object.values(MetricTimeframe);
-export function PeriodFilter() {
-  const period = useFiltersContext((state) => state.period);
-  const setFilters = useFiltersContext((state) => state.setFilters);
+export function PeriodFilter(props: PeriodFilterProps) {
+  if (props.value) return <DumbPeriodFilter {...props} />;
+  return <StatefulPeriodFilter type={props.type} />;
+}
 
+type DumbProps = {
+  value: MetricTimeframe;
+  onChange: (value: MetricTimeframe) => void;
+};
+function DumbPeriodFilter({ value, onChange }: DumbProps) {
   return (
-    <SelectMenu
-      label={period && splitUppercase(period.toString())}
-      options={periodOptions.map((option) => ({ label: splitUppercase(option), value: option }))}
-      onClick={(period) => setFilters({ period })}
-      value={period}
-    />
+    <IsClient>
+      <SelectMenu
+        label={getDisplayName(value)}
+        options={periodOptions.map((x) => ({ label: getDisplayName(x), value: x }))}
+        onClick={onChange}
+        value={value}
+      />
+    </IsClient>
   );
+}
+
+type StatefulProps = {
+  type: FilterSubTypes;
+  value?: undefined;
+  onChange?: undefined;
+};
+function StatefulPeriodFilter({ type }: StatefulProps) {
+  const period = useFiltersContext((state) => state[type].period);
+  const setFilters = useSetFilters(type);
+
+  return <DumbPeriodFilter value={period} onChange={(period) => setFilters({ period })} />;
 }

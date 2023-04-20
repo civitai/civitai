@@ -56,10 +56,12 @@ export type ReactionButtonProps = ToggleReactionInput & {
     hasReacted,
     count,
     reaction,
+    canClick,
   }: {
     hasReacted: boolean;
     count: number;
     reaction: ReviewReactions;
+    canClick: boolean;
   }) => React.ReactElement;
   readonly?: boolean;
 };
@@ -103,8 +105,8 @@ export function ReactionButton({
 
   if (noEmpty && count < 1) return null;
 
-  const canClick = currentUser && !readonly;
-  const child = children({ hasReacted, count, reaction });
+  const canClick = !!currentUser && !readonly;
+  const child = children({ hasReacted, count, reaction, canClick });
 
   return canClick ? cloneElement(child, { onClick: handleClick }) : child;
 }

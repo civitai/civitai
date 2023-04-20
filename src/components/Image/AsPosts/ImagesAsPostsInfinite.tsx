@@ -17,8 +17,6 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
-import { ImagePeriod } from '~/components/Image/Filters/ImagePeriod';
-import { ImageSort } from '~/components/Image/Filters/ImageSort';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -30,6 +28,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -75,7 +74,7 @@ export default function ImagesAsPostsInfinite({
     username,
   });
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit },
       {
@@ -90,10 +89,10 @@ export default function ImagesAsPostsInfinite({
 
   // #region [infinite data fetching]
   useEffect(() => {
-    if (inView) {
+    if (inView && !isFetching) {
       fetchNextPage?.();
     }
-  }, [fetchNextPage, inView]);
+  }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
   const isMuted = currentUser?.muted ?? false;
@@ -141,9 +140,9 @@ export default function ImagesAsPostsInfinite({
             </Group>
             {/* IMAGES */}
             <Group position="apart" spacing={0}>
-              <ImageSort type="modelImages" />
+              <SortFilter type="modelImages" />
               <Group spacing={4}>
-                <ImagePeriod type="modelImages" />
+                <PeriodFilter type="modelImages" />
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>

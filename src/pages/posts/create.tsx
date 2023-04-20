@@ -27,6 +27,7 @@ import { trpc } from '~/utils/trpc';
 export default function PostCreate() {
   const currentUser = useCurrentUser();
   const router = useRouter();
+  const tagId = router.query.tag ? Number(router.query.tag) : undefined;
   const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
   const modelVersionId = router.query.modelVersionId
     ? Number(router.query.modelVersionId)
@@ -49,6 +50,11 @@ export default function PostCreate() {
     { id: modelVersionId ?? 0 },
     { enabled: !!modelVersionId }
   );
+
+  const { data: tag, isLoading: tagLoading } = trpc.tag.getById.useQuery(
+    { id: tagId ?? 0 },
+    { enabled: !!tagId }
+  );
   const { data: currentUserReview, isLoading: loadingCurrentUserReview } =
     trpc.resourceReview.getUserResourceReview.useQuery(
       { modelVersionId: modelVersionId ?? 0 },
@@ -64,10 +70,10 @@ export default function PostCreate() {
       reviewing && version ? `${version.model.name} - ${version.name} Review` : undefined;
 
     mutate(
-      { modelVersionId: versionId, title },
+      { modelVersionId: versionId, title, tag: tagId },
       {
         onSuccess: async (response) => {
-          reset();
+          reset(response);
           const postId = response.id;
           queryUtils.post.getEdit.setData({ id: postId }, () => response);
           upload({ postId, modelVersionId: versionId }, files);
@@ -86,6 +92,7 @@ export default function PostCreate() {
 
   let backButtonUrl = modelId ? `/models/${modelId}` : '/';
   if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
+  if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
 
   const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 
@@ -107,11 +114,25 @@ export default function PostCreate() {
         </Container>
       ) : (
         <Stack spacing={8}>
+          {tagId && (tag || tagLoading) && (
+            <Group spacing="xs">
+              {tagLoading && <Loader size="sm" />}
+              <Text size="sm" color="dimmed">
+                Posting to{' '}
+                <Text component="span" td="underline">
+                  {tag?.name}
+                </Text>
+              </Text>
+            </Group>
+          )}
           {modelVersionId && (version || loading) && (
             <Group spacing="xs">
               {loading && <Loader size="sm" />}
               <Text size="sm" color="dimmed">
-                Posting to {version?.model.name} - {version?.name}
+                Posting to{' '}
+                <Text component="span" td="underline">
+                  {version?.model.name} - {version?.name}
+                </Text>
               </Text>
             </Group>
           )}
