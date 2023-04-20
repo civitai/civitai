@@ -1,45 +1,24 @@
-import { Group, Stack } from '@mantine/core';
+import { Tabs } from '@mantine/core';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
+import { UserImagesFeed } from '~/components/User/UserImagesFeed';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { postgresSlugify } from '~/utils/string-helpers';
 
-export default function UserImages() {
+import { UserProfileLayout } from './';
+
+export default function UserImagesPage() {
   const router = useRouter();
   const { username } = userPageQuerySchema.parse(router.query);
-  const currentUser = useCurrentUser();
 
   // currently not showing any content if the username is undefined
-  if (
-    !currentUser ||
-    !username ||
-    (!currentUser.isModerator && username !== postgresSlugify(currentUser.username))
-  )
-    return <NotFound />;
+  if (!username) return <NotFound />;
 
   return (
-    <MasonryProvider
-      columnWidth={constants.cardSizes.image}
-      maxColumnCount={7}
-      maxSingleColumnWidth={450}
-    >
-      <MasonryContainer fluid>
-        <Stack spacing="xs">
-          <Group position="apart" spacing={0}>
-            <SortFilter type="images" />
-            <PeriodFilter type="images" />
-          </Group>
-          {/* <ImageCategories /> */}
-          <ImagesInfinite filters={{ username }} withTags />
-        </Stack>
-      </MasonryContainer>
-    </MasonryProvider>
+    <Tabs.Panel value="/images">
+      <UserImagesFeed username={username} />
+    </Tabs.Panel>
   );
 }
+
+UserImagesPage.getLayout = UserProfileLayout;

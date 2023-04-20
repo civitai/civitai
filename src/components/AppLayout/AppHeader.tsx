@@ -20,21 +20,19 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
-  IconAlbum,
   IconCircleDashed,
   IconCrown,
-  IconFile,
   IconHeart,
   IconHistory,
   IconLogout,
   IconMoonStars,
   IconPalette,
-  IconPhoto,
   IconPlus,
   IconQuestionCircle,
   IconSettings,
   IconSun,
   IconUpload,
+  IconUser,
   IconUserCircle,
   IconUsers,
 } from '@tabler/icons';
@@ -202,28 +200,8 @@ export function AppHeader() {
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconFile stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your models
-          </Group>
-        ),
-      },
-      {
-        href: `/user/${currentUser?.username}/posts`,
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconAlbum stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your posts
-          </Group>
-        ),
-      },
-      {
-        href: `/user/${currentUser?.username}/images`,
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconPhoto stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Your images
+            <IconUser stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Your profile
           </Group>
         ),
       },

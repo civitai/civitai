@@ -16,7 +16,7 @@ type InfiniteModelsProps = {
 export function ModelsInfinite({ filters: filterOverrides = {} }: InfiniteModelsProps) {
   const { ref, inView } = useInView();
   const modelFilters = useModelFilters();
-  console.log('modelFilters', modelFilters);
+
   const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
