@@ -10,8 +10,6 @@ import osu from 'node-os-utils';
 const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
-  const freeCPU = await osu.cpu.free();
-
   const writeDbCheck = !!(await dbWrite.user.updateMany({
     where: { id: -1 },
     data: { username: 'civitai' },
@@ -24,9 +22,14 @@ const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse
   const redisCheck = !!(await redis.get(redisKey));
   await redis.del(redisKey);
 
-  let healthy = writeDbCheck && readDbCheck && redisCheck && freeCPU > 20;
-  const includeCPUCheck = (await redis.get(`system:health-check:include-cpu-check`)) === 'true';
-  if (includeCPUCheck) healthy = healthy && freeCPU > 20;
+  let healthy = writeDbCheck && readDbCheck && redisCheck;
+  const includeCPUCheck = await redis.get(`system:health-check:include-cpu-check`);
+  let freeCPU: number | undefined;
+  if (includeCPUCheck) {
+    const { requiredFreeCPU, interval } = JSON.parse(includeCPUCheck);
+    freeCPU = await osu.cpu.free(interval);
+    healthy = healthy && freeCPU > requiredFreeCPU;
+  }
 
   return res.status(healthy ? 200 : 500).json({
     podname,
@@ -34,7 +37,6 @@ const handler = WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse
     writeDb: writeDbCheck,
     readDb: readDbCheck,
     redis: redisCheck,
-    includeCPUCheck,
     freeCPU,
   });
 });
