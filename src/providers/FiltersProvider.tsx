@@ -20,6 +20,7 @@ import { devtools } from 'zustand/middleware';
 import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
@@ -27,7 +28,7 @@ const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW)
 export type ViewMode = z.infer<typeof viewModeSchema>;
 const viewModeSchema = z.enum(['categories', 'feed']).default('categories');
 
-type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
+export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
   sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
@@ -57,7 +58,7 @@ const imageFilterSchema = z.object({
 
 type PostFilterSchema = z.infer<typeof postFilterSchema>;
 const postFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
   view: viewModeSchema,
 });
@@ -150,7 +151,7 @@ function handleLocalStorageChange<TKey extends keyof StorageState>({
   data: Record<string, unknown>;
   state: StoreState;
 }) {
-  const values = { ...state[key], ...data };
+  const values = removeEmpty({ ...state[key], ...data });
   localStorage.setItem(localStorageSchemas[key].key, serializeJSON(values));
   return { [key]: values } as StoreState | Partial<StoreState>;
 }

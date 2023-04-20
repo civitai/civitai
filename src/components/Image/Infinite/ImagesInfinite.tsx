@@ -37,16 +37,17 @@ export default function ImagesInfinite({
   const imageFilters = useImageFilters('images');
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
 
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(filters, {
-    keepPreviousData: true,
-  });
+  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+    useQueryImages(filters, {
+      keepPreviousData: true,
+    });
 
   // #region [infinite data fetching]
   useEffect(() => {
-    if (inView) {
+    if (inView && !isFetching) {
       fetchNextPage?.();
     }
-  }, [fetchNextPage, inView]);
+  }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
   return (

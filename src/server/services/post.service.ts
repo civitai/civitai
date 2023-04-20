@@ -136,21 +136,27 @@ export const getPostsInfinite = async ({
   return {
     nextCursor,
     items: posts
-      .map(({ stats, ...post }) => ({
-        ...post,
-        stats: stats
-          ? {
-              commentCount: stats[`commentCount${period}`],
-              likeCount: stats[`likeCount${period}`],
-              dislikeCount: stats[`dislikeCount${period}`],
-              heartCount: stats[`heartCount${period}`],
-              laughCount: stats[`laughCount${period}`],
-              cryCount: stats[`cryCount${period}`],
-            }
-          : undefined,
-        image: images.find((x) => x.postId === post.id) as (typeof images)[0],
-      }))
-      .filter((x) => x.image !== undefined),
+      .map(({ stats, ...post }) => {
+        const { imageCount, ...image } =
+          images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
+
+        return {
+          ...post,
+          imageCount: Number(imageCount ?? 0),
+          stats: stats
+            ? {
+                commentCount: stats[`commentCount${period}`],
+                likeCount: stats[`likeCount${period}`],
+                dislikeCount: stats[`dislikeCount${period}`],
+                heartCount: stats[`heartCount${period}`],
+                laughCount: stats[`laughCount${period}`],
+                cryCount: stats[`cryCount${period}`],
+              }
+            : undefined,
+          image,
+        };
+      })
+      .filter((x) => x.imageCount !== 0),
   };
 };
 
@@ -579,18 +585,19 @@ export const getPostsByCategory = async ({
     SELECT
       *
     FROM all_images
-    WHERE row_number <= ${input.limit ?? 1}
     ORDER BY row_number;
   `;
 
   // Convert raw to processed
   const usedImages = new Set();
   const rawToProcess = (raw: GetPostByCategoryRaw) => {
-    const image = images.find((i) => i.postId === raw.id && !usedImages.has(i.id));
+    const postImages = images.filter((i) => i.postId === raw.id);
+    const image = postImages.find((i) => !usedImages.has(i.id));
     if (!image) return null;
     usedImages.add(image.id);
     return {
       ...raw,
+      imageCount: postImages.length,
       image,
     };
   };

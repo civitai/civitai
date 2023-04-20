@@ -34,12 +34,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import {
-  InfiniteModelsFilter,
-  InfiniteModelsPeriod,
-  InfiniteModelsSort,
-} from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { Meta } from '~/components/Meta/Meta';
 import { UserDraftModels } from '~/components/User/UserDraftModels';
@@ -57,6 +52,12 @@ import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants } from '~/server/common/constants';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { useState } from 'react';
+import { ModelSort } from '~/server/common/enums';
+import { MetricTimeframe } from '@prisma/client';
+import { useModelQueryParams } from '~/components/Model/model.utils';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useRouter } from 'next/router';
 import { nestLayout } from '~/utils/layout-helpers';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -86,6 +87,9 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
+  const { set, ...queryFilters } = useModelQueryParams();
+  const period = queryFilters.period ?? MetricTimeframe.AllTime;
+  const sort = queryFilters.sort ?? ModelSort.Newest;
 
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
 
@@ -398,25 +402,38 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
             {children}
           </>
         )}
-        <Tabs.Panel value="models">
-          <MasonryProvider
-            columnWidth={constants.cardSizes.model}
-            maxColumnCount={7}
-            maxSingleColumnWidth={450}
-          >
-            <MasonryContainer fluid>
-              <Stack spacing="xs">
-                <Group position="apart">
-                  <InfiniteModelsSort />
-                  <Group spacing="xs">
-                    <InfiniteModelsPeriod />
-                    <InfiniteModelsFilter />
+        <Tabs.Panel value="published">
+          {user && user.username && (
+            <MasonryProvider
+              columnWidth={constants.cardSizes.model}
+              maxColumnCount={7}
+              maxSingleColumnWidth={450}
+            >
+              <MasonryContainer fluid>
+                <Stack spacing="xs">
+                  <Group position="apart">
+                    <SortFilter
+                      type="models"
+                      value={sort}
+                      onChange={(x) => set({ sort: x as any })}
+                    />
+                    <Group spacing="xs">
+                      <PeriodFilter value={period} onChange={(x) => set({ period: x })} />
+                      <ModelFiltersDropdown />
+                    </Group>
                   </Group>
-                </Group>
-                <InfiniteModels />
-              </Stack>
-            </MasonryContainer>
-          </MasonryProvider>
+                  <ModelsInfinite
+                    filters={{
+                      ...queryFilters,
+                      sort,
+                      period,
+                      username: user.username,
+                    }}
+                  />
+                </Stack>
+              </MasonryContainer>
+            </MasonryProvider>
+          )}
         </Tabs.Panel>
         <Tabs.Panel value="draft">
           <Container size="xl">

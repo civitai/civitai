@@ -8,15 +8,15 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { useState } from 'react';
-import { Reactions, ReactionTotal } from '~/components/Reaction/Reactions';
+import { Reactions, PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 
 export function PostsCard({
-  data: { image, id, stats },
+  data: { image, id, stats, imageCount },
   height,
 }: {
   data: PostsInfiniteModel;
-  height: number;
+  height?: number;
 }) {
   const { classes } = useStyles();
 
@@ -58,8 +58,9 @@ export function PostsCard({
                             />
                           )}
                         </RoutedContextLink>
-                        <ReactionTotal
+                        <PostReactions
                           className={classes.reactions}
+                          imageCount={imageCount}
                           metrics={{
                             likeCount: stats?.likeCount,
                             dislikeCount: stats?.dislikeCount,
