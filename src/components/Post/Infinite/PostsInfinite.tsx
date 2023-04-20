@@ -10,12 +10,16 @@ import { useInView } from 'react-intersection-observer';
 import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
 import { IconCloudOff } from '@tabler/icons';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MetricTimeframe } from '@prisma/client';
+import { PostSort } from '~/server/common/enums';
 
 type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
   modelVersionId?: number; // not hooked up to service/schema yet
   tags?: number[];
   username?: string;
+  period?: MetricTimeframe;
+  sort?: PostSort;
 };
 
 type PostsInfiniteProps = {

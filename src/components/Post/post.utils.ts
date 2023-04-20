@@ -1,7 +1,9 @@
+import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { PostSort } from '~/server/common/enums';
 import { GetPostsByCategoryInput, PostsQueryInput } from '~/server/schema/post.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -20,6 +22,8 @@ const postQueryParamSchema = z
     modelVersionId: numericString(),
     username: z.string(),
     view: z.enum(['categories', 'feed']),
+    period: z.nativeEnum(MetricTimeframe),
+    sort: z.nativeEnum(PostSort),
   })
   .partial()
   .transform((props) => {
