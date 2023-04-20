@@ -10,9 +10,7 @@ export const updateDailyMetricsJob = createJob(
   '0 0 * * *',
   async () => {
     const lastRecord = await dbWrite.modelMetricDaily.aggregate({ _max: { date: true } });
-    const startDate = dayjs(lastRecord._max?.date ?? new Date(0))
-      .add(1, 'day')
-      .toDate();
+    const startDate = dayjs(lastRecord._max?.date ?? new Date(0)).toDate();
 
     await dbWrite.$executeRaw`
       WITH user_model_downloads as (
