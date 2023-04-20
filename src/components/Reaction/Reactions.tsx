@@ -1,7 +1,7 @@
 import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconMoodSmile, IconPlus } from '@tabler/icons';
+import { IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons';
 import { capitalize } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
@@ -34,21 +34,33 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   withinPortal?: boolean;
 };
 
-export function ReactionTotal({
+export function PostReactions({
   metrics = {},
+  imageCount,
   ...groupProps
 }: {
   metrics?: ReactionMetrics;
+  imageCount?: number;
 } & GroupProps) {
   const total = Object.values(metrics).reduce((a, b) => a + b, 0);
   if (total === 0) return null;
 
   return (
-    <Group spacing={4} align="center" sx={{ cursor: 'default' }} {...groupProps}>
-      <IconMoodSmile size={20} strokeWidth={2} />
-      <Text size="sm" weight={500} pr={2}>
-        {total}
-      </Text>
+    <Group spacing="xs" sx={{ cursor: 'default' }} {...groupProps}>
+      {imageCount && (
+        <Group spacing={4} align="center">
+          <IconPhoto size={20} strokeWidth={2} />
+          <Text size="sm" weight={500}>
+            {imageCount}
+          </Text>
+        </Group>
+      )}
+      <Group spacing={4} align="center">
+        <IconMoodSmile size={20} strokeWidth={2} />
+        <Text size="sm" weight={500} pr={2}>
+          {total}
+        </Text>
+      </Group>
     </Group>
   );
 }

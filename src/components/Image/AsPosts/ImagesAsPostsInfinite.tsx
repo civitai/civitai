@@ -70,7 +70,7 @@ export default function ImagesAsPostsInfinite({
   const imageFilters = useImageFilters('modelImages');
   const filters = removeEmpty({ ...imageFilters, modelId, username });
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit },
       {
@@ -86,10 +86,10 @@ export default function ImagesAsPostsInfinite({
 
   // #region [infinite data fetching]
   useEffect(() => {
-    if (inView) {
+    if (inView && !isFetching) {
       fetchNextPage?.();
     }
-  }, [fetchNextPage, inView]);
+  }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
   const isMuted = currentUser?.muted ?? false;

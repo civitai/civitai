@@ -19,7 +19,7 @@ export function PostCategoriesInfinite({
   limit?: number;
 }) {
   const globalFilters = usePostFilters();
-  const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit });
+  const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
   const { categories, isLoading, fetchNextPage, hasNextPage } = useQueryPostCategories(filters);
   if (!categories) return null;

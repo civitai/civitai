@@ -1,24 +1,19 @@
-import { Container, Group, Stack, Title } from '@mantine/core';
-import { GetServerSideProps } from 'next';
-import { useRouter } from 'next/router';
+import { Group, Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 
-import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import {
-  InfiniteModelsFilter,
-  InfiniteModelsPeriod,
-  InfiniteModelsSort,
-} from '~/components/InfiniteModels/InfiniteModelsFilters';
-import { Meta } from '~/components/Meta/Meta';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { Meta } from '~/components/Meta/Meta';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
+import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { constants } from '~/server/common/constants';
-import useIsClient from '~/hooks/useIsClient';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -38,11 +33,9 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function Home() {
-  const router = useRouter();
   const currentUser = useCurrentUser();
-  const { username, favorites, hidden } = router.query;
-
-  const isClient = useIsClient();
+  const queryFilters = useModelQueryParams();
+  const { username, favorites, hidden } = queryFilters;
 
   return (
     <>
@@ -74,15 +67,15 @@ function Home() {
             <Group position="apart" spacing={0}>
               <Group>
                 <HomeContentToggle sx={hideMobile} />
-                <InfiniteModelsSort />
+                <SortFilter type="models" />
               </Group>
               <Group spacing={4}>
-                <InfiniteModelsPeriod />
-                <InfiniteModelsFilter />
+                <PeriodFilter type="models" />
+                <ModelFiltersDropdown />
               </Group>
             </Group>
             <CategoryTags />
-            <InfiniteModels delayNsfw />
+            <ModelsInfinite filters={queryFilters} />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

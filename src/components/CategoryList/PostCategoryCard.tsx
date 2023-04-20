@@ -4,7 +4,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { Reactions, ReactionTotal } from '~/components/Reaction/Reactions';
+import { Reactions, PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { constants } from '~/server/common/constants';
 import { PostGetByCategoryPostModel } from '~/types/router';
@@ -20,8 +20,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
           {({ safe }) => (
             <div className={classes.container}>
               <ImageGuard.Report />
-              <ImageGuard.ToggleConnect />
-              <ImageGuard.ToggleImage
+              <ImageGuard.ToggleConnect
                 sx={(theme) => ({
                   backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
                   color: 'white',
@@ -54,8 +53,9 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                 </AspectRatio>
               </RoutedContextLink>
 
-              <ReactionTotal
+              <PostReactions
                 className={classes.reactions}
+                imageCount={data.imageCount}
                 metrics={{
                   likeCount: data.likeCount,
                   dislikeCount: data.dislikeCount,
@@ -92,6 +92,9 @@ const useStyles = createStyles((theme) => ({
   container: {
     position: 'relative',
     width: constants.cardSizes.image,
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+    },
   },
 
   viewMore: {

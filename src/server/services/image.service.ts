@@ -1157,6 +1157,7 @@ export const getImagesForPosts = async ({
       height: number;
       hash: string;
       postId: number;
+      imageCount: number;
       cryCount: number;
       laughCount: number;
       likeCount: number;
@@ -1169,7 +1170,8 @@ export const getImagesForPosts = async ({
     WITH targets AS (
       SELECT
         i."postId",
-        MIN(i.index) "index"
+        MIN(i.index) "index",
+        COUNT(*) "count"
       FROM "Image" i
       WHERE ${imageWhere.join(' AND ')}
       GROUP BY i."postId"
@@ -1184,6 +1186,7 @@ export const getImagesForPosts = async ({
       i.height,
       i.hash,
       t."postId",
+      t.count "imageCount",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",

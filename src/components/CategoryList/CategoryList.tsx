@@ -82,7 +82,17 @@ function CategoryTitle({
 }) {
   return (
     <Group spacing="xs">
-      <Text weight="bold" tt="uppercase" size="lg" lh={1}>
+      <Text
+        weight="bold"
+        tt="uppercase"
+        size="lg"
+        lh={1}
+        sx={(theme) => ({
+          [theme.fn.smallerThan('sm')]: {
+            marginRight: 'auto',
+          },
+        })}
+      >
         {name}
       </Text>
       {actions?.map((action, index) => (
@@ -128,6 +138,7 @@ function CategoryCarousel<Item>({
         align="start"
         withControls={data.items.length + (actions?.length ? 1 : 0) > slidesToScroll ? true : false}
         slidesToScroll={mobile ? 1 : slidesToScroll}
+        loop
       >
         {data.items.map((item, index) => {
           const key = itemId ? itemId(item) : index;

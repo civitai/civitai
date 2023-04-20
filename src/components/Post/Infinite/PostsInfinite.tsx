@@ -17,12 +17,6 @@ type PostsInfiniteState = {
   tags?: number[];
   username?: string;
 };
-const PostsInfiniteContext = createContext<PostsInfiniteState | null>(null);
-export const usePostsInfiniteState = () => {
-  const context = useContext(PostsInfiniteContext);
-  if (!context) throw new Error('PostsInfiniteContext not in tree');
-  return context;
-};
 
 type PostsInfiniteProps = {
   filters?: PostsInfiniteState;
@@ -33,18 +27,21 @@ export default function PostsInfinite({ filters: filterOverrides = {} }: PostsIn
   const postFilters = usePostFilters();
   const filters = removeEmpty({ ...postFilters, ...filterOverrides });
 
-  const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryPosts(filters, {
-    keepPreviousData: true,
-  });
+  const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
+    filters,
+    {
+      keepPreviousData: true,
+    }
+  );
 
   // #region [infinite data fetching]
   useEffect(() => {
-    if (inView) fetchNextPage?.();
-  }, [fetchNextPage, inView]);
+    if (inView && !isFetching) fetchNextPage?.();
+  }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
   return (
-    <PostsInfiniteContext.Provider value={filters}>
+    <>
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -82,6 +79,6 @@ export default function PostsInfinite({ filters: filterOverrides = {} }: PostsIn
           </Text>
         </Stack>
       )}
-    </PostsInfiniteContext.Provider>
+    </>
   );
 }
