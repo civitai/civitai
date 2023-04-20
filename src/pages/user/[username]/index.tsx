@@ -65,6 +65,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
+import { useEffect } from 'react';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -205,6 +206,12 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
       onConfirm: () => removeContentMutation.mutate({ id: user.id }),
     });
   };
+
+  // Redirect all users to the creator's models tab if they have uploaded models
+  useEffect(() => {
+    if (uploads) router.replace(`/user/${username}/models`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploads, username]);
 
   if (userLoading && !user)
     return (
