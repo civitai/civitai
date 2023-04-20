@@ -106,19 +106,20 @@ export const getTags = async ({
   else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
   else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
 
+  const isCategory =
+    !categories && !!categoryTags?.length
+      ? Prisma.sql`, EXISTS (
+        SELECT 1 FROM "TagsOnTags"
+        WHERE "fromTagId" IN (${Prisma.join(categoryTags)})
+        AND "toTagId" = t.id
+      ) "isCategory"`
+      : Prisma.sql``;
+
   const tagsRaw = await dbRead.$queryRaw<{ id: number; name: string; isCategory?: boolean }[]>`
     SELECT
       t."id",
       t."name"
-      ${Prisma.raw(
-        !categories && categoryTags.length
-          ? `, EXISTS (
-              SELECT 1 FROM "TagsOnTags"
-              WHERE "fromTagId" IN (${Prisma.join(categoryTags)})
-              AND "toTagId" = t.id
-            ) "isCategory"`
-          : ``
-      )}
+      ${isCategory}
     FROM "Tag" t
     ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
