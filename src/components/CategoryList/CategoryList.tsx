@@ -175,6 +175,9 @@ function CategoryCarousel<Item>({
 }
 
 const useStyles = createStyles((theme) => ({
+  container: {
+    minHeight: 200,
+  },
   control: {
     svg: {
       width: 32,

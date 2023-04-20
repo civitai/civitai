@@ -614,8 +614,9 @@ export const getPostsByCategory = async ({
   // Map category record to array
   const items = categories
     .map((c) => {
-      const items = postCategories[c.id]?.filter(isDefined);
-      if (!items) return null;
+      const items = postCategories[c.id]?.filter(isDefined) ?? [];
+      // Let's include empty categories for now
+      // if (!items.length) return null;
       return { ...c, items };
     })
     .filter(isDefined);

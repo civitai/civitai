@@ -7,6 +7,7 @@ import { ModelSort } from '~/server/common/enums';
 import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const useModelFilters = () => {
@@ -20,7 +21,7 @@ const modelQueryParamSchema = z
     sort: z.nativeEnum(ModelSort),
     query: z.string(),
     user: z.string(),
-    username: usernameSchema,
+    username: usernameSchema.transform(postgresSlugify),
     tagname: z.string(),
     tag: z.string(),
     favorites: z.preprocess((val) => val === true || val === 'true', z.boolean()),

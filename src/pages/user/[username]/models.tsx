@@ -11,19 +11,16 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
-import { userPageQuerySchema } from '~/server/schema/user.schema';
 
 import { UserProfileLayout } from './';
 
 export default function UserModelsPage() {
-  const router = useRouter();
-  const { username } = userPageQuerySchema.parse(router.query);
   const { set, ...queryFilters } = useModelQueryParams();
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
   const sort = queryFilters.sort ?? ModelSort.Newest;
 
   // currently not showing any content if the username is undefined
-  if (!username) return <NotFound />;
+  if (!queryFilters.username) return <NotFound />;
 
   return (
     <Tabs.Panel value="/models">
@@ -46,7 +43,6 @@ export default function UserModelsPage() {
                 ...queryFilters,
                 sort,
                 period,
-                username,
               }}
             />
           </Stack>

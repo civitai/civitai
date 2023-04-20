@@ -20,16 +20,12 @@ const postQueryParamSchema = z
     tags: numericStringArray(),
     modelId: numericString(),
     modelVersionId: numericString(),
-    username: z.string(),
+    username: z.string().transform(postgresSlugify),
     view: z.enum(['categories', 'feed']),
     period: z.nativeEnum(MetricTimeframe),
     sort: z.nativeEnum(PostSort),
   })
-  .partial()
-  .transform((props) => {
-    props.username = props.username ? postgresSlugify(props.username) : undefined;
-    return removeEmpty(props);
-  });
+  .partial();
 type PostQueryParams = z.output<typeof postQueryParamSchema>;
 export const usePostQueryParams = () => {
   const { query, pathname, replace } = useRouter();
