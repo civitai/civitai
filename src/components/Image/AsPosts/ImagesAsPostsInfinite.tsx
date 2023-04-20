@@ -25,7 +25,6 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -68,14 +67,18 @@ export default function ImagesAsPostsInfinite({
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
 
   const imageFilters = useImageFilters('modelImages');
-  const filters = removeEmpty({ ...imageFilters, modelId, username });
+  const filters = removeEmpty({
+    ...imageFilters,
+    modelVersionId: selectedVersionId,
+    modelId,
+    username,
+  });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit },
       {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
         keepPreviousData: true,
         // enabled: inView,

@@ -94,7 +94,7 @@ export default function PostCreate() {
   if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
   if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
 
-  const loading = loadingCurrentUserReview || versionLoading;
+  const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 
   return (
     <Container size="xs">

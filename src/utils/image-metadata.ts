@@ -67,6 +67,7 @@ const decoder = new TextDecoder('utf-8');
 // #region [parsers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
+const stripKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
 const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
 const automaticSDKeyMap = new Map<string, string>([
@@ -81,10 +82,15 @@ const automaticSDParser = createMetadataParser(
   (meta: string) => {
     const metadata: ImageMetaProps = {};
     if (!meta) return metadata;
-    const metaLines = meta.split('\n');
+    const metaLines = meta.split('\n').filter((line) => {
+      // filter out empty lines and any lines that start with a key we want to strip
+      return line.trim() !== '' && !stripKeys.some((key) => line.startsWith(key));
+    });
 
+    let detailsLine = metaLines.find((line) => line.startsWith('Steps: '));
+    // Strip it from the meta lines
+    if (detailsLine) metaLines.splice(metaLines.indexOf(detailsLine), 1);
     // Remove meta keys I wish I hadn't made... :(
-    let detailsLine = metaLines.pop();
     for (const key of badExtensionKeys) {
       if (!detailsLine?.includes(key)) continue;
       detailsLine = detailsLine.split(key)[0];
