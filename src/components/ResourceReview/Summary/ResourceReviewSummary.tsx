@@ -24,6 +24,9 @@ const useSummaryContext = () => {
   return context;
 };
 
+function roundRating(rating: number) {
+  return Math.round(rating * 100) / 100;
+}
 export function getRatingCount(totals: ResourceReviewRatingTotals | undefined) {
   const count = totals ? Object.values(totals).reduce<number>((acc, value) => acc + value, 0) : 0;
   return count;
@@ -36,7 +39,7 @@ export function getAverageRating(totals: ResourceReviewRatingTotals | undefined,
           return acc + Number(key) * value;
         }, 0) / count
       : 0;
-  return Math.round(rating * 100) / 100;
+  return roundRating(rating);
 }
 
 export function ResourceReviewSummary({ modelId, modelVersionId, children }: Props) {
@@ -72,6 +75,7 @@ ResourceReviewSummary.Header = function Header({
 }) {
   const { rating, count, modelVersionId, loading } = useSummaryContext();
   const showSkeleton = loading && (!initialRating || !initialCount);
+  const roundedRating = roundRating(rating);
 
   return (
     <Stack spacing={0}>
@@ -89,8 +93,8 @@ ResourceReviewSummary.Header = function Header({
             </Text>
           </Group>
           <Group>
-            <Rating value={initialRating ?? rating} readOnly />
-            <Text>{initialRating ?? rating} out of 5</Text>
+            <Rating value={roundedRating} readOnly />
+            <Text>{roundedRating} out of 5</Text>
           </Group>
         </>
       )}
