@@ -110,9 +110,9 @@ export function PostDetail({ postId }: { postId: number }) {
           </Group>
 
           <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
-          <Stack spacing="xl">
+          <Stack spacing="xl" id="comments">
             {post.detail && <RenderHtml html={post.detail} withMentions />}
-            <PostComments id="comments" postId={postId} userId={post.user.id} />
+            <PostComments postId={postId} userId={post.user.id} />
           </Stack>
         </Stack>
       </Container>

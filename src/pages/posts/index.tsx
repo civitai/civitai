@@ -10,6 +10,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
