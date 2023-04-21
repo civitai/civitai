@@ -32,7 +32,11 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
   }
 
   return dbRead.user.findFirst({
-    where: { id: { not: -1 }, ...where, deletedAt: null },
+    where: {
+      ...where,
+      deletedAt: null,
+      AND: [{ id: { not: -1 } }, { username: { not: 'civitai' } }],
+    },
     select: {
       id: true,
       image: true,
