@@ -15,6 +15,8 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { playfab } from '~/server/playfab/client';
+import { clickhouse } from '~/server/clickhouse/client';
+import { formatDate } from '~/utils/date-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -155,6 +157,21 @@ export default RateLimitedEndpoint(
 
     // Track download
     try {
+      // Insert into clickhouse
+      // Do not await as we do not guarantee uptime of clickhouse
+      clickhouse.insert({
+        table: 'downloads',
+        values: [
+          {
+            userId,
+            date: formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss'),
+            modelId: modelVersion.model.id,
+            modelVersionId: modelVersion.id,
+          },
+        ],
+        format: 'JSONEachRow',
+      });
+
       await dbWrite.userActivity.create({
         data: {
           userId,
