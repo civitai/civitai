@@ -7,7 +7,6 @@ import { useMemo } from 'react';
 import { useVotableTagStore, VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 
@@ -29,7 +28,6 @@ export function VotableTags({
   collapsible = false,
   ...props
 }: GalleryTagProps) {
-  const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
   const setVote = useVotableTagStore((state) => state.setVote);
   const { data: tags = initialTags, isLoading } = trpc.tag.getVotableTags.useQuery(
@@ -95,7 +93,7 @@ export function VotableTags({
     });
     if (!collapsible || showAll) return displayTags;
     return displayTags.slice(0, limit);
-  }, [tags, showAll, collapsible, limit, currentUser?.isModerator]);
+  }, [tags, showAll, collapsible, limit]);
 
   if (!initialTags && isLoading)
     return (
