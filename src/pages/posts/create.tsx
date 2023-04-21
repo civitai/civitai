@@ -12,14 +12,17 @@ import {
 } from '@mantine/core';
 import { IconLock } from '@tabler/icons';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
-import { EditUserResourceReview } from '~/components/ResourceReview/EditUserResourceReview';
+import {
+  EditUserResourceReview,
+  ReviewEditCommandsRef,
+} from '~/components/ResourceReview/EditUserResourceReview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
@@ -35,6 +38,7 @@ export default function PostCreate() {
   const reviewing = router.query.reviewing ? router.query.reviewing === 'true' : undefined;
   const isMuted = currentUser?.muted ?? false;
   const displayReview = !isMuted && !!reviewing && !!modelVersionId && !!modelId;
+  const reviewEditRef = useRef<ReviewEditCommandsRef | null>(null);
 
   const reset = useEditPostContext((state) => state.reset);
   const images = useEditPostContext((state) => state.images);
@@ -68,6 +72,8 @@ export default function PostCreate() {
     const versionId = selected ? Number(selected) : modelVersionId;
     const title =
       reviewing && version ? `${version.model.name} - ${version.name} Review` : undefined;
+
+    reviewEditRef.current?.save();
 
     mutate(
       { modelVersionId: versionId, title, tag: tagId },
@@ -159,6 +165,7 @@ export default function PostCreate() {
                     modelVersionName={version.name}
                     resourceReview={currentUserReview}
                     openedCommentBox
+                    innerRef={reviewEditRef}
                   />
                 </Box>
               </Input.Wrapper>
