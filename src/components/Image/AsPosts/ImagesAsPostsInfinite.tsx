@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Button,
   Center,
   Group,
@@ -11,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
+import { IconArrowsShuffle, IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
@@ -29,6 +30,7 @@ import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -65,11 +67,13 @@ export default function ImagesAsPostsInfinite({
   const isMobile = useIsMobile();
   // const globalFilters = useImageFilters();
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
+  const [crossPosts, setCrossPosts] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
   const filters = removeEmpty({
     ...imageFilters,
-    modelVersionId: selectedVersionId,
+    modelVersionId: !crossPosts ? selectedVersionId : undefined,
+    excludedVersionIds: crossPosts && modelVersions ? modelVersions.map(({ id }) => id) : undefined,
     modelId,
     username,
   });
@@ -143,6 +147,15 @@ export default function ImagesAsPostsInfinite({
               <SortFilter type="modelImages" />
               <Group spacing={4}>
                 <PeriodFilter type="modelImages" />
+                <ButtonTooltip label="Show Cross-posts only">
+                  <ActionIcon
+                    variant="transparent"
+                    color={crossPosts ? 'green' : undefined}
+                    onClick={() => setCrossPosts((v) => !v)}
+                  >
+                    <IconArrowsShuffle size={20} />
+                  </ActionIcon>
+                </ButtonTooltip>
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>

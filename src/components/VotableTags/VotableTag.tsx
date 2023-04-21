@@ -1,7 +1,7 @@
 import { VotableTagConnectorInput } from '~/server/schema/tag.schema';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { ActionIcon, Anchor, Badge, Group, useMantineTheme } from '@mantine/core';
+import { ActionIcon, Badge, Group, useMantineTheme } from '@mantine/core';
 import { useCallback, useRef } from 'react';
 import { TagType } from '@prisma/client';
 import { IconArrowBigDown, IconArrowBigTop, IconFlag, IconX } from '@tabler/icons';

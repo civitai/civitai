@@ -658,6 +658,7 @@ export const getAllImages = async ({
   excludedTagIds,
   excludedUserIds,
   excludedImageIds,
+  excludedVersionIds,
   period,
   sort,
   userId,
@@ -693,6 +694,10 @@ export const getAllImages = async ({
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."needsReview"
     )`);
+  }
+
+  if (excludedVersionIds && excludedVersionIds.length) {
+    AND.push(Prisma.sql`p."modelVersionId" NOT IN (${Prisma.join(excludedVersionIds)})`);
   }
 
   // Filter to specific model/review content
