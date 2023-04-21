@@ -659,6 +659,7 @@ export const getAllImages = async ({
   excludedUserIds,
   excludedImageIds,
   period,
+  periodMode,
   sort,
   userId,
   isModerator,
@@ -759,7 +760,8 @@ export const getAllImages = async ({
   }
 
   // Limit to images created since period start
-  if (period !== 'AllTime') AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+  if (period !== 'AllTime' && periodMode !== 'stats')
+    AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {

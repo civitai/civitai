@@ -217,7 +217,8 @@ export const getVotableTags = async ({
         tag.type !== 'Moderation' ||
         tag.score > 0 ||
         (tag.vote && tag.vote > 0) ||
-        (tag.needsReview && isModerator)
+        (tag.needsReview && isModerator) ||
+        (!tag.needsReview && tag.type === 'Moderation' && tag.score <= 0)
     );
   }
 
