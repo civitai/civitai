@@ -887,6 +887,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   title: {
+    wordBreak: 'break-word',
     [theme.fn.smallerThan('md')]: {
       fontSize: theme.fontSizes.xs * 2.4, // 24px
       width: '100%',

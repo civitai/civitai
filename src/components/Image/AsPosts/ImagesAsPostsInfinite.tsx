@@ -12,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCloudOff, IconLayersIntersect2, IconPlus, IconStar } from '@tabler/icons';
+import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
@@ -151,10 +151,10 @@ export default function ImagesAsPostsInfinite({
                 <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
                   <ActionIcon
                     variant={excludeCrossPosts ? 'light' : 'transparent'}
-                    color={excludeCrossPosts ? 'blue' : undefined}
+                    color={excludeCrossPosts ? 'red' : undefined}
                     onClick={() => setFilters({ excludeCrossPosts: !excludeCrossPosts })}
                   >
-                    <IconLayersIntersect2 size={20} />
+                    <IconArrowsCross size={20} />
                   </ActionIcon>
                 </ButtonTooltip>
                 {/* <ImageFiltersDropdown /> */}
