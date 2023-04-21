@@ -26,7 +26,6 @@ export default function UserModelsPage() {
   // currently not showing any content if the username is undefined
   if (!queryFilters.username) return <NotFound />;
   const selfView = queryFilters.username === currentUser?.username;
-  console.log('selfView', selfView);
 
   return (
     <Tabs.Panel value="/models">

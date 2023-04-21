@@ -80,7 +80,7 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { scrollToTop } from '~/utils/scroll-utils';
-import { removeTags, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, removeTags, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import Router from 'next/router';
@@ -402,7 +402,9 @@ export default function ModelDetailsV2({
 
   const meta = (
     <Meta
-      title={`${model.name} | Stable Diffusion ${model.type} | Civitai`}
+      title={`${model.name}${
+        selectedVersion ? ' - ' + selectedVersion.name : ''
+      } | Stable Diffusion ${getDisplayName(model.type)} | Civitai`}
       description={truncate(removeTags(model.description ?? ''), { length: 150 })}
       image={
         nsfw || versionImages[0]?.url == null

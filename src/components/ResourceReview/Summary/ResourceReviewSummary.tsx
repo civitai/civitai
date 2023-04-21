@@ -49,7 +49,6 @@ export function ResourceReviewSummary({ modelId, modelVersionId, children }: Pro
   });
 
   const count = getRatingCount(data);
-  console.log(count);
   const rating = getAverageRating(data, count);
 
   return (

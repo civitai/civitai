@@ -90,7 +90,6 @@ export function cacheIt<TInput extends object>({
     const cacheKey = `trpc:${key ?? path.replace('.', ':')}:${hashifyObject(cacheKeyObj)}`;
     const cached = await redis.get(cacheKey);
     if (cached) {
-      console.log(`cache hit: ${cacheKey}`);
       const data = fromJson(cached);
       return { ok: true, data, marker: 'fromCache' as any, ctx };
     }
