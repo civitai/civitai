@@ -203,7 +203,7 @@ export const getInfiniteImagesSchema = z
     needsReview: z.boolean().optional(),
     tagReview: z.boolean().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
-    excludedVersionIds: z.array(z.number()).optional(),
+    excludeCrossPosts: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
