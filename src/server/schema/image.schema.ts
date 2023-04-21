@@ -197,6 +197,7 @@ export const getInfiniteImagesSchema = z
     prioritizedUserIds: z.array(z.number()).optional(),
     excludedImageIds: z.array(z.number()).optional(),
     period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+    periodMode: periodModeSchema,
     sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
     tags: z.array(z.number()).optional(),
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),

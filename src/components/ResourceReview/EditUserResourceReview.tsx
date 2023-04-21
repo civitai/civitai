@@ -9,6 +9,7 @@ import {
   useCreateResourceReview,
   useUpdateResourceReview,
 } from '~/components/ResourceReview/resourceReview.utils';
+import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 
 const schema = z.object({
   details: z.string().optional(),
@@ -33,7 +34,7 @@ export function EditUserResourceReview({
   modelVersionName?: string;
   modelVersionId: number;
   openedCommentBox?: boolean;
-  innerRef?: React.ForwardedRef<EditorCommandsRef>;
+  innerRef?: React.ForwardedRef<ReviewEditCommandsRef>;
 }) {
   const [editDetail, setEditDetail] = useState(openedCommentBox);
   const toggleEditDetail = () => {
