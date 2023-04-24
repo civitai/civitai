@@ -40,7 +40,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   const { limit, page, ...data } = reqParams.data;
   const { skip } = getPagination(limit, page);
   const { items, ...metadata } = getPagingData(
-    await getAllImages({ ...data, limit, skip, include: ['count'] }),
+    await getAllImages({ ...data, limit, skip, periodMode: 'published', include: ['count'] }),
     limit,
     page
   );

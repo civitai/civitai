@@ -50,6 +50,7 @@ export const getPostsInfinite = async ({
   excludedUserIds,
   excludedImageIds,
   period,
+  periodMode,
   sort,
   user,
   tags,
@@ -66,7 +67,7 @@ export const getPostsInfinite = async ({
   if (!isOwnerRequest) {
     AND.push({
       publishedAt:
-        period === 'AllTime'
+        period === 'AllTime' || periodMode === 'stats'
           ? { not: null }
           : { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) },
     });
@@ -513,7 +514,7 @@ export const getPostsByCategory = async ({
       FROM "TagsOnPost" top
       JOIN "Post" p ON p.id = top."postId"
         ${Prisma.raw(
-          input.period !== 'AllTime'
+          input.period !== 'AllTime' && input.periodMode !== 'stats'
             ? `AND p."publishedAt" > now() - INTERVAL '1 ${input.period}'`
             : 'AND p."publishedAt" IS NOT NULL'
         )}

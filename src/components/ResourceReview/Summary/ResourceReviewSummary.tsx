@@ -75,7 +75,7 @@ ResourceReviewSummary.Header = function Header({
 }) {
   const { rating, count, modelVersionId, loading } = useSummaryContext();
   const showSkeleton = loading && (!initialRating || !initialCount);
-  const roundedRating = roundRating(rating);
+  const roundedRating = roundRating(rating ?? initialRating ?? 0);
 
   return (
     <Stack spacing={0}>
@@ -89,7 +89,7 @@ ResourceReviewSummary.Header = function Header({
           <Group>
             <Text>Reviews</Text>
             <Text size="sm" color="dimmed">
-              {initialCount ?? count} {!!modelVersionId ? 'version' : ''} ratings
+              {count ?? initialCount} {!!modelVersionId ? 'version' : ''} ratings
             </Text>
           </Group>
           <Group>

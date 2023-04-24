@@ -484,6 +484,7 @@ export const getModelWithVersionsHandler = async ({
       favorites: false,
       hidden: false,
       period: 'AllTime',
+      periodMode: 'published',
     },
     ctx,
   });

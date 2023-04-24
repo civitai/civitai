@@ -55,7 +55,6 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
       }
       onChange={(value) => {
         const url = set(value as HomeOptions);
-        console.log(value, url);
         router.push(url);
       }}
       data={data}

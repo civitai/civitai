@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { z } from 'zod';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ModelSort } from '~/server/common/enums';
+import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -18,6 +19,7 @@ export const useModelFilters = () => {
 const modelQueryParamSchema = z
   .object({
     period: z.nativeEnum(MetricTimeframe),
+    periodMode: periodModeSchema,
     sort: z.nativeEnum(ModelSort),
     query: z.string(),
     user: z.string(),

@@ -135,7 +135,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                         Unavailable
                       </Badge>
                     )}
-                    <Group spacing={4}>
+                    <Group spacing={4} noWrap>
                       {resource.modelType && (
                         <Badge radius="sm" size="sm">
                           {getDisplayName(resource.modelType)}

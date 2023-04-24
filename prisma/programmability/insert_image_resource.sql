@@ -43,7 +43,8 @@ BEGIN
 		LEFT JOIN "ModelFile" mf ON mf.id = mfh."fileId"
 		LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
 		LEFT JOIN "Model" m ON m.id = mv."modelId"
-		WHERE irh.name != 'vae' AND m.status != 'Deleted'
+		WHERE irh.name != 'vae'
+		  AND (m.id IS NULL OR m.status != 'Deleted')
 	)
 	INSERT INTO "ImageResource"("imageId", "modelVersionId", name, hash, detected)
 	SELECT

@@ -1,4 +1,4 @@
-import { Group, Stack, Title } from '@mantine/core';
+import { ActionIcon, Button, Group, Popover, Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 
@@ -14,6 +14,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { PeriodMode } from '~/server/schema/base.schema';
+import { IconExclamationMark } from '@tabler/icons';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -34,8 +36,9 @@ export const getServerSideProps = createServerSideProps({
 
 function Home() {
   const currentUser = useCurrentUser();
-  const queryFilters = useModelQueryParams();
-  const { username, favorites, hidden } = queryFilters;
+  const { set, ...queryFilters } = useModelQueryParams();
+  const { username, favorites, hidden, query } = queryFilters;
+  const periodMode = query ? ('stats' as PeriodMode) : undefined;
 
   return (
     <>
@@ -70,12 +73,27 @@ function Home() {
                 <SortFilter type="models" />
               </Group>
               <Group spacing={4}>
+                {periodMode && (
+                  <Popover>
+                    <Popover.Target>
+                      <ActionIcon variant="filled" color="blue" radius="xl" size="sm" mr={4}>
+                        <IconExclamationMark size={20} strokeWidth={3} />
+                      </ActionIcon>
+                    </Popover.Target>
+                    <Popover.Dropdown maw={300}>
+                      {`To ensure that you see all possible results, we've disable the period filter.`}
+                      <Button mt="xs" size="xs" fullWidth onClick={() => set({ query: undefined })}>
+                        Clear Search
+                      </Button>
+                    </Popover.Dropdown>
+                  </Popover>
+                )}
                 <PeriodFilter type="models" />
                 <ModelFiltersDropdown />
               </Group>
             </Group>
             <CategoryTags />
-            <ModelsInfinite filters={queryFilters} />
+            <ModelsInfinite filters={{ ...queryFilters, periodMode }} />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

@@ -11,7 +11,7 @@ import { constants } from '~/server/common/constants';
 
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getByIdSchema, periodModeSchema } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -57,6 +57,7 @@ export const getAllModelsSchema = licensingSchema.extend({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
+  periodMode: periodModeSchema,
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))

@@ -54,6 +54,8 @@ const imageFilterSchema = z.object({
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   view: viewModeSchema,
+  excludeCrossPosts: z.boolean().optional(),
+  // excludeCrossPosts: z.preprocess((value) => value !== 'true', z.boolean()).optional(),
 });
 
 type PostFilterSchema = z.infer<typeof postFilterSchema>;

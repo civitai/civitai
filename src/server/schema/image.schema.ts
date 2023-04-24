@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
+import { periodModeSchema } from '~/server/schema/base.schema';
 
 const stringToNumber = z.preprocess(
   (value) => (value ? Number(value) : undefined),
@@ -133,6 +134,7 @@ export const getGalleryImageSchema = z.object({
   userId: z.number().optional(),
   infinite: z.boolean().default(true),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+  periodMode: periodModeSchema,
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   tags: z.array(z.number()).optional(),
@@ -195,6 +197,7 @@ export const getInfiniteImagesSchema = z
     prioritizedUserIds: z.array(z.number()).optional(),
     excludedImageIds: z.array(z.number()).optional(),
     period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+    periodMode: periodModeSchema,
     sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
     tags: z.array(z.number()).optional(),
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
@@ -203,6 +206,7 @@ export const getInfiniteImagesSchema = z
     needsReview: z.boolean().optional(),
     tagReview: z.boolean().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
+    excludeCrossPosts: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
