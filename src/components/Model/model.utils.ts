@@ -42,7 +42,9 @@ export const useModelQueryParams = () => {
     return {
       ...data,
       set: (filters: Partial<ModelQueryParams>) => {
-        replace({ pathname, query: { ...query, ...filters } }, undefined, { shallow: true });
+        replace({ pathname, query: removeEmpty({ ...query, ...filters }) }, undefined, {
+          shallow: true,
+        });
       },
     };
   }, [query, pathname, replace]);
