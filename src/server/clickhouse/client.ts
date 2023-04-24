@@ -1,8 +1,9 @@
 import { createClient } from '@clickhouse/client';
 import { env } from '~/env/server.mjs';
 import requestIp from 'request-ip';
-import { NextApiRequest } from 'next';
+import { NextApiRequest, NextApiResponse } from 'next';
 import { ReviewReactions, ReportReason, ReportStatus } from '@prisma/client';
+import { getServerAuthSession } from '../utils/get-server-auth-session';
 
 export const clickhouse = createClient({
   host: env.CLICKHOUSE_HOST,
@@ -47,367 +48,126 @@ export type ReactionType =
   | 'Answer_Create'
   | 'Answer_Delete';
 export type ReportType = 'Create' | 'StatusChange';
-export type ModelEngagementType = 'Hide' | 'Favorite';
-export type TagEngagementType = 'Hide' | 'Allow';
-export type UserEngagementType = 'Follow' | 'Hide';
+export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete';
+export type TagEngagementType = 'Hide' | 'Allow' | 'Delete';
+export type UserEngagementType = 'Follow' | 'Hide' | 'Delete';
 export type CommentType = 'Model' | 'Image' | 'Post' | 'Comment' | 'Review';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags';
 export type ImageActivityType = 'Create' | 'Delete' | 'DeleteTOS' | 'Tags' | 'Resources';
 export type QuestionType = 'Create' | 'Delete';
 export type AnswerType = 'Create' | 'Delete';
 
-export async function trackView(
-  req: NextApiRequest,
-  type: ViewType,
-  entityType: EntityType,
-  entityId: number
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+export type TrackRequest = {
+  userId: number;
+  ip: string;
+  userAgent: string;
+};
 
-  clickhouse.insert({
-    table: 'views',
-    values: [
-      {
-        type,
-        userId: 0, // todo:
-        entityType,
-        entityId,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+export class Tracker {
+  constructor(private req: NextApiRequest, private res: NextApiResponse) {}
 
-export async function trackModelEvent(
-  req: NextApiRequest,
-  type: ModelActivty,
-  modelId: number,
-  nsfw: boolean
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  private async track(table: string, custom: object) {
+    const values = {
+      ip: requestIp.getClientIp(this.req),
+      userAgent: this.req.headers['user-agent'],
+      userId: (await getServerAuthSession({ req: this.req, res: this.res }))?.user?.id,
+      ...custom,
+    };
+    // do not await as we do not want to fail on tracker issues
+    clickhouse.insert({
+      table: table,
+      values: [values],
+      format: 'JSONEachRow',
+    });
+  }
 
-  clickhouse.insert({
-    table: 'modelEvents',
-    values: [
-      {
-        type,
-        userId: 0, // todo:
-        modelId,
-        nsfw,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+  public view(values: { type: ViewType; entityType: EntityType; entityId: number }) {
+    return this.track('views', values);
+  }
 
-export async function trackModelVersionEvent(
-  req: NextApiRequest,
-  type: ModelVersionActivty,
-  modelId: number,
-  modelVersionId: number,
-  nsfw: boolean
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
+    return this.track('views', values);
+  }
 
-  clickhouse.insert({
-    table: 'modelVersionEvents',
-    values: [
-      {
-        type,
-        userId: 0, // todo:
-        modelId,
-        modelVersionId,
-        nsfw,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+  public modelVersionEvent(values: {
+    type: ModelVersionActivty;
+    modelId: number;
+    modelVersionId: number;
+    nsfw: boolean;
+  }) {
+    return this.track('views', values);
+  }
 
-export async function trackUserActivity(req: NextApiRequest, type: UserActivityType) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  public userActivity(values: { type: UserActivityType; byId: number }) {
+    return this.track('views', values);
+  }
 
-  clickhouse.insert({
-    table: 'userActivities',
-    values: [
-      {
-        type,
-        userId: 0, // todo:
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+  public resourceReview(values: { type: ResourceReviewType }) {
+    return this.track('views', values);
+  }
 
-export async function trackResourceReview(req: NextApiRequest, type: ResourceReviewType) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  public reaction(values: {
+    type: ReactionType;
+    entityId: number;
+    reaction: ReviewReactions;
+    nswf: boolean;
+  }) {
+    return this.track('views', values);
+  }
 
-  clickhouse.insert({
-    table: 'resourceReviews',
-    values: [
-      {
-        type,
-        userId: 0, // todo:
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+  public question(values: { type: QuestionType; questionId: number }) {
+    return this.track('views', values);
+  }
 
-export async function trackReaction(
-  req: NextApiRequest,
-  type: ReactionType,
-  entityId: number,
-  reaction: ReviewReactions
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  public answer(values: { type: AnswerType; questionId: number; answerId: number }) {
+    return this.track('views', values);
+  }
 
-  clickhouse.insert({
-    table: 'reactions',
-    values: [
-      {
-        type,
-        userId: 0, // todo:
-        entityId,
-        reaction,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+  public comment(
+    values:
+      | {
+          type: CommentType;
+          entityId: number;
+          nsfw: boolean;
+        }
+      | TrackRequest
+  ) {
+    return this.track('views', values);
+  }
 
-export async function trackReport(
-  req: NextApiRequest,
-  type: ReportType,
-  userId: number,
-  reason: ReportReason,
-  status: ReportStatus
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  public post(values: { type: PostActivityType; postId: number; nsfw: boolean; tags: string[] }) {
+    return this.track('views', values);
+  }
 
-  clickhouse.insert({
-    table: 'reports',
-    values: [
-      {
-        type,
-        userId,
-        reason,
-        status,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+  public image(values: {
+    type: ImageActivityType;
+    imageId: number;
+    nsfw: boolean;
+    tags: string[];
+  }) {
+    return this.track('views', values);
+  }
 
-export async function trackModelEngagement(
-  req: NextApiRequest,
-  type: ModelEngagementType,
-  modelId: number
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  public modelEngagement(values: { type: ModelEngagementType; modelId: number }) {
+    return this.track('views', values);
+  }
 
-  clickhouse.insert({
-    table: 'modelEngagement',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        modelId,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
+  public tagEngagement(values: { type: TagEngagementType; tagId: number }) {
+    return this.track('views', values);
+  }
 
-export async function trackTagEngagement(
-  req: NextApiRequest,
-  type: TagEngagementType,
-  tagId: number
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
+  public userEngagement(values: { type: UserEngagementType; targetUserId: number }) {
+    return this.track('views', values);
+  }
 
-  clickhouse.insert({
-    table: 'tagEngagement',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        tagId,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
-
-export async function trackUserEngagement(
-  req: NextApiRequest,
-  type: UserEngagementType,
-  targetUserId: number
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
-
-  clickhouse.insert({
-    table: 'userEngagement',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        targetUserId,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
-
-export async function trackComment(
-  req: NextApiRequest,
-  type: CommentType,
-  entityId: number,
-  nsfw: boolean
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
-
-  clickhouse.insert({
-    table: 'comments',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        entityId,
-        nsfw,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
-
-export async function trackPost(
-  req: NextApiRequest,
-  type: PostActivityType,
-  postId: number,
-  nsfw: boolean,
-  tags: string[]
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
-
-  clickhouse.insert({
-    table: 'posts',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        postId,
-        tags,
-        nsfw,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
-
-export async function trackImage(
-  req: NextApiRequest,
-  type: ImageActivityType,
-  imageId: number,
-  nsfw: boolean,
-  tags: string[]
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
-
-  clickhouse.insert({
-    table: 'images',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        imageId,
-        tags,
-        nsfw,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
-
-export async function trackQuestion(req: NextApiRequest, type: QuestionType, questionId: number) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
-
-  clickhouse.insert({
-    table: 'questions',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        questionId,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
-}
-
-export async function trackAnswer(
-  req: NextApiRequest,
-  type: AnswerType,
-  questionId: number,
-  answerId: number
-) {
-  const ip = requestIp.getClientIp(req);
-  const userAgent = req.headers['user-agent'];
-
-  clickhouse.insert({
-    table: 'answers',
-    values: [
-      {
-        type,
-        userId: 0, // todo
-        questionId,
-        answerId,
-        ip,
-        userAgent,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
+  public report(values: {
+    type: ReportType;
+    userId: number;
+    entityType: string;
+    entityId: number;
+    reason: ReportReason;
+    status: ReportStatus;
+  }) {
+    return this.track('views', values);
+  }
 }
