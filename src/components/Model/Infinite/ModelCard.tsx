@@ -406,15 +406,7 @@ export function AmbientModelCard({ data, width, height }: Props) {
                             </Menu>
                           )}
                           <Group spacing={4} className={classes.cardBadges}>
-                            <ImageGuard.ToggleConnect
-                              sx={(theme) => ({
-                                backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                                color: 'white',
-                                backdropFilter: 'blur(7px)',
-                                boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                              })}
-                              position="static"
-                            />
+                            <ImageGuard.ToggleConnect position="static" />
                             {modelBadges}
                           </Group>
                           <ImageGuard.Unsafe>

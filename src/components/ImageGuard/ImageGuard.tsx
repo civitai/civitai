@@ -13,7 +13,7 @@ import {
   HoverCard,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '@prisma/client';
 import {
   IconDotsVertical,
   IconEye,
@@ -33,13 +33,12 @@ import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ImageModel } from '~/server/selectors/image.selector';
-import { SimpleTag } from '~/server/selectors/tag.selector';
 import { useImageStore } from '~/store/images.store';
 import { isDefined } from '~/utils/type-guards';
 import Router, { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { isNsfwImage } from '~/server/common/model-helpers';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -106,10 +105,11 @@ const useImageGuardContext = () => {
 
 type ImageProps = {
   id: number;
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   imageNsfw?: boolean;
   postId?: number | null;
   width?: number | null;
+  height?: number | null;
   needsReview?: boolean;
 };
 
@@ -178,7 +178,7 @@ function ImageGuardContentProvider({
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const showing = showConnection ?? showImage;
-  const nsfw = !!userId && userId === currentUser?.id ? false : imageStore.nsfw ?? image.nsfw;
+  const nsfw = imageStore.nsfw ?? isNsfwImage(image);
   const nsfwWithBlur = nsfw && shouldBlur;
   const unsafe = nsfwWithBlur && !showing;
   const safe = !unsafe;
@@ -197,11 +197,7 @@ function ImageGuardContentProvider({
         showToggleConnect,
         showReportNsfw,
         canToggleNsfw,
-        image: {
-          ...image,
-          nsfw: nsfwWithBlur,
-          imageNsfw: nsfw,
-        },
+        image,
         isOwner,
         isModerator,
       }}
@@ -364,20 +360,29 @@ ImageGuard.Report = function ReportImage({
   );
 };
 
-ImageGuard.ToggleImage = function ToggleImage({
-  position = 'top-left',
+const getNsfwBadgeContent = {
+  [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
+  [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },
+  [NsfwLevel.Mature]: { label: '17', color: 'orange', shade: 7 },
+  [NsfwLevel.X]: { label: '18', color: 'red', shade: 9 },
+};
+
+const NsfwBadge = ({
+  showImage,
+  position,
   sx,
   className,
+  onClick,
 }: {
+  showImage: boolean;
+  onClick: () => void;
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
-}) {
-  const { image, showToggleImage, canToggleNsfw } = useImageGuardContentContext();
-  const showImage = useStore((state) => state.showingImages[image.id.toString()]);
-  const toggleImage = useStore((state) => state.toggleImage);
-
-  if (!showToggleImage || !canToggleNsfw) return null;
+}) => {
+  const { image, canToggleNsfw } = useImageGuardContentContext();
+  const { color, label, shade } =
+    getNsfwBadgeContent[image.nsfw] || getNsfwBadgeContent[NsfwLevel.X];
 
   return (
     <ImageGuardPopover>
@@ -389,6 +394,10 @@ ImageGuard.ToggleImage = function ToggleImage({
         sx={(theme) => ({
           cursor: canToggleNsfw ? 'pointer' : undefined,
           userSelect: 'none',
+          backgroundColor: theme.fn.rgba(theme.colors[color][shade], 0.6),
+          color: 'white',
+          backdropFilter: 'blur(7px)',
+          boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
           ...(position !== 'static'
             ? {
                 position: 'absolute',
@@ -401,7 +410,7 @@ ImageGuard.ToggleImage = function ToggleImage({
           ...(sx && sx instanceof Function ? sx(theme) : sx),
         })}
         className={className}
-        onClick={canToggleNsfw ? () => toggleImage(image.id) : undefined}
+        onClick={canToggleNsfw ? () => onClick() : undefined}
       >
         <Group spacing={5} noWrap>
           <Text
@@ -418,7 +427,7 @@ ImageGuard.ToggleImage = function ToggleImage({
             }}
             component="span"
           >
-            18
+            {label}
             <Box component="span" sx={{ marginLeft: 1 }}>
               <IconPlus size={8} strokeWidth={5} />
             </Box>
@@ -435,11 +444,21 @@ ImageGuard.ToggleImage = function ToggleImage({
   );
 };
 
-ImageGuard.ToggleConnect = function ToggleConnect({
-  position = 'top-left',
-  sx,
-  className,
-}: {
+ImageGuard.ToggleImage = function ToggleImage(props: {
+  position?: 'static' | 'top-left' | 'top-right';
+  sx?: Sx;
+  className?: string;
+}) {
+  const { image, showToggleImage, canToggleNsfw } = useImageGuardContentContext();
+  const showImage = useStore((state) => state.showingImages[image.id.toString()]);
+  const toggleImage = useStore((state) => state.toggleImage);
+
+  if (!showToggleImage || !canToggleNsfw) return null;
+
+  return <NsfwBadge showImage={showImage} onClick={() => toggleImage(image.id)} {...props} />;
+};
+
+ImageGuard.ToggleConnect = function ToggleConnect(props: {
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
@@ -460,58 +479,11 @@ ImageGuard.ToggleConnect = function ToggleConnect({
 
   const showing = showConnect ?? showImage;
   return (
-    <ImageGuardPopover>
-      <Badge
-        color="red"
-        variant="filled"
-        size="sm"
-        px={6}
-        sx={(theme) => ({
-          cursor: canToggleNsfw ? 'pointer' : undefined,
-          userSelect: 'none',
-          ...(position !== 'static'
-            ? {
-                position: 'absolute',
-                top: theme.spacing.xs,
-                left: position === 'top-left' ? theme.spacing.xs : undefined,
-                right: position === 'top-right' ? theme.spacing.xs : undefined,
-                zIndex: 10,
-              }
-            : {}),
-          ...(sx && sx instanceof Function ? sx(theme) : sx),
-        })}
-        className={className}
-        onClick={canToggleNsfw && connect ? () => toggleConnect(connect) : undefined}
-      >
-        <Group spacing={5} noWrap>
-          <Text
-            weight="bold"
-            sx={{
-              whiteSpace: 'nowrap',
-              ...(canToggleNsfw
-                ? {
-                    borderRight: '1px solid rgba(0,0,0,.15)',
-                    boxShadow: '0 1px 0 1px rgba(255,255,255,.1)',
-                    paddingRight: 5,
-                  }
-                : {}),
-            }}
-            component="span"
-          >
-            18
-            <Box component="span" sx={{ marginLeft: 1 }}>
-              <IconPlus size={8} strokeWidth={5} />
-            </Box>
-          </Text>
-          {canToggleNsfw &&
-            (showing ? (
-              <IconEyeOff size={14} strokeWidth={2.5} />
-            ) : (
-              <IconEye size={14} strokeWidth={2.5} />
-            ))}
-        </Group>
-      </Badge>
-    </ImageGuardPopover>
+    <NsfwBadge
+      showImage={showing}
+      onClick={() => (connect ? toggleConnect(connect) : undefined)}
+      {...props}
+    />
   );
 };
 
@@ -521,8 +493,9 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
   const { image } = useImageGuardContentContext();
   const [opened, setOpened] = useState(false);
   const router = useRouter();
+  const nsfw = isNsfwImage(image);
 
-  if (image.nsfw && !isAuthenticated)
+  if (nsfw && !isAuthenticated)
     return (
       <Popover
         width={300}

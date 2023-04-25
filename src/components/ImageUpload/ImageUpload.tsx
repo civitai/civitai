@@ -46,6 +46,7 @@ import {
 } from '@tabler/icons';
 import produce from 'immer';
 import { cloneElement, useMemo, useState } from 'react';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -300,8 +301,8 @@ function UploadedImage({
   const showLoading = image.status && !isError && !isComplete && !isBlocked;
   const needsReview = useMemo(() => {
     if (image.id || image.status !== 'complete') return false;
-    return getNeedsReview({ analysis: image.analysis, nsfw: image.nsfw });
-  }, [image.id, image.analysis, image.nsfw, image.status]);
+    return getNeedsReview({ analysis: image.analysis });
+  }, [image.id, image.analysis, image.status]);
 
   return (
     <ImageUploadPreview image={image} isPrimary={isPrimary} id={image.url}>
@@ -376,15 +377,7 @@ function UploadedImage({
               </ActionIcon>
             </Tooltip> */}
             {withMeta && (
-              <ImageMetaPopover
-                meta={image.meta}
-                tags={image.tags ?? []}
-                nsfw={image.nsfw ?? false}
-                onSubmit={(data) => filesHandler.setItem(index, { ...image, ...data })}
-                onCopyTags={(tags) => {
-                  filesHandler.apply((item) => ({ ...item, tags }));
-                }}
-              >
+              <ImageMetaPopover meta={image.meta as ImageMetaProps}>
                 <ActionIcon
                   variant="outline"
                   color={image.meta && Object.keys(image.meta).length ? 'primary' : undefined}
@@ -392,6 +385,22 @@ function UploadedImage({
                   <IconPencil />
                 </ActionIcon>
               </ImageMetaPopover>
+              // <ImageMetaPopover
+              //   meta={image.meta}
+              //   tags={image.tags ?? []}
+              //   nsfw={image.nsfw ?? false}
+              //   onSubmit={(data) => filesHandler.setItem(index, { ...image, ...data })}
+              //   onCopyTags={(tags) => {
+              //     filesHandler.apply((item) => ({ ...item, tags }));
+              //   }}
+              // >
+              //   <ActionIcon
+              //     variant="outline"
+              //     color={image.meta && Object.keys(image.meta).length ? 'primary' : undefined}
+              //   >
+              //     <IconPencil />
+              //   </ActionIcon>
+              // </ImageMetaPopover>
             )}
           </>
         )}
@@ -410,185 +419,185 @@ function UploadedImage({
   );
 }
 
-function ImageMetaPopover({
-  children,
-  meta,
-  tags,
-  nsfw,
-  onSubmit,
-  onCopyTags,
-}: {
-  children: React.ReactElement;
-  meta?: ImageMetaProps | null;
-  onSubmit?: (data: { meta: ImageMetaProps | null; tags: SimpleTag[]; nsfw: boolean }) => void;
-  tags: SimpleTag[];
-  nsfw: boolean;
-  onCopyTags?: (tags: SimpleTag[]) => void;
-}) {
-  const [opened, setOpened] = useState(false);
+// function ImageMetaPopover({
+//   children,
+//   meta,
+//   tags,
+//   nsfw,
+//   onSubmit,
+//   onCopyTags,
+// }: {
+//   children: React.ReactElement;
+//   meta?: ImageMetaProps | null;
+//   onSubmit?: (data: { meta: ImageMetaProps | null; tags: SimpleTag[]; nsfw: boolean }) => void;
+//   tags: SimpleTag[];
+//   nsfw: boolean;
+//   onCopyTags?: (tags: SimpleTag[]) => void;
+// }) {
+//   const [opened, setOpened] = useState(false);
 
-  const [prompt, setPrompt] = useState<string | undefined>(meta?.prompt);
-  const [negativePrompt, setNegativePrompt] = useState<string | undefined>(meta?.negativePrompt);
-  const [cfgScale, setCfgScale] = useState<number | undefined>(meta?.cfgScale);
-  const [steps, setSteps] = useState<number | undefined>(meta?.steps);
-  const [sampler, setSampler] = useState<string | undefined>(meta?.sampler);
-  const [seed, setSeed] = useState<number | undefined>(meta?.seed);
-  const [imageTags, setImageTags] = useState<SimpleTag[]>(tags);
-  const [tab, setTab] = useLocalStorage<string | null>({
-    key: 'image-meta-tab',
-    defaultValue: 'tags',
-  });
-  const [imageNsfw, setImageNsfw] = useState(nsfw);
+//   const [prompt, setPrompt] = useState<string | undefined>(meta?.prompt);
+//   const [negativePrompt, setNegativePrompt] = useState<string | undefined>(meta?.negativePrompt);
+//   const [cfgScale, setCfgScale] = useState<number | undefined>(meta?.cfgScale);
+//   const [steps, setSteps] = useState<number | undefined>(meta?.steps);
+//   const [sampler, setSampler] = useState<string | undefined>(meta?.sampler);
+//   const [seed, setSeed] = useState<number | undefined>(meta?.seed);
+//   const [imageTags, setImageTags] = useState<SimpleTag[]>(tags);
+//   const [tab, setTab] = useLocalStorage<string | null>({
+//     key: 'image-meta-tab',
+//     defaultValue: 'tags',
+//   });
+//   const [imageNsfw, setImageNsfw] = useState(nsfw);
 
-  const handleClose = () => {
-    setPrompt(meta?.prompt);
-    setNegativePrompt(meta?.negativePrompt);
-    setCfgScale(meta?.cfgScale);
-    setSteps(meta?.steps);
-    setSampler(meta?.sampler);
-    setSeed(meta?.seed);
-    setImageTags(tags);
-    setImageNsfw(nsfw);
-    setOpened((v) => !v);
-  };
+//   const handleClose = () => {
+//     setPrompt(meta?.prompt);
+//     setNegativePrompt(meta?.negativePrompt);
+//     setCfgScale(meta?.cfgScale);
+//     setSteps(meta?.steps);
+//     setSampler(meta?.sampler);
+//     setSeed(meta?.seed);
+//     setImageTags(tags);
+//     setImageNsfw(nsfw);
+//     setOpened((v) => !v);
+//   };
 
-  const handleSubmit = () => {
-    const newMeta = { ...meta, prompt, negativePrompt, cfgScale, steps, sampler, seed };
-    const keys = Object.keys(newMeta) as Array<keyof typeof newMeta>;
-    const toSubmit = keys.reduce<ImageMetaProps>((acc, key) => {
-      if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
-      return acc;
-    }, {});
-    onSubmit?.({
-      meta: Object.keys(toSubmit).length ? toSubmit : null,
-      tags: imageTags,
-      nsfw: imageNsfw,
-    });
-    setOpened(false);
-  };
+//   const handleSubmit = () => {
+//     const newMeta = { ...meta, prompt, negativePrompt, cfgScale, steps, sampler, seed };
+//     const keys = Object.keys(newMeta) as Array<keyof typeof newMeta>;
+//     const toSubmit = keys.reduce<ImageMetaProps>((acc, key) => {
+//       if (newMeta[key]) return { ...acc, [key]: newMeta[key] };
+//       return acc;
+//     }, {});
+//     onSubmit?.({
+//       meta: Object.keys(toSubmit).length ? toSubmit : null,
+//       tags: imageTags,
+//       nsfw: imageNsfw,
+//     });
+//     setOpened(false);
+//   };
 
-  const generationParams = (
-    <Grid gutter="xs">
-      <Grid.Col span={12}>
-        <Textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          label="Prompt"
-          autosize
-          maxRows={3}
-        />
-      </Grid.Col>
-      <Grid.Col span={12}>
-        <Textarea
-          value={negativePrompt}
-          onChange={(e) => setNegativePrompt(e.target.value)}
-          label="Negative prompt"
-          autosize
-          maxRows={3}
-        />
-      </Grid.Col>
-      <Grid.Col span={6}>
-        <NumberInput
-          value={cfgScale}
-          onChange={(number) => setCfgScale(number)}
-          label="Guidance scale"
-          min={0}
-          max={30}
-        />
-      </Grid.Col>
-      <Grid.Col span={6}>
-        <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
-      </Grid.Col>
-      <Grid.Col span={6}>
-        <Select
-          clearable
-          searchable
-          data={[
-            'Euler a',
-            'Euler',
-            'LMS',
-            'Heun',
-            'DPM2',
-            'DPM2 a',
-            'DPM++ 2S a',
-            'DPM++ 2M',
-            'DPM++ SDE',
-            'DPM fast',
-            'DPM adaptive',
-            'LMS Karras',
-            'DPM2 Karras',
-            'DPM2 a Karras',
-            'DPM++ 2S a Karras',
-            'DPM++ 2M Karras',
-            'DPM++ SDE Karras',
-            'DDIM',
-            'PLMS',
-            'UniPC',
-          ]}
-          value={sampler}
-          onChange={(value) => setSampler(value ?? undefined)}
-          label="Sampler"
-        />
-      </Grid.Col>
-      <Grid.Col span={6}>
-        <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
-      </Grid.Col>
-    </Grid>
-  );
+//   const generationParams = (
+//     <Grid gutter="xs">
+//       <Grid.Col span={12}>
+//         <Textarea
+//           value={prompt}
+//           onChange={(e) => setPrompt(e.target.value)}
+//           label="Prompt"
+//           autosize
+//           maxRows={3}
+//         />
+//       </Grid.Col>
+//       <Grid.Col span={12}>
+//         <Textarea
+//           value={negativePrompt}
+//           onChange={(e) => setNegativePrompt(e.target.value)}
+//           label="Negative prompt"
+//           autosize
+//           maxRows={3}
+//         />
+//       </Grid.Col>
+//       <Grid.Col span={6}>
+//         <NumberInput
+//           value={cfgScale}
+//           onChange={(number) => setCfgScale(number)}
+//           label="Guidance scale"
+//           min={0}
+//           max={30}
+//         />
+//       </Grid.Col>
+//       <Grid.Col span={6}>
+//         <NumberInput value={steps} onChange={(value) => setSteps(value)} label="Steps" />
+//       </Grid.Col>
+//       <Grid.Col span={6}>
+//         <Select
+//           clearable
+//           searchable
+//           data={[
+//             'Euler a',
+//             'Euler',
+//             'LMS',
+//             'Heun',
+//             'DPM2',
+//             'DPM2 a',
+//             'DPM++ 2S a',
+//             'DPM++ 2M',
+//             'DPM++ SDE',
+//             'DPM fast',
+//             'DPM adaptive',
+//             'LMS Karras',
+//             'DPM2 Karras',
+//             'DPM2 a Karras',
+//             'DPM++ 2S a Karras',
+//             'DPM++ 2M Karras',
+//             'DPM++ SDE Karras',
+//             'DDIM',
+//             'PLMS',
+//             'UniPC',
+//           ]}
+//           value={sampler}
+//           onChange={(value) => setSampler(value ?? undefined)}
+//           label="Sampler"
+//         />
+//       </Grid.Col>
+//       <Grid.Col span={6}>
+//         <NumberInput value={seed} onChange={(value) => setSeed(value)} label="Seed" />
+//       </Grid.Col>
+//     </Grid>
+//   );
 
-  return (
-    <Popover
-      opened={opened}
-      onClose={handleClose}
-      position="bottom"
-      withArrow
-      withinPortal
-      width={400}
-    >
-      <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
-      <Popover.Dropdown>
-        {/* <Tabs value={tab} onTabChange={setTab}>
-          <Tabs.List grow>
-            <Tabs.Tab value="tags">Tags</Tabs.Tab>
-            <Tabs.Tab value="meta">Generation Details</Tabs.Tab>
-          </Tabs.List>
-          <Tabs.Panel value="tags" p="xs">
-            <ImageTagTab
-              imageTags={imageTags}
-              imageNsfw={imageNsfw}
-              onChange={({ tags, nsfw }) => {
-                setImageTags(tags);
-                setImageNsfw(nsfw);
-              }}
-            />
-          </Tabs.Panel>
-          <Tabs.Panel value="meta" p="xs">
-            {generationParams}
-          </Tabs.Panel>
-        </Tabs> */}
-        <Title order={4}>Generation details</Title>
-        {generationParams}
-        <Group position="right" spacing={4} pt="sm">
-          <Button fullWidth onClick={handleSubmit}>
-            Save
-          </Button>
-          {/* {tab === 'tags' && (
-            <Button
-              variant="subtle"
-              size="xs"
-              onClick={() => {
-                onCopyTags?.(imageTags);
-                // handleSubmit();
-              }}
-            >
-              Copy tags to all images
-            </Button>
-          )} */}
-        </Group>
-      </Popover.Dropdown>
-    </Popover>
-  );
-}
+//   return (
+//     <Popover
+//       opened={opened}
+//       onClose={handleClose}
+//       position="bottom"
+//       withArrow
+//       withinPortal
+//       width={400}
+//     >
+//       <Popover.Target>{cloneElement(children, { onClick: handleClose })}</Popover.Target>
+//       <Popover.Dropdown>
+//         {/* <Tabs value={tab} onTabChange={setTab}>
+//           <Tabs.List grow>
+//             <Tabs.Tab value="tags">Tags</Tabs.Tab>
+//             <Tabs.Tab value="meta">Generation Details</Tabs.Tab>
+//           </Tabs.List>
+//           <Tabs.Panel value="tags" p="xs">
+//             <ImageTagTab
+//               imageTags={imageTags}
+//               imageNsfw={imageNsfw}
+//               onChange={({ tags, nsfw }) => {
+//                 setImageTags(tags);
+//                 setImageNsfw(nsfw);
+//               }}
+//             />
+//           </Tabs.Panel>
+//           <Tabs.Panel value="meta" p="xs">
+//             {generationParams}
+//           </Tabs.Panel>
+//         </Tabs> */}
+//         <Title order={4}>Generation details</Title>
+//         {generationParams}
+//         <Group position="right" spacing={4} pt="sm">
+//           <Button fullWidth onClick={handleSubmit}>
+//             Save
+//           </Button>
+//           {/* {tab === 'tags' && (
+//             <Button
+//               variant="subtle"
+//               size="xs"
+//               onClick={() => {
+//                 onCopyTags?.(imageTags);
+//                 // handleSubmit();
+//               }}
+//             >
+//               Copy tags to all images
+//             </Button>
+//           )} */}
+//         </Group>
+//       </Popover.Dropdown>
+//     </Popover>
+//   );
+// }
 
 // function ImageTagTab({
 //   imageTags = [],

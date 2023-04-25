@@ -144,13 +144,18 @@ export default WebhookEndpoint(async function imageTags(req, res) {
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
-    // Set scannedAt and nsfw
+    // Set scannedAt and needsReview
     const shouldReview = hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw);
     const image = await dbWrite.image.update({
       where: { id: imageId },
-      data: { scannedAt: new Date(), nsfw, needsReview: shouldReview ? true : undefined },
+      data: { scannedAt: new Date(), needsReview: shouldReview ? true : undefined },
       select: { id: true, meta: true },
     });
+
+    // Set nsfw level
+    await dbWrite.$executeRaw`
+      SELECT update_nsfw_level(${imageId}::int);
+    `;
 
     // Check metadata for blocklist if nsfw, if on blocklist, delete it...
     const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
