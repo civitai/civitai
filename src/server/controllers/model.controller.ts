@@ -346,7 +346,7 @@ export const publishModelHandler = async ({
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { status: true, meta: true, nsfw },
+      select: { status: true, meta: true, nsfw: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
@@ -884,7 +884,7 @@ export const changeModelModifierHandler = async ({
       data: { mode, meta: { ...updatedMeta } },
     });
 
-    if ([ModelModifier.Archived, ModelModifier.TakenDown].includes(mode)) {
+    if (mode === ModelModifier.Archived || mode === ModelModifier.TakenDown) {
       await ctx.track.modelEvent({
         type: mode === ModelModifier.Archived ? 'Archive' : 'Takedown',
         modelId: updatedModel.id,
