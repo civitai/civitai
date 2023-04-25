@@ -11,15 +11,17 @@ export const toggleReaction = async ({
   reaction,
 }: ToggleReactionInput & { userId: number }) => {
   const existing = await getReaction({ entityType, entityId, userId, reaction });
-  if (existing) return await deleteReaction({ entityType, id: existing.id, entityId });
-  else {
+  if (existing) {
+    await deleteReaction({ entityType, id: existing.id, entityId });
+    return 'removed';
+  } else {
     await createReaction({ entityType, entityId, userId, reaction });
     await playfab.trackEvent(userId, {
       eventName: `user_react_${entityType}`,
       entityId,
       reaction,
     });
-    return;
+    return 'created';
   }
 };
 

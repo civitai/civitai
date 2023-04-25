@@ -102,7 +102,13 @@ export class Tracker {
     return this.track('userActivities', values);
   }
 
-  public resourceReview(values: { type: ResourceReviewType }) {
+  public resourceReview(values: {
+    type: ResourceReviewType;
+    modelId: number;
+    modelVersionId: number;
+    nsfw: boolean;
+    rating: number;
+  }) {
     return this.track('resourceReviews', values);
   }
 
@@ -110,7 +116,7 @@ export class Tracker {
     type: ReactionType;
     entityId: number;
     reaction: ReviewReactions;
-    nswf: boolean;
+    nsfw: boolean;
   }) {
     return this.track('reactions', values);
   }
@@ -123,15 +129,7 @@ export class Tracker {
     return this.track('answers', values);
   }
 
-  public comment(
-    values:
-      | {
-          type: CommentType;
-          entityId: number;
-          nsfw: boolean;
-        }
-      | TrackRequest
-  ) {
+  public comment(values: { type: CommentType; entityId: number; nsfw: boolean }) {
     return this.track('comments', values);
   }
 

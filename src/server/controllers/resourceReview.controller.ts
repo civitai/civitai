@@ -37,7 +37,15 @@ export const createResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await createResourceReview({ ...input, userId: ctx.user.id });
+    const result = await createResourceReview({ ...input, userId: ctx.user.id });
+    await ctx.track.resourceReview({
+      type: 'Create',
+      modelId: result.modelId,
+      modelVersionId: result.modelVersion.id,
+      rating: result.rating,
+      nsfw: result.nsfw,
+    });
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -65,7 +73,15 @@ export const deleteResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await deleteResourceReview(input);
+    const result = await deleteResourceReview(input);
+    await ctx.track.resourceReview({
+      type: 'Delete',
+      modelId: result.modelId,
+      modelVersionId: result.modelVersionId,
+      rating: result.rating,
+      nsfw: result.nsfw,
+    });
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
