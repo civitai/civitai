@@ -444,7 +444,19 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    return await getImage({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator });
+    const result = await getImage({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
+
+    await ctx.track.view({
+      entityId: result.id,
+      entityType: 'Image',
+      type: 'ImageView',
+    });
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
