@@ -188,10 +188,32 @@ export const moderateImageHandler = async ({ input }: { input: ImageModerationSc
   }
 };
 
-export const deleteImageHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
+    const imageTags = await dbRead.imageTag.findMany({
+      where: {
+        imageId: input.id,
+      },
+      select: {
+        tagName: true,
+      },
+    });
+
     const image = await deleteImageById(input);
     if (!image) throw throwNotFoundError(`No image with id ${input.id} found`);
+
+    await ctx.track.image({
+      type: 'Delete',
+      imageId: image.id,
+      nsfw: image.nsfw,
+      tags: imageTags.map((x) => x.tagName),
+    });
 
     return image;
   } catch (error) {
