@@ -17,7 +17,11 @@ import {
   deleteVersionById,
   publishModelVersionById,
 } from '~/server/services/model-version.service';
-import { updateModelEarlyAccessDeadline, updateModelById } from '~/server/services/model.service';
+import {
+  updateModelEarlyAccessDeadline,
+  updateModelById,
+  getModel,
+} from '~/server/services/model.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -111,7 +115,13 @@ export const toggleNotifyEarlyAccessHandler = async ({
   }
 };
 
-export const upsertModelVersionHandler = async ({ input }: { input: ModelVersionUpsertInput }) => {
+export const upsertModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelVersionUpsertInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const version = await upsertModelVersion({ ...input });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
@@ -122,6 +132,24 @@ export const upsertModelVersionHandler = async ({ input }: { input: ModelVersion
         console.error('Unable to update model early access deadline');
         console.error(e);
       });
+
+    if (!input.id) {
+      const model = await getModel({
+        id: version.modelId,
+        select: {
+          nsfw: true,
+        },
+      });
+
+      if (model) {
+        ctx.track.modelVersionEvent({
+          type: 'Create',
+          modelId: version.modelId,
+          modelVersionId: version.id,
+          nsfw: model.nsfw,
+        });
+      }
+    }
 
     return version;
   } catch (error) {
@@ -147,7 +175,13 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
   }
 };
 
-export const publishModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+export const publishModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const version = await publishModelVersionById(input);
 
@@ -155,6 +189,22 @@ export const publishModelVersionHandler = async ({ input }: { input: GetByIdInpu
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
+
+    const model = await getModel({
+      id: version.modelId,
+      select: {
+        nsfw: true,
+      },
+    });
+
+    if (model) {
+      ctx.track.modelVersionEvent({
+        type: 'Publish',
+        modelId: version.modelId,
+        modelVersionId: version.id,
+        nsfw: model.nsfw,
+      });
+    }
 
     return version;
   } catch (error) {
