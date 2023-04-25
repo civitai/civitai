@@ -178,8 +178,7 @@ function ImageGuardContentProvider({
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const showing = showConnection ?? showImage;
-  const nsfw =
-    !!userId && userId === currentUser?.id ? false : imageStore.nsfw ?? isNsfwImage(image);
+  const nsfw = imageStore.nsfw ?? isNsfwImage(image);
   const nsfwWithBlur = nsfw && shouldBlur;
   const unsafe = nsfwWithBlur && !showing;
   const safe = !unsafe;
@@ -362,10 +361,10 @@ ImageGuard.Report = function ReportImage({
 };
 
 const getNsfwBadgeContent = {
-  [NsfwLevel.None]: { label: '', color: 'gray' },
-  [NsfwLevel.Soft]: { label: '13', color: 'yellow' },
-  [NsfwLevel.Mature]: { label: '18', color: 'orange' },
-  [NsfwLevel.X]: { label: '18', color: 'red' },
+  [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
+  [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },
+  [NsfwLevel.Mature]: { label: '17', color: 'orange', shade: 7 },
+  [NsfwLevel.X]: { label: '18', color: 'red', shade: 9 },
 };
 
 const NsfwBadge = ({
@@ -382,7 +381,8 @@ const NsfwBadge = ({
   className?: string;
 }) => {
   const { image, canToggleNsfw } = useImageGuardContentContext();
-  const { color, label } = getNsfwBadgeContent[image.nsfw] || { color: 'orange', label: '18' };
+  const { color, label, shade } =
+    getNsfwBadgeContent[image.nsfw] || getNsfwBadgeContent[NsfwLevel.X];
 
   return (
     <ImageGuardPopover>
@@ -394,7 +394,7 @@ const NsfwBadge = ({
         sx={(theme) => ({
           cursor: canToggleNsfw ? 'pointer' : undefined,
           userSelect: 'none',
-          backgroundColor: theme.fn.rgba(theme.colors[color][7], 0.4),
+          backgroundColor: theme.fn.rgba(theme.colors[color][shade], 0.6),
           color: 'white',
           backdropFilter: 'blur(7px)',
           boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',

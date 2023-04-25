@@ -88,7 +88,10 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                 }}
               >
                 <ImageGuard.ToggleConnect position="top-left" />
-                <ImageGuard.ToggleImage position="top-left" />
+                <ImageGuard.ToggleImage
+                  position="top-left"
+                  sx={(theme) => ({ borderRadius: theme.radius.sm })}
+                />
                 <ImageGuard.Report />
                 <ImageGuard.Unsafe>
                   <MediaHash {...image} />

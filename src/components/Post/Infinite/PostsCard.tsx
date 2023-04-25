@@ -31,7 +31,7 @@ export function PostsCard({
                     {({ safe }) => (
                       <>
                         <ImageGuard.Report />
-                        <ImageGuard.ToggleConnect />
+                        <ImageGuard.ToggleConnect position="top-left" />
                         <RoutedContextLink modal="postDetailModal" postId={id}>
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>

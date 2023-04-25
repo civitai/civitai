@@ -38,7 +38,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                     {({ safe }) => (
                       <>
                         <ImageGuard.Report />
-                        <ImageGuard.ToggleImage />
+                        <ImageGuard.ToggleImage position="top-left" />
                         <RoutedContextLink modal="imageDetailModal" imageId={image.id} {...filters}>
                           {!safe ? (
                             <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>

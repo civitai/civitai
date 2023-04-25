@@ -154,7 +154,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
     // Set nsfw level
     await dbWrite.$executeRaw`
-      SELECT update_nsfw_level(${imageId});
+      SELECT update_nsfw_level(${imageId}::int);
     `;
 
     // Check metadata for blocklist if nsfw, if on blocklist, delete it...
