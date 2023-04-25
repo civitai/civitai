@@ -22,6 +22,7 @@ export const imagesQueryParamSchema = z
     sort: z.nativeEnum(ImageSort),
     tags: numericStringArray(),
     view: z.enum(['categories', 'feed']),
+    excludeCrossPosts: z.boolean(),
   })
   .partial();
 

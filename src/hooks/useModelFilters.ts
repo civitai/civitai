@@ -31,6 +31,7 @@ const filterSchema = z.object({
 
 type FilterState = z.infer<typeof filterSchema>;
 
+// DEPRECATED
 export function useModelFilters() {
   const router = useRouter();
 

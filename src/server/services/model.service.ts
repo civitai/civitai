@@ -74,6 +74,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     types,
     sort,
     period = MetricTimeframe.AllTime,
+    periodMode,
     rating,
     favorites,
     hidden,
@@ -218,7 +219,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND: AND.length ? AND : undefined,
     modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
     lastVersionAt:
-      period !== MetricTimeframe.AllTime
+      period !== MetricTimeframe.AllTime && periodMode !== 'stats'
         ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
         : undefined,
   };

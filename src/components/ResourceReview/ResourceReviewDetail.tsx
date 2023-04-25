@@ -17,7 +17,7 @@ import { NextLink } from '@mantine/next';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { trpc } from '~/utils/trpc';
-import { slugit } from '~/utils/string-helpers';
+import { removeTags, slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
 import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
@@ -30,6 +30,8 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import Link from 'next/link';
 import { formatDate } from '~/utils/date-helpers';
 import { PostSort } from '~/server/common/enums';
+import { Meta } from '~/components/Meta/Meta';
+import { truncate } from 'lodash-es';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -59,6 +61,12 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
 
   return (
     <>
+      <Meta
+        title={`${data.model.name} - ${data.modelVersion.name} - Review by ${data.user.username}`}
+        description={`${data.rating} star review${
+          data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''
+        }`}
+      />
       <Container mb="md">
         <Stack>
           <Group position="apart" noWrap align="center">

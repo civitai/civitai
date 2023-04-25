@@ -7,7 +7,7 @@ import { useRouter } from 'next/router';
 import { useRef, useEffect, useMemo, forwardRef } from 'react';
 
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
-import { useModelFilters } from '~/hooks/useModelFilters';
+import { useModelQueryParams } from '~/components/Model/model.utils';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -21,10 +21,7 @@ const limit = 5;
 
 export function ListSearch({ onSearch }: Props) {
   const router = useRouter();
-  const {
-    filters: { tag, query, username },
-    setFilters,
-  } = useModelFilters();
+  const { tag, query, username, set } = useModelQueryParams();
   const searchRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useDebouncedState('', 300);
 
@@ -92,11 +89,11 @@ export function ListSearch({ onSearch }: Props) {
   };
 
   const handleSetQuery = (query: string) => {
-    setFilters((state) => ({ ...state, tag: undefined, query, username: undefined }));
+    set({ tag: undefined, query, username: undefined });
   };
 
   const handleClear = () => {
-    setFilters((state) => ({ ...state, tag: undefined, query: undefined, username: undefined }));
+    set({ tag: undefined, query: undefined, username: undefined });
   };
 
   const autocompleteData = useMemo(

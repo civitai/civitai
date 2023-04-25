@@ -1,5 +1,5 @@
 import { ResourceReviewModel } from '~/server/selectors/resourceReview.selector';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Card, Group, Rating, Stack, Text, Divider, Button } from '@mantine/core';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconChevronDown } from '@tabler/icons';
@@ -15,6 +15,10 @@ const schema = z.object({
   details: z.string().optional(),
 });
 
+export type ReviewEditCommandsRef = {
+  save: () => void;
+};
+
 export function EditUserResourceReview({
   resourceReview,
   modelId,
@@ -22,6 +26,7 @@ export function EditUserResourceReview({
   modelVersionName,
   modelVersionId,
   openedCommentBox = false,
+  innerRef,
 }: {
   resourceReview?: ResourceReviewModel;
   modelId: number;
@@ -29,6 +34,7 @@ export function EditUserResourceReview({
   modelVersionName?: string;
   modelVersionId: number;
   openedCommentBox?: boolean;
+  innerRef?: React.ForwardedRef<ReviewEditCommandsRef>;
 }) {
   const [editDetail, setEditDetail] = useState(openedCommentBox);
   const toggleEditDetail = () => {
@@ -72,6 +78,13 @@ export function EditUserResourceReview({
   useEffect(() => {
     form.reset({ details: resourceReview?.details ?? undefined });
   }, [resourceReview?.details]); // eslint-disable-line
+
+  // Used to call editor commands outside the component via a ref
+  useImperativeHandle(innerRef, () => ({
+    save: () => {
+      if (form.formState.isDirty) form.handleSubmit(handleSubmit)();
+    },
+  }));
 
   modelVersionName ??= resourceReview?.modelVersion.name;
 

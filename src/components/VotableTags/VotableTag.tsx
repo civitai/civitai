@@ -2,11 +2,12 @@ import { VotableTagConnectorInput } from '~/server/schema/tag.schema';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { ActionIcon, Badge, Group, useMantineTheme } from '@mantine/core';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { TagType } from '@prisma/client';
 import { IconArrowBigDown, IconArrowBigTop, IconFlag, IconX } from '@tabler/icons';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getTagDisplayName } from '~/libs/tags';
+import Link from 'next/link';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
@@ -85,95 +86,113 @@ export function VotableTag({
     }
   };
 
-  const handleUpvote = () =>
+  const handleUpvote: React.MouseEventHandler = (e) => {
+    e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation();
+
     runDebouncer(() => {
       const value = vote !== 1 ? 1 : 0;
       setVote({ entityId, entityType, name, vote: value });
       onChange({ name, vote: value });
     });
+  };
 
-  const handleDownvote = () =>
+  const handleDownvote: React.MouseEventHandler = (e) => {
+    e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation();
+
     runDebouncer(() => {
       const value = vote !== -1 ? -1 : 0;
       setVote({ entityId, entityType, name, vote: value });
       onChange({ name, vote: value });
     });
+  };
 
-  const handleRemove = () =>
+  const handleRemove: React.MouseEventHandler = (e) => {
+    e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation();
+
     runDebouncer(() => {
       setVote({ entityId, entityType, name, vote: 0 });
       onChange({ name, vote: 0 });
     });
+  };
 
   const canVote = tagId;
   return (
-    <Badge
-      radius="xs"
-      key={tagId}
-      sx={{
-        position: 'relative',
-        background: badgeBg,
-        borderColor: badgeBorder,
-        color: badgeColor.color,
-        [`&:before`]: {
-          content: '""',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          bottom: 0,
-          backgroundColor: progressBg,
-          width: `${opacity * 100}%`,
-        },
-      }}
-      pl={canVote ? 0 : 4}
-      pr={0}
-    >
-      <Group spacing={0}>
-        {canVote && (
-          <LoginPopover>
-            <ActionIcon
-              variant="transparent"
-              size="sm"
-              onClick={handleUpvote}
-              color={vote === 1 ? voteColor : undefined}
-            >
-              <IconArrowBigTop
-                strokeWidth={0}
-                fill={vote === 1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
-                size="1rem"
-              />
+    <Link href={`/images?tags=${tagId}`} passHref>
+      <Badge
+        component="a"
+        radius="xs"
+        key={tagId}
+        sx={{
+          position: 'relative',
+          background: badgeBg,
+          borderColor: badgeBorder,
+          color: badgeColor.color,
+          cursor: 'pointer',
+          userSelect: 'none',
+
+          [`&:before`]: {
+            content: '""',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            bottom: 0,
+            backgroundColor: progressBg,
+            width: `${opacity * 100}%`,
+          },
+        }}
+        pl={canVote ? 0 : 4}
+        pr={0}
+      >
+        <Group spacing={0}>
+          {canVote && (
+            <LoginPopover>
+              <ActionIcon
+                variant="transparent"
+                size="sm"
+                onClick={handleUpvote}
+                color={vote === 1 ? voteColor : undefined}
+              >
+                <IconArrowBigTop
+                  strokeWidth={0}
+                  fill={vote === 1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
+                  size="1rem"
+                />
+              </ActionIcon>
+            </LoginPopover>
+          )}
+          {needsReview && (
+            <IconFlag
+              size={12}
+              strokeWidth={4}
+              color={theme.colors.yellow[4]}
+              style={{ marginRight: 2 }}
+            />
+          )}
+          <span title={`Score: ${score}`} style={{ zIndex: 10 }}>
+            {getTagDisplayName(name)}
+          </span>
+          {canVote && (
+            <LoginPopover>
+              <ActionIcon variant="transparent" size="sm" onClick={handleDownvote}>
+                <IconArrowBigDown
+                  strokeWidth={0}
+                  fill={vote === -1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
+                  size="1rem"
+                />
+              </ActionIcon>
+            </LoginPopover>
+          )}
+          {!canVote && (
+            <ActionIcon variant="transparent" size="sm" onClick={handleRemove}>
+              <IconX strokeWidth={2.5} size=".75rem" />
             </ActionIcon>
-          </LoginPopover>
-        )}
-        {needsReview && (
-          <IconFlag
-            size={12}
-            strokeWidth={4}
-            color={theme.colors.yellow[4]}
-            style={{ marginRight: 2 }}
-          />
-        )}
-        <span title={`Score: ${score}`} style={{ cursor: 'default', zIndex: 10 }}>
-          {getTagDisplayName(name)}
-        </span>
-        {canVote && (
-          <LoginPopover>
-            <ActionIcon variant="transparent" size="sm" onClick={handleDownvote}>
-              <IconArrowBigDown
-                strokeWidth={0}
-                fill={vote === -1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
-                size="1rem"
-              />
-            </ActionIcon>
-          </LoginPopover>
-        )}
-        {!canVote && (
-          <ActionIcon variant="transparent" size="sm" onClick={handleRemove}>
-            <IconX strokeWidth={2.5} size=".75rem" />
-          </ActionIcon>
-        )}
-      </Group>
-    </Badge>
+          )}
+        </Group>
+      </Badge>
+    </Link>
   );
 }
 

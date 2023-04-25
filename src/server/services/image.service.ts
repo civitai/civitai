@@ -659,6 +659,7 @@ export const getAllImages = async ({
   excludedUserIds,
   excludedImageIds,
   period,
+  periodMode,
   sort,
   userId,
   isModerator,
@@ -670,6 +671,7 @@ export const getAllImages = async ({
   tagReview,
   include,
   nsfw,
+  excludeCrossPosts,
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: boolean }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
@@ -693,6 +695,10 @@ export const getAllImages = async ({
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."needsReview"
     )`);
+  }
+
+  if (excludeCrossPosts && modelVersionId) {
+    AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
   }
 
   // Filter to specific model/review content
@@ -759,7 +765,8 @@ export const getAllImages = async ({
   }
 
   // Limit to images created since period start
-  if (period !== 'AllTime') AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+  if (period !== 'AllTime' && periodMode !== 'stats')
+    AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {

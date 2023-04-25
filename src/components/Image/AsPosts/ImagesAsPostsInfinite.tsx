@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Button,
   Center,
   Group,
@@ -11,11 +12,13 @@ import {
   Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
+import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
@@ -25,10 +28,10 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useSetFilters } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
 
 type ModelVersionsProps = { id: number; name: string };
 type ImagesAsPostsInfiniteState = {
@@ -67,6 +70,7 @@ export default function ImagesAsPostsInfinite({
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
 
   const imageFilters = useImageFilters('modelImages');
+  const setFilters = useSetFilters('modelImages');
   const filters = removeEmpty({
     ...imageFilters,
     modelVersionId: selectedVersionId,
@@ -99,6 +103,7 @@ export default function ImagesAsPostsInfinite({
   const addPostLink = `/posts/create?modelId=${modelId}${
     selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
   }&returnUrl=${router.asPath}`;
+  const { excludeCrossPosts } = imageFilters;
 
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ filters, modelVersions }}>
@@ -143,6 +148,15 @@ export default function ImagesAsPostsInfinite({
               <SortFilter type="modelImages" />
               <Group spacing={4}>
                 <PeriodFilter type="modelImages" />
+                <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
+                  <ActionIcon
+                    variant={excludeCrossPosts ? 'light' : 'transparent'}
+                    color={excludeCrossPosts ? 'red' : undefined}
+                    onClick={() => setFilters({ excludeCrossPosts: !excludeCrossPosts })}
+                  >
+                    <IconArrowsCross size={20} />
+                  </ActionIcon>
+                </ButtonTooltip>
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>
