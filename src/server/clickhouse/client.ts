@@ -74,7 +74,7 @@ export class Tracker {
       ...custom,
     };
     // do not await as we do not want to fail on tracker issues
-    clickhouse.insert({
+    await clickhouse.insert({
       table: table,
       values: [values],
       format: 'JSONEachRow',
@@ -86,7 +86,7 @@ export class Tracker {
   }
 
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
-    return this.track('views', values);
+    return this.track('modelEvents', values);
   }
 
   public modelVersionEvent(values: {
@@ -95,15 +95,15 @@ export class Tracker {
     modelVersionId: number;
     nsfw: boolean;
   }) {
-    return this.track('views', values);
+    return this.track('modelVersionEvents', values);
   }
 
   public userActivity(values: { type: UserActivityType; byId: number }) {
-    return this.track('views', values);
+    return this.track('userActivities', values);
   }
 
   public resourceReview(values: { type: ResourceReviewType }) {
-    return this.track('views', values);
+    return this.track('resourceReviews', values);
   }
 
   public reaction(values: {
@@ -112,15 +112,15 @@ export class Tracker {
     reaction: ReviewReactions;
     nswf: boolean;
   }) {
-    return this.track('views', values);
+    return this.track('reactions', values);
   }
 
   public question(values: { type: QuestionType; questionId: number }) {
-    return this.track('views', values);
+    return this.track('questions', values);
   }
 
   public answer(values: { type: AnswerType; questionId: number; answerId: number }) {
-    return this.track('views', values);
+    return this.track('answers', values);
   }
 
   public comment(
@@ -132,11 +132,11 @@ export class Tracker {
         }
       | TrackRequest
   ) {
-    return this.track('views', values);
+    return this.track('comments', values);
   }
 
   public post(values: { type: PostActivityType; postId: number; nsfw: boolean; tags: string[] }) {
-    return this.track('views', values);
+    return this.track('posts', values);
   }
 
   public image(values: {
@@ -145,19 +145,19 @@ export class Tracker {
     nsfw: boolean;
     tags: string[];
   }) {
-    return this.track('views', values);
+    return this.track('images', values);
   }
 
   public modelEngagement(values: { type: ModelEngagementType; modelId: number }) {
-    return this.track('views', values);
+    return this.track('modelEngagements', values);
   }
 
   public tagEngagement(values: { type: TagEngagementType; tagId: number }) {
-    return this.track('views', values);
+    return this.track('tagEngagements', values);
   }
 
   public userEngagement(values: { type: UserEngagementType; targetUserId: number }) {
-    return this.track('views', values);
+    return this.track('userEngagements', values);
   }
 
   public report(values: {
@@ -168,6 +168,6 @@ export class Tracker {
     reason: ReportReason;
     status: ReportStatus;
   }) {
-    return this.track('views', values);
+    return this.track('reports', values);
   }
 }
