@@ -666,6 +666,11 @@ export const toggleMuteHandler = async ({
   const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
   await invalidateSession(id);
 
+  await ctx.track.userActivity({
+    type: user.muted ? 'Unmuted' : 'Muted',
+    targetUserId: id,
+  });
+
   return updatedUser;
 };
 
@@ -696,6 +701,11 @@ export const toggleBanHandler = async ({
 
   // Cancel their subscription
   await cancelSubscription({ userId: id });
+
+  await ctx.track.userActivity({
+    type: user.bannedAt ? 'Unbanned' : 'Banned',
+    targetUserId: id,
+  });
 
   return updatedUser;
 };
