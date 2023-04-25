@@ -98,7 +98,7 @@ export class Tracker {
     return this.track('modelVersionEvents', values);
   }
 
-  public userActivity(values: { type: UserActivityType; byId: number }) {
+  public userActivity(values: { type: UserActivityType; targetUserId: number }) {
     return this.track('userActivities', values);
   }
 
