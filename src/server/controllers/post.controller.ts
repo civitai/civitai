@@ -32,6 +32,7 @@ import {
   throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
+import { dbRead } from '../db/client';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -56,16 +57,63 @@ export const createPostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await createPost({ userId: ctx.user.id, ...input });
+    const post = await createPost({ userId: ctx.user.id, ...input });
+    await ctx.track.post({
+      type: 'Create',
+      nsfw: post.nsfw,
+      postId: post.id,
+      tags: post.tags.map((x) => x.name),
+    });
+    if (post.publishedAt) {
+      await ctx.track.post({
+        type: 'Publish',
+        nsfw: post.nsfw,
+        postId: post.id,
+        tags: post.tags.map((x) => x.name),
+      });
+    }
+
+    return post;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
 
-export const updatePostHandler = async ({ input }: { input: PostUpdateInput }) => {
+export const updatePostHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PostUpdateInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    await updatePost(input);
+    const post = await dbRead.post.findFirst({
+      where: {
+        id: input.id,
+      },
+      select: {
+        publishedAt: true,
+      },
+    });
+    const updatedPost = await updatePost(input);
+
+    if (!post?.publishedAt && updatedPost.publishedAt) {
+      const postTags = await dbRead.postTag.findMany({
+        where: {
+          postId: updatedPost.id,
+        },
+        select: {
+          tagName: true,
+        },
+      });
+      await ctx.track.post({
+        type: 'Publish',
+        nsfw: updatedPost.nsfw,
+        postId: updatedPost.id,
+        tags: postTags.map((x) => x.tagName),
+      });
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -177,7 +225,31 @@ export const addPostTagHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await addPostTag({ ...input });
+    const result = await addPostTag({ ...input });
+    const post = await dbRead.post.findFirstOrThrow({
+      where: {
+        id: input.id,
+      },
+      select: {
+        nsfw: true,
+        tags: {
+          select: {
+            tag: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    await ctx.track.post({
+      type: 'Tags',
+      postId: input.id,
+      nsfw: post.nsfw,
+      tags: post.tags.map((x) => x.tag.name),
+    });
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
