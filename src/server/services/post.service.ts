@@ -1,7 +1,6 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { SessionUser } from 'next-auth';
 import { getSystemTags } from '~/server/services/system-cache';
-import { isNotImageResource } from './../schema/image.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -18,17 +17,12 @@ import {
   GetPostsByCategoryInput,
 } from './../schema/post.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { TagType, TagTarget, Prisma, ImageGenerationProcess } from '@prisma/client';
+import { TagType, TagTarget, Prisma, ImageGenerationProcess, NsfwLevel } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
-import { constants, ModelFileType } from '~/server/common/constants';
-import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
-import { getImageV2Select } from '~/server/selectors/imagev2.selector';
-import uniqWith from 'lodash/uniqWith';
-import isEqual from 'lodash/isEqual';
 import {
   applyModRulesSql,
   applyUserPreferencesSql,
@@ -36,7 +30,6 @@ import {
 } from '~/server/services/image.service';
 import { redis } from '~/server/redis/client';
 import { indexOfOr, shuffle } from '~/utils/array-helpers';
-import { hashifyObject } from '~/utils/string-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 
@@ -441,7 +434,7 @@ type PostImageRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   width: number;
   height: number;
   hash: string;

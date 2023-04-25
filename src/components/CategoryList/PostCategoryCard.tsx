@@ -4,7 +4,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { Reactions, PostReactions } from '~/components/Reaction/Reactions';
+import { PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { constants } from '~/server/common/constants';
 import { PostGetByCategoryPostModel } from '~/types/router';
@@ -20,14 +20,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
           {({ safe }) => (
             <div className={classes.container}>
               <ImageGuard.Report />
-              <ImageGuard.ToggleConnect
-                sx={(theme) => ({
-                  backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                  color: 'white',
-                  backdropFilter: 'blur(7px)',
-                  boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-                })}
-              />
+              <ImageGuard.ToggleConnect />
               <RoutedContextLink modal="postDetailModal" postId={data.id} className={classes.link}>
                 <AspectRatio
                   ratio={1}

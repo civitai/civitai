@@ -1,5 +1,5 @@
 import { BrowsingMode, ImageSort } from './../common/enums';
-import { ImageGenerationProcess, MetricTimeframe } from '@prisma/client';
+import { ImageGenerationProcess, MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -80,7 +80,7 @@ export const imageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
   needsReview: z.boolean().optional(),
@@ -108,7 +108,7 @@ export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   needsReview: z.boolean().optional(),
   delete: z.boolean().optional(),
 });
@@ -165,7 +165,7 @@ export const updateImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),
 });
 

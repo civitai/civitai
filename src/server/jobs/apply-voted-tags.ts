@@ -43,17 +43,21 @@ export const applyVotedTags = createJob('apply-voted-tags', '*/2 * * * *', async
   // Update NSFW baseline
   // --------------------------------------------
   await dbWrite.$executeRawUnsafe(`
-    -- Add NSFW baseline
-    UPDATE "Image" i SET nsfw = true
-    WHERE NOT nsfw
-    AND EXISTS (
-      SELECT 1 FROM "TagsOnImage" toi
-      JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
-      WHERE
-        NOT toi.disabled
-        AND toi."imageId" = i.id
-        AND toi."createdAt" > '${lastApplied}'
+    -- Update NSFW baseline
+    WITH to_update AS (
+      SELECT array_agg(i.id) ids
+      FROM "Image" i
+      WHERE EXISTS (
+        SELECT 1 FROM "TagsOnImage" toi
+        JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
+        WHERE
+          NOT toi.disabled
+          AND toi."imageId" = i.id
+          AND toi."createdAt" > '${lastApplied}'
+      )
     )
+    SELECT update_nsfw_levels(ids)
+    FROM to_update;
   `);
 
   // Update the last sent time

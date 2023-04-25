@@ -1,4 +1,4 @@
-import { ImageGenerationProcess, Prisma } from '@prisma/client';
+import { Image, ImageGenerationProcess, NsfwLevel, Prisma } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { MyDraftModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -42,4 +42,8 @@ export function getModelWizardUrl(model: MyDraftModelGetAll['items'][number]) {
   if (hasVersion && hasFiles && !hasPosts) return `/models/${model.id}/wizard?step=4`;
 
   return `/models/${model.id}`;
+}
+
+export function isNsfwImage(image: Pick<Image, 'nsfw'>) {
+  return image.nsfw !== NsfwLevel.None;
 }

@@ -3,6 +3,7 @@ import { unescape } from 'lodash';
 import { ImageAnalysisInput, ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import blocked from './blocklist.json';
 import blockedNSFW from './blocklist-nsfw.json';
+import { NsfwLevel } from '@prisma/client';
 
 export async function getMetadata(file: File) {
   let exif: any; //eslint-disable-line
@@ -244,17 +245,22 @@ export const detectNsfwImage = ({ porn, hentai, sexy }: ImageAnalysisInput) => {
 };
 
 const MINOR_DETECTION_AGE = 20;
+/**
+ * @deprecated
+ */
 export const getNeedsReview = ({
   nsfw,
   analysis,
 }: {
-  nsfw?: boolean;
+  nsfw?: NsfwLevel;
   analysis?: ImageAnalysisInput;
 }) => {
-  const assessedNSFW = analysis ? detectNsfwImage(analysis) : true; // Err on side of caution
-  const assessedMinor = analysis?.faces && analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
-  const needsReview = (nsfw === true || assessedNSFW) && assessedMinor;
+  // const assessedNSFW = analysis ? detectNsfwImage(analysis) : true; // Err on side of caution
+  // const assessedMinor = analysis?.faces && analysis.faces.some((x) => x.age <= MINOR_DETECTION_AGE);
+  // const needsReview =
+  //   (nsfw === NsfwLevel.Mature || nsfw === NsfwLevel.X || assessedNSFW) && assessedMinor;
 
-  return needsReview;
+  // return needsReview;
+  return false;
 };
 // #endregion

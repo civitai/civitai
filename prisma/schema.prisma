@@ -789,6 +789,13 @@ enum ImageGenerationProcess {
   inpainting
 }
 
+enum NsfwLevel {
+  None
+  Soft
+  Mature
+  X
+}
+
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -801,7 +808,7 @@ model Image {
   hash              String?
   height            Int?
   width             Int?
-  nsfw              Boolean                 @default(false)
+  nsfw              NsfwLevel               @default(None)
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?
@@ -987,14 +994,15 @@ model TagsOnQuestions {
 
 model TagsOnImage {
   imageId     Int
-  image       Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId       Int
-  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  automated   Boolean  @default(false)
+  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  automated   Boolean   @default(false)
   confidence  Int?
-  disabled    Boolean  @default(false)
-  needsReview Boolean  @default(false)
+  disabled    Boolean   @default(false)
+  disabledAt  DateTime?
+  needsReview Boolean   @default(false)
 
   @@id([tagId, imageId])
   @@index([imageId], type: Hash)
