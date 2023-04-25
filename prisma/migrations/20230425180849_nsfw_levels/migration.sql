@@ -22,7 +22,7 @@ SELECT
   t2.id, t1.id
 FROM "Tag" t1
 JOIN "Tag" t2 ON t2.name = 'rated 13+'
-WHERE t1.name IN ('corpses', 'emaciated bodies', 'explosions and blasts', 'female swimwear or underwear', 'male swimwear or underwear', 'middle finger', 'partial nudity', 'physical violence', 'revealing clothes', 'sexual situations', 'weapon violence', 'weapons')
+WHERE t1.name IN ('corpses', 'emaciated bodies', 'explosions and blasts', 'female swimwear or underwear', 'male swimwear or underwear', 'middle finger', 'physical violence', 'revealing clothes', 'weapon violence', 'weapons')
 ON CONFLICT ("fromTagId", "toTagId") DO NOTHING;
 
 INSERT INTO "TagsOnTags" ("fromTagId", "toTagId")
@@ -30,7 +30,7 @@ SELECT
   t2.id, t1.id
 FROM "Tag" t1
 JOIN "Tag" t2 ON t2.name = 'rated m'
-WHERE t1.name IN ('white supremacy', 'adult toys', 'extremist', 'graphic violence or gore', 'hanging', 'hate symbols', 'nazi party', 'nudity')
+WHERE t1.name IN ('white supremacy', 'adult toys', 'extremist', 'graphic violence or gore', 'hanging', 'hate symbols', 'nazi party', 'nudity', 'partial nudity', 'sexual situations')
 ON CONFLICT ("fromTagId", "toTagId") DO NOTHING;
 
 INSERT INTO "TagsOnTags" ("fromTagId", "toTagId")

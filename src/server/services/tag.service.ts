@@ -3,6 +3,7 @@ import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
 import { dbWrite, dbRead } from '~/server/db/client';
+import { redis } from '~/server/redis/client';
 import {
   AdjustTagsSchema,
   DeleteTagsSchema,
@@ -342,6 +343,21 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
       WHERE toTag."id" IN (${entityIds.join(', ')})
       ON CONFLICT DO NOTHING
     `);
+
+    // Clear cache for affected system tags
+    const systemTags = await getSystemTags();
+    for (const tag of systemTags) {
+      if (
+        isTagIds
+          ? !(castedTags as number[]).includes(tag.id)
+          : !(castedTags as string[]).includes(tag.name)
+      )
+        continue;
+
+      try {
+        await redis.del(`system:categories:${tag.name.replace(' category', '')}`);
+      } catch {}
+    }
   }
 };
 
