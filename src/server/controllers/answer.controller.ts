@@ -103,7 +103,15 @@ export const upsertAnswerHandler = async ({
   input: UpsertAnswerInput;
 }) => {
   try {
-    await upsertAnswer({ ...input, userId: ctx.user.id });
+    const result = await upsertAnswer({ ...input, userId: ctx.user.id });
+    if (!input.id) {
+      await ctx.track.answer({
+        type: 'Create',
+        answerId: result.id,
+        questionId: result.questionId,
+      });
+    }
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
