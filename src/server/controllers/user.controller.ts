@@ -452,7 +452,13 @@ export const toggleHideUserHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleHideUser({ ...input, userId });
+    const result = await toggleHideUser({ ...input, userId });
+    if (result) {
+      await ctx.track.userEngagement({
+        type: 'Hide',
+        targetUserId: input.targetUserId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -467,7 +473,13 @@ export const toggleHideModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleModelHide({ ...input, userId });
+    const result = await toggleModelHide({ ...input, userId });
+    if (result) {
+      await ctx.track.modelEngagement({
+        type: 'Hide',
+        modelId: input.modelId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -482,7 +494,13 @@ export const toggleFavoriteModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleModelFavorite({ ...input, userId });
+    const result = await toggleModelFavorite({ ...input, userId });
+    if (result) {
+      await ctx.track.modelEngagement({
+        type: 'Favorite',
+        modelId: input.modelId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }

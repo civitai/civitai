@@ -237,7 +237,7 @@ export const toggleModelEngagement = async ({
         data: { type, createdAt: new Date() },
       });
 
-    return;
+    return engagement.type !== type;
   }
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
@@ -246,7 +246,7 @@ export const toggleModelEngagement = async ({
     await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
   } else if (type === 'Favorite')
     await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
-  return;
+  return true;
 };
 
 export const toggleModelFavorite = async ({
@@ -314,13 +314,13 @@ export const toggleHideUser = async ({
         data: { type: 'Hide' },
       });
 
-    return;
+    return false;
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
   await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
   await refreshHiddenUsersForUser({ userId });
-  return;
+  return true;
 };
 
 export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput) => {
