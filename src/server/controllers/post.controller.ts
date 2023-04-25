@@ -125,6 +125,13 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
   try {
     const post = await getPostDetail({ ...input, user: ctx.user });
     if (!post) throw throwNotFoundError();
+
+    await ctx.track.view({
+      type: 'PostView',
+      entityId: post.id,
+      entityType: 'Post',
+    });
+
     return post;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
