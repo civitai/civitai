@@ -414,7 +414,13 @@ export const toggleFollowUserHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleFollowUser({ ...input, userId });
+    const result = await toggleFollowUser({ ...input, userId });
+    if (result) {
+      ctx.track.userEngagement({
+        type: 'Follow',
+        targetUserId: input.targetUserId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -599,7 +605,11 @@ export const toggleBlockedTagHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleBlockedTag({ ...input, userId });
+    const result = await toggleBlockedTag({ ...input, userId });
+    ctx.track.tagEngagement({
+      type: result ? 'Hide' : 'Allow',
+      tagId: input.tagId,
+    });
   } catch (error) {
     throw throwDbError(error);
   }

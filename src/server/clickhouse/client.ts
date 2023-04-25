@@ -49,7 +49,7 @@ export type ReactionType =
   | 'Answer_Delete';
 export type ReportType = 'Create' | 'StatusChange';
 export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete';
-export type TagEngagementType = 'Hide' | 'Allow' | 'Delete';
+export type TagEngagementType = 'Hide' | 'Allow';
 export type UserEngagementType = 'Follow' | 'Hide' | 'Delete';
 export type CommentType = 'Model' | 'Image' | 'Post' | 'Comment' | 'Review';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags';

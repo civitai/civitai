@@ -283,12 +283,12 @@ export const toggleFollowUser = async ({
         data: { type: 'Follow' },
       });
 
-    return;
+    return false;
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
   await playfab.trackEvent(userId, { eventName: 'user_follow_user', userId: targetUserId });
-  return;
+  return true;
 };
 
 export const toggleHideUser = async ({
@@ -370,8 +370,10 @@ export const toggleBlockedTag = async ({
         where: { userId_tagId: { userId, tagId } },
         data: { type: 'Hide' },
       });
+    return false;
   } else {
     await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
+    return true;
   }
   await refreshAllHiddenForUser({ userId });
 };
