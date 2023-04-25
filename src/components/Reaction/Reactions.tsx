@@ -91,6 +91,8 @@ export function Reactions({
     return value > 0 || !!storedReactions[reactionType] || hasReaction;
   });
 
+  console.log({ hasAllReactions, readonly, reactions });
+
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
       <Group

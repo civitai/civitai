@@ -789,6 +789,13 @@ enum ImageGenerationProcess {
   inpainting
 }
 
+enum NsfwLevel {
+  None
+  Soft
+  Mature
+  X
+}
+
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -801,7 +808,7 @@ model Image {
   hash              String?
   height            Int?
   width             Int?
-  nsfw              Boolean                 @default(false)
+  nsfw              NsfwLevel               @default(None)
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?

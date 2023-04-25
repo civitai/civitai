@@ -11,6 +11,7 @@ import {
   CosmeticType,
   ImageGenerationProcess,
   ModelStatus,
+  NsfwLevel,
   Prisma,
   ReportReason,
   ReportStatus,
@@ -68,7 +69,7 @@ type GetGalleryImagesRaw = {
   id: number;
   name: string | null;
   url: string;
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   width: number | null;
   height: number | null;
   hash: string | null;
@@ -351,7 +352,7 @@ export const moderateImages = async ({
   delete: deleteImages,
 }: {
   ids: number[];
-  nsfw?: boolean;
+  nsfw?: NsfwLevel;
   needsReview?: boolean;
   delete?: boolean;
 }) => {
@@ -618,7 +619,7 @@ type GetAllImagesRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -1038,7 +1039,7 @@ type ImagesForModelVersions = {
   userId: number;
   name: string;
   url: string;
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -1159,7 +1160,7 @@ export const getImagesForPosts = async ({
       userId: number;
       name: string;
       url: string;
-      nsfw: boolean;
+      nsfw: NsfwLevel;
       width: number;
       height: number;
       hash: string;

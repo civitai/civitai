@@ -87,8 +87,8 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   width: width,
                 }}
               >
-                <ImageGuard.ToggleConnect />
-                <ImageGuard.ToggleImage />
+                <ImageGuard.ToggleConnect position="top-left" />
+                <ImageGuard.ToggleImage position="top-left" />
                 <ImageGuard.Report />
                 <ImageGuard.Unsafe>
                   <MediaHash {...image} />

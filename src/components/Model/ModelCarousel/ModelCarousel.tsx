@@ -217,7 +217,7 @@ export function ModelCarousel({
                 {({ safe }) => (
                   <Center style={{ height: '100%', width: '100%' }}>
                     <div style={{ width: '100%', position: 'relative' }}>
-                      <ImageGuard.ToggleConnect />
+                      <ImageGuard.ToggleConnect position="top-left" />
                       <ImageGuard.Report />
                       <RoutedContextLink
                         modal="imageDetailModal"

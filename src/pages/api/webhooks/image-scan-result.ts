@@ -124,6 +124,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   }
 
   try {
+    // TODO.justin: Replace with new sql fucntion to set the correct nsfw level
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
     const tags =
       (
