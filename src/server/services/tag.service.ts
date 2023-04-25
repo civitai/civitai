@@ -331,6 +331,7 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
       WHERE i."id" IN (${entityIds.join(', ')})
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled" = false, "needsReview" = false, automated = false
     `);
+    updateImageNSFWLevels(entityIds);
   } else if (entityType === 'tag') {
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "TagsOnTags" ("fromTagId", "toTagId")
@@ -364,7 +365,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   } else if (entityType === 'image') {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "TagsOnImage"
-      SET "disabled" = true, "needsReview" = false
+      SET "disabled" = true, "needsReview" = false, "disabledAt" = NOW()
       WHERE "imageId" IN (${entityIds.join(', ')})
       ${
         isTagIds
@@ -372,6 +373,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
           : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
       }
     `);
+    updateImageNSFWLevels(entityIds);
   } else if (entityType === 'tag') {
     await dbWrite.$executeRawUnsafe(`
       DELETE FROM "TagsOnTags"
@@ -397,26 +399,24 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
   } else if (entityType === 'image') {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "TagsOnImage"
-      SET "disabled" = ${disable}, "needsReview" = false, "automated" = false
+      SET
+        "disabled" = ${disable},
+        "needsReview" = false,
+        "automated" = false,
+        "disabledAt" = ${disable ? 'NOW()' : 'null'}
       WHERE "needsReview" = true AND "imageId" IN (${entityIds.join(', ')})
     `);
 
     // Update nsfw baseline
-    if (disable) {
-      await dbWrite.$executeRawUnsafe(`
-        -- Update NSFW baseline
-        UPDATE "Image" SET nsfw = false
-        WHERE id IN (${entityIds.join(', ')})
-          AND NOT EXISTS (
-            SELECT 1
-            FROM "TagsOnImage" toi
-            JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
-            WHERE toi."imageId" = "Image".id
-              AND toi."disabled" = false
-          )
-      `);
-    }
+    if (disable) updateImageNSFWLevels(entityIds);
   }
+};
+
+const updateImageNSFWLevels = async (imageIds: number[]) => {
+  await dbWrite.$executeRawUnsafe(`
+    -- Update NSFW baseline
+    SELECT update_nsfw_levels(ARRAY[${imageIds.join(',')}]);
+  `);
 };
 
 export const deleteTags = async ({ tags }: DeleteTagsSchema) => {

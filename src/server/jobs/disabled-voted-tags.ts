@@ -62,7 +62,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= 0
     )
-    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false
+    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false, "disabledAt" = NOW()
     WHERE ("tagId", "imageId") IN (
       SELECT
         "tagId",
@@ -105,13 +105,27 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
   // --------------------------------------------
   await dbWrite.$executeRawUnsafe(`
     -- Remove NSFW if no longer tagged
-    UPDATE "Image" i SET nsfw = false
-    WHERE i.nsfw = true AND NOT EXISTS (
-      SELECT 1 FROM "TagsOnImage" toi
-      JOIN "Tag" t ON t.id = toi."tagId"
-      WHERE
-        toi.disabled = FALSE AND t.type = 'Moderation' AND toi."imageId" = i.id
-    );
+    WITH to_update AS (
+      SELECT array_agg(i.id) ids
+      FROM "Image" i
+      WHERE nsfw != 'None'
+      -- If any moderation tags were added since last run, update
+      AND EXISTS (
+        SELECT 1 FROM "TagsOnImage" toi
+        JOIN "Tag" t ON t.id = toi."tagId"
+        WHERE
+          toi.disabled AND t.type = 'Moderation' AND toi."imageId" = i.id
+          AND toi."disabledAt" > '${lastApplied}'
+      )
+      -- And there aren't any remaining moderation tags
+      AND NOT EXISTS (
+        SELECT 1 FROM "TagsOnImage" toi
+        JOIN "Tag" t ON t.id = toi."tagId"
+        WHERE
+          toi.disabled = FALSE AND t.type = 'Moderation' AND toi."imageId" = i.id
+      )
+    )
+    SELECT update_nsfw_levels(ids);
   `);
 
   // Update the last sent time
