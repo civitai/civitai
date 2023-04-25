@@ -78,10 +78,8 @@ export const createAuthOptions = (req: NextApiRequest): NextAuthOptions => ({
 
       return token;
     },
-    async session({ session, token, trigger }) {
-      if (trigger === 'update') {
-        token = await refreshToken(token);
-      }
+    async session({ session, token }) {
+      token = await refreshToken(token);
       session.user = (token.user ? token.user : session.user) as Session['user'];
       return session;
     },

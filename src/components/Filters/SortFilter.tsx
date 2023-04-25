@@ -1,36 +1,55 @@
+import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { FilterSubTypes, useFiltersContext } from '~/providers/FiltersProviderOld';
+import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
 
-type SortFilterProps = {
-  type: FilterSubTypes;
+type SortFilterProps = StatefulProps | DumbProps;
+
+const sortOptions = {
+  models: Object.values(ModelSort),
+  posts: Object.values(PostSort),
+  images: Object.values(ImageSort),
+  modelImages: Object.values(ImageSort),
+  questions: Object.values(QuestionSort),
 };
 
-function getSortOptions(type: FilterSubTypes) {
-  switch (type) {
-    case 'model':
-      return ModelSort;
-    case 'post':
-      return PostSort;
-    case 'image':
-      return ImageSort;
-    case 'question':
-      return QuestionSort;
-    default:
-      throw new Error(`unhandled SortFilter type: ${type}`);
-  }
+export function SortFilter(props: SortFilterProps) {
+  if (props.value) return <DumbSortFilter {...props} />;
+  return <StatefulSortFilter type={props.type} />;
 }
 
-export function SortFilter({ type }: SortFilterProps) {
-  const sortOptions = Object.values(getSortOptions(type));
-  const sort = useFiltersContext((state) => state[type].sort);
-  const setFilters = useFiltersContext((state) => state.setFilters);
+type DumbProps = {
+  type: FilterSubTypes;
+  value: ModelSort | PostSort | ImageSort | QuestionSort;
+  onChange: (value: ModelSort | PostSort | ImageSort | QuestionSort) => void;
+};
+function DumbSortFilter({ type, value, onChange }: DumbProps) {
   return (
-    <SelectMenu
-      label={sort}
-      options={sortOptions.map((x) => ({ label: x, value: x }))}
-      onClick={(sort) => setFilters({ [type]: { sort } })}
+    <IsClient>
+      <SelectMenu
+        label={value}
+        options={sortOptions[type].map((x) => ({ label: x, value: x }))}
+        onClick={onChange}
+        value={value}
+      />
+    </IsClient>
+  );
+}
+
+type StatefulProps = {
+  type: FilterSubTypes;
+  value?: undefined;
+  onChange?: undefined;
+};
+function StatefulSortFilter({ type }: StatefulProps) {
+  const sort = useFiltersContext((state) => state[type].sort);
+  const setFilters = useSetFilters(type);
+
+  return (
+    <DumbSortFilter
+      type={type}
       value={sort}
+      onChange={(sort) => setFilters({ sort: sort as any })}
     />
   );
 }

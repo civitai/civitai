@@ -30,6 +30,17 @@ export const getTagWithModelCount = ({ name }: { name: string }) => {
   `;
 };
 
+export const getTag = ({ id }: { id: number }) => {
+  return dbRead.tag.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+    },
+  });
+};
+
 export const getTags = async ({
   take,
   skip,
@@ -64,16 +75,19 @@ export const getTags = async ({
       AND tot."fromTagId" IN (${Prisma.join(not)})
     )`);
   }
-  if (categories) {
-    const systemTags = await getSystemTags();
-    const categoryTag = systemTags.find((t) => t.name === `${entityType} category`.toLowerCase());
-    if (categoryTag) {
-      AND.push(Prisma.sql`EXISTS (
-        SELECT 1 FROM "TagsOnTags" tot
-        WHERE tot."toTagId" = t."id"
-        AND tot."fromTagId" = ${categoryTag.id}
-      )`);
-    }
+
+  const systemTags = await getSystemTags();
+  const categoryTags = (
+    entityType
+      ? systemTags.filter((t) => t.name === `${entityType} category`.toLowerCase())
+      : systemTags.filter((t) => t.name.endsWith('category'))
+  ).map((x) => x.id);
+  if (categories && categoryTags.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnTags" tot
+      WHERE tot."toTagId" = t."id"
+      AND tot."fromTagId" IN (${Prisma.join(categoryTags)})
+    )`);
   }
 
   let orderBy = `t."name" ASC`;
@@ -92,10 +106,20 @@ export const getTags = async ({
   else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
   else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
 
-  const tagsRaw = await dbRead.$queryRaw<{ id: number; name: string }[]>`
+  const isCategory =
+    !categories && !!categoryTags?.length
+      ? Prisma.sql`, EXISTS (
+        SELECT 1 FROM "TagsOnTags"
+        WHERE "fromTagId" IN (${Prisma.join(categoryTags)})
+        AND "toTagId" = t.id
+      ) "isCategory"`
+      : Prisma.sql``;
+
+  const tagsRaw = await dbRead.$queryRaw<{ id: number; name: string; isCategory?: boolean }[]>`
     SELECT
       t."id",
       t."name"
+      ${isCategory}
     FROM "Tag" t
     ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -193,7 +217,8 @@ export const getVotableTags = async ({
         tag.type !== 'Moderation' ||
         tag.score > 0 ||
         (tag.vote && tag.vote > 0) ||
-        (tag.needsReview && isModerator)
+        (tag.needsReview && isModerator) ||
+        (!tag.needsReview && tag.type === 'Moderation' && tag.score <= 0)
     );
   }
 
@@ -281,6 +306,7 @@ export const addTagVotes = async ({
 
 export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
+  // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
   const tagSelector = isTagIds ? 'id' : 'name';
   const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
@@ -320,6 +346,7 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
 
 export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
+  // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
   const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
 
@@ -394,6 +421,7 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
 
 export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   const isTagIds = typeof tags[0] === 'number';
+  // Explicit cast to number[] or string[] to avoid type errors
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
   const tagSelector = isTagIds ? 'id' : 'name';
   const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');

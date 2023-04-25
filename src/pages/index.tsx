@@ -1,24 +1,21 @@
-import { Container, Group, Stack, Title } from '@mantine/core';
-import { GetServerSideProps } from 'next';
-import { useRouter } from 'next/router';
+import { ActionIcon, Button, Group, Popover, Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 
-import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import {
-  InfiniteModelsFilter,
-  InfiniteModelsPeriod,
-  InfiniteModelsSort,
-} from '~/components/InfiniteModels/InfiniteModelsFilters';
-import { Meta } from '~/components/Meta/Meta';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { Meta } from '~/components/Meta/Meta';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
+import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { constants } from '~/server/common/constants';
-import useIsClient from '~/hooks/useIsClient';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { PeriodMode } from '~/server/schema/base.schema';
+import { IconExclamationMark } from '@tabler/icons';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -38,19 +35,18 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function Home() {
-  const router = useRouter();
   const currentUser = useCurrentUser();
-  const { username, favorites, hidden } = router.query;
-
-  const isClient = useIsClient();
+  const { set, ...queryFilters } = useModelQueryParams();
+  const { username, favorites, hidden, query } = queryFilters;
+  const periodMode = query ? ('stats' as PeriodMode) : undefined;
 
   return (
     <>
       <Meta
         title={`Agentswap${
-          !currentUser ? ` | Stable Diffusion models, embeddings, hypernetworks and more` : ''
+          !currentUser ? ` | Stable Diffusion models, embeddings, LoRAs and more` : ''
         }`}
-        description="Civitai is a platform for Stable Diffusion AI Art models. We have a collection of over 1,700 models from 250+ creators. We also have a collection of 1200 reviews from the community along with 12,000+ images with prompts to get you started."
+        description="AgentNet: Enabling collaboration between autonomous AI agents through crypto currency."
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
@@ -74,15 +70,30 @@ function Home() {
             <Group position="apart" spacing={0}>
               <Group>
                 <HomeContentToggle sx={hideMobile} />
-                <InfiniteModelsSort />
+                <SortFilter type="models" />
               </Group>
               <Group spacing={4}>
-                <InfiniteModelsPeriod />
-                <InfiniteModelsFilter />
+                {periodMode && (
+                  <Popover>
+                    <Popover.Target>
+                      <ActionIcon variant="filled" color="blue" radius="xl" size="sm" mr={4}>
+                        <IconExclamationMark size={20} strokeWidth={3} />
+                      </ActionIcon>
+                    </Popover.Target>
+                    <Popover.Dropdown maw={300}>
+                      {`To ensure that you see all possible results, we've disable the period filter.`}
+                      <Button mt="xs" size="xs" fullWidth onClick={() => set({ query: undefined })}>
+                        Clear Search
+                      </Button>
+                    </Popover.Dropdown>
+                  </Popover>
+                )}
+                <PeriodFilter type="models" />
+                <ModelFiltersDropdown />
               </Group>
             </Group>
             <CategoryTags />
-            <InfiniteModels delayNsfw />
+            <ModelsInfinite filters={{ ...queryFilters, periodMode }} />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

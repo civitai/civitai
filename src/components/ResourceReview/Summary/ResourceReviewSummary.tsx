@@ -24,22 +24,32 @@ const useSummaryContext = () => {
   return context;
 };
 
+function roundRating(rating: number) {
+  return Math.round(rating * 100) / 100;
+}
+export function getRatingCount(totals: ResourceReviewRatingTotals | undefined) {
+  const count = totals ? Object.values(totals).reduce<number>((acc, value) => acc + value, 0) : 0;
+  return count;
+}
+export function getAverageRating(totals: ResourceReviewRatingTotals | undefined, count?: number) {
+  if (!count) count = getRatingCount(totals);
+  const rating =
+    totals && count > 0
+      ? Object.entries(totals).reduce<number>((acc, [key, value]) => {
+          return acc + Number(key) * value;
+        }, 0) / count
+      : 0;
+  return roundRating(rating);
+}
+
 export function ResourceReviewSummary({ modelId, modelVersionId, children }: Props) {
   const { data, isLoading, isRefetching } = trpc.resourceReview.getRatingTotals.useQuery({
     modelId,
     modelVersionId,
   });
 
-  const count = data ? Object.values(data).reduce<number>((acc, value) => acc + value, 0) : 0;
-
-  const rating =
-    data && !!count
-      ? Object.entries(data).reduce<number>((acc, [key, value]) => {
-          return acc + Number(key) * value;
-        }, 0) / count
-      : 0;
-
-  // const roundedRating = Math.round(rating * 100) / 100;
+  const count = getRatingCount(data);
+  const rating = getAverageRating(data, count);
 
   return (
     <SummaryContext.Provider
@@ -64,8 +74,8 @@ ResourceReviewSummary.Header = function Header({
   count?: number;
 }) {
   const { rating, count, modelVersionId, loading } = useSummaryContext();
-  const roundedRating = Math.round((initialRating ?? rating) * 100) / 100;
   const showSkeleton = loading && (!initialRating || !initialCount);
+  const roundedRating = roundRating(rating ?? initialRating ?? 0);
 
   return (
     <Stack spacing={0}>
@@ -79,7 +89,7 @@ ResourceReviewSummary.Header = function Header({
           <Group>
             <Text>Reviews</Text>
             <Text size="sm" color="dimmed">
-              {initialCount ?? count} {!!modelVersionId ? 'version' : ''} ratings
+              {count ?? initialCount} {!!modelVersionId ? 'version' : ''} ratings
             </Text>
           </Group>
           <Group>

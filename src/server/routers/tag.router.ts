@@ -12,6 +12,7 @@ import {
   getManagableTagsHandler,
   deleteTagsHandler,
 } from '~/server/controllers/tag.controller';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addTagVotesSchema,
   adjustTagsSchema,
@@ -23,6 +24,7 @@ import {
   moderateTagsSchema,
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
+import { getTag } from '~/server/services/tag.service';
 import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import {
   middleware,
@@ -57,6 +59,7 @@ export const tagRouter = router({
   getTagWithModelCount: publicProcedure
     .input(getTagByNameSchema)
     .query(getTagWithModelCountHandler),
+  getById: publicProcedure.input(getByIdSchema).query(({ input }) => getTag(input)),
   getAll: publicProcedure
     .input(getTagsInput.optional())
     .use(applyUserPreferences)

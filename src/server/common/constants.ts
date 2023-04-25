@@ -69,6 +69,9 @@ export const constants = {
     image: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
+  cacheTime: {
+    postCategories: 60 * 60 * 1,
+  },
   timeCutOffs: {
     updatedModel: 2 * 60 * 60 * 1000,
   },

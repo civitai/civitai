@@ -23,11 +23,13 @@ import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { isProd } from '~/env/other';
 import { updateMetricsModelJob } from '~/server/jobs/update-metrics-models';
+import { updateDailyMetricsJob } from '~/server/jobs/update-daily-metrics';
 
 const jobs: Job[] = [
   scanFilesJob,
   updateMetricsJob,
   updateMetricsModelJob,
+  updateDailyMetricsJob,
   processImportsJob,
   sendNotificationsJob,
   sendWebhooksJob,

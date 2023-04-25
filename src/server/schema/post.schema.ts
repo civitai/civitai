@@ -5,11 +5,13 @@ import { constants } from '~/server/common/constants';
 import { MetricTimeframe } from '@prisma/client';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
+import { periodModeSchema } from '~/server/schema/base.schema';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).default(constants.postFilterDefaults.browsingMode),
   period: z.nativeEnum(MetricTimeframe).default(constants.postFilterDefaults.period),
+  periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
 });
 
@@ -33,6 +35,7 @@ export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().optional(),
   title: z.string().trim().optional(),
+  tag: z.number().optional(),
 });
 
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
@@ -48,6 +51,27 @@ export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
 export const removePostTagSchema = z.object({
   tagId: z.number(),
   id: z.number(),
+});
+
+export type GetPostsByCategoryInput = z.infer<typeof getPostsByCategorySchema>;
+export const getPostsByCategorySchema = z.object({
+  cursor: z.number().optional(),
+  limit: z.number().min(1).max(30).optional(),
+  postLimit: z.number().min(1).max(30).optional(),
+  sort: z.nativeEnum(PostSort).optional(),
+  period: z.nativeEnum(MetricTimeframe).optional(),
+  periodMode: periodModeSchema,
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
+  tags: z.number().array().optional(),
+  username: z
+    .string()
+    .transform((data) => postgresSlugify(data))
+    .nullish(),
+  modelVersionId: z.number().optional(),
+  modelId: z.number().optional(),
 });
 
 export type AddPostTagInput = z.infer<typeof addPostTagSchema>;

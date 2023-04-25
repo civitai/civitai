@@ -46,6 +46,7 @@ import { getTagsNeedingReview } from '~/server/services/system-cache';
 import { redis } from '~/server/redis/client';
 import { hashify } from '~/utils/string-helpers';
 import { TRPCError } from '@trpc/server';
+import { applyUserPreferences, UserPreferencesInput } from '~/server/middleware.trpc';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -573,6 +574,46 @@ export const ingestNewImages = async ({
 };
 
 // #region [new service methods]
+export function applyUserPreferencesSql(
+  AND: Prisma.Sql[],
+  {
+    excludedUserIds,
+    excludedImageIds,
+    excludedTagIds,
+    userId,
+  }: UserPreferencesInput & { userId?: number }
+) {
+  // Exclude specific users
+  if (excludedUserIds?.length)
+    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+
+  // Exclude specific images
+  if (excludedImageIds?.length)
+    AND.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`);
+
+  // Exclude specific tags
+  if (excludedTagIds?.length) {
+    const OR = [
+      Prisma.join(
+        [
+          Prisma.sql`i."scannedAt" IS NOT NULL`,
+          Prisma.sql`NOT EXISTS (
+          SELECT 1 FROM "TagsOnImage" toi
+          WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
+            ...new Set(excludedTagIds),
+          ])}) AND NOT toi.disabled
+        )`,
+        ],
+        ' AND '
+      ),
+    ];
+    if (userId) OR.push(Prisma.sql`i."userId" = ${userId}`);
+    AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
+  }
+
+  return AND;
+}
+
 type GetAllImagesRaw = {
   id: number;
   name: string;
@@ -618,6 +659,7 @@ export const getAllImages = async ({
   excludedUserIds,
   excludedImageIds,
   period,
+  periodMode,
   sort,
   userId,
   isModerator,
@@ -629,6 +671,7 @@ export const getAllImages = async ({
   tagReview,
   include,
   nsfw,
+  excludeCrossPosts,
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: boolean }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
@@ -638,18 +681,7 @@ export const getAllImages = async ({
     needsReview = false;
     tagReview = false;
 
-    // Hide images that need review
-    const needsReviewOr = [Prisma.sql`i."needsReview" = false`];
-    // Hide images that aren't published
-    const publishedOr = [Prisma.sql`p."publishedAt" IS NOT NULL`];
-
-    if (userId) {
-      const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
-      needsReviewOr.push(belongsToUser);
-      publishedOr.push(belongsToUser);
-    }
-    AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-    AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+    applyModRulesSql(AND, { userId });
   }
 
   if (needsReview) {
@@ -663,6 +695,10 @@ export const getAllImages = async ({
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."needsReview"
     )`);
+  }
+
+  if (excludeCrossPosts && modelVersionId) {
+    AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
   }
 
   // Filter to specific model/review content
@@ -716,41 +752,21 @@ export const getAllImages = async ({
     else orderBy = `i."id" DESC`;
   }
 
-  // Exclude specific users
-  if (excludedUserIds?.length)
-    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
-
-  // Exclude specific images
-  if (excludedImageIds?.length)
-    AND.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`);
-
-  // Exclude specific tags
-  if (excludedTagIds?.length) {
-    const OR = [
-      Prisma.join(
-        [
-          Prisma.sql`i."scannedAt" IS NOT NULL`,
-          Prisma.sql`NOT EXISTS (
-          SELECT 1 FROM "TagsOnImage" toi
-          WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
-            ...new Set(excludedTagIds),
-          ])}) AND NOT toi.disabled
-        )`,
-        ],
-        ' AND '
-      ),
-    ];
-    if (userId) OR.push(Prisma.sql`i."userId" = ${userId}`);
-    AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
-  }
+  // Apply user preferences
+  applyUserPreferencesSql(AND, {
+    excludedImageIds,
+    excludedTagIds,
+    excludedUserIds,
+    userId,
+  });
 
   if (nsfw !== undefined) {
     AND.push(Prisma.sql`i."nsfw" = ${nsfw}`);
   }
 
-  // TODO Briant: turn this back on when we have support for separate period filters
   // Limit to images created since period start
-  // if (period !== 'AllTime') AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
+  if (period !== 'AllTime' && periodMode !== 'stats')
+    AND.push(Prisma.raw(`i."createdAt" >= now() - INTERVAL '1 ${period}'`));
 
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
@@ -1147,6 +1163,7 @@ export const getImagesForPosts = async ({
       height: number;
       hash: string;
       postId: number;
+      imageCount: number;
       cryCount: number;
       laughCount: number;
       likeCount: number;
@@ -1159,7 +1176,8 @@ export const getImagesForPosts = async ({
     WITH targets AS (
       SELECT
         i."postId",
-        MIN(i.index) "index"
+        MIN(i.index) "index",
+        COUNT(*) "count"
       FROM "Image" i
       WHERE ${imageWhere.join(' AND ')}
       GROUP BY i."postId"
@@ -1174,6 +1192,7 @@ export const getImagesForPosts = async ({
       i.height,
       i.hash,
       t."postId",
+      t.count "imageCount",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1251,3 +1270,18 @@ export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: 
     throw throwDbError(error);
   }
 };
+
+export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: number }) {
+  // Hide images that need review
+  const needsReviewOr = [Prisma.sql`i."needsReview" = false`];
+  // Hide images that aren't published
+  const publishedOr = [Prisma.sql`p."publishedAt" IS NOT NULL`];
+
+  if (userId) {
+    const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
+    needsReviewOr.push(belongsToUser);
+    publishedOr.push(belongsToUser);
+  }
+  AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
+  AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+}

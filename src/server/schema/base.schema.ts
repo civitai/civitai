@@ -15,6 +15,9 @@ export const getAllQuerySchema = paginationSchema.extend({
 });
 export type GetAllSchema = z.infer<typeof getAllQuerySchema>;
 
+export const periodModeSchema = z.enum(['stats', 'published']).default('published');
+export type PeriodMode = z.infer<typeof periodModeSchema>;
+
 // type BaseInterface = {
 //   id?: number;
 // } & Record<string, unknown>;

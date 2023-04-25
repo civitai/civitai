@@ -1,4 +1,4 @@
-import { Group, Menu, Text, createStyles, useMantineTheme } from '@mantine/core';
+import { Group, Menu, Text, createStyles, useMantineTheme, MenuProps } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons';
 
 type SelectMenu<T extends string | number> = {
@@ -6,6 +6,7 @@ type SelectMenu<T extends string | number> = {
   options: { label: React.ReactNode; value: T }[];
   onClick: (value: T) => void;
   value?: T;
+  disabled?: boolean;
 };
 
 export function SelectMenu<T extends string | number>({
@@ -13,14 +14,19 @@ export function SelectMenu<T extends string | number>({
   options,
   onClick,
   value,
+  disabled,
 }: SelectMenu<T>) {
   const { classes } = useStyles();
   const theme = useMantineTheme();
 
   return (
-    <Menu withArrow>
+    <Menu withArrow disabled={disabled}>
       <Menu.Target>
-        <Group spacing={6} className={classes.target}>
+        <Group
+          spacing={6}
+          className={classes.target}
+          style={disabled ? { opacity: 0.3, cursor: 'default', userSelect: 'none' } : {}}
+        >
           <Text weight={700} transform="uppercase">
             {label}
           </Text>

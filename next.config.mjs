@@ -10,10 +10,7 @@ import { withPlausibleProxy } from 'next-plausible';
  * @constraint {{import('next').NextConfig}}
  */
 function defineNextConfig(config) {
-  return withPlausibleProxy({
-    scriptName: 'civit-eye',
-    customDomain: 'https://analytics.civitai.com',
-  })(config);
+  return config;
 }
 
 export default defineNextConfig({

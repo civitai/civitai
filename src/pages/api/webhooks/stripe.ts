@@ -98,7 +98,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             throw new Error('Unhandled relevant event!');
         }
       } catch (error: any) {
-        return res.status(400).send('Webhook error: "Webhook handler failed. View logs."');
+        return res.status(400).send({
+          error: error.message,
+        });
       }
     }
 

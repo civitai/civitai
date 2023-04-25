@@ -221,6 +221,11 @@ export const upsertSubscription = async (
     return;
   }
 
+  if (user.subscriptionId && user.subscriptionId !== subscription.id) {
+    log('Subscription id changed, deleting old subscription');
+    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId } });
+  }
+
   const data = {
     id: subscription.id,
     userId: user.id,

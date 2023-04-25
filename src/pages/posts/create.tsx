@@ -12,14 +12,17 @@ import {
 } from '@mantine/core';
 import { IconLock } from '@tabler/icons';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
-import { EditUserResourceReview } from '~/components/ResourceReview/EditUserResourceReview';
+import {
+  EditUserResourceReview,
+  ReviewEditCommandsRef,
+} from '~/components/ResourceReview/EditUserResourceReview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
@@ -27,6 +30,7 @@ import { trpc } from '~/utils/trpc';
 export default function PostCreate() {
   const currentUser = useCurrentUser();
   const router = useRouter();
+  const tagId = router.query.tag ? Number(router.query.tag) : undefined;
   const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
   const modelVersionId = router.query.modelVersionId
     ? Number(router.query.modelVersionId)
@@ -34,6 +38,7 @@ export default function PostCreate() {
   const reviewing = router.query.reviewing ? router.query.reviewing === 'true' : undefined;
   const isMuted = currentUser?.muted ?? false;
   const displayReview = !isMuted && !!reviewing && !!modelVersionId && !!modelId;
+  const reviewEditRef = useRef<ReviewEditCommandsRef | null>(null);
 
   const reset = useEditPostContext((state) => state.reset);
   const images = useEditPostContext((state) => state.images);
@@ -49,6 +54,11 @@ export default function PostCreate() {
     { id: modelVersionId ?? 0 },
     { enabled: !!modelVersionId }
   );
+
+  const { data: tag, isLoading: tagLoading } = trpc.tag.getById.useQuery(
+    { id: tagId ?? 0 },
+    { enabled: !!tagId }
+  );
   const { data: currentUserReview, isLoading: loadingCurrentUserReview } =
     trpc.resourceReview.getUserResourceReview.useQuery(
       { modelVersionId: modelVersionId ?? 0 },
@@ -63,11 +73,13 @@ export default function PostCreate() {
     const title =
       reviewing && version ? `${version.model.name} - ${version.name} Review` : undefined;
 
+    reviewEditRef.current?.save();
+
     mutate(
-      { modelVersionId: versionId, title },
+      { modelVersionId: versionId, title, tag: tagId },
       {
         onSuccess: async (response) => {
-          reset();
+          reset(response);
           const postId = response.id;
           queryUtils.post.getEdit.setData({ id: postId }, () => response);
           upload({ postId, modelVersionId: versionId }, files);
@@ -86,8 +98,9 @@ export default function PostCreate() {
 
   let backButtonUrl = modelId ? `/models/${modelId}` : '/';
   if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
+  if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
 
-  const loading = loadingCurrentUserReview || versionLoading;
+  const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 
   return (
     <Container size="xs">
@@ -107,11 +120,25 @@ export default function PostCreate() {
         </Container>
       ) : (
         <Stack spacing={8}>
+          {tagId && (tag || tagLoading) && (
+            <Group spacing="xs">
+              {tagLoading && <Loader size="sm" />}
+              <Text size="sm" color="dimmed">
+                Posting to{' '}
+                <Text component="span" td="underline">
+                  {tag?.name}
+                </Text>
+              </Text>
+            </Group>
+          )}
           {modelVersionId && (version || loading) && (
             <Group spacing="xs">
               {loading && <Loader size="sm" />}
               <Text size="sm" color="dimmed">
-                Posting to {version?.model.name} - {version?.name}
+                Posting to{' '}
+                <Text component="span" td="underline">
+                  {version?.model.name} - {version?.name}
+                </Text>
               </Text>
             </Group>
           )}
@@ -138,6 +165,7 @@ export default function PostCreate() {
                     modelVersionName={version.name}
                     resourceReview={currentUserReview}
                     openedCommentBox
+                    innerRef={reviewEditRef}
                   />
                 </Box>
               </Input.Wrapper>

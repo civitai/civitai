@@ -68,6 +68,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     types,
     sort,
     period = MetricTimeframe.AllTime,
+    periodMode,
     rating,
     favorites,
     hidden,
@@ -211,11 +212,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       : undefined,
     AND: AND.length ? AND : undefined,
     modelVersions: { some: { baseModel: baseModels?.length ? { in: baseModels } : undefined } },
-    // TODO Briant: turn this back on when we have support for separate period filters
-    // lastVersionAt:
-    //   period !== MetricTimeframe.AllTime
-    //     ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
-    //     : undefined,
+    lastVersionAt:
+      period !== MetricTimeframe.AllTime && periodMode !== 'stats'
+        ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
+        : undefined,
   };
 
   let orderBy: Prisma.ModelOrderByWithRelationInput = {

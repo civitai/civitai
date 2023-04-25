@@ -45,7 +45,7 @@ export function CreatorCard({ user }: Props) {
   const { models: uploads } = creator?._count ?? { models: 0 };
   const stats = creator?.stats;
 
-  if (!creator) return null;
+  if (!creator || user.id === -1) return null;
 
   return (
     <Card p="xs" withBorder>

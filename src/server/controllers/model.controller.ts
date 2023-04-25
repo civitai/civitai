@@ -14,6 +14,7 @@ import { Context } from '~/server/createContext';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   ChangeModelModifierSchema,
+  DeclineReviewSchema,
   DeleteModelSchema,
   GetAllModelsOutput,
   GetDownloadSchema,
@@ -491,6 +492,7 @@ export const getModelWithVersionsHandler = async ({
       favorites: false,
       hidden: false,
       period: 'AllTime',
+      periodMode: 'published',
     },
     ctx,
   });
@@ -770,6 +772,45 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
     const updatedModel = await upsertModel({
       ...model,
       meta: { ...meta, needsReview: true },
+    });
+
+    return updatedModel;
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const declineReviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DeclineReviewSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+    const model = await dbRead.model.findUnique({
+      where: { id: input.id },
+      select: { id: true, name: true, status: true, type: true, meta: true, userId: true },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    const meta = (model.meta as ModelMeta | null) || {};
+    if (model.status !== ModelStatus.UnpublishedViolation && !meta?.needsReview)
+      throw throwBadRequestError(
+        'Cannot decline a review for this model because it is not in the correct status'
+      );
+
+    const updatedModel = await upsertModel({
+      ...model,
+      meta: {
+        ...meta,
+        declinedReason: input.reason,
+        decliendAt: new Date().toISOString(),
+        needsReview: false,
+      },
     });
 
     return updatedModel;

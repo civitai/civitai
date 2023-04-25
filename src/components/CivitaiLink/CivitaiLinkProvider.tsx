@@ -77,7 +77,7 @@ type CivitaiLinkStore = {
 };
 export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
   immer((set) => ({
-    ids: [],
+    ids: [] as string[],
     activities: {},
     activityProgress: null,
     setActivities: (activities: Response[]) =>

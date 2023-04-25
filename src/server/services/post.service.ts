@@ -1,5 +1,6 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { SessionUser } from 'next-auth';
+import { getSystemTags } from '~/server/services/system-cache';
 import { isNotImageResource } from './../schema/image.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
@@ -14,12 +15,13 @@ import {
   RemovePostTagInput,
   GetPostTagsInput,
   PostsQueryInput,
+  GetPostsByCategoryInput,
 } from './../schema/post.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { TagType, TagTarget, Prisma } from '@prisma/client';
+import { TagType, TagTarget, Prisma, ImageGenerationProcess } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
-import { ModelFileType } from '~/server/common/constants';
+import { constants, ModelFileType } from '~/server/common/constants';
 import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -27,7 +29,16 @@ import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageV2Select } from '~/server/selectors/imagev2.selector';
 import uniqWith from 'lodash/uniqWith';
 import isEqual from 'lodash/isEqual';
-import { getImagesForPosts } from '~/server/services/image.service';
+import {
+  applyModRulesSql,
+  applyUserPreferencesSql,
+  getImagesForPosts,
+} from '~/server/services/image.service';
+import { redis } from '~/server/redis/client';
+import { indexOfOr, shuffle } from '~/utils/array-helpers';
+import { hashifyObject } from '~/utils/string-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
+import { ManipulateType } from 'dayjs';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -39,6 +50,7 @@ export const getPostsInfinite = async ({
   excludedUserIds,
   excludedImageIds,
   period,
+  periodMode,
   sort,
   user,
   tags,
@@ -52,10 +64,13 @@ export const getPostsInfinite = async ({
     AND.push({ userId: targetUser?.id });
   }
   if (modelVersionId) AND.push({ modelVersionId });
-  if (isOwnerRequest) {
-    orderBy.push({ id: 'desc' });
-  } else {
-    AND.push({ publishedAt: { not: null } });
+  if (!isOwnerRequest) {
+    AND.push({
+      publishedAt:
+        period === 'AllTime' || periodMode === 'stats'
+          ? { not: null }
+          : { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) },
+    });
     if (query) AND.push({ title: { in: query } });
     if (!!excludedTagIds?.length) {
       AND.push({
@@ -70,14 +85,14 @@ export const getPostsInfinite = async ({
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-
-    // sorting
-    if (sort === PostSort.MostComments)
-      orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
-    else if (sort === PostSort.MostReactions)
-      orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
-    orderBy.push({ publishedAt: 'desc' });
   }
+
+  // sorting
+  if (sort === PostSort.MostComments)
+    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostReactions)
+    orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+  orderBy.push({ publishedAt: 'desc' });
 
   const posts = await dbRead.post.findMany({
     take: limit + 1,
@@ -90,6 +105,16 @@ export const getPostsInfinite = async ({
       title: true,
       // user: { select: userWithCosmeticsSelect },
       publishedAt: true,
+      stats: {
+        select: {
+          [`commentCount${period}`]: true,
+          [`likeCount${period}`]: true,
+          [`dislikeCount${period}`]: true,
+          [`heartCount${period}`]: true,
+          [`laughCount${period}`]: true,
+          [`cryCount${period}`]: true,
+        },
+      },
     },
   });
 
@@ -112,17 +137,36 @@ export const getPostsInfinite = async ({
   return {
     nextCursor,
     items: posts
-      .map((post) => ({
-        ...post,
-        image: images.find((x) => x.postId === post.id) as (typeof images)[0],
-      }))
-      .filter((x) => x.image !== undefined),
+      .map(({ stats, ...post }) => {
+        const { imageCount, ...image } =
+          images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
+
+        return {
+          ...post,
+          imageCount: Number(imageCount ?? 0),
+          stats: stats
+            ? {
+                commentCount: stats[`commentCount${period}`],
+                likeCount: stats[`likeCount${period}`],
+                dislikeCount: stats[`dislikeCount${period}`],
+                heartCount: stats[`heartCount${period}`],
+                laughCount: stats[`laughCount${period}`],
+                cryCount: stats[`cryCount${period}`],
+              }
+            : undefined,
+          image,
+        };
+      })
+      .filter((x) => x.imageCount !== 0),
   };
 };
 
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const post = await dbRead.post.findUnique({
-    where: { id },
+  const post = await dbRead.post.findFirst({
+    where: {
+      id,
+      OR: user?.isModerator ? undefined : [{ publishedAt: { not: null } }, { userId: user?.id }],
+    },
     select: {
       id: true,
       nsfw: true,
@@ -154,9 +198,13 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
   };
 };
 
-export const createPost = async ({ userId, ...data }: PostCreateInput & { userId: number }) => {
+export const createPost = async ({
+  userId,
+  tag,
+  ...data
+}: PostCreateInput & { userId: number }) => {
   const result = await dbWrite.post.create({
-    data: { ...data, userId },
+    data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
     select: editPostSelect,
   });
   return {
@@ -318,4 +366,264 @@ export const getPostResources = async ({ id }: GetByIdInput) => {
     where: { postId: id },
     orderBy: { modelName: 'asc' },
   });
+};
+
+const colorPriority = [
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'blue',
+  'purple',
+  'pink',
+  'brown',
+  'grey',
+];
+type PostCategory = { id: number; name: string; priority: number };
+export const getPostCategories = async ({
+  excludeIds,
+  limit,
+  cursor,
+}: {
+  excludeIds?: number[];
+  limit?: number;
+  cursor?: number;
+}) => {
+  let categories: PostCategory[] | undefined;
+  const categoriesCache = await redis.get('system:categories:posts');
+  if (categoriesCache) categories = JSON.parse(categoriesCache);
+
+  if (!categories) {
+    const systemTags = await getSystemTags();
+    const categoryTag = systemTags.find((t) => t.name === 'post category');
+    if (!categoryTag) throw new Error('Post category tag not found');
+    const categoriesRaw = await dbRead.tag.findMany({
+      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
+      select: { id: true, name: true, color: true },
+    });
+    categories = categoriesRaw
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
+      }))
+      .sort((a, b) => a.priority - b.priority);
+    if (categories.length) await redis.set('system:categories:posts', JSON.stringify(categories));
+  }
+
+  if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
+  let start = 0;
+  if (cursor) start = categories.findIndex((c) => c.id === cursor) + 1;
+  if (limit) categories = categories.slice(start, start + limit);
+
+  return categories;
+};
+
+type GetPostByCategoryRaw = {
+  id: number;
+  tagId: number;
+  nsfw: boolean;
+  title: string | null;
+  detail: string | null;
+  username: string | null;
+  userImage: string | null;
+  modelVersionId: number | null;
+  createdAt: Date;
+  publishedAt: Date | null;
+  cryCount: number;
+  laughCount: number;
+  likeCount: number;
+  dislikeCount: number;
+  heartCount: number;
+  commentCount: number;
+};
+type PostImageRaw = {
+  id: number;
+  name: string;
+  url: string;
+  nsfw: boolean;
+  width: number;
+  height: number;
+  hash: string;
+  meta: Prisma.JsonValue;
+  hideMeta: boolean;
+  generationProcess: ImageGenerationProcess;
+  createdAt: Date;
+  mimeType: string;
+  scannedAt: Date;
+  needsReview: boolean;
+  postId: number;
+};
+export const getPostsByCategory = async ({
+  userId,
+  ...input
+}: GetPostsByCategoryInput & { userId?: number }) => {
+  input.limit ??= 10;
+
+  let categories = await getPostCategories({
+    excludeIds: input.excludedTagIds,
+    limit: input.limit + 1,
+    cursor: input.cursor,
+  });
+
+  let nextCursor: number | null = null;
+  if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
+  categories = shuffle(categories);
+
+  const AND = [Prisma.sql`1 = 1`];
+
+  // Apply excluded tags
+  if (input.excludedTagIds?.length)
+    AND.push(Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnPost" top
+      WHERE top."postId" = p.id
+      AND top."tagId" IN (${Prisma.join(input.excludedTagIds)})
+    )`);
+
+  // Apply excluded users
+  if (input.excludedUserIds?.length)
+    AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(input.excludedUserIds)})`);
+
+  // Limit to selected user
+  if (input.username) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: input.username },
+      select: { id: true },
+    });
+    if (!targetUser) throw new Error('User not found');
+    AND.push(Prisma.sql`p."userId" = ${targetUser.id}`);
+  }
+
+  // Limit to selected model/version
+  if (input.modelId) AND.push(Prisma.sql`mv."modelId" = ${input.modelId}`);
+  if (input.modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${input.modelVersionId}`);
+
+  // Apply SFW filter
+  if (input.browsingMode === BrowsingMode.SFW) AND.push(Prisma.sql`p."nsfw" = false`);
+
+  let orderBy = `p."publishedAt" DESC NULLS LAST`;
+  if (input.sort === PostSort.MostReactions)
+    orderBy = `pm."likeCount"+pm."heartCount"+pm."laughCount"+pm."cryCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === PostSort.MostComments)
+    orderBy = `pm."commentCount" DESC NULLS LAST, ${orderBy}`;
+
+  const targets = categories.map((c) => {
+    return Prisma.sql`(
+      SELECT
+        top."postId", "tagId", row_number() OVER (ORDER BY ${Prisma.raw(orderBy)}) "index"
+      FROM "TagsOnPost" top
+      JOIN "Post" p ON p.id = top."postId"
+        ${Prisma.raw(
+          input.period !== 'AllTime' && input.periodMode !== 'stats'
+            ? `AND p."publishedAt" > now() - INTERVAL '1 ${input.period}'`
+            : 'AND p."publishedAt" IS NOT NULL'
+        )}
+      ${Prisma.raw(input.modelId ? `JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"` : '')}
+      ${Prisma.raw(
+        orderBy.startsWith('pm')
+          ? `LEFT JOIN "PostMetric" pm ON pm."postId" = top."postId" AND pm.timeframe = '${input.period}'`
+          : ''
+      )}
+      WHERE top."tagId" = ${c.id}
+      AND ${Prisma.join(AND, ' AND ')}
+      ORDER BY ${Prisma.raw(orderBy)}
+      LIMIT ${Math.ceil((input.postLimit ?? 12) * 1.25)}
+    )`;
+  });
+
+  const postsRaw = await dbRead.$queryRaw<GetPostByCategoryRaw[]>`
+    WITH targets AS (
+      ${Prisma.join(targets, ' UNION ALL ')}
+    )
+    SELECT
+      p.id,
+      t."tagId",
+      p.nsfw,
+      p.title,
+      p.detail,
+      u.username,
+      u.image AS "userImage",
+      p."modelVersionId",
+      p."createdAt",
+      p."publishedAt",
+      COALESCE(pm."cryCount", 0) "cryCount",
+      COALESCE(pm."laughCount", 0) "laughCount",
+      COALESCE(pm."likeCount", 0) "likeCount",
+      COALESCE(pm."dislikeCount", 0) "dislikeCount",
+      COALESCE(pm."heartCount", 0) "heartCount",
+      COALESCE(pm."commentCount", 0) "commentCount"
+    FROM targets t
+    JOIN "Post" p ON p.id = t."postId"
+    JOIN "User" u ON u.id = p."userId"
+    LEFT JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"
+    ORDER BY t."index"
+  `;
+
+  const postIds = postsRaw.map((p) => p.id);
+  const imageAND = [Prisma.sql`"postId" IN (${Prisma.join(postIds)})`];
+  applyUserPreferencesSql(imageAND, { ...input, userId });
+  applyModRulesSql(imageAND, { userId });
+  const images = await dbRead.$queryRaw<PostImageRaw[]>`
+    WITH all_images AS (
+      SELECT
+        i.id,
+        i.name,
+        i.url,
+        i.nsfw,
+        i.width,
+        i.height,
+        i.hash,
+        i.meta,
+        i."hideMeta",
+        i."generationProcess",
+        i."createdAt",
+        i."mimeType",
+        i."scannedAt",
+        i."needsReview",
+        i."postId",
+        row_number() OVER (PARTITION BY i."postId" ORDER BY i."index") row_number
+      FROM "Image" i
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE ${Prisma.join(imageAND, ' AND ')}
+    )
+    SELECT
+      *
+    FROM all_images
+    ORDER BY row_number;
+  `;
+
+  // Convert raw to processed
+  const usedImages = new Set();
+  const rawToProcess = (raw: GetPostByCategoryRaw) => {
+    const postImages = images.filter((i) => i.postId === raw.id);
+    const image = postImages.find((i) => !usedImages.has(i.id));
+    if (!image) return null;
+    usedImages.add(image.id);
+    return {
+      ...raw,
+      imageCount: postImages.length,
+      image,
+    };
+  };
+
+  // Map posts to categories
+  const postCategories: Record<number, ReturnType<typeof rawToProcess>[]> = {};
+  for (const raw of postsRaw) {
+    const processed = rawToProcess(raw);
+    if (!processed) continue;
+    if (!postCategories[raw.tagId]) postCategories[raw.tagId] = [];
+    postCategories[raw.tagId].push(processed);
+  }
+
+  // Map category record to array
+  const items = categories
+    .map((c) => {
+      const items = postCategories[c.id]?.filter(isDefined) ?? [];
+      // Let's include empty categories for now
+      // if (!items.length) return null;
+      return { ...c, items };
+    })
+    .filter(isDefined);
+
+  return { items, nextCursor };
 };

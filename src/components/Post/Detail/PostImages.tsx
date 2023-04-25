@@ -59,7 +59,7 @@ export function PostImages({
           const width = image.width ?? maxWidth;
           return (
             <RoutedContextLink modal="imageDetailModal" imageId={image.id} postId={postId}>
-              <Paper radius="md" className={classes.frame}>
+              <Paper radius="md" className={classes.frame} shadow="md" withBorder>
                 <ImageGuard.ToggleConnect
                   sx={(theme) => ({
                     backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),

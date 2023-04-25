@@ -14,7 +14,7 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { getSession } from 'next-auth/react';
-import { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -99,7 +99,7 @@ function MyApp(props: CustomAppProps) {
   }, [colorScheme]);
 
   const getLayout = useMemo(
-    () => Component.getLayout ?? ((page: any) => <AppLayout>{page}</AppLayout>),
+    () => Component.getLayout ?? ((page: React.ReactElement) => <AppLayout>{page}</AppLayout>),
     [Component.getLayout]
   );
 

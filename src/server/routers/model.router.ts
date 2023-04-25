@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import {
   changeModelModifierHandler,
   createModelHandler,
+  declineReviewHandler,
   deleteModelHandler,
   getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
@@ -27,6 +28,7 @@ import { dbRead } from '~/server/db/client';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   changeModelModifierSchema,
+  declineReviewSchema,
   deleteModelSchema,
   GetAllModelsOutput,
   getAllModelsSchema,
@@ -177,6 +179,7 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(requestReviewHandler),
+  declineReview: protectedProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
   changeMode: protectedProcedure
     .input(changeModelModifierSchema)
     .use(isOwnerOrModerator)

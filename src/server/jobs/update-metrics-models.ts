@@ -210,31 +210,55 @@ export const updateMetricsModelJob = createJob(
           FROM ${viewName} m
           LEFT JOIN (
             SELECT
-              a.${viewId},
-              COUNT(a.${viewId}) AS download_count,
-              SUM(CASE WHEN a.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
-              SUM(CASE WHEN a.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
-              SUM(CASE WHEN a.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
-              SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count
-            FROM
-            (
-              SELECT
-                user_id,
-                ${viewId},
-                MAX(created_at) created_at
-              FROM (
+              ${viewId},
+              SUM(download_count) download_count,
+              SUM(year_download_count) year_download_count,
+              SUM(month_download_count) month_download_count,
+              SUM(week_download_count) week_download_count,
+              SUM(day_download_count) day_download_count
+            FROM (
+              (
                 SELECT
-                  COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
-                  CAST(a.details ->> 'modelId' AS INT) AS model_id,
-                  CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
-                  a."createdAt" AS created_at
-                FROM "UserActivity" a
-                WHERE a.activity = 'ModelDownload'
-              ) t
-              JOIN "ModelVersion" mv ON mv.id = t.model_version_id
-              GROUP BY user_id, model_id, model_version_id
-            ) a
-            GROUP BY a.${viewId}
+                  a.${viewId},
+                  COUNT(a.${viewId}) AS download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
+                  SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count
+                FROM
+                (
+                  SELECT
+                    user_id,
+                    ${viewId},
+                    MAX(created_at) created_at
+                  FROM (
+                    SELECT
+                      COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
+                      CAST(a.details ->> 'modelId' AS INT) AS model_id,
+                      CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
+                      a."createdAt" AS created_at
+                    FROM "UserActivity" a
+                    WHERE a.activity = 'ModelDownload' AND a."createdAt" > current_date
+                  ) t
+                  JOIN "ModelVersion" mv ON mv.id = t.model_version_id
+                  GROUP BY user_id, model_id, model_version_id
+                ) a
+                GROUP BY a.${viewId}
+              )
+              UNION ALL
+              (
+                SELECT
+                  "${tableId}" ${viewId},
+                  SUM(count) download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '365 days') THEN count ELSE 0 END) AS year_download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '30 days') THEN count ELSE 0 END) AS month_download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '7 days') THEN count ELSE 0 END) AS week_download_count,
+                  SUM(CASE WHEN date >= (NOW() - interval '1 days') THEN count ELSE 0 END) AS day_download_count
+                FROM "ModelMetricDaily"
+                GROUP BY "${tableId}"
+              )
+            ) agg
+            GROUP BY agg.${viewId}
           ) ds ON m.${viewId} = ds.${viewId}
           LEFT JOIN (
             SELECT

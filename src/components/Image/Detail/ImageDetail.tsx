@@ -34,6 +34,8 @@ import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailCommen
 import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
+import { Meta } from '~/components/Meta/Meta';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export function ImageDetail() {
   const { classes, cx } = useStyles();
@@ -44,139 +46,145 @@ export function ImageDetail() {
   if (!image) return <NotFound />;
 
   return (
-    <MantineProvider theme={{ colorScheme: 'dark' }}>
-      <Paper className={classes.root}>
-        <CloseButton
-          style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
-          size="lg"
-          variant="default"
-          onClick={close}
-          className={classes.mobileOnly}
-        />
-        <ImageDetailCarousel className={classes.carousel} />
-        <ActionIcon
-          size="lg"
-          className={cx(classes.info, classes.mobileOnly)}
-          onClick={toggleInfo}
-          variant="default"
-        >
-          <IconInfoCircle />
-        </ActionIcon>
-        <Card
-          className={cx(classes.sidebar, {
-            [classes.active]: active,
-          })}
-        >
-          <Card.Section withBorder>
-            <Stack p="sm" spacing={8}>
-              <Group noWrap>
-                <Group position="apart" style={{ flex: 1 }}>
-                  <UserAvatar
-                    user={image.user}
-                    subText={<DaysFromNow date={image.createdAt} />}
-                    subTextForce
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group spacing={4}>
-                    <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
-                      <ActionIcon size="lg">
-                        <IconShare />
-                      </ActionIcon>
-                    </ShareButton>
-                    <ReportImageButton imageId={image.id}>
-                      <ActionIcon size="lg">
-                        <IconFlag />
-                      </ActionIcon>
-                    </ReportImageButton>
-                    {(isMod || isOwner) && (
-                      <ImageDetailContextMenu>
-                        <ActionIcon size="lg">
-                          <IconDotsVertical />
-                        </ActionIcon>
-                      </ImageDetailContextMenu>
-                    )}
-                  </Group>
-                </Group>
-                <CloseButton size="lg" variant="default" onClick={close} />
-              </Group>
-            </Stack>
-          </Card.Section>
-          <Card.Section
-            component={ScrollArea}
-            style={{ flex: 1, position: 'relative' }}
-            classNames={{ viewport: classes.scrollViewport }}
+    <>
+      <Meta
+        title={`Image posted by ${image.user.username}`}
+        image={image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
+      />
+      <MantineProvider theme={{ colorScheme: 'dark' }}>
+        <Paper className={classes.root}>
+          <CloseButton
+            style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
+            size="lg"
+            variant="default"
+            onClick={close}
+            className={classes.mobileOnly}
+          />
+          <ImageDetailCarousel className={classes.carousel} />
+          <ActionIcon
+            size="lg"
+            className={cx(classes.info, classes.mobileOnly)}
+            onClick={toggleInfo}
+            variant="default"
           >
-            <Stack spacing="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
-              {image.needsReview && (
-                <AlertWithIcon
-                  icon={<IconAlertTriangle />}
-                  color="yellow"
-                  iconColor="yellow"
-                  title="Flagged for review"
-                  radius={0}
-                  px="md"
-                >
-                  {`This image won't be visible to other users until it's reviewed by our moderators.`}
-                </AlertWithIcon>
-              )}
-              <VotableTags
-                entityType="image"
-                entityId={image.id}
-                canAdd
-                canAddModerated={isMod}
-                collapsible
-                px="md"
-              />
-              <div>
-                <Divider
-                  label="Discussion"
-                  labelPosition="center"
-                  styles={{
-                    label: {
-                      marginTop: '-9px !important',
-                      marginBottom: -9,
-                    },
-                  }}
-                />
-                <Paper p="sm" radius={0}>
-                  <Stack spacing={8}>
-                    <Reactions
-                      entityId={image.id}
-                      entityType="image"
-                      reactions={image.reactions}
-                      metrics={{
-                        likeCount: image.stats?.likeCountAllTime,
-                        dislikeCount: image.stats?.dislikeCountAllTime,
-                        heartCount: image.stats?.heartCountAllTime,
-                        laughCount: image.stats?.laughCountAllTime,
-                        cryCount: image.stats?.cryCountAllTime,
-                      }}
+            <IconInfoCircle />
+          </ActionIcon>
+          <Card
+            className={cx(classes.sidebar, {
+              [classes.active]: active,
+            })}
+          >
+            <Card.Section withBorder>
+              <Stack p="sm" spacing={8}>
+                <Group noWrap>
+                  <Group position="apart" style={{ flex: 1 }}>
+                    <UserAvatar
+                      user={image.user}
+                      subText={<DaysFromNow date={image.createdAt} />}
+                      subTextForce
+                      withUsername
+                      linkToProfile
                     />
-                    <ImageDetailComments imageId={image.id} userId={image.user.id} />
-                  </Stack>
-                </Paper>
-              </div>
-              <Stack spacing="md" mt="auto">
-                <Divider label="Resources" labelPosition="center" />
-
-                <Box px="md">
-                  <ImageResources imageId={image.id} />
-                </Box>
-                {image.meta && (
-                  <>
-                    <Divider label="Generation Data" labelPosition="center" mb={-15} />
-                    <Box px="md">
-                      <ImageMeta meta={image.meta as ImageMetaProps} />
-                    </Box>
-                  </>
-                )}
+                    <Group spacing={4}>
+                      <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
+                        <ActionIcon size="lg">
+                          <IconShare />
+                        </ActionIcon>
+                      </ShareButton>
+                      <ReportImageButton imageId={image.id}>
+                        <ActionIcon size="lg">
+                          <IconFlag />
+                        </ActionIcon>
+                      </ReportImageButton>
+                      {(isMod || isOwner) && (
+                        <ImageDetailContextMenu>
+                          <ActionIcon size="lg">
+                            <IconDotsVertical />
+                          </ActionIcon>
+                        </ImageDetailContextMenu>
+                      )}
+                    </Group>
+                  </Group>
+                  <CloseButton size="lg" variant="default" onClick={close} />
+                </Group>
               </Stack>
-            </Stack>
-          </Card.Section>
-        </Card>
-      </Paper>
-    </MantineProvider>
+            </Card.Section>
+            <Card.Section
+              component={ScrollArea}
+              style={{ flex: 1, position: 'relative' }}
+              classNames={{ viewport: classes.scrollViewport }}
+            >
+              <Stack spacing="md" pt={image.needsReview ? 0 : 'md'} pb="md" style={{ flex: 1 }}>
+                {image.needsReview && (
+                  <AlertWithIcon
+                    icon={<IconAlertTriangle />}
+                    color="yellow"
+                    iconColor="yellow"
+                    title="Flagged for review"
+                    radius={0}
+                    px="md"
+                  >
+                    {`This image won't be visible to other users until it's reviewed by our moderators.`}
+                  </AlertWithIcon>
+                )}
+                <VotableTags
+                  entityType="image"
+                  entityId={image.id}
+                  canAdd
+                  canAddModerated={isMod}
+                  collapsible
+                  px="md"
+                />
+                <div>
+                  <Divider
+                    label="Discussion"
+                    labelPosition="center"
+                    styles={{
+                      label: {
+                        marginTop: '-9px !important',
+                        marginBottom: -9,
+                      },
+                    }}
+                  />
+                  <Paper p="sm" radius={0}>
+                    <Stack spacing={8}>
+                      <Reactions
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                        }}
+                      />
+                      <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                    </Stack>
+                  </Paper>
+                </div>
+                <Stack spacing="md" mt="auto">
+                  <Divider label="Resources" labelPosition="center" />
+
+                  <Box px="md">
+                    <ImageResources imageId={image.id} />
+                  </Box>
+                  {image.meta && (
+                    <>
+                      <Divider label="Generation Data" labelPosition="center" mb={-15} />
+                      <Box px="md">
+                        <ImageMeta meta={image.meta as ImageMetaProps} />
+                      </Box>
+                    </>
+                  )}
+                </Stack>
+              </Stack>
+            </Card.Section>
+          </Card>
+        </Paper>
+      </MantineProvider>
+    </>
   );
 }
 

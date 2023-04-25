@@ -1,65 +1,58 @@
 import {
-  useSensors,
-  useSensor,
-  PointerSensor,
   DndContext,
-  closestCenter,
   DragEndEvent,
-  UniqueIdentifier,
-  DragStartEvent,
   DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  UniqueIdentifier,
+  closestCenter,
+  useSensor,
+  useSensors,
 } from '@dnd-kit/core';
-import { arrayMove, SortableContext } from '@dnd-kit/sortable';
+import { SortableContext, arrayMove } from '@dnd-kit/sortable';
 import {
-  Checkbox,
-  createStyles,
+  ActionIcon,
+  Alert,
+  Box,
+  Button,
+  Center,
+  Grid,
   Group,
+  HoverCard,
   Input,
   InputWrapperProps,
-  Text,
-  Stack,
-  Button,
-  ActionIcon,
-  Popover,
-  Textarea,
-  NumberInput,
-  Grid,
-  Select,
-  Tooltip,
   Loader,
   LoadingOverlay,
-  Center,
+  NumberInput,
   Overlay,
-  Tabs,
-  MultiSelect,
-  Box,
-  Alert,
-  HoverCard,
+  Paper,
+  Popover,
+  Select,
+  Stack,
+  Text,
+  Textarea,
   Title,
+  createStyles,
 } from '@mantine/core';
-import { FileWithPath, Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
-import { TagTarget } from '@prisma/client';
+import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
+import { useDidUpdate, useListState, useLocalStorage } from '@mantine/hooks';
 import {
+  IconAlertTriangle,
   IconPencil,
   IconPhoto,
-  IconAlertTriangle,
-  IconRating18Plus,
   IconTrash,
   IconUpload,
   IconX,
 } from '@tabler/icons';
-import isEqual from 'lodash/isEqual';
-import { cloneElement, useEffect, useMemo, useState } from 'react';
+import produce from 'immer';
+import { cloneElement, useMemo, useState } from 'react';
 
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useImageUpload } from '~/hooks/useImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { useImageUpload } from '~/hooks/useImageUpload';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { trpc } from '~/utils/trpc';
 import { SimpleTag } from '~/server/selectors/tag.selector';
-import { TagSort } from '~/server/common/enums';
 import { getNeedsReview } from '~/utils/image-metadata';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -90,17 +83,19 @@ export function ImageUpload({
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const {
-    files,
-    filesHandler,
-    removeImage,
-    upload,
-    // isCompleted,
-    // isUploading,
-    // isProcessing,
-    // hasErrors,
-    // hasBlocked,
-  } = useImageUpload({ max, value: Array.isArray(value) ? value : [] });
+  // const {
+  //   files,
+  //   filesHandler,
+  //   removeImage,
+  //   upload,
+  //   // isCompleted,
+  //   // isUploading,
+  //   // isProcessing,
+  //   // hasErrors,
+  //   // hasBlocked,
+  // } = useImageUpload({ max, value: Array.isArray(value) ? value : [] });
+  const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
+  const [files, filesHandler] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
 
   useDidUpdate(() => {
@@ -113,7 +108,27 @@ export function ImageUpload({
   }, [files]); //eslint-disable-line
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
-    await upload(droppedFiles);
+    if (files.length + droppedFiles.length > max) return;
+
+    const toUpload = droppedFiles.map((file) => ({ url: URL.createObjectURL(file), file }));
+    filesHandler.setState((current) => [
+      ...current,
+      ...toUpload.map((x) => ({ url: x.url, file: x.file })),
+    ]);
+    await Promise.all(
+      toUpload.map(async (image) => {
+        const { id } = await uploadToCF(image.file);
+        filesHandler.setState(
+          produce((current) => {
+            const index = current.findIndex((x) => x.file === image.file);
+            if (index === -1) return;
+            current[index].url = id;
+            current[index].file = undefined;
+          })
+        );
+        URL.revokeObjectURL(image.url);
+      })
+    );
   };
   const dropzoneDisabled = files.length >= max;
 
@@ -132,7 +147,7 @@ export function ImageUpload({
         <Dropzone
           accept={IMAGE_MIME_TYPE}
           onDrop={handleDrop}
-          // maxFiles={max - files.length}
+          maxFiles={max - files.length}
           className={cx({ [classes.disabled]: dropzoneDisabled })}
           styles={(theme) => ({
             root: !!inputWrapperProps.error
@@ -193,6 +208,22 @@ export function ImageUpload({
                   }}
                 >
                   {files.map((image, index) => {
+                    const match = imageFiles.find((file) => image.file === file.file);
+                    const { progress } = match ?? { progress: 0 };
+                    const showLoading = (match && progress < 100) || image.file;
+
+                    if (showLoading)
+                      return (
+                        <div key={index}>
+                          <Paper
+                            withBorder
+                            style={{ position: 'relative', height: '96px', width: '96px' }}
+                          >
+                            <LoadingOverlay visible={showLoading ?? false} />
+                          </Paper>
+                        </div>
+                      );
+
                     return (
                       <UploadedImage
                         image={image}
@@ -260,7 +291,7 @@ function UploadedImage({
   index: number;
   isPrimary: boolean;
   filesHandler: ReturnType<typeof useImageUpload>['filesHandler'];
-  removeImage: ReturnType<typeof useImageUpload>['removeImage'];
+  removeImage: ReturnType<typeof useCFImageUpload>['removeImage'];
   withMeta?: boolean;
 }) {
   const isError = image.status === 'error';
@@ -364,7 +395,14 @@ function UploadedImage({
             )}
           </>
         )}
-        <ActionIcon color="red" variant="outline" onClick={() => removeImage(image)}>
+        <ActionIcon
+          color="red"
+          variant="outline"
+          onClick={() => {
+            filesHandler.remove(index);
+            removeImage(image.url);
+          }}
+        >
           <IconTrash size={16} />
         </ActionIcon>
       </Group>

@@ -359,6 +359,7 @@ model Model {
   hashes            ModelHash[]
   threads           Thread[]
   resourceReviews   ResourceReview[]
+  metricsDaily      ModelMetricDaily[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -441,6 +442,7 @@ model ModelVersion {
   posts            Post[]
   resourceReviews  ResourceReview[]
   hashes           ModelHash[]
+  metricsDaily     ModelMetricDaily[]
 
   @@index([modelId], type: Hash)
 }
@@ -541,6 +543,19 @@ model ModelVersionMetric {
   commentCount   Int             @default(0)
 
   @@id([modelVersionId, timeframe])
+}
+
+model ModelMetricDaily {
+  modelId        Int
+  model          Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type           String
+  date           DateTime     @db.Date
+  count          Int
+
+  @@id([modelId, modelVersionId, type, date])
+  @@index(modelVersionId)
 }
 
 enum UserActivityType {

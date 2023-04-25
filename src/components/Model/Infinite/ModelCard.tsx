@@ -48,6 +48,7 @@ import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
+import { isFutureDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit, getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -169,7 +170,8 @@ export function AmbientModelCard({ data, width, height }: Props) {
   const theme = useMantineTheme();
   const { push } = useRouter();
 
-  const { id, image, name, rank, user, locked } = data ?? {};
+  const { id, image, name, rank, user, locked, earlyAccessDeadline } = data ?? {};
+  const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
 
   const [loading, setLoading] = useState(false);
 
@@ -205,7 +207,7 @@ export function AmbientModelCard({ data, width, height }: Props) {
           {data.status}
         </Badge>
       )}
-      {data.status === ModelStatus.Published && data.earlyAccessDeadline && (
+      {data.status === ModelStatus.Published && inEarlyAccess && (
         <Badge
           className={cx(classes.floatingBadge, classes.earlyAccessBadge)}
           radius="sm"

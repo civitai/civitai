@@ -1,15 +1,15 @@
-import { Container, Stack, Group, createStyles, Box, Center, Title, Text } from '@mantine/core';
+import { Box, Center, createStyles, Group, Stack, Text, Title } from '@mantine/core';
+import { MetricTimeframe } from '@prisma/client';
 import { InferGetServerSidePropsType } from 'next/types';
-import { InfiniteModels } from '~/components/InfiniteModels/InfiniteModels';
-import {
-  InfiniteModelsSort,
-  InfiniteModelsPeriod,
-  InfiniteModelsFilter,
-} from '~/components/InfiniteModels/InfiniteModelsFilters';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
+import { useModelQueryParams } from '~/components/Model/model.utils';
 import { constants } from '~/server/common/constants';
+import { ModelSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -26,11 +26,14 @@ export const getServerSideProps = createServerSideProps({
 export default function TagPage({
   tagname,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { classes } = useStyles();
+  const { set, ...queryFilters } = useModelQueryParams();
+  const sort = queryFilters.sort ?? ModelSort.HighestRated;
+  const period = queryFilters.period ?? MetricTimeframe.AllTime;
 
   const { data = [] } = trpc.tag.getTagWithModelCount.useQuery({ name: tagname });
   const [tag] = data;
 
+  const { classes } = useStyles();
   const count = tag?.count ?? 0;
 
   return (
@@ -61,13 +64,13 @@ export default function TagPage({
         <MasonryContainer fluid>
           <Stack spacing="xs">
             <Group position="apart">
-              <InfiniteModelsSort />
+              <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as any })} />
               <Group spacing="xs">
-                <InfiniteModelsPeriod />
-                <InfiniteModelsFilter />
+                <PeriodFilter value={period} onChange={(x) => set({ period: x })} />
+                <ModelFiltersDropdown />
               </Group>
             </Group>
-            <InfiniteModels />
+            <ModelsInfinite filters={queryFilters} />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Button,
   Center,
   Group,
@@ -11,14 +12,14 @@ import {
   Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
+import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
-import { ImagePeriod } from '~/components/Image/Filters/ImagePeriod';
-import { ImageSort } from '~/components/Image/Filters/ImageSort';
 import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -27,7 +28,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useSetFilters } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -69,14 +70,19 @@ export default function ImagesAsPostsInfinite({
   const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
 
   const imageFilters = useImageFilters('modelImages');
-  const filters = removeEmpty({ ...imageFilters, modelId, username });
+  const setFilters = useSetFilters('modelImages');
+  const filters = removeEmpty({
+    ...imageFilters,
+    modelVersionId: selectedVersionId,
+    modelId,
+    username,
+  });
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit },
       {
-        getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-        getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
         keepPreviousData: true,
         // enabled: inView,
@@ -87,16 +93,17 @@ export default function ImagesAsPostsInfinite({
 
   // #region [infinite data fetching]
   useEffect(() => {
-    if (inView) {
+    if (inView && !isFetching) {
       fetchNextPage?.();
     }
-  }, [fetchNextPage, inView]);
+  }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
   const isMuted = currentUser?.muted ?? false;
   const addPostLink = `/posts/create?modelId=${modelId}${
     selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
   }&returnUrl=${router.asPath}`;
+  const { excludeCrossPosts } = imageFilters;
 
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ filters, modelVersions }}>
@@ -138,9 +145,18 @@ export default function ImagesAsPostsInfinite({
             </Group>
             {/* IMAGES */}
             <Group position="apart" spacing={0}>
-              <ImageSort type="modelImages" />
+              <SortFilter type="modelImages" />
               <Group spacing={4}>
-                <ImagePeriod type="modelImages" />
+                <PeriodFilter type="modelImages" />
+                <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
+                  <ActionIcon
+                    variant={excludeCrossPosts ? 'light' : 'transparent'}
+                    color={excludeCrossPosts ? 'red' : undefined}
+                    onClick={() => setFilters({ excludeCrossPosts: !excludeCrossPosts })}
+                  >
+                    <IconArrowsCross size={20} />
+                  </ActionIcon>
+                </ButtonTooltip>
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>

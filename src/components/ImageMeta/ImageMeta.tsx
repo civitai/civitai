@@ -15,8 +15,6 @@ import { IconCheck, IconCopy } from '@tabler/icons';
 import { useMemo } from 'react';
 import { encodeMetadata } from '~/utils/image-metadata';
 import { ImageGenerationProcess } from '@prisma/client';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { cloneElement } from 'react';
 
 type Props = {
   meta: ImageMetaProps;
@@ -96,7 +94,15 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
               </>
             )}
           </Group>
-          <Code block sx={{ whiteSpace: 'normal', maxHeight: 150, overflowY: 'auto' }}>
+          <Code
+            block
+            sx={{
+              whiteSpace: 'normal',
+              wordBreak: 'break-word',
+              maxHeight: 150,
+              overflowY: 'auto',
+            }}
+          >
             {value}
           </Code>
         </Stack>
@@ -117,7 +123,15 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
             <Text size="sm" mr="xs" weight={500}>
               {label}
             </Text>
-            <Code sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            <Code
+              sx={{
+                flex: '1',
+                textAlign: 'right',
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                maxWidth: 300,
+              }}
+            >
               {value}
             </Code>
           </Group>

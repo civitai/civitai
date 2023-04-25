@@ -1,4 +1,4 @@
-import { applyUserPreferences, applyBrowsingMode } from './../middleware.trpc';
+import { applyUserPreferences, applyBrowsingMode, cacheIt } from './../middleware.trpc';
 import { getByIdSchema } from './../schema/base.schema';
 import { publicProcedure } from './../trpc';
 import {
@@ -26,10 +26,12 @@ import {
   updatePostImageSchema,
   getPostTagsSchema,
   postsQuerySchema,
+  getPostsByCategorySchema,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { router, protectedProcedure, middleware } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { getPostsByCategory } from '~/server/services/post.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -116,4 +118,9 @@ export const postRouter = router({
     .use(isOwnerOrModerator)
     .mutation(removePostTagHandler),
   getResources: publicProcedure.input(getByIdSchema).query(getPostResourcesHandler),
+  getPostsByCategory: publicProcedure
+    .input(getPostsByCategorySchema)
+    .use(applyUserPreferences())
+    .use(cacheIt())
+    .query(({ input }) => getPostsByCategory(input)),
 });

@@ -31,9 +31,10 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
       return { prevHidden };
     },
     onSuccess() {
+      // Because of optimistic updates, we have to revert the condition to display the correct message
       showSuccessNotification({
-        title: `User marked as ${alreadyHiding ? 'show' : 'hidden'}`,
-        message: `Content from this user will${alreadyHiding ? ' ' : ' not'} show up in your feed`,
+        title: `User marked as ${!alreadyHiding ? 'show' : 'hidden'}`,
+        message: `Content from this user will${!alreadyHiding ? ' ' : ' not'} show up in your feed`,
       });
     },
     onError(_error, _variables, context) {

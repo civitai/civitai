@@ -92,6 +92,7 @@ export const updateMetricsJob = createJob(
           SELECT DISTINCT
               r.user_id
           FROM recent_engagements r
+          JOIN "User" u ON u.id = r.user_id
           WHERE r.user_id IS NOT NULL
       )
 
@@ -304,8 +305,8 @@ export const updateMetricsJob = createJob(
           SELECT DISTINCT
               r.id
           FROM recent_engagements r
+          JOIN "Question" q ON q.id = r.id
           WHERE r.id IS NOT NULL
-          AND r.id IN (SELECT id FROM "Question")
       )
 
       -- upsert metrics for all affected users
@@ -437,8 +438,8 @@ export const updateMetricsJob = createJob(
           SELECT DISTINCT
               r.id
           FROM recent_engagements r
+          JOIN "Answer" a ON a.id = r.id
           WHERE r.id IS NOT NULL
-          AND r.id IN (SELECT id FROM "Answer")
       )
 
       -- upsert metrics for all affected users
@@ -594,6 +595,7 @@ export const updateMetricsJob = createJob(
           SELECT DISTINCT
               r.id
           FROM recent_engagements r
+          JOIN "Tag" t ON t.id = r.id
           WHERE r.id IS NOT NULL
       )
 
@@ -768,6 +770,7 @@ export const updateMetricsJob = createJob(
             SELECT DISTINCT
                 r.id
             FROM recent_engagements r
+            JOIN "Post" p ON p.id = r.id
             WHERE r.id IS NOT NULL
         )
 

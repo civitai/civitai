@@ -9,6 +9,7 @@ export type ModelById = ModelRouter['getById'];
 export type ModelGetAll = ModelRouter['getAll'];
 export type ModelGetVersions = ModelRouter['getVersions'];
 export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
+export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 
 type ModelVersionRouter = RouterOutput['modelVersion'];
 export type ModelVersionById = ModelVersionRouter['getById'];
@@ -53,3 +54,7 @@ export type ResourceReviewInfiniteModel = ResourceReviewRouter['getInfinite']['i
 export type ResourceReviewRatingTotals = ResourceReviewRouter['getRatingTotals'];
 export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
 export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];
+
+type PostRouter = RouterOutput['post'];
+export type PostGetByCategoryModel = PostRouter['getPostsByCategory']['items'][number];
+export type PostGetByCategoryPostModel = PostGetByCategoryModel['items'][number];

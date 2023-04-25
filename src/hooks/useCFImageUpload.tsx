@@ -9,6 +9,8 @@ type TrackedFile = {
   timeRemaining: number;
   status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
   abort: () => void;
+  id?: string;
+  url?: string;
 };
 
 type UploadResult = {
@@ -21,6 +23,7 @@ type UploadToCF = (file: File, metadata?: Record<string, string>) => Promise<Upl
 type UseS3UploadTools = {
   uploadToCF: UploadToCF;
   files: TrackedFile[];
+  removeImage: (imageId: string) => void;
 };
 
 type UseCFImageUpload = () => UseS3UploadTools;
@@ -65,7 +68,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
     const xhr = new XMLHttpRequest();
     setFiles((x) => [
       ...x,
-      { file, ...pendingTrackedFile, abort: xhr.abort.bind(xhr) } as TrackedFile,
+      { file, ...pendingTrackedFile, abort: xhr.abort.bind(xhr), id, url } as TrackedFile,
     ]);
 
     function updateFile(trackedFile: Partial<TrackedFile>) {
@@ -124,9 +127,14 @@ export const useCFImageUpload: UseCFImageUpload = () => {
     return { url: url.split('?')[0], id };
   };
 
+  const removeImage = (imageId: string) => {
+    setFiles((current) => current.filter((x) => x.id !== imageId));
+  };
+
   return {
     uploadToCF,
     files,
     resetFiles,
+    removeImage,
   };
 };
