@@ -41,6 +41,7 @@ import {
   publishModelById,
   restoreModelById,
   toggleLockModel,
+  unpublishModelById,
   updateModelById,
   upsertModel,
 } from '~/server/services/model.service';
@@ -356,7 +357,7 @@ export const publishModelHandler = async ({
 
 export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSchema }) => {
   try {
-    const { id, reason } = input;
+    const { id } = input;
     const model = await dbRead.model.findUnique({
       where: { id },
       select: { meta: true },
@@ -364,22 +365,7 @@ export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSc
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const meta = (model.meta as ModelMeta | null) || {};
-    const updatedModel = await updateModelById({
-      id,
-      data: {
-        status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
-        publishedAt: null,
-        meta: reason
-          ? { ...meta, unpublishedReason: reason, unpublishedAt: new Date().toISOString() }
-          : undefined,
-        modelVersions: {
-          updateMany: {
-            where: { status: ModelStatus.Published },
-            data: { status: ModelStatus.Unpublished, publishedAt: null },
-          },
-        },
-      },
-    });
+    const updatedModel = await unpublishModelById({ ...input, meta });
 
     return updatedModel;
   } catch (error) {

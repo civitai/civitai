@@ -1,4 +1,4 @@
-import { ModelMeta, ToggleModelLockInput } from './../schema/model.schema';
+import { ModelMeta, ToggleModelLockInput, UnpublishModelSchema } from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -505,6 +505,48 @@ export const publishModelById = async ({
       }
 
       return model;
+    },
+    { timeout: 10000 }
+  );
+
+  return model;
+};
+
+export const unpublishModelById = async ({
+  id,
+  reason,
+  meta,
+}: UnpublishModelSchema & { meta?: ModelMeta }) => {
+  const model = await dbWrite.$transaction(
+    async (tx) => {
+      const updatedModel = await tx.model.update({
+        where: { id },
+        data: {
+          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          publishedAt: null,
+          meta: reason
+            ? { ...meta, unpublishedReason: reason, unpublishedAt: new Date().toISOString() }
+            : undefined,
+          modelVersions: {
+            updateMany: {
+              where: { status: ModelStatus.Published },
+              data: { status: ModelStatus.Unpublished, publishedAt: null },
+            },
+          },
+        },
+        select: { userId: true, modelVersions: { select: { id: true } } },
+      });
+
+      await tx.post.updateMany({
+        where: {
+          modelVersionId: { in: updatedModel.modelVersions.map((x) => x.id) },
+          userId: updatedModel.userId,
+          publishedAt: { not: null },
+        },
+        data: { publishedAt: null },
+      });
+
+      return updatedModel;
     },
     { timeout: 10000 }
   );
