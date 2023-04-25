@@ -298,6 +298,12 @@ export const createModelHandler = async ({
     const { user } = ctx;
     const model = await createModel({ ...input, userId: user.id });
 
+    await ctx.track.modelEvent({
+      type: 'Create',
+      modelId: model.id,
+      nsfw: model.nsfw,
+    });
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -317,6 +323,12 @@ export const upsertModelHandler = async ({
     const model = await upsertModel({ ...input, userId });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
+    await ctx.track.modelEvent({
+      type: input.id ? 'Update' : 'Create',
+      modelId: model.id,
+      nsfw: model.nsfw,
+    });
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -334,7 +346,7 @@ export const publishModelHandler = async ({
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { status: true, meta: true },
+      select: { status: true, meta: true, nsfw },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
@@ -347,6 +359,12 @@ export const publishModelHandler = async ({
       (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
+    await ctx.track.modelEvent({
+      type: 'Publish',
+      modelId: input.id,
+      nsfw: model.nsfw,
+    });
+
     return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -354,12 +372,18 @@ export const publishModelHandler = async ({
   }
 };
 
-export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSchema }) => {
+export const unpublishModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UnpublishModelSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const { id, reason } = input;
     const model = await dbRead.model.findUnique({
       where: { id },
-      select: { meta: true },
+      select: { meta: true, nsfw: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
@@ -379,6 +403,12 @@ export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSc
           },
         },
       },
+    });
+
+    await ctx.track.modelEvent({
+      type: 'Unpublish',
+      modelId: id,
+      nsfw: model.nsfw,
     });
 
     return updatedModel;
@@ -402,6 +432,12 @@ export const deleteModelHandler = async ({
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
     const model = await deleteModel({ id, userId: ctx.user.id });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+    await ctx.track.modelEvent({
+      type: permanently ? 'PermanentDelete' : 'Delete',
+      modelId: model.id,
+      nsfw: model.nsfw,
+    });
 
     return model;
   } catch (error) {
@@ -847,6 +883,15 @@ export const changeModelModifierHandler = async ({
       id,
       data: { mode, meta: { ...updatedMeta } },
     });
+
+    if ([ModelModifier.Archived, ModelModifier.TakenDown].includes(mode)) {
+      await ctx.track.modelEvent({
+        type: mode === ModelModifier.Archived ? 'Archive' : 'Takedown',
+        modelId: updatedModel.id,
+        nsfw: true,
+      });
+    }
+
     return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) error;
