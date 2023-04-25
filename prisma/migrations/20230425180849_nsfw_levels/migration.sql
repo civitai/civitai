@@ -67,6 +67,7 @@ WITH tag_level AS (
 	  END "nsfw"
 	FROM "TagsOnImage" toi
 	JOIN tag_level tl ON tl."tagId" = toi."tagId"
+	WHERE NOT toi.disabled
 	GROUP BY toi."imageId"
 )
 UPDATE "Image" i SET nsfw = il.nsfw

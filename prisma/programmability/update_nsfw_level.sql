@@ -24,7 +24,7 @@ BEGIN
       END "nsfw"
     FROM "TagsOnImage" toi
     JOIN tag_level tl ON tl."tagId" = toi."tagId"
-    WHERE toi."imageId" = ANY(image_ids)
+    WHERE toi."imageId" = ANY(image_ids) AND NOT toi.disabled
     GROUP BY toi."imageId"
   )
   UPDATE "Image" i SET nsfw = il.nsfw
