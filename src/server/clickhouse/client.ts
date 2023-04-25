@@ -160,7 +160,6 @@ export class Tracker {
 
   public report(values: {
     type: ReportType;
-    userId: number;
     entityType: string;
     entityId: number;
     reason: ReportReason;
