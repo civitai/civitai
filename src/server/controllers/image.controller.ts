@@ -238,6 +238,16 @@ export const setTosViolationHandler = async ({
     const image = await dbRead.image.findFirst({
       where: { id },
       select: {
+        nsfw: true,
+        tags: {
+          select: {
+            tag: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
         user: { select: { id: true } },
         imagesOnModels: {
           select: { modelVersion: { select: { model: { select: { name: true } } } } },
@@ -268,6 +278,13 @@ export const setTosViolationHandler = async ({
 
     // Delete image
     await deleteImageById({ id });
+
+    await ctx.track.image({
+      type: 'DeleteTOS',
+      imageId: id,
+      nsfw: image.nsfw,
+      tags: image.tags.map((x) => x.tag.name),
+    });
     return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
