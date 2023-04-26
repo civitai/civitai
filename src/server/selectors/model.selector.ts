@@ -124,6 +124,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   licenses: true,
   publishedAt: true,
   locked: true,
+  meta: true,
+  earlyAccessDeadline: true,
+  mode: true,
   reportStats: {
     select: {
       ownershipProcessing: true,
