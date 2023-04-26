@@ -1,4 +1,4 @@
-import { Prisma, TagTarget } from '@prisma/client';
+import { NsfwLevel, Prisma, TagTarget } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
@@ -11,7 +11,7 @@ import {
   GetVotableTagsSchema,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
-import { imageTagCompositeSelect, modelTagCompositSelect } from '~/server/selectors/tag.selector';
+import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 
@@ -164,7 +164,7 @@ export const getVotableTags = async ({
   if (type === 'model') {
     const tags = await dbRead.modelTag.findMany({
       where: { modelId: id, score: { gt: 0 } },
-      select: modelTagCompositSelect,
+      select: modelTagCompositeSelect,
       orderBy: { score: 'desc' },
       // take,
     });
@@ -173,6 +173,7 @@ export const getVotableTags = async ({
         ...tag,
         id: tagId,
         type: tagType,
+        nsfw: NsfwLevel.None,
         name: tagName,
       }))
     );
@@ -195,10 +196,11 @@ export const getVotableTags = async ({
       // take,
     });
     results.push(
-      ...tags.map(({ tagId, tagName, tagType, ...tag }) => ({
+      ...tags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
         ...tag,
         id: tagId,
         type: tagType,
+        nsfw: tagNsfw,
         name: tagName,
       }))
     );

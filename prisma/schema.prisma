@@ -921,6 +921,7 @@ model Tag {
   updatedAt  DateTime    @updatedAt
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
+  nsfw       NsfwLevel   @default(None)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
@@ -2059,11 +2060,12 @@ model PostRank {
 /// @view
 model ImageTag {
   imageId     Int
-  image       Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId       Int
-  tag         Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagName     String
   tagType     TagType
+  tagNsfw     NsfwLevel
   automated   Boolean
   confidence  Int?
   score       Int

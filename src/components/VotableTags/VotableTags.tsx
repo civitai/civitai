@@ -124,6 +124,7 @@ export function VotableTags({
             initialVote={tag.vote}
             needsReview={tag.needsReview}
             type={tag.type}
+            nsfw={tag.nsfw}
             score={tag.score}
             onChange={({ name, vote }) => {
               handleVote({ tag: name, vote });

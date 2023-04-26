@@ -39,6 +39,7 @@ import Router, { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { isNsfwImage } from '~/server/common/model-helpers';
+import { nsfwLevelUI } from '~/libs/moderation';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -360,13 +361,6 @@ ImageGuard.Report = function ReportImage({
   );
 };
 
-const getNsfwBadgeContent = {
-  [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
-  [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },
-  [NsfwLevel.Mature]: { label: '17', color: 'orange', shade: 7 },
-  [NsfwLevel.X]: { label: '18', color: 'red', shade: 9 },
-};
-
 const NsfwBadge = ({
   showImage,
   position,
@@ -381,8 +375,7 @@ const NsfwBadge = ({
   className?: string;
 }) => {
   const { image, canToggleNsfw } = useImageGuardContentContext();
-  const { color, label, shade } =
-    getNsfwBadgeContent[image.nsfw] || getNsfwBadgeContent[NsfwLevel.X];
+  const { color, label, shade } = nsfwLevelUI[image.nsfw] ?? nsfwLevelUI[NsfwLevel.X];
 
   return (
     <ImageGuardPopover>
@@ -494,8 +487,9 @@ function ImageGuardPopover({ children }: { children: React.ReactElement }) {
   const [opened, setOpened] = useState(false);
   const router = useRouter();
   const nsfw = isNsfwImage(image);
+  const accountRequired = nsfw && image.nsfw !== NsfwLevel.Soft;
 
-  if (nsfw && !isAuthenticated)
+  if (accountRequired && !isAuthenticated)
     return (
       <Popover
         width={300}

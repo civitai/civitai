@@ -48,6 +48,7 @@ import { redis } from '~/server/redis/client';
 import { hashify } from '~/utils/string-helpers';
 import { TRPCError } from '@trpc/server';
 import { applyUserPreferences, UserPreferencesInput } from '~/server/middleware.trpc';
+import { nsfwLevelOrder } from '~/libs/moderation';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -673,7 +674,7 @@ export const getAllImages = async ({
   include,
   nsfw,
   excludeCrossPosts,
-}: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: boolean }) => {
+}: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: NsfwLevel }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
 
@@ -761,8 +762,10 @@ export const getAllImages = async ({
     userId,
   });
 
-  if (nsfw !== undefined) {
-    AND.push(Prisma.sql`i."nsfw" = ${nsfw}`);
+  if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
+  else if (nsfw !== undefined) {
+    const nsfwLevels = nsfwLevelOrder.slice(1, nsfwLevelOrder.indexOf(nsfw) + 1);
+    AND.push(Prisma.sql`i."nsfw" = ANY(ARRAY[${Prisma.join(nsfwLevels)}]::"NsfwLevel"[])`);
   }
 
   // Limit to images created since period start
@@ -869,6 +872,7 @@ export const getAllImages = async ({
         tagId: true,
         tagName: true,
         tagType: true,
+        tagNsfw: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -877,10 +881,11 @@ export const getAllImages = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
+      nsfw: tagNsfw,
       name: tagName,
     }));
 
