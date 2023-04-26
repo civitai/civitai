@@ -20,7 +20,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
           {({ safe }) => (
             <div className={classes.container}>
               <ImageGuard.Report />
-              <ImageGuard.ToggleConnect />
+              <ImageGuard.ToggleConnect className={classes.toggle} />
               <RoutedContextLink modal="postDetailModal" postId={data.id} className={classes.link}>
                 <AspectRatio
                   ratio={1}
@@ -120,6 +120,9 @@ const useStyles = createStyles((theme) => ({
     width: '100%',
     display: 'flex',
     justifyContent: 'center',
+  },
+  toggle: {
+    left: 10,
   },
   reactions: {
     position: 'absolute',

@@ -1,40 +1,41 @@
 import { useMemo } from 'react';
-import { CategoryList } from './CategoryList';
-import { PostCategoryCard } from './PostCategoryCard';
 import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { IconArrowRight, IconPlus } from '@tabler/icons';
+import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { ImageCategoryCard } from './ImageCategoryCard';
+import { useImageFilters, useQueryImageCategories } from '~/components/Image/image.utils';
 
-type PostCategoriesState = {
+type ImageCategoriesState = {
   username?: string;
   modelId?: number;
   modelVersionId?: number;
 };
 
-export function PostCategoriesInfinite({
+export function ImageCategoriesInfinite({
   filters: filterOverrides = {},
   limit = 6,
 }: {
-  filters?: PostCategoriesState;
+  filters?: ImageCategoriesState;
   limit?: number;
 }) {
-  const globalFilters = usePostFilters();
+  const globalFilters = useImageFilters('images');
   const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
-  const { categories, isLoading, fetchNextPage, hasNextPage } = useQueryPostCategories(filters);
+  const { categories, isLoading, fetchNextPage, hasNextPage } = useQueryImageCategories(filters);
   if (!categories) return null;
 
   return (
     <CategoryList
       data={categories}
-      render={PostCategoryCard}
+      render={ImageCategoryCard}
       isLoading={isLoading}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
       actions={[
         {
           label: 'View more',
-          href: (category) => `/posts?tags=${category.id}&view=feed`,
+          href: (category) => `/images?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
         },

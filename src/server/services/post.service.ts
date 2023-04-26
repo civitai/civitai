@@ -32,6 +32,8 @@ import { redis } from '~/server/redis/client';
 import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
+import { colorPriority } from '~/libs/tags';
+import { getTypeCategories } from '~/server/services/tag.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -361,57 +363,6 @@ export const getPostResources = async ({ id }: GetByIdInput) => {
   });
 };
 
-const colorPriority = [
-  'red',
-  'orange',
-  'yellow',
-  'green',
-  'blue',
-  'purple',
-  'pink',
-  'brown',
-  'grey',
-];
-type PostCategory = { id: number; name: string; priority: number };
-export const getPostCategories = async ({
-  excludeIds,
-  limit,
-  cursor,
-}: {
-  excludeIds?: number[];
-  limit?: number;
-  cursor?: number;
-}) => {
-  let categories: PostCategory[] | undefined;
-  const categoriesCache = await redis.get('system:categories:posts');
-  if (categoriesCache) categories = JSON.parse(categoriesCache);
-
-  if (!categories) {
-    const systemTags = await getSystemTags();
-    const categoryTag = systemTags.find((t) => t.name === 'post category');
-    if (!categoryTag) throw new Error('Post category tag not found');
-    const categoriesRaw = await dbRead.tag.findMany({
-      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
-      select: { id: true, name: true, color: true },
-    });
-    categories = categoriesRaw
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
-      }))
-      .sort((a, b) => a.priority - b.priority);
-    if (categories.length) await redis.set('system:categories:posts', JSON.stringify(categories));
-  }
-
-  if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
-  let start = 0;
-  if (cursor) start = categories.findIndex((c) => c.id === cursor) + 1;
-  if (limit) categories = categories.slice(start, start + limit);
-
-  return categories;
-};
-
 type GetPostByCategoryRaw = {
   id: number;
   tagId: number;
@@ -453,7 +404,8 @@ export const getPostsByCategory = async ({
 }: GetPostsByCategoryInput & { userId?: number }) => {
   input.limit ??= 10;
 
-  let categories = await getPostCategories({
+  let categories = await getTypeCategories({
+    type: 'post',
     excludeIds: input.excludedTagIds,
     limit: input.limit + 1,
     cursor: input.cursor,

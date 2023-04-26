@@ -509,7 +509,8 @@ export const unpublishModelById = async ({
   id,
   reason,
   meta,
-}: UnpublishModelSchema & { meta?: ModelMeta }) => {
+  user,
+}: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
   const model = await dbWrite.$transaction(
     async (tx) => {
       const updatedModel = await tx.model.update({
@@ -518,7 +519,12 @@ export const unpublishModelById = async ({
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
           publishedAt: null,
           meta: reason
-            ? { ...meta, unpublishedReason: reason, unpublishedAt: new Date().toISOString() }
+            ? {
+                ...meta,
+                unpublishedReason: reason,
+                unpublishedAt: new Date().toISOString(),
+                unpublishedBy: user.id,
+              }
             : undefined,
           modelVersions: {
             updateMany: {

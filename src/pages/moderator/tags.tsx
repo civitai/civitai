@@ -60,6 +60,7 @@ import { trpc } from '~/utils/trpc';
 import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
+import { NextLink } from '@mantine/next';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -193,19 +194,25 @@ export default function Tags() {
           return (
             <Group noWrap spacing={5}>
               {tag.target.includes(TagTarget.Image) && (
-                <IconBadge icon={<IconPhoto size={14} />}>
-                  {abbreviateNumber(tag.stats.imageCount)}
-                </IconBadge>
+                <NextLink href={`/images?tags=${row.id}&view=feed`} target="_blank">
+                  <IconBadge icon={<IconPhoto size={14} />}>
+                    {abbreviateNumber(tag.stats.imageCount)}
+                  </IconBadge>
+                </NextLink>
               )}
               {tag.target.includes(TagTarget.Model) && (
-                <IconBadge icon={<IconBox size={14} />}>
-                  {abbreviateNumber(tag.stats.modelCount)}
-                </IconBadge>
+                <NextLink href={`/?tags=${row.id}&view=feed`} target="_blank">
+                  <IconBadge icon={<IconBox size={14} />}>
+                    {abbreviateNumber(tag.stats.modelCount)}
+                  </IconBadge>
+                </NextLink>
               )}
               {tag.target.includes(TagTarget.Post) && (
-                <IconBadge icon={<IconAlbum size={14} />}>
-                  {abbreviateNumber(tag.stats.postCount)}
-                </IconBadge>
+                <NextLink href={`/posts?tags=${row.id}&view=feed`} target="_blank">
+                  <IconBadge icon={<IconAlbum size={14} />}>
+                    {abbreviateNumber(tag.stats.postCount)}
+                  </IconBadge>
+                </NextLink>
               )}
             </Group>
           );

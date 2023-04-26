@@ -14,6 +14,7 @@ import {
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
+import { indexOfOr } from '~/utils/array-helpers';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -448,4 +449,57 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
     DELETE FROM "Tag"
     WHERE ${tagSelector} IN (${tagIn})
   `);
+};
+
+const colorPriority = [
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'blue',
+  'purple',
+  'pink',
+  'brown',
+  'grey',
+];
+type TypeCategory = { id: number; name: string; priority: number };
+export const getTypeCategories = async ({
+  type,
+  excludeIds,
+  limit,
+  cursor,
+}: {
+  type: 'image' | 'model' | 'post';
+  excludeIds?: number[];
+  limit?: number;
+  cursor?: number;
+}) => {
+  let categories: TypeCategory[] | undefined;
+  const categoriesCache = await redis.get(`system:categories:${type}`);
+  if (categoriesCache) categories = JSON.parse(categoriesCache);
+
+  if (!categories) {
+    const systemTags = await getSystemTags();
+    const categoryTag = systemTags.find((t) => t.name === `${type} category`);
+    if (!categoryTag) throw new Error(`${type} category tag not found`);
+    const categoriesRaw = await dbRead.tag.findMany({
+      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
+      select: { id: true, name: true, color: true },
+    });
+    categories = categoriesRaw
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
+      }))
+      .sort((a, b) => a.priority - b.priority);
+    if (categories.length) await redis.set(`system:categories:${type}`, JSON.stringify(categories));
+  }
+
+  if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
+  let start = 0;
+  if (cursor) start = categories.findIndex((c) => c.id === cursor) + 1;
+  if (limit) categories = categories.slice(start, start + limit);
+
+  return categories;
 };

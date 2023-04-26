@@ -361,7 +361,13 @@ export const publishModelHandler = async ({
   }
 };
 
-export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSchema }) => {
+export const unpublishModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UnpublishModelSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const { id } = input;
     const model = await dbRead.model.findUnique({
@@ -371,7 +377,7 @@ export const unpublishModelHandler = async ({ input }: { input: UnpublishModelSc
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const meta = (model.meta as ModelMeta | null) || {};
-    const updatedModel = await unpublishModelById({ ...input, meta });
+    const updatedModel = await unpublishModelById({ ...input, meta, user: ctx.user });
 
     return updatedModel;
   } catch (error) {

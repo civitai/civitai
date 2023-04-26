@@ -1,19 +1,25 @@
 import { Group, Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
+import { ImageCategoriesInfinite } from '~/components/Image/Categories/ImageCategoriesInfinite';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 
 export default function ImagesPage() {
   const currentUser = useCurrentUser();
+  const storedView = useFiltersContext((state) => state.images.view);
+  const { view: queryView, ...filters } = useImageQueryParams();
 
+  const view = queryView ?? storedView;
   return (
     <>
       <Meta
@@ -47,11 +53,18 @@ export default function ImagesPage() {
               </Group>
               <Group spacing={4}>
                 <PeriodFilter type="images" />
+                <ViewToggle type="images" />
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>
-            <ImageCategories />
-            <ImagesInfinite />
+            {view === 'categories' ? (
+              <ImageCategoriesInfinite filters={filters} />
+            ) : (
+              <>
+                <ImageCategories />
+                <ImagesInfinite filters={filters} />
+              </>
+            )}
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
