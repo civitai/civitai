@@ -245,6 +245,11 @@ export const deleteUserHandler = async ({
     const user = await deleteUser(input);
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
+    await ctx.track.userActivity({
+      targetUserId: id,
+      type: 'Account closure',
+    });
+
     return user;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
