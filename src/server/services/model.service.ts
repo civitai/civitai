@@ -10,7 +10,6 @@ import {
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { isEmpty } from 'lodash-es';
-import isEqual from 'lodash/isEqual';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
@@ -18,7 +17,6 @@ import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { Context } from '~/server/createContext';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { playfab } from '~/server/playfab/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
@@ -27,12 +25,6 @@ import {
   PublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import {
-  imageSelect,
-  prepareCreateImage,
-  prepareUpdateImage,
-} from '~/server/selectors/image.selector';
-import { modelWithDetailsSelect } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { ingestNewImages } from '~/server/services/image.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
@@ -49,12 +41,13 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
+  const OR: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ status: ModelStatus.Published }];
+  if (user?.id) OR.push({ userId: user.id, deletedAt: null });
+
   return dbRead.model.findFirst({
     where: {
       id,
-      OR: user?.isModerator
-        ? undefined
-        : [{ status: ModelStatus.Published }, { user: { id: user?.id }, deletedAt: null }],
+      OR: !user?.isModerator ? OR : undefined,
     },
     select,
   });

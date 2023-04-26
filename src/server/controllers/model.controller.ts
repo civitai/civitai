@@ -71,14 +71,20 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       ...input,
       user: ctx.user,
-      select: { ...modelWithDetailsSelect, meta: true, earlyAccessDeadline: true, mode: true },
+      select: modelWithDetailsSelect,
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
     const features = getFeatureFlags({ user: ctx.user });
-    const modelVersionIds = model.modelVersions.map((version) => version.id);
+    const filteredVersions = model.modelVersions.filter((version) => {
+      const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+      if (isOwner) return true;
+
+      return version.status === ModelStatus.Published;
+    });
+    const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {
         modelVersionId: { in: modelVersionIds },
@@ -91,7 +97,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     return {
       ...model,
       meta: model.meta as ModelMeta | null,
-      modelVersions: model.modelVersions.map((version) => {
+      modelVersions: filteredVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
               versionCreatedAt: version.createdAt,
