@@ -42,7 +42,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { colorPriority, VotableTagModel } from '~/libs/tags';
+import { VotableTagModel } from '~/libs/tags';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getSystemTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { redis } from '~/server/redis/client';

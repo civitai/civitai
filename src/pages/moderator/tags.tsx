@@ -252,10 +252,10 @@ export default function Tags() {
         filterFn: (row, id, filterValue) => {
           if (!filterValue.length) return true;
           if (!row.original.tags?.length) return false;
-          return row.original.tags.some((x) => filterValue.includes(x.name));
+          return filterValue.every((x: number) => row.original.tags.some((y) => y.id === x));
         },
-        filterVariant: 'select',
-        mantineFilterSelectProps: {
+        filterVariant: 'multi-select',
+        mantineFilterMultiSelectProps: {
           searchable: true,
           data: addableTagsOptions as any,
         },

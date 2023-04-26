@@ -32,7 +32,6 @@ import { redis } from '~/server/redis/client';
 import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
-import { colorPriority } from '~/libs/tags';
 import { getTypeCategories } from '~/server/services/tag.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
