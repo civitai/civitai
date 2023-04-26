@@ -11,7 +11,7 @@ BEGIN
         ELSE 'None'::"NsfwLevel"
       END "nsfw"
     FROM "TagsOnImage" toi
-    JOIN "Tag" t ON t.id = toi."tagId" AND t.nsfw != 'None'
+    LEFT JOIN "Tag" t ON t.id = toi."tagId" AND t.nsfw != 'None'
     WHERE toi."imageId" = ANY(image_ids) AND NOT toi.disabled
     GROUP BY toi."imageId"
   )

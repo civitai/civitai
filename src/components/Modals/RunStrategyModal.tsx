@@ -202,7 +202,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
             <Loader />
           </Center>
         ) : !!partnersWithStrategies?.length ? (
-          <ScrollArea.Autosize maxHeight={500}>
+          <ScrollArea.Autosize maxHeight="55vh">
             <Stack>
               {renderPartners(
                 availablePartners,

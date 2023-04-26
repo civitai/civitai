@@ -66,6 +66,7 @@ import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { useEffect } from 'react';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -90,6 +91,9 @@ export function UserImagesPage() {
 
   // currently not showing any content if the username is undefined
   if (!queryFilters.username) return <NotFound />;
+  const isSameUser =
+    !!currentUser &&
+    postgresSlugify(currentUser.username) === postgresSlugify(queryFilters.username);
 
   return (
     <Tabs.Panel value="/images">
@@ -106,7 +110,7 @@ export function UserImagesPage() {
             </Group>
             <ImagesInfinite
               filters={{ ...queryFilters, period, sort }}
-              withTags={currentUser?.isModerator || currentUser?.username === queryFilters.username}
+              withTags={currentUser?.isModerator || isSameUser}
             />
           </Stack>
         </MasonryContainer>
@@ -117,7 +121,7 @@ export function UserImagesPage() {
 
 function NestedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { username } = router.query as { username?: string };
+  const { username } = router.query as { username: string };
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
@@ -127,7 +131,8 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
   const { models: uploads } = user?._count ?? { models: 0 };
   const stats = user?.stats;
   const isMod = currentUser && currentUser.isModerator;
-  const isSameUser = currentUser?.username === user?.username;
+  const isSameUser =
+    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
 
   const removeContentMutation = trpc.user.removeAllContent.useMutation({
     onSuccess() {
@@ -209,7 +214,8 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
 
   // Redirect all users to the creator's models tab if they have uploaded models
   useEffect(() => {
-    if (uploads) router.replace(`/user/${username}/models`);
+    if (router.pathname !== '/user/[username]') return;
+    if (uploads > 0) router.replace(`/user/${username}/models`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploads, username]);
 
