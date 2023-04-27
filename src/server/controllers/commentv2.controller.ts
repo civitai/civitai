@@ -81,13 +81,15 @@ export const upsertCommentV2Handler = async ({
           : null;
 
       if (type) {
-        ctx.track.comment({
+        await ctx.track.comment({
           type,
           nsfw: result.nsfw,
           entityId: result.id,
         });
       }
     }
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
