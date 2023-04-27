@@ -63,7 +63,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
                   downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                     versionId: version.id,
                     type: file.type,
-                    format: file.metadata.format,
+                    meta: file.metadata,
                     primary: primaryFile.id === file.id,
                   })}`,
                   primary: primaryFile.id === file.id ? true : undefined,

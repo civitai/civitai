@@ -205,7 +205,7 @@ export function ModelVersionDetails({
         href={createModelFileDownloadUrl({
           versionId: version.id,
           type: file.type,
-          format: file.metadata.format,
+          meta: file.metadata,
         })}
         download
       >
@@ -242,7 +242,7 @@ export function ModelVersionDetails({
             href={createModelFileDownloadUrl({
               versionId: version.id,
               type: file.type,
-              format: file.metadata.format,
+              meta: file.metadata,
             })}
             disabled={archived}
             download
