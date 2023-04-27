@@ -12,7 +12,7 @@ import {
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
-import { getSystemTags } from '~/server/services/system-cache';
+import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 import { indexOfOr } from '~/utils/array-helpers';
 
@@ -451,18 +451,6 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   `);
 };
 
-const colorPriority = [
-  'red',
-  'orange',
-  'yellow',
-  'green',
-  'blue',
-  'purple',
-  'pink',
-  'brown',
-  'grey',
-];
-type TypeCategory = { id: number; name: string; priority: number };
 export const getTypeCategories = async ({
   type,
   excludeIds,
@@ -474,28 +462,7 @@ export const getTypeCategories = async ({
   limit?: number;
   cursor?: number;
 }) => {
-  let categories: TypeCategory[] | undefined;
-  const categoriesCache = await redis.get(`system:categories:${type}`);
-  if (categoriesCache) categories = JSON.parse(categoriesCache);
-
-  if (!categories) {
-    const systemTags = await getSystemTags();
-    const categoryTag = systemTags.find((t) => t.name === `${type} category`);
-    if (!categoryTag) throw new Error(`${type} category tag not found`);
-    const categoriesRaw = await dbRead.tag.findMany({
-      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
-      select: { id: true, name: true, color: true },
-    });
-    categories = categoriesRaw
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
-      }))
-      .sort((a, b) => a.priority - b.priority);
-    if (categories.length) await redis.set(`system:categories:${type}`, JSON.stringify(categories));
-  }
-
+  let categories = await getCategoryTags(type);
   if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
   let start = 0;
   if (cursor) start = categories.findIndex((c) => c.id === cursor) + 1;

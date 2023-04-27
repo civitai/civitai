@@ -210,5 +210,5 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       favoriteCountAllTime: true,
     },
   },
-  tagsOnModels: { select: { tag: { select: { id: true, name: true, isCategory: true } } } },
+  tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
 });

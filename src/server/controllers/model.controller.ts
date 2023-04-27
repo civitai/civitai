@@ -64,6 +64,7 @@ import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { ModelSort } from '~/server/common/enums';
+import { getCategoryTags } from '~/server/services/system-cache';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -94,9 +95,16 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       orderBy: { id: 'asc' },
     });
 
+    const modelCategories = await getCategoryTags('model');
     return {
       ...model,
       meta: model.meta as ModelMeta | null,
+      tagsOnModels: model.tagsOnModels.map(({ tag }) => ({
+        tag: {
+          ...tag,
+          isCategory: modelCategories.some((c) => c.id === tag.id),
+        },
+      })),
       modelVersions: filteredVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
