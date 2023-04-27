@@ -467,12 +467,6 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       isModerator: ctx.user?.isModerator,
     });
 
-    await ctx.track.view({
-      entityId: result.id,
-      entityType: 'Image',
-      type: 'ImageView',
-    });
-
     return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
