@@ -34,7 +34,7 @@ export default function UserPostsPage() {
                 value={sort}
                 onChange={(sort) => set({ sort: sort as any })}
               />
-              <PeriodFilter value={period} onChange={(period) => set({ period })} />
+              <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
             </Group>
             <PostsInfinite filters={{ ...queryFilters, period, sort }} />
           </Stack>

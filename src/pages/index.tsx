@@ -39,6 +39,7 @@ function Home() {
   const { set, ...queryFilters } = useModelQueryParams();
   const { username, favorites, hidden, query } = queryFilters;
   const periodMode = query ? ('stats' as PeriodMode) : undefined;
+  if (periodMode) queryFilters.periodMode = periodMode;
 
   return (
     <>
@@ -93,7 +94,7 @@ function Home() {
               </Group>
             </Group>
             <CategoryTags />
-            <ModelsInfinite filters={{ ...queryFilters, periodMode }} />
+            <ModelsInfinite filters={{ ...queryFilters }} />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

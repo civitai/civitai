@@ -14,6 +14,7 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 import { UserProfileLayout } from './';
 
@@ -25,7 +26,9 @@ export default function UserModelsPage() {
 
   // currently not showing any content if the username is undefined
   if (!queryFilters.username) return <NotFound />;
-  const selfView = queryFilters.username === currentUser?.username;
+  const selfView =
+    !!currentUser &&
+    postgresSlugify(currentUser.username) === postgresSlugify(queryFilters.username);
 
   return (
     <Tabs.Panel value="/models">
@@ -47,7 +50,12 @@ export default function UserModelsPage() {
             <Group position="apart">
               <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as any })} />
               <Group spacing="xs">
-                <PeriodFilter value={period} onChange={(x) => set({ period: x })} />
+                <PeriodFilter
+                  type="models"
+                  value={period}
+                  onChange={(x) => set({ period: x })}
+                  hideMode={selfView}
+                />
                 <ModelFiltersDropdown />
               </Group>
             </Group>

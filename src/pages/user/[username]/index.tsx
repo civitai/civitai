@@ -107,7 +107,7 @@ export function UserImagesPage() {
           <Stack spacing="xs">
             <Group position="apart" spacing={0}>
               <SortFilter type="images" value={sort} onChange={(x) => set({ sort: x as any })} />
-              <PeriodFilter value={period} onChange={(x) => set({ period: x })} />
+              <PeriodFilter type="images" value={period} onChange={(x) => set({ period: x })} />
             </Group>
             <ImagesInfinite
               filters={{ ...queryFilters, period, sort }}

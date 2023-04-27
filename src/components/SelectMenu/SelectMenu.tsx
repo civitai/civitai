@@ -7,6 +7,7 @@ type SelectMenu<T extends string | number> = {
   onClick: (value: T) => void;
   value?: T;
   disabled?: boolean;
+  children?: React.ReactNode;
 };
 
 export function SelectMenu<T extends string | number>({
@@ -15,6 +16,7 @@ export function SelectMenu<T extends string | number>({
   onClick,
   value,
   disabled,
+  children,
 }: SelectMenu<T>) {
   const { classes } = useStyles();
   const theme = useMantineTheme();
@@ -34,17 +36,21 @@ export function SelectMenu<T extends string | number>({
         </Group>
       </Menu.Target>
       <Menu.Dropdown>
-        {options.map((option) => (
-          <Menu.Item key={option.value.toString()} onClick={() => onClick(option.value)}>
-            <Text
-              transform="uppercase"
-              color={option.value === value ? theme.primaryColor : undefined}
-              weight={option.value === value ? 700 : undefined}
-            >
-              {option.label}
-            </Text>
-          </Menu.Item>
-        ))}
+        <>
+          {options.map((option) => (
+            <Menu.Item key={option.value.toString()} onClick={() => onClick(option.value)}>
+              <Text
+                transform="uppercase"
+                ta="center"
+                color={option.value === value ? theme.primaryColor : undefined}
+                weight={option.value === value ? 700 : undefined}
+              >
+                {option.label}
+              </Text>
+            </Menu.Item>
+          ))}
+          {children}
+        </>
       </Menu.Dropdown>
     </Menu>
   );
