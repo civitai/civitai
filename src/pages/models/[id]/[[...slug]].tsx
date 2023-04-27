@@ -95,6 +95,7 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { parseBrowsingMode } from '~/server/createContext';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { TrackView } from '~/components/TrackView/TrackView';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -436,6 +437,7 @@ export default function ModelDetailsV2({
   return (
     <>
       {meta}
+      <TrackView entityId={model.id} entityType="Model" type="ModelView" />
       <Container size="xl">
         <Stack spacing="xl">
           <Announcements sx={{ marginBottom: 5 }} />

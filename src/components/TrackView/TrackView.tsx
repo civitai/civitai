@@ -4,19 +4,19 @@ import { trpc } from '~/utils/trpc';
 
 export function TrackView({ type, entityType, entityId }: AddViewSchema) {
   const trackMutation = trpc.track.addView.useMutation();
-  const didRender = useRef(false);
+  const observedEntityId = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!didRender.current) {
+    console.log({ entityId, observed: observedEntityId.current });
+    if (entityId !== observedEntityId.current) {
+      observedEntityId.current = entityId;
       trackMutation.mutate({
         type,
         entityType,
         entityId,
       });
-
-      didRender.current = true;
     }
-  }, []);
+  }, [entityId, type, entityType]);
 
   return null;
 }
