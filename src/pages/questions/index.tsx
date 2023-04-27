@@ -1,7 +1,6 @@
 import { Container, Stack, Title, Group, Button, Badge, Alert, Text } from '@mantine/core';
 import { GetServerSideProps } from 'next';
 import Link from 'next/link';
-import { getServerProxySSGHelpers } from '~/server/utils/getServerProxySSGHelpers';
 
 import { Meta } from '~/components/Meta/Meta';
 import { Questions } from '~/components/Questions/Questions.Provider';

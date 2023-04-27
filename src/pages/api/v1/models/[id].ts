@@ -29,7 +29,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
   const baseUrl = getBaseUrl();
 
-  const apiCaller = appRouter.createCaller({ ...publicApiContext });
+  const apiCaller = appRouter.createCaller(publicApiContext(req, res));
   try {
     const { modelVersions, tagsOnModels, user, ...model } =
       await apiCaller.model.getByIdWithVersions({ id });

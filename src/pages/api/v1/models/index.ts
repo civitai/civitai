@@ -30,7 +30,7 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  const apiCaller = appRouter.createCaller({ ...publicApiContext, user });
+  const apiCaller = appRouter.createCaller({ ...publicApiContext(req, res), user });
   try {
     if (Object.keys(req.query).some((key: any) => authedOnlyOptions.includes(key)) && !user)
       return res.status(401).json({ error: 'Unauthorized' });
