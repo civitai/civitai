@@ -264,6 +264,7 @@ export const getModelsPagedSimpleHandler = async ({
 }) => {
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
+  console.log(`model search`, input.query);
   const results = await getModels({
     input: { ...input, take, skip },
     user: ctx.user,

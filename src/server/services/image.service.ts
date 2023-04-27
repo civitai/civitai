@@ -46,7 +46,7 @@ import { VotableTagModel } from '~/libs/tags';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getSystemTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { redis } from '~/server/redis/client';
-import { hashify } from '~/utils/string-helpers';
+import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { TRPCError } from '@trpc/server';
 import { applyUserPreferences, UserPreferencesInput } from '~/server/middleware.trpc';
 import { nsfwLevelOrder } from '~/libs/moderation';
@@ -1316,7 +1316,6 @@ type GetImageByCategoryRaw = {
   userImage: string | null;
   createdAt: Date;
   publishedAt: Date | null;
-  reactions?: ReviewReactions[];
   cryCount: number;
   laughCount: number;
   likeCount: number;
@@ -1410,64 +1409,65 @@ export const getImagesByCategory = async ({
     )`;
   });
 
-  console.time('getImagesByCategory');
-  const imagesRaw = await dbRead.$queryRaw<GetImageByCategoryRaw[]>`
-    WITH targets AS (
-      ${Prisma.join(targets, ' UNION ALL ')}
-    )
-    SELECT
-      i.id,
-      t."tagId",
-      i.name,
-      i.url,
-      i.nsfw,
-      i.width,
-      i.height,
-      i.hash,
-      i.meta,
-      i."hideMeta",
-      i."generationProcess",
-      i."mimeType",
-      i."scannedAt",
-      i."needsReview",
-      i."postId",
-      u.username,
-      u.image AS "userImage",
-      i."createdAt",
-      p."publishedAt",
-      COALESCE(im."cryCount", 0) "cryCount",
-      COALESCE(im."laughCount", 0) "laughCount",
-      COALESCE(im."likeCount", 0) "likeCount",
-      COALESCE(im."dislikeCount", 0) "dislikeCount",
-      COALESCE(im."heartCount", 0) "heartCount",
-      COALESCE(im."commentCount", 0) "commentCount",
-      ${Prisma.raw(!userId ? 'null' : 'ir.reactions')} "reactions"
-    FROM targets t
-    JOIN "Image" i ON i.id = t."imageId"
-    JOIN "Post" p ON p.id = i."postId"
-    JOIN "User" u ON u.id = p."userId"
-    ${
-      !userId
-        ? Prisma.sql``
-        : Prisma.sql`LEFT JOIN (
-        SELECT "imageId", jsonb_agg(reaction) "reactions"
-        FROM "ImageReaction"
-        WHERE "userId" = ${userId}
-        GROUP BY "imageId"
-      ) ir ON ir."imageId" = i.id`
-    }
-    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-    ORDER BY t."index"
-  `;
-  console.timeEnd('getImagesByCategory');
+  let imagesRaw: GetImageByCategoryRaw[] = [];
+  const cacheKey = `trpc:image:imagesByCategory:${hashifyObject(input)}`;
+  const cache = await redis.get(cacheKey);
+  if (cache) imagesRaw = JSON.parse(cache);
+  else {
+    imagesRaw = await dbRead.$queryRaw<GetImageByCategoryRaw[]>`
+      WITH targets AS (
+        ${Prisma.join(targets, ' UNION ALL ')}
+      )
+      SELECT
+        i.id,
+        t."tagId",
+        i.name,
+        i.url,
+        i.nsfw,
+        i.width,
+        i.height,
+        i.hash,
+        i.meta,
+        i."hideMeta",
+        i."generationProcess",
+        i."mimeType",
+        i."scannedAt",
+        i."needsReview",
+        i."postId",
+        u.username,
+        u.image AS "userImage",
+        i."createdAt",
+        p."publishedAt",
+        COALESCE(im."cryCount", 0) "cryCount",
+        COALESCE(im."laughCount", 0) "laughCount",
+        COALESCE(im."likeCount", 0) "likeCount",
+        COALESCE(im."dislikeCount", 0) "dislikeCount",
+        COALESCE(im."heartCount", 0) "heartCount",
+        COALESCE(im."commentCount", 0) "commentCount"
+      FROM targets t
+      JOIN "Image" i ON i.id = t."imageId"
+      JOIN "Post" p ON p.id = i."postId"
+      JOIN "User" u ON u.id = p."userId"
+      LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im."timeframe" = 'AllTime'::"MetricTimeframe"
+      ORDER BY t."index"
+    `;
+    await redis.set(cacheKey, JSON.stringify(imagesRaw), { EX: 60 * 3 });
+  }
+
+  const reactions = userId
+    ? await dbRead.imageReaction.findMany({
+        where: { userId, imageId: { in: imagesRaw.map((x) => x.id) } },
+        select: { imageId: true, reaction: true },
+      })
+    : [];
 
   // Map category record to array
   const items = categories.map((c) => {
     const items = imagesRaw
       .filter((x) => x.tagId === c.id)
-      .map(({ reactions, ...x }) => ({
+      .map((x) => ({
         ...x,
-        reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+        reactions: reactions.map((r) => ({ userId, reaction: r })),
       }));
     return { ...c, items };
   });
