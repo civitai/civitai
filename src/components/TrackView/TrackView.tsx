@@ -7,7 +7,6 @@ export function TrackView({ type, entityType, entityId }: AddViewSchema) {
   const observedEntityId = useRef<number | null>(null);
 
   useEffect(() => {
-    console.log({ entityId, observed: observedEntityId.current });
     if (entityId !== observedEntityId.current) {
       observedEntityId.current = entityId;
       trackMutation.mutate({
