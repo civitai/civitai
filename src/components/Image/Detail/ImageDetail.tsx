@@ -35,6 +35,7 @@ import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { Meta } from '~/components/Meta/Meta';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export function ImageDetail() {
@@ -51,6 +52,7 @@ export function ImageDetail() {
         title={`Image posted by ${image.user.username}`}
         image={image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
       />
+      <TrackView entityId={image.id} entityType="Image" type="ImageView" />
       <MantineProvider theme={{ colorScheme: 'dark' }}>
         <Paper className={classes.root}>
           <CloseButton

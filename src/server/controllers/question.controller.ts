@@ -137,15 +137,32 @@ export const upsertQuestionHandler = async ({
   input: UpsertQuestionInput;
 }) => {
   try {
-    return await upsertQuestion({ ...input, userId: ctx.user.id });
+    const result = await upsertQuestion({ ...input, userId: ctx.user.id });
+    if (!input.id) {
+      await ctx.track.question({
+        type: 'Create',
+        questionId: result.id,
+      });
+    }
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
 };
 
-export const deleteQuestionHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteQuestionHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: GetByIdInput;
+}) => {
   try {
     await deleteQuestion(input);
+    await ctx.track.question({
+      type: 'Delete',
+      questionId: input.id,
+    });
   } catch (error) {
     throw throwDbError(error);
   }

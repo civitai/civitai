@@ -58,6 +58,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { TrackView } from '~/components/TrackView/TrackView';
 
 export function ModelVersionDetails({
   model,
@@ -275,6 +276,7 @@ export function ModelVersionDetails({
 
   return (
     <Grid gutter="xl">
+      <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <Grid.Col xs={12} md={4} orderMd={2}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && (

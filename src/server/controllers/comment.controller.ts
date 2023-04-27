@@ -81,7 +81,15 @@ export const upsertCommentHandler = async ({
     const { ownerId, locked } = ctx;
     const comment = await createOrUpdateComment({ ...input, ownerId, locked });
 
-    return comment;
+    if (!input.commentId) {
+      await ctx.track.comment({
+        type: 'Model',
+        entityId: comment.modelId,
+        nsfw: comment.nsfw,
+      });
+
+      return comment;
+    }
   } catch (error) {
     throw throwDbError(error);
   }

@@ -188,10 +188,32 @@ export const moderateImageHandler = async ({ input }: { input: ImageModerationSc
   }
 };
 
-export const deleteImageHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
+    const imageTags = await dbRead.imageTag.findMany({
+      where: {
+        imageId: input.id,
+      },
+      select: {
+        tagName: true,
+      },
+    });
+
     const image = await deleteImageById(input);
     if (!image) throw throwNotFoundError(`No image with id ${input.id} found`);
+
+    await ctx.track.image({
+      type: 'Delete',
+      imageId: image.id,
+      nsfw: image.nsfw,
+      tags: imageTags.map((x) => x.tagName),
+    });
 
     return image;
   } catch (error) {
@@ -216,6 +238,16 @@ export const setTosViolationHandler = async ({
     const image = await dbRead.image.findFirst({
       where: { id },
       select: {
+        nsfw: true,
+        tags: {
+          select: {
+            tag: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
         user: { select: { id: true } },
         imagesOnModels: {
           select: { modelVersion: { select: { model: { select: { name: true } } } } },
@@ -246,6 +278,13 @@ export const setTosViolationHandler = async ({
 
     // Delete image
     await deleteImageById({ id });
+
+    await ctx.track.image({
+      type: 'DeleteTOS',
+      imageId: id,
+      nsfw: image.nsfw,
+      tags: image.tags.map((x) => x.tag.name),
+    });
     return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -422,7 +461,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    return await getImage({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator });
+    const result = await getImage({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

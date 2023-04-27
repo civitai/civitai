@@ -15,6 +15,8 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { playfab } from '~/server/playfab/client';
+import { Tracker, clickhouse } from '~/server/clickhouse/client';
+import { formatDate } from '~/utils/date-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -79,6 +81,7 @@ export default RateLimitedEndpoint(
             status: true,
             userId: true,
             mode: true,
+            nsfw: true,
           },
         },
         name: true,
@@ -172,6 +175,14 @@ export default RateLimitedEndpoint(
               : {}), // You'll notice we don't include this for authed users...
           },
         },
+      });
+
+      const tracker = new Tracker(req, res);
+      await tracker.modelVersionEvent({
+        type: 'Download',
+        modelId: modelVersion.model.id,
+        modelVersionId: modelVersion.id,
+        nsfw: modelVersion.model.nsfw,
       });
 
       if (userId)

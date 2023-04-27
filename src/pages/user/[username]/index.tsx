@@ -66,6 +66,7 @@ import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { useEffect } from 'react';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { postgresSlugify } from '~/utils/string-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -251,6 +252,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
           description="Learn more about this awesome creator on Civitai."
         />
       )}
+      {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}
       <CivitaiTabs
         value={activeTab}
         onTabChange={(value) => router.push(`/user/${username}${value}`)}

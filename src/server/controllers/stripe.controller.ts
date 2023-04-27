@@ -39,11 +39,18 @@ export const createDonateSessionHandler = async ({
 }) => {
   const { id, email, customerId } = ctx.user;
   if (!email) throw throwAuthorizationError('email required');
-  return await createDonateSession({
+  const result = await createDonateSession({
     returnUrl,
     customerId,
     user: { id, email },
   });
+
+  await ctx.track.userActivity({
+    type: 'Donate',
+    targetUserId: id,
+  });
+
+  return result;
 };
 
 export const createSubscriptionSessionHandler = async ({
@@ -55,11 +62,18 @@ export const createSubscriptionSessionHandler = async ({
 }) => {
   const { id, email, customerId } = ctx.user;
   if (!email) throw throwAuthorizationError('email required');
-  return await createSubscribeSession({
+  const result = await createSubscribeSession({
     priceId,
     customerId,
     user: { id, email },
   });
+
+  await ctx.track.userActivity({
+    type: 'Subscribe',
+    targetUserId: id,
+  });
+
+  return result;
 };
 
 export const createManageSubscriptionSessionHandler = async ({
