@@ -12,6 +12,7 @@ import {
   getManagableTagsHandler,
   deleteTagsHandler,
 } from '~/server/controllers/tag.controller';
+import { cacheIt } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addTagVotesSchema,
@@ -63,6 +64,7 @@ export const tagRouter = router({
   getAll: publicProcedure
     .input(getTagsInput.optional())
     .use(applyUserPreferences)
+    .use(cacheIt({ ttl: 60 }))
     .query(getAllTagsHandler),
   getTrending: publicProcedure
     .input(getTrendingTagsSchema)
