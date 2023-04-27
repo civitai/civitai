@@ -75,7 +75,7 @@ export default MixedAuthEndpoint(async function handler(
                     downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                       versionId: version.id,
                       type: file.type,
-                      format: file.metadata.format,
+                      meta: file.metadata,
                       primary: primaryFile.id === file.id,
                     })}`,
                     primary: primaryFile.id === file.id ? true : undefined,

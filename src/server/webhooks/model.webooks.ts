@@ -47,7 +47,7 @@ export const modelWebhooks = createWebhookProcessor({
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.metadata.format,
+                  meta: file.metadata,
                   primary: primaryFile.id === file.id,
                 })}`,
               })),
@@ -111,7 +111,7 @@ export const modelWebhooks = createWebhookProcessor({
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
-                  format: file.metadata.format,
+                  meta: file.metadata,
                   primary: primaryFile.id === file.id,
                 })}`,
               })),
