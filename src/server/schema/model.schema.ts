@@ -179,3 +179,52 @@ export const declineReviewSchema = z.object({
   id: z.number(),
   reason: z.string().optional(),
 });
+
+export type GetModelsByCategoryInput = z.infer<typeof getModelsByCategorySchema>;
+export const getModelsByCategorySchema = z.object({
+  limit: z.number().min(1).max(30).optional(),
+  modelLimit: z.number().min(1).max(30).optional(),
+  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+  tag: z.string().optional(),
+  tagname: z.string().optional(),
+  types: z
+    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
+    .optional()
+    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+    .optional(),
+  status: z
+    .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
+    .optional()
+    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+    .optional(),
+  checkpointType: z.nativeEnum(CheckpointType).optional(),
+  baseModels: z
+    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
+    .optional()
+    .transform((rel) => {
+      if (!rel) return undefined;
+      return Array.isArray(rel) ? rel : [rel];
+    }),
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
+  period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
+  periodMode: periodModeSchema,
+  rating: z
+    .preprocess((val) => Number(val), z.number())
+    .transform((val) => Math.floor(val))
+    .optional(),
+  favorites: z.preprocess(
+    (val) => val === true || val === 'true',
+    z.boolean().optional().default(false)
+  ),
+  hidden: z.preprocess(
+    (val) => val === true || val === 'true',
+    z.boolean().optional().default(false)
+  ),
+  excludedIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  excludedImageTagIds: z.array(z.number()).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
+  earlyAccess: z.boolean().optional(),
+});

@@ -1,7 +1,14 @@
-import { ModelMeta, ToggleModelLockInput, UnpublishModelSchema } from './../schema/model.schema';
+import {
+  ModelMeta,
+  ToggleModelLockInput,
+  UnpublishModelSchema,
+  getModelsByCategorySchema,
+} from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
+  ModelHashType,
+  ModelModifier,
   ModelStatus,
   ModelType,
   Prisma,
@@ -13,6 +20,7 @@ import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
+import { ModelFileType } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { Context } from '~/server/createContext';
@@ -23,15 +31,25 @@ import {
   ModelInput,
   ModelUpsertInput,
   PublishModelSchema,
+  GetModelsByCategoryInput,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { ingestNewImages } from '~/server/services/image.service';
+import { modelHashSelect } from '~/server/selectors/modelHash.selector';
+import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  applyModRulesSql,
+  getImagesForModelVersion,
+  ingestNewImages,
+} from '~/server/services/image.service';
+import { getTypeCategories } from '~/server/services/tag.service';
+import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -639,4 +657,124 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
   } else {
     await updateModelById({ id, data: { earlyAccessDeadline: null } });
   }
+};
+
+export const getModelsByCategory = async ({
+  user,
+  ...input
+}: GetModelsByCategoryInput & { user?: SessionUser }) => {
+  input.limit ??= 10;
+  let categories = await getTypeCategories({
+    type: 'model',
+    excludeIds: input.excludedTagIds,
+    limit: input.limit + 1,
+    cursor: input.cursor,
+  });
+
+  let nextCursor: number | null = null;
+  if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
+  categories = shuffle(categories);
+
+  console.time('getModelsByCategory');
+  const items = await Promise.all(
+    categories.map((c) =>
+      getModels({
+        input: { ...input, tag: c.name, take: input.modelLimit ?? 12 },
+        user,
+        // Can we make this into a select schema? (low pri)
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          nsfw: true,
+          status: true,
+          createdAt: true,
+          lastVersionAt: true,
+          publishedAt: true,
+          locked: true,
+          earlyAccessDeadline: true,
+          mode: true,
+          rank: {
+            select: {
+              [`downloadCount${input.period}`]: true,
+              [`favoriteCount${input.period}`]: true,
+              [`commentCount${input.period}`]: true,
+              [`ratingCount${input.period}`]: true,
+              [`rating${input.period}`]: true,
+            },
+          },
+          modelVersions: {
+            orderBy: { index: 'asc' },
+            take: 1,
+            select: {
+              id: true,
+              earlyAccessTimeFrame: true,
+              createdAt: true,
+            },
+          },
+          user: { select: simpleUserSelect },
+          hashes: {
+            select: modelHashSelect,
+            where: {
+              hashType: ModelHashType.SHA256,
+              fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+            },
+          },
+        },
+      }).then(({ items }) => ({
+        ...c,
+        items,
+      }))
+    )
+  );
+  console.timeLog('getModelsByCategory');
+
+  const modelVersionIds = items
+    .flatMap((m) => m.items)
+    .flatMap((m) => m.modelVersions)
+    .map((m) => m.id);
+  const images = !!modelVersionIds.length
+    ? await getImagesForModelVersion({
+        modelVersionIds,
+        excludedTagIds: input.excludedImageTagIds,
+        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+        excludedUserIds: input.excludedUserIds,
+        currentUserId: user?.id,
+      })
+    : [];
+  console.timeEnd('getModelsByCategory');
+
+  const result = {
+    nextCursor,
+    items: items.map(({ items, ...c }) => ({
+      ...c,
+      items: items
+        .map(({ hashes, modelVersions, rank, ...model }) => {
+          const [version] = modelVersions;
+          if (!version) return null;
+          const [image] = images.filter((i) => i.modelVersionId === version.id);
+          if (!image) return null;
+
+          return {
+            ...model,
+            hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+            rank: {
+              downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+              favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+              commentCount: rank?.[`commentCount${input.period}`] ?? 0,
+              ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
+              rating: rank?.[`rating${input.period}`] ?? 0,
+            },
+            image:
+              model.mode !== ModelModifier.TakenDown
+                ? (image as (typeof images)[0] | undefined)
+                : undefined,
+            // earlyAccess,
+          };
+        })
+        .filter(isDefined),
+    })),
+  };
+
+  return result;
 };
