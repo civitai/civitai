@@ -42,6 +42,11 @@ const getReaction = async ({
         where: { userId, reaction, answerId: entityId },
         select: { id: true },
       });
+    case 'commentOld':
+      return await dbRead.commentReaction.findFirst({
+        where: { userId, reaction, commentId: entityId },
+        select: { id: true },
+      });
     case 'comment':
       return await dbRead.commentV2Reaction.findFirst({
         where: { userId, reaction, commentId: entityId },
@@ -85,6 +90,9 @@ const deleteReaction = async ({
       await dbWrite.answerReaction.deleteMany({ where: { id } });
       await queueMetricUpdate('Answer', entityId);
       return;
+    case 'commentOld':
+      await dbWrite.commentReaction.deleteMany({ where: { id } });
+      return;
     case 'comment':
       await dbWrite.commentV2Reaction.deleteMany({ where: { id } });
       return;
@@ -118,6 +126,11 @@ const createReaction = async ({
     case 'answer':
       return await dbWrite.answerReaction.create({
         data: { ...data, answerId: entityId },
+        select: { reaction: true },
+      });
+    case 'commentOld':
+      return await dbWrite.commentReaction.create({
+        data: { ...data, commentId: entityId },
         select: { reaction: true },
       });
     case 'comment':

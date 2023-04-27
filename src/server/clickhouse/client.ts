@@ -2,14 +2,17 @@ import { createClient } from '@clickhouse/client';
 import { env } from '~/env/server.mjs';
 import requestIp from 'request-ip';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { ReviewReactions, ReportReason, ReportStatus } from '@prisma/client';
+import { ReviewReactions, ReportReason, ReportStatus, NsfwLevel } from '@prisma/client';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 
-export const clickhouse = createClient({
-  host: env.CLICKHOUSE_HOST,
-  username: env.CLICKHOUSE_USERNAME,
-  password: env.CLICKHOUSE_PASSWORD,
-});
+const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
+export const clickhouse = shouldConnect
+  ? createClient({
+      host: env.CLICKHOUSE_HOST,
+      username: env.CLICKHOUSE_USERNAME,
+      password: env.CLICKHOUSE_PASSWORD,
+    })
+  : null;
 
 export type ViewType = 'ProfileView' | 'ImageView' | 'PostView' | 'ModelView' | 'ModelVersionView';
 export type EntityType = 'User' | 'Image' | 'Post' | 'Model' | 'ModelVersion';
@@ -67,6 +70,8 @@ export class Tracker {
   constructor(private req?: NextApiRequest, private res?: NextApiResponse) {}
 
   private async track(table: string, custom: object) {
+    if (!clickhouse) return;
+
     const values =
       this.req && this.res
         ? {
@@ -125,7 +130,7 @@ export class Tracker {
     type: ReactionType;
     entityId: number;
     reaction: ReviewReactions;
-    nsfw: boolean;
+    nsfw: NsfwLevel;
   }) {
     return this.track('reactions', values);
   }
@@ -149,7 +154,7 @@ export class Tracker {
   public image(values: {
     type: ImageActivityType;
     imageId: number;
-    nsfw: boolean;
+    nsfw: NsfwLevel;
     tags: string[];
   }) {
     return this.track('images', values);

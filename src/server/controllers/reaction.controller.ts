@@ -4,6 +4,7 @@ import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { ReactionType } from '../clickhouse/client';
+import { NsfwLevel } from '@prisma/client';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -44,50 +45,34 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (post) {
         return {
           type: `Post_${action}`,
-          nsfw: post.nsfw,
+          nsfw: post.nsfw ? NsfwLevel.Mature : NsfwLevel.None,
           ...shared,
         };
       }
       break;
+    case 'commentOld':
+      return {
+        type: `Comment_${action}`,
+        nsfw: NsfwLevel.None,
+        ...shared,
+      };
     case 'comment':
-      let comment = await dbRead.comment.findFirst({
-        where: {
-          id: input.entityId,
-        },
-        select: {
-          nsfw: true,
-        },
-      });
-
-      if (!comment) {
-        comment = await dbRead.commentV2.findFirst({
-          where: {
-            id: input.entityId,
-          },
-          select: {
-            nsfw: true,
-          },
-        });
-      }
-
-      if (comment) {
-        return {
-          type: `Comment_${action}`,
-          nsfw: comment.nsfw,
-          ...shared,
-        };
-      }
+      return {
+        type: `CommentV2_${action}`,
+        nsfw: NsfwLevel.None,
+        ...shared,
+      };
       break;
     case 'question':
       return {
         type: `Question_${action}`,
-        nsfw: false,
+        nsfw: NsfwLevel.None,
         ...shared,
       };
     case 'answer':
       return {
         type: `Answer_${action}`,
-        nsfw: false,
+        nsfw: NsfwLevel.None,
         ...shared,
       };
   }
