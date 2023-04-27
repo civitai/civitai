@@ -125,7 +125,8 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
           toi.disabled = FALSE AND t.type = 'Moderation' AND toi."imageId" = i.id
       )
     )
-    SELECT update_nsfw_levels(ids);
+    SELECT update_nsfw_levels(ids)
+    FROM to_update;
   `);
 
   // Update the last sent time
