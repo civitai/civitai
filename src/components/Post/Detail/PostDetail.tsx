@@ -25,6 +25,7 @@ import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { daysFromNow } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -49,6 +50,7 @@ export function PostDetail({ postId }: { postId: number }) {
         description={truncate(removeTags(post.detail ?? ''), { length: 150 })}
         image={images[0]?.url == null ? undefined : getEdgeUrl(images[0].url, { width: 1200 })}
       />
+      <TrackView entityId={post.id} entityType="Post" type="PostView" />
       <Container size="sm">
         <Stack>
           <Group position="apart" noWrap align="flex-start">
