@@ -1467,7 +1467,7 @@ export const getImagesByCategory = async ({
       .filter((x) => x.tagId === c.id)
       .map((x) => ({
         ...x,
-        reactions: reactions.map((r) => ({ userId, reaction: r })),
+        reactions: userId ? reactions.map((r) => ({ userId, reaction: r.reaction })) : [],
       }));
     return { ...c, items };
   });
