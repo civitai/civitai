@@ -24,6 +24,7 @@ import { resourceReviewRouter } from './resourceReview.router';
 import { reviewRouter } from './review.router';
 import { stripeRouter } from './stripe.router';
 import { tagRouter } from './tag.router';
+import { trackRouter } from './track.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
 
@@ -52,6 +53,7 @@ export const appRouter = router({
   review: reviewRouter,
   stripe: stripeRouter,
   tag: tagRouter,
+  track: trackRouter,
   user: userRouter,
   userLink: userLinkRouter,
 });
