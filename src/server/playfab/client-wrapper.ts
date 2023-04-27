@@ -9,7 +9,7 @@ async function ClientLoginWithCustomID(userId: number) {
       CreateAccount: true,
       TitleId: PlayFabClient.settings.titleId,
     }
-  );
+  ).catch((err) => err);
 }
 
 async function ServerLinkCustomID(userId: number, playFabId: string) {
@@ -19,7 +19,7 @@ async function ServerLinkCustomID(userId: number, playFabId: string) {
     ServerCustomId: userId.toString(),
     PlayFabId: playFabId,
     ForceLink: true,
-  });
+  }).catch((err) => err);
 }
 
 async function ServerLoginWithCustomID(userId: number) {
@@ -29,12 +29,12 @@ async function ServerLoginWithCustomID(userId: number) {
       ServerCustomId: userId.toString(),
       CreateAccount: false,
     }
-  );
+  ).catch((err) => err);
 }
 
 export async function LoginWithCustomID(userId: number) {
   let serverLogin = await ServerLoginWithCustomID(userId);
-  if ((serverLogin.errorCode = 1001)) {
+  if (serverLogin.errorCode === 1001) {
     // If server login fails, login with the client and link the accounts
     const clientLogin = await ClientLoginWithCustomID(userId);
     if (clientLogin.errorCode == 1001 || !clientLogin.data.PlayFabId)

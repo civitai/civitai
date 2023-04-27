@@ -74,9 +74,9 @@ type User_React_Image = {
   imageId: number;
 };
 
-type User_React_Comment = {
+type User_React_Entity = {
   eventName: `user_react_${ReactionEntityType}`;
-  entityId: number;
+  id: number;
   reaction: ReviewReactions;
 };
 
@@ -109,7 +109,7 @@ type PlayEvent =
   | User_Follow_User
   | User_Download_Resource
   | User_React_Image
-  | User_React_Comment
+  | User_React_Entity
   | User_Ask_Question
   | User_Answer_Question
   | User_Start_Membership

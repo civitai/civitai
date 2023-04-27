@@ -18,7 +18,7 @@ export const toggleReaction = async ({
     await createReaction({ entityType, entityId, userId, reaction });
     await playfab.trackEvent(userId, {
       eventName: `user_react_${entityType}`,
-      entityId,
+      id: entityId,
       reaction,
     });
     return 'created';
