@@ -1,3 +1,4 @@
+import { NsfwLevel } from '@prisma/client';
 import { TagVotableEntityType } from '~/libs/tags';
 
 export type ModerationCategory = {
@@ -115,4 +116,12 @@ export const topLevelModerationCategories = moderationCategories.map((x) => x.va
 export const entityModerationCategories: Record<TagVotableEntityType, ModerationCategory[]> = {
   image: moderationCategories,
   model: modelModerationCategories,
+};
+
+export const nsfwLevelOrder = [NsfwLevel.None, NsfwLevel.Soft, NsfwLevel.Mature, NsfwLevel.X];
+export const nsfwLevelUI = {
+  [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
+  [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },
+  [NsfwLevel.Mature]: { label: '17', color: 'orange', shade: 7 },
+  [NsfwLevel.X]: { label: '18', color: 'red', shade: 9 },
 };

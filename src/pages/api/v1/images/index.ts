@@ -1,4 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
@@ -30,7 +30,14 @@ const imagesEndpointSchema = z.object({
   username: usernameSchema.optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  nsfw: booleanString().optional(),
+  nsfw: z
+    .union([z.nativeEnum(NsfwLevel), booleanString()])
+    .optional()
+    .transform((value) => {
+      if (!value) return undefined;
+      if (typeof value === 'boolean') return value ? NsfwLevel.X : NsfwLevel.None;
+      return value;
+    }),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -54,7 +61,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       hash: image.hash,
       width: image.width,
       height: image.height,
-      nsfw: image.nsfw,
+      nsfwLevel: image.nsfw,
+      nsfw: image.nsfw !== NsfwLevel.None,
       createdAt: image.createdAt,
       postId: image.postId,
       stats: {

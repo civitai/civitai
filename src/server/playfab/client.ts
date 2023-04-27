@@ -1,5 +1,5 @@
 import { ModelType, ReviewReactions } from '@prisma/client';
-import { PlayFabClient } from 'playfab-sdk';
+import { PlayFabClient, PlayFabServer } from 'playfab-sdk';
 import { env } from '~/env/server.mjs';
 import { LoginWithCustomID, WritePlayerEvent } from '~/server/playfab/client-wrapper';
 import { redis } from '~/server/redis/client';
@@ -14,6 +14,9 @@ function initializePlayfab() {
     console.error('Playfab not initialized, missing secret key or title id');
     return;
   }
+
+  PlayFabServer.settings.titleId = env.PLAYFAB_TITLE_ID;
+  PlayFabServer.settings.developerSecretKey = env.PLAYFAB_SECRET_KEY;
 
   PlayFabClient.settings.titleId = env.PLAYFAB_TITLE_ID;
   PlayFabClient.settings.developerSecretKey = env.PLAYFAB_SECRET_KEY;
@@ -130,14 +133,30 @@ async function getSessionTicket(userId: number) {
   return sessionTicket;
 }
 
+async function getPlayFabId(userId: number) {
+  const cachedId = await redis.get(`playfab:playfab-id:${userId}`);
+  if (cachedId) return cachedId;
+
+  const result = await LoginWithCustomID(userId);
+  if (result.status !== 'OK') return null;
+
+  const playFabId = result.data.PlayFabId;
+  if (!playFabId) return null;
+  await redis.set(`playfab:playfab-id:${userId}`, playFabId, {
+    EX: 60 * 60 * 24, // 24 hours
+  });
+
+  return playFabId;
+}
+
 async function trackEvent(userId: number, { eventName, ...body }: PlayEvent) {
   if (!initialized) return;
 
   try {
-    const sessionTicket = await getSessionTicket(userId);
-    if (!sessionTicket) return;
+    const playFabId = await getPlayFabId(userId);
+    if (!playFabId) return;
 
-    await WritePlayerEvent(sessionTicket, { EventName: eventName, Body: body });
+    await WritePlayerEvent(playFabId, { EventName: eventName, Body: body });
   } catch (err) {
     log('Tracking error', err);
   }

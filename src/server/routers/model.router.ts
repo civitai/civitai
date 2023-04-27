@@ -54,6 +54,7 @@ import { prepareFile } from '~/utils/file-helpers';
 import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import { BrowsingMode } from '~/server/common/enums';
 import { getSimpleModelWithVersions } from '~/server/services/model.service';
+import { cacheIt } from '~/server/middleware.trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -135,8 +136,12 @@ export const modelRouter = router({
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .use(applyUserPreferences)
+    .use(cacheIt({ ttl: 60 }))
     .query(getModelsInfiniteHandler),
-  getAllPagedSimple: publicProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
+  getAllPagedSimple: publicProcedure
+    .input(getAllModelsSchema)
+    .use(cacheIt({ ttl: 60 }))
+    .query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
     .query(getModelsWithVersionsHandler),

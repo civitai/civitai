@@ -10,7 +10,7 @@ import {
   getImageResources,
   moderateImages,
 } from './../services/image.service';
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
@@ -136,7 +136,7 @@ export const getGalleryImagesInfiniteHandler = async ({
 };
 
 type SortableImage = {
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   createdAt: Date;
   connections: {
     index: number | null;

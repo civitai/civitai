@@ -41,6 +41,7 @@ import {
   publishModelById,
   restoreModelById,
   toggleLockModel,
+  unpublishModelById,
   updateModelById,
   upsertModel,
 } from '~/server/services/model.service';
@@ -70,14 +71,20 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const model = await getModel({
       ...input,
       user: ctx.user,
-      select: { ...modelWithDetailsSelect, meta: true, earlyAccessDeadline: true, mode: true },
+      select: modelWithDetailsSelect,
     });
     if (!model) {
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
     const features = getFeatureFlags({ user: ctx.user });
-    const modelVersionIds = model.modelVersions.map((version) => version.id);
+    const filteredVersions = model.modelVersions.filter((version) => {
+      const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+      if (isOwner) return true;
+
+      return version.status === ModelStatus.Published;
+    });
+    const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {
         modelVersionId: { in: modelVersionIds },
@@ -90,7 +97,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     return {
       ...model,
       meta: model.meta as ModelMeta | null,
-      modelVersions: model.modelVersions.map((version) => {
+      modelVersions: filteredVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
               versionCreatedAt: version.createdAt,
@@ -380,7 +387,7 @@ export const unpublishModelHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id, reason } = input;
+    const { id } = input;
     const model = await dbRead.model.findUnique({
       where: { id },
       select: { meta: true, nsfw: true },
@@ -388,22 +395,7 @@ export const unpublishModelHandler = async ({
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const meta = (model.meta as ModelMeta | null) || {};
-    const updatedModel = await updateModelById({
-      id,
-      data: {
-        status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
-        publishedAt: null,
-        meta: reason
-          ? { ...meta, unpublishedReason: reason, unpublishedAt: new Date().toISOString() }
-          : undefined,
-        modelVersions: {
-          updateMany: {
-            where: { status: ModelStatus.Published },
-            data: { status: ModelStatus.Unpublished, publishedAt: null },
-          },
-        },
-      },
-    });
+    const updatedModel = await unpublishModelById({ ...input, meta, user: ctx.user });
 
     await ctx.track.modelEvent({
       type: 'Unpublish',

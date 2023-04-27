@@ -23,6 +23,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import FourOhFour from '~/pages/404';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
@@ -49,7 +50,8 @@ export default function UserLists() {
     list: 'following' | 'followers' | 'hidden';
     username: string;
   };
-  const isSameUser = currentUser?.username === username;
+  const isSameUser =
+    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
 
   const { data, isLoading: loadingLists } = trpc.user.getLists.useQuery({ username });
 

@@ -433,6 +433,8 @@ export default function ModelDetailsV2({
     !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
+  const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
+  const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
 
   return (
     <>
@@ -640,12 +642,29 @@ export default function ModelDetailsV2({
                 <Text size="xs" color="dimmed">
                   Updated: {formatDate(model.updatedAt)}
                 </Text>
-                {model.tagsOnModels.length > 0 && <Divider orientation="vertical" />}
+                {category && (
+                  <>
+                    <Divider orientation="vertical" />
+                    <Link href={`/tag/${encodeURIComponent(category.name.toLowerCase())}`} passHref>
+                      <Badge component="a" size="sm" color="blue" sx={{ cursor: 'pointer' }}>
+                        {category.name}
+                      </Badge>
+                    </Link>
+                  </>
+                )}
+
+                {tags.length > 0 && <Divider orientation="vertical" />}
                 <Collection
-                  items={model.tagsOnModels}
-                  renderItem={({ tag }) => (
+                  items={tags}
+                  renderItem={(tag) => (
                     <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
-                      <Badge component="a" size="sm" sx={{ cursor: 'pointer' }}>
+                      <Badge
+                        component="a"
+                        size="sm"
+                        color="gray"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                        sx={{ cursor: 'pointer' }}
+                      >
                         {tag.name}
                       </Badge>
                     </Link>

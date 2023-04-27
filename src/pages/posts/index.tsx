@@ -1,12 +1,12 @@
 import { Container, Group, Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { PostCategoriesInfinite } from '~/components/CategoryList/PostCategoriesInfinite';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { PostCategoriesInfinite } from '~/components/Post/Categories/PostCategoriesInfinite';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';

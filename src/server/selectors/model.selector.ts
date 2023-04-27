@@ -124,6 +124,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   licenses: true,
   publishedAt: true,
   locked: true,
+  meta: true,
+  earlyAccessDeadline: true,
+  mode: true,
   reportStats: {
     select: {
       ownershipProcessing: true,
@@ -207,5 +210,5 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       favoriteCountAllTime: true,
     },
   },
-  tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
+  tagsOnModels: { select: { tag: { select: { id: true, name: true, isCategory: true } } } },
 });

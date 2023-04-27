@@ -1,6 +1,13 @@
 import { prepareUpdateImage } from './../selectors/image.selector';
 import { prepareCreateImage } from '~/server/selectors/image.selector';
-import { Prisma, ReportReason, ReportStatus, Review, ReviewReactions } from '@prisma/client';
+import {
+  NsfwLevel,
+  Prisma,
+  ReportReason,
+  ReportStatus,
+  Review,
+  ReviewReactions,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -261,7 +268,7 @@ export const updateReviewReportStatusByReason = ({
       else if (reason === ReportReason.NSFW)
         await tx.image.updateMany({
           where: { imagesOnReviews: { reviewId: id } },
-          data: { nsfw: true },
+          data: { nsfw: NsfwLevel.Mature },
         });
     }
   });

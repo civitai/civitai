@@ -173,10 +173,6 @@ function MasonryItem({ data: image, width: itemWidth }: MasonryItemProps) {
                   </Menu>
                   <ImageGuard.ToggleImage
                     sx={(theme) => ({
-                      backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.4),
-                      color: 'white',
-                      backdropFilter: 'blur(7px)',
-                      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                       position: 'absolute',
                       top: theme.spacing.xs,
                       left: theme.spacing.xs,

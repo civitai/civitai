@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { constants } from '~/server/common/constants';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 import { periodModeSchema } from '~/server/schema/base.schema';
@@ -90,7 +90,7 @@ export const addPostImageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   postId: z.number(),
   modelVersionId: z.number().optional(),
   index: z.number(),
@@ -111,7 +111,7 @@ export const updatePostImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
-  nsfw: z.boolean().optional(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
   // resources: z.array(imageResourceUpsertSchema),
 });
 

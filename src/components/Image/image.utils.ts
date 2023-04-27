@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { z } from 'zod';
 import { useFiltersContext, FilterKeys } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -74,4 +74,26 @@ export const useQueryImages = (
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return { data, images, ...rest };
+};
+
+export const useQueryImageCategories = (
+  filters?: Partial<GetImagesByCategoryInput>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  filters ??= {};
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const { data, ...rest } = trpc.image.getImagesByCategory.useInfiniteQuery(
+    { ...filters, browsingMode },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+      keepPreviousData: true,
+      ...options,
+    }
+  );
+
+  const categories = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+
+  return { data, categories, ...rest };
 };

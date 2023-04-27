@@ -20,25 +20,27 @@ import {
   InputTags,
   InputCheckbox,
 } from '~/libs/form';
+import { TagSort } from '~/server/common/enums';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { showErrorNotification } from '~/utils/notifications';
-import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const schema = modelUpsertSchema.refine(
-  (data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true),
-  {
+const schema = modelUpsertSchema
+  .extend({
+    category: z.number().optional(),
+  })
+  .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
-  }
-);
+  });
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
-  const defaultValues: ModelUpsertInput = {
+  const defaultValues: z.infer<typeof schema> = {
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? null,
-    tagsOnModels: model?.tagsOnModels ?? [],
+    tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
     type: model?.type ?? 'Checkpoint',
     checkpointType: model?.checkpointType,
@@ -48,6 +50,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
+    category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id,
   };
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useContext();
@@ -55,6 +58,16 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
+
+  const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
+    categories: true,
+    entityType: ['Model'],
+    unlisted: false,
+    sort: TagSort.MostModels,
+    limit: 100,
+  });
+  const categories =
+    data?.items.map((tag) => ({ label: titleCase(tag.name), value: tag.id })) ?? [];
 
   const handleModelTypeChange = (value: ModelType) => {
     form.setValue('checkpointType', null);
@@ -77,13 +90,22 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to save model' });
     },
   });
-  const handleSubmit = (data: z.infer<typeof schema>) => {
-    if (isDirty) upsertModelMutation.mutate(data);
-    else onSubmit(defaultValues);
+  const handleSubmit = ({ category, tagsOnModels = [], ...rest }: z.infer<typeof schema>) => {
+    if (isDirty) {
+      const selectedCategory = data?.items.find((cat) => cat.id === category);
+      const tags =
+        tagsOnModels && selectedCategory ? tagsOnModels.concat([selectedCategory]) : tagsOnModels;
+      upsertModelMutation.mutate({ ...rest, tagsOnModels: tags });
+    } else onSubmit(defaultValues);
   };
 
   useEffect(() => {
-    if (model) form.reset(model);
+    if (model)
+      form.reset({
+        ...model,
+        tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
+        category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id,
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model]);
 
@@ -138,11 +160,23 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               </Group>
               {errors.checkpointType && <Input.Error>{errors.checkpointType.message}</Input.Error>}
             </Stack>
+            <InputSelect
+              name="category"
+              label="Category"
+              nothingFound="Nothing found"
+              data={categories}
+              loading={loadingCategories}
+              searchable
+              withAsterisk
+            />
             <InputTags
               name="tagsOnModels"
               label="Tags"
               description="Search or create tags for your model"
               target={[TagTarget.Model]}
+              filter={(tag) =>
+                tag.id ? !categories.map((cat) => cat.value).includes(tag.id) : true
+              }
             />
             <InputRTE
               name="description"

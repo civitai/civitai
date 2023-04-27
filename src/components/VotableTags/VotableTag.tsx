@@ -3,16 +3,18 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { ActionIcon, Badge, Group, useMantineTheme } from '@mantine/core';
 import { useCallback, useRef } from 'react';
-import { TagType } from '@prisma/client';
+import { TagType, NsfwLevel } from '@prisma/client';
 import { IconArrowBigDown, IconArrowBigTop, IconFlag, IconX } from '@tabler/icons';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getTagDisplayName } from '~/libs/tags';
 import Link from 'next/link';
+import { nsfwLevelUI } from '~/libs/moderation';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
   initialVote?: number;
   type: TagType;
+  nsfw: NsfwLevel;
   name: string;
   score: number;
   needsReview?: boolean;
@@ -50,6 +52,7 @@ export function VotableTag({
   tagId,
   initialVote = 0,
   type,
+  nsfw,
   name,
   score,
   needsReview = false,
@@ -62,10 +65,11 @@ export function VotableTag({
 
   const theme = useMantineTheme();
   const isModeration = type === 'Moderation';
-  const voteColor = isModeration ? theme.colors.red[7] : theme.colors.blue[5];
+  const nsfwUI = isModeration ? nsfwLevelUI[nsfw] : undefined;
+  const voteColor = nsfwUI ? theme.colors[nsfwUI.color][nsfwUI.shade] : theme.colors.blue[5];
   const badgeColor = theme.fn.variant({
-    color: isModeration ? 'red' : 'gray',
-    variant: isModeration ? 'light' : 'filled',
+    color: nsfwUI?.color ?? 'gray',
+    variant: !!nsfwUI ? 'light' : 'filled',
   });
   const badgeBorder = theme.fn.lighten(
     needsReview ? theme.colors.yellow[8] : badgeColor.background ?? theme.colors.gray[4],

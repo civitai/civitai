@@ -1,7 +1,6 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { SessionUser } from 'next-auth';
 import { getSystemTags } from '~/server/services/system-cache';
-import { isNotImageResource } from './../schema/image.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -18,17 +17,12 @@ import {
   GetPostsByCategoryInput,
 } from './../schema/post.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { TagType, TagTarget, Prisma, ImageGenerationProcess } from '@prisma/client';
+import { TagType, TagTarget, Prisma, ImageGenerationProcess, NsfwLevel } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
-import { constants, ModelFileType } from '~/server/common/constants';
-import { isImageResource } from '~/server/schema/image.schema';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
-import { getImageV2Select } from '~/server/selectors/imagev2.selector';
-import uniqWith from 'lodash/uniqWith';
-import isEqual from 'lodash/isEqual';
 import {
   applyModRulesSql,
   applyUserPreferencesSql,
@@ -36,9 +30,9 @@ import {
 } from '~/server/services/image.service';
 import { redis } from '~/server/redis/client';
 import { indexOfOr, shuffle } from '~/utils/array-helpers';
-import { hashifyObject } from '~/utils/string-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
+import { getTypeCategories } from '~/server/services/tag.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -368,57 +362,6 @@ export const getPostResources = async ({ id }: GetByIdInput) => {
   });
 };
 
-const colorPriority = [
-  'red',
-  'orange',
-  'yellow',
-  'green',
-  'blue',
-  'purple',
-  'pink',
-  'brown',
-  'grey',
-];
-type PostCategory = { id: number; name: string; priority: number };
-export const getPostCategories = async ({
-  excludeIds,
-  limit,
-  cursor,
-}: {
-  excludeIds?: number[];
-  limit?: number;
-  cursor?: number;
-}) => {
-  let categories: PostCategory[] | undefined;
-  const categoriesCache = await redis.get('system:categories:posts');
-  if (categoriesCache) categories = JSON.parse(categoriesCache);
-
-  if (!categories) {
-    const systemTags = await getSystemTags();
-    const categoryTag = systemTags.find((t) => t.name === 'post category');
-    if (!categoryTag) throw new Error('Post category tag not found');
-    const categoriesRaw = await dbRead.tag.findMany({
-      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
-      select: { id: true, name: true, color: true },
-    });
-    categories = categoriesRaw
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
-      }))
-      .sort((a, b) => a.priority - b.priority);
-    if (categories.length) await redis.set('system:categories:posts', JSON.stringify(categories));
-  }
-
-  if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
-  let start = 0;
-  if (cursor) start = categories.findIndex((c) => c.id === cursor) + 1;
-  if (limit) categories = categories.slice(start, start + limit);
-
-  return categories;
-};
-
 type GetPostByCategoryRaw = {
   id: number;
   tagId: number;
@@ -441,7 +384,7 @@ type PostImageRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: boolean;
+  nsfw: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -460,7 +403,8 @@ export const getPostsByCategory = async ({
 }: GetPostsByCategoryInput & { userId?: number }) => {
   input.limit ??= 10;
 
-  let categories = await getPostCategories({
+  let categories = await getTypeCategories({
+    type: 'post',
     excludeIds: input.excludedTagIds,
     limit: input.limit + 1,
     cursor: input.cursor,

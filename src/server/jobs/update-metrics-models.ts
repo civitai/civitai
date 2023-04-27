@@ -344,10 +344,10 @@ export const updateMetricsModelJob = createJob(
     };
 
     const refreshModelRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelRank"');
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ModelRank"');
 
     const refreshVersionModelRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ModelVersionRank"');
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ModelVersionRank"');
 
     const clearDayMetrics = async () =>
       await Promise.all(

@@ -15,7 +15,7 @@ export const imageTagSelect = Prisma.validator<Prisma.TagSelect>()({
 export type ImageTag = Prisma.TagGetPayload<typeof imageTag>;
 const imageTag = Prisma.validator<Prisma.TagArgs>()({ select: imageTagSelect });
 
-export const modelTagCompositSelect = Prisma.validator<Prisma.ImageTagSelect>()({
+export const modelTagCompositeSelect = Prisma.validator<Prisma.ModelTagSelect>()({
   tagId: true,
   tagName: true,
   tagType: true,
@@ -24,7 +24,13 @@ export const modelTagCompositSelect = Prisma.validator<Prisma.ImageTagSelect>()(
   downVotes: true,
 });
 export const imageTagCompositeSelect = Prisma.validator<Prisma.ImageTagSelect>()({
-  ...modelTagCompositSelect,
+  tagId: true,
+  tagName: true,
+  tagType: true,
+  score: true,
+  upVotes: true,
+  downVotes: true,
+  tagNsfw: true,
   automated: true,
   needsReview: true,
 });

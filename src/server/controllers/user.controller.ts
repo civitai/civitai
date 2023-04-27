@@ -77,7 +77,7 @@ export const getUserCreatorHandler = async ({
   try {
     return await getUserCreator({ username, id });
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };
 
