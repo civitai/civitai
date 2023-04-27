@@ -2,6 +2,7 @@ import { createServerSideHelpers } from '@trpc/react-query/server';
 import { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
 import { Session } from 'next-auth';
 import superjson from 'superjson';
+import { Tracker } from '~/server/clickhouse/client';
 
 import { parseBrowsingMode } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
@@ -18,6 +19,7 @@ export const getServerProxySSGHelpers = async (
       user: session?.user,
       acceptableOrigin: true,
       browsingMode: parseBrowsingMode(ctx.req.cookies, session),
+      track: new Tracker(),
     },
     transformer: superjson,
   });

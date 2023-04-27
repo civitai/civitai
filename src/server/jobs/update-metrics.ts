@@ -1116,16 +1116,16 @@ export const updateMetricsJob = createJob(
     };
 
     const refreshTagRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "TagRank"');
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "TagRank"');
 
     const refreshUserRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "UserRank"');
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "UserRank"');
 
     const refreshImageRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "ImageRank"');
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ImageRank"');
 
     const refreshPostRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW CONCURRENTLY "PostRank"');
+      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "PostRank"');
 
     const clearDayMetrics = async () =>
       await Promise.all(

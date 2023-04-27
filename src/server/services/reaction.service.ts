@@ -11,15 +11,17 @@ export const toggleReaction = async ({
   reaction,
 }: ToggleReactionInput & { userId: number }) => {
   const existing = await getReaction({ entityType, entityId, userId, reaction });
-  if (existing) return await deleteReaction({ entityType, id: existing.id, entityId });
-  else {
+  if (existing) {
+    await deleteReaction({ entityType, id: existing.id, entityId });
+    return 'removed';
+  } else {
     await createReaction({ entityType, entityId, userId, reaction });
     await playfab.trackEvent(userId, {
       eventName: `user_react_${entityType}`,
-      entityId,
+      id: entityId,
       reaction,
     });
-    return;
+    return 'created';
   }
 };
 
@@ -38,6 +40,11 @@ const getReaction = async ({
     case 'answer':
       return await dbRead.answerReaction.findFirst({
         where: { userId, reaction, answerId: entityId },
+        select: { id: true },
+      });
+    case 'commentOld':
+      return await dbRead.commentReaction.findFirst({
+        where: { userId, reaction, commentId: entityId },
         select: { id: true },
       });
     case 'comment':
@@ -83,6 +90,9 @@ const deleteReaction = async ({
       await dbWrite.answerReaction.deleteMany({ where: { id } });
       await queueMetricUpdate('Answer', entityId);
       return;
+    case 'commentOld':
+      await dbWrite.commentReaction.deleteMany({ where: { id } });
+      return;
     case 'comment':
       await dbWrite.commentV2Reaction.deleteMany({ where: { id } });
       return;
@@ -116,6 +126,11 @@ const createReaction = async ({
     case 'answer':
       return await dbWrite.answerReaction.create({
         data: { ...data, answerId: entityId },
+        select: { reaction: true },
+      });
+    case 'commentOld':
+      return await dbWrite.commentReaction.create({
+        data: { ...data, commentId: entityId },
         select: { reaction: true },
       });
     case 'comment':

@@ -9,9 +9,9 @@ import {
   getCommentsInfiniteHandler,
   setTosViolationHandler,
   toggleLockHandler,
-  toggleReactionHandler,
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
+import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -96,7 +96,12 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
-  toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(toggleReactionHandler),
+  toggleReaction: protectedProcedure.input(toggleReactionInput).mutation(({ input, ctx }) =>
+    toggleReactionHandler({
+      ctx,
+      input: { entityType: 'commentOld', entityId: input.id, reaction: input.reaction },
+    })
+  ),
   toggleLock: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

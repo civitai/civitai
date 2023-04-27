@@ -17,7 +17,7 @@ import {
 } from '~/server/services/report.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
-export function createReportHandler({
+export async function createReportHandler({
   input,
   ctx,
 }: {
@@ -25,18 +25,40 @@ export function createReportHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    return createReport({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
+    const result = await createReport({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+
+    if (result) {
+      await ctx.track.report({
+        type: 'Create',
+        entityId: input.id,
+        entityType: input.type,
+        reason: input.reason,
+        status: result.status,
+      });
+    }
+
+    return result;
   } catch (e) {
     throw throwDbError(e);
   }
 }
 
-export async function setReportStatusHandler({ input }: { input: SetReportStatusInput }) {
+export async function setReportStatusHandler({
+  input,
+  ctx,
+}: {
+  input: SetReportStatusInput;
+  ctx: DeepNonNullable<Context>;
+}) {
   try {
     const { id, status } = input;
     const report = await getReportById({
       id,
-      select: { alsoReportedBy: true, previouslyReviewedCount: true },
+      select: { alsoReportedBy: true, previouslyReviewedCount: true, reason: true, type: true },
     });
     if (!report) throw throwNotFoundError(`No report with id ${id}`);
 
@@ -47,6 +69,14 @@ export async function setReportStatusHandler({ input }: { input: SetReportStatus
         previouslyReviewedCount:
           status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
       },
+    });
+
+    await ctx.track.report({
+      type: 'StatusChange',
+      entityId: input.id,
+      entityType: report.type,
+      reason: report.reason,
+      status,
     });
 
     return updatedReport;

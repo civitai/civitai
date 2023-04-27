@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import { parseFilterCookies } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { Tracker } from './clickhouse/client';
 
 export const parseBrowsingMode = (
   cookies: Partial<{ [key: string]: string }>,
@@ -26,18 +27,21 @@ export const createContext = async ({
   const session = await getServerAuthSession({ req, res });
   const acceptableOrigin = origins.some((o) => req.headers.referer?.startsWith(o)) ?? false;
   const browsingMode = parseBrowsingMode(req.cookies, session);
+  const track = new Tracker(req, res);
 
   return {
     user: session?.user,
     browsingMode,
     acceptableOrigin,
+    track,
   };
 };
 
-export const publicApiContext = {
+export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => ({
   user: undefined,
   acceptableOrigin: true,
   browsingMode: BrowsingMode.All,
-};
+  track: new Tracker(req, res),
+});
 
 export type Context = AsyncReturnType<typeof createContext>;

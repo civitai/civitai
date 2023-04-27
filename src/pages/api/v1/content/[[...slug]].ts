@@ -5,7 +5,7 @@ import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller({ ...publicApiContext });
+  const apiCaller = appRouter.createCaller(publicApiContext(req, res));
 
   try {
     const result = await apiCaller.content.get({ slug: req.query.slug });

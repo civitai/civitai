@@ -2,6 +2,7 @@ import { TagType } from '@prisma/client';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
+import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('system-cache', 'green');
@@ -39,6 +40,44 @@ export async function getSystemTags() {
 
   log('got system tags');
   return tags;
+}
+
+const colorPriority = [
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'blue',
+  'purple',
+  'pink',
+  'brown',
+  'grey',
+];
+type TypeCategory = { id: number; name: string; priority: number };
+export async function getCategoryTags(type: 'image' | 'model' | 'post') {
+  let categories: TypeCategory[] | undefined;
+  const categoriesCache = await redis.get(`system:categories:${type}`);
+  if (categoriesCache) categories = JSON.parse(categoriesCache);
+
+  if (!categories) {
+    const systemTags = await getSystemTags();
+    const categoryTag = systemTags.find((t) => t.name === `${type} category`);
+    if (!categoryTag) throw new Error(`${type} category tag not found`);
+    const categoriesRaw = await dbWrite.tag.findMany({
+      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
+      select: { id: true, name: true, color: true },
+    });
+    categories = categoriesRaw
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
+      }))
+      .sort((a, b) => a.priority - b.priority);
+    if (categories.length) await redis.set(`system:categories:${type}`, JSON.stringify(categories));
+  }
+
+  return categories;
 }
 
 export async function getTagsNeedingReview() {

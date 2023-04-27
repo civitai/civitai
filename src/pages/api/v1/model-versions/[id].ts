@@ -72,7 +72,7 @@ export async function prepareModelVersionResponse(
           downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
             versionId: version.id,
             type: file.type,
-            format: file.metadata.format,
+            meta: file.metadata,
             primary: primaryFile.id === file.id,
           })}`,
         }))

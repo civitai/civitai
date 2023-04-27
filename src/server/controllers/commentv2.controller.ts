@@ -16,6 +16,7 @@ import {
 import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import { CommentType } from '../clickhouse/client';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -66,7 +67,29 @@ export const upsertCommentV2Handler = async ({
   input: UpsertCommentV2Input;
 }) => {
   try {
-    return await upsertComment({ ...input, userId: ctx.user.id });
+    const result = await upsertComment({ ...input, userId: ctx.user.id });
+    if (!input.id) {
+      const type =
+        input.entityType === 'image'
+          ? 'Image'
+          : input.entityType === 'post'
+          ? 'Post'
+          : input.entityType === 'comment'
+          ? 'Comment'
+          : input.entityType === 'review'
+          ? 'Review'
+          : null;
+
+      if (type) {
+        await ctx.track.comment({
+          type,
+          nsfw: result.nsfw,
+          entityId: result.id,
+        });
+      }
+    }
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }

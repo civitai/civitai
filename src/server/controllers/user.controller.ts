@@ -245,6 +245,11 @@ export const deleteUserHandler = async ({
     const user = await deleteUser(input);
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
+    await ctx.track.userActivity({
+      targetUserId: id,
+      type: 'Account closure',
+    });
+
     return user;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -414,7 +419,13 @@ export const toggleFollowUserHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleFollowUser({ ...input, userId });
+    const result = await toggleFollowUser({ ...input, userId });
+    if (result) {
+      ctx.track.userEngagement({
+        type: 'Follow',
+        targetUserId: input.targetUserId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -452,7 +463,13 @@ export const toggleHideUserHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleHideUser({ ...input, userId });
+    const result = await toggleHideUser({ ...input, userId });
+    if (result) {
+      await ctx.track.userEngagement({
+        type: 'Hide',
+        targetUserId: input.targetUserId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -467,7 +484,13 @@ export const toggleHideModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleModelHide({ ...input, userId });
+    const result = await toggleModelHide({ ...input, userId });
+    if (result) {
+      await ctx.track.modelEngagement({
+        type: 'Hide',
+        modelId: input.modelId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -482,7 +505,13 @@ export const toggleFavoriteModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleModelFavorite({ ...input, userId });
+    const result = await toggleModelFavorite({ ...input, userId });
+    if (result) {
+      await ctx.track.modelEngagement({
+        type: 'Favorite',
+        modelId: input.modelId,
+      });
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -581,7 +610,11 @@ export const toggleBlockedTagHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    await toggleBlockedTag({ ...input, userId });
+    const result = await toggleBlockedTag({ ...input, userId });
+    ctx.track.tagEngagement({
+      type: result ? 'Hide' : 'Allow',
+      tagId: input.tagId,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -638,6 +671,11 @@ export const toggleMuteHandler = async ({
   const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
   await invalidateSession(id);
 
+  await ctx.track.userActivity({
+    type: user.muted ? 'Unmuted' : 'Muted',
+    targetUserId: id,
+  });
+
   return updatedUser;
 };
 
@@ -668,6 +706,11 @@ export const toggleBanHandler = async ({
 
   // Cancel their subscription
   await cancelSubscription({ userId: id });
+
+  await ctx.track.userActivity({
+    type: user.bannedAt ? 'Unbanned' : 'Banned',
+    targetUserId: id,
+  });
 
   return updatedUser;
 };

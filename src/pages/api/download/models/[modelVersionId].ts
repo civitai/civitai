@@ -1,25 +1,30 @@
 import { ModelModifier, ModelType, Prisma, UserActivityType } from '@prisma/client';
+import { isEmpty } from 'lodash-es';
 import { NextApiRequest, NextApiResponse } from 'next';
+import requestIp from 'request-ip';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
-import { dbWrite, dbRead } from '~/server/db/client';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
-import requestIp from 'request-ip';
-import { constants, ModelFileType } from '~/server/common/constants';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { Tracker } from '~/server/clickhouse/client';
+import { ModelFileType, constants } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { playfab } from '~/server/playfab/client';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
-import { getJoinLink } from '~/utils/join-helpers';
-import { getLoginLink } from '~/utils/login-helpers';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
-import { playfab } from '~/server/playfab/client';
+import { getJoinLink } from '~/utils/join-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
+import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
   type: z.enum(constants.modelFileTypes).optional(),
   format: z.enum(constants.modelFileFormats).optional(),
+  size: z.enum(constants.modelFileSizes).optional(),
+  fp: z.enum(constants.modelFileFp).optional(),
 });
 
 const forbidden = (req: NextApiRequest, res: NextApiResponse) => {
@@ -59,12 +64,13 @@ export default RateLimitedEndpoint(
         .status(400)
         .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
 
-    const { type, modelVersionId, format } = queryResults.data;
+    const { type, modelVersionId, format, size, fp } = queryResults.data;
     if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
 
     const fileWhere: Prisma.ModelFileWhereInput = {};
+    const metaJson: FileMetadata = removeEmpty({ format, size, fp });
     if (type) fileWhere.type = type;
-    if (format) fileWhere.metadata = { path: ['format'], equals: format };
+    if (!isEmpty(metaJson)) fileWhere.metadata = { equals: metaJson };
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { id: modelVersionId },
@@ -79,6 +85,7 @@ export default RateLimitedEndpoint(
             status: true,
             userId: true,
             mode: true,
+            nsfw: true,
           },
         },
         name: true,
@@ -174,6 +181,14 @@ export default RateLimitedEndpoint(
         },
       });
 
+      const tracker = new Tracker(req, res);
+      await tracker.modelVersionEvent({
+        type: 'Download',
+        modelId: modelVersion.model.id,
+        modelVersionId: modelVersion.id,
+        nsfw: modelVersion.model.nsfw,
+      });
+
       if (userId)
         await playfab.trackEvent(userId, {
           eventName: 'user_download_model',
@@ -188,8 +203,9 @@ export default RateLimitedEndpoint(
     try {
       const { url } = await getDownloadUrl(file.url, fileName);
       res.redirect(url);
-    } catch (err: any) {
-      console.error(`Error downloading file: ${file.url} - ${err.message}`);
+    } catch (err: unknown) {
+      const error = err as Error;
+      console.error(`Error downloading file: ${file.url} - ${error.message}`);
       return res.status(500).json({ error: 'Error downloading file' });
     }
   },

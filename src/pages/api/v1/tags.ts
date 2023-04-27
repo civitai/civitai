@@ -9,7 +9,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller(publicApiContext);
+  const apiCaller = appRouter.createCaller(publicApiContext(req, res));
   try {
     const { items, ...metadata } = await apiCaller.tag.getAll({
       ...req.query,

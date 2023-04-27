@@ -335,7 +335,7 @@ export const upsertModel = ({
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
   if (!id)
     return dbWrite.model.create({
-      select: { id: true },
+      select: { id: true, nsfw: true },
       data: {
         ...data,
         userId,
@@ -358,7 +358,7 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
     });
   else
     return dbWrite.model.update({
-      select: { id: true },
+      select: { id: true, nsfw: true },
       where: { id },
       data: {
         ...data,
@@ -469,7 +469,7 @@ export const createModel = async ({
             }
           : undefined,
       },
-      select: { id: true },
+      select: { id: true, nsfw: true },
     });
   });
 

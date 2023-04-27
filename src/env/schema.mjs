@@ -1,7 +1,7 @@
 // @ts-check
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
-import {stringArray} from '~/utils/zod-helpers';
+import { stringArray } from '~/utils/zod-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -21,6 +21,9 @@ export const serverSchema = z.object({
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
     process.env.VERCEL ? z.string() : z.string().url()
   ),
+  CLICKHOUSE_HOST: z.string().optional(),
+  CLICKHOUSE_USERNAME: z.string().optional(),
+  CLICKHOUSE_PASSWORD: z.string().optional(),
   DISCORD_CLIENT_ID: z.string(),
   DISCORD_CLIENT_SECRET: z.string(),
   DISCORD_BOT_TOKEN: z.string().optional(),

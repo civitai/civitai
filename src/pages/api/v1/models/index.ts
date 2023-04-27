@@ -30,7 +30,7 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  const apiCaller = appRouter.createCaller({ ...publicApiContext, user });
+  const apiCaller = appRouter.createCaller({ ...publicApiContext(req, res), user });
   try {
     if (Object.keys(req.query).some((key: any) => authedOnlyOptions.includes(key)) && !user)
       return res.status(401).json({ error: 'Unauthorized' });
@@ -75,7 +75,7 @@ export default MixedAuthEndpoint(async function handler(
                     downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                       versionId: version.id,
                       type: file.type,
-                      format: file.metadata.format,
+                      meta: file.metadata,
                       primary: primaryFile.id === file.id,
                     })}`,
                     primary: primaryFile.id === file.id ? true : undefined,

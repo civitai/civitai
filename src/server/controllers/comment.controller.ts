@@ -21,6 +21,7 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
+import { toggleReaction } from '~/server/services/reaction.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -81,7 +82,15 @@ export const upsertCommentHandler = async ({
     const { ownerId, locked } = ctx;
     const comment = await createOrUpdateComment({ ...input, ownerId, locked });
 
-    return comment;
+    if (!input.commentId) {
+      await ctx.track.comment({
+        type: 'Model',
+        entityId: comment.modelId,
+        nsfw: comment.nsfw,
+      });
+
+      return comment;
+    }
   } catch (error) {
     throw throwDbError(error);
   }
@@ -96,44 +105,6 @@ export const deleteUserCommentHandler = async ({ input }: { input: GetByIdInput 
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
-  }
-};
-
-export const toggleReactionHandler = async ({
-  ctx,
-  input,
-}: {
-  ctx: DeepNonNullable<Context>;
-  input: ToggleReactionInput;
-}) => {
-  const { user } = ctx;
-  const { id, reaction } = input;
-
-  const commentReaction = await getUserReactionByCommentId({
-    reaction,
-    commentId: id,
-    userId: user.id,
-  });
-
-  try {
-    const comment = await updateCommentById({
-      id,
-      data: {
-        reactions: {
-          create: commentReaction ? undefined : { reaction, userId: user.id },
-          deleteMany: commentReaction ? { reaction, userId: user.id } : undefined,
-        },
-      },
-    });
-
-    if (!comment) {
-      throw throwNotFoundError(`No comment with id ${id}`);
-    }
-
-    return comment;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
   }
 };
 

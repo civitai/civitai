@@ -119,6 +119,7 @@ export const createOrUpdateComment = ({
       modelId: true,
       reviewId: true,
       content: true,
+      nsfw: true,
     },
   });
 };
