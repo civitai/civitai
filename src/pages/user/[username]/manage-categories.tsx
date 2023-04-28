@@ -101,7 +101,7 @@ export default function ManageCategories({
 
   const { data: models, isLoading: loadingModels } = trpc.model.getWithCategoriesSimple.useQuery(
     {
-      // userId: currentUser?.id,
+      userId: currentUser?.id,
       page,
     },
     { enabled: !!currentUser, keepPreviousData: true }
