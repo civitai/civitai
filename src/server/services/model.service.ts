@@ -1,8 +1,9 @@
 import {
+  GetModelsWithCategoriesSchema,
   ModelMeta,
+  SetModelsCategoryInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
-  getModelsByCategorySchema,
 } from './../schema/model.schema';
 import {
   CommercialUse,
@@ -36,15 +37,11 @@ import {
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import {
-  applyModRulesSql,
-  getImagesForModelVersion,
-  ingestNewImages,
-} from '~/server/services/image.service';
+import { getImagesForModelVersion, ingestNewImages } from '~/server/services/image.service';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -780,4 +777,82 @@ export const getModelsByCategory = async ({
   };
 
   return result;
+};
+
+export const getAllModelsWithCategories = async ({
+  userId,
+  limit,
+  page,
+}: GetModelsWithCategoriesSchema) => {
+  const { take, skip } = getPagination(limit, page);
+  const where: Prisma.ModelFindManyArgs['where'] = {
+    status: { in: [ModelStatus.Published, ModelStatus.Draft] },
+    deletedAt: null,
+    userId,
+  };
+
+  try {
+    const [models, count] = await dbRead.$transaction([
+      dbRead.model.findMany({
+        take,
+        skip,
+        where,
+        select: {
+          id: true,
+          name: true,
+          tagsOnModels: {
+            // TODO.justin: check if this is enough to get the category tags
+            where: { tag: { isCategory: true } },
+            select: {
+              tag: {
+                select: { id: true, name: true },
+              },
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
+      }),
+      dbRead.model.count({ where }),
+    ]);
+    const items = models.map(({ tagsOnModels, ...model }) => ({
+      ...model,
+      tags: tagsOnModels.map(({ tag }) => tag),
+    }));
+
+    return getPagingData({ items, count }, take, page);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+// TODO.justin: update with raw queries for better peformance when updating the tags
+export const setModelsCategory = async ({ categoryId, modelIds }: SetModelsCategoryInput) => {
+  try {
+    const category = await dbRead.tag.findUnique({ where: { id: categoryId } });
+    if (!category) throw throwNotFoundError(`No category with id ${categoryId}`);
+
+    const affectedModels = (
+      await dbRead.$transaction(
+        modelIds.map((id) =>
+          dbRead.model.findUnique({
+            where: { id },
+            select: {
+              id: true,
+              tagsOnModels: {
+                select: { tag: { select: { id: true, name: true, isCategory: true } } },
+              },
+            },
+          })
+        )
+      )
+    ).filter(isDefined);
+
+    // remove all tags with isCategory from affectedModels
+    const tagsToRemove = affectedModels.flatMap((m) =>
+      m.tagsOnModels.map((t) => t.tag).filter((t) => t.isCategory)
+    );
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
 };
