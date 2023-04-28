@@ -48,7 +48,6 @@ const reports = [
     Element: TosViolationForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.Review,
       ReportEntity.Comment,
       ReportEntity.CommentV2,
       ReportEntity.Image,
@@ -61,7 +60,6 @@ const reports = [
     Element: AdminAttentionForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.Review,
       ReportEntity.Comment,
       ReportEntity.CommentV2,
       ReportEntity.Image,
@@ -148,10 +146,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
                 })
               );
               await queryUtils.model.getAll.invalidate();
-              break;
-            case ReportEntity.Review:
-              await queryUtils.review.getDetail.invalidate({ id: variables.id });
-              await queryUtils.review.getAll.invalidate();
               break;
             case ReportEntity.Comment:
               // Nothing changes here so nothing to invalidate...

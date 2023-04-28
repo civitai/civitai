@@ -122,14 +122,6 @@ export const createReport = async ({
           },
         });
         break;
-      case ReportEntity.Review:
-        await tx.reviewReport.create({
-          data: {
-            review: { connect: { id } },
-            report,
-          },
-        });
-        break;
       case ReportEntity.Comment:
         await tx.commentReport.create({
           data: {

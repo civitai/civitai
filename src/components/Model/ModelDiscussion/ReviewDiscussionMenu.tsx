@@ -258,7 +258,7 @@ export function ReviewDiscussionMenu({
             )}
           </>
         )}
-        {(!user || !isOwner) && (
+        {/* {(!user || !isOwner) && (
           <LoginRedirect reason="report-model">
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
@@ -269,7 +269,7 @@ export function ReviewDiscussionMenu({
               Report
             </Menu.Item>
           </LoginRedirect>
-        )}
+        )} */}
       </Menu.Dropdown>
     </Menu>
   );
