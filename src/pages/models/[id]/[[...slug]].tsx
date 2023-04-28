@@ -166,7 +166,8 @@ export default function ModelDetailsV2({
   const modelVersionId = Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId;
 
   const isModerator = currentUser?.isModerator ?? false;
-  const isOwner = model?.user.id === currentUser?.id || isModerator;
+  const isCreator = model?.user.id === currentUser?.id;
+  const isOwner = isCreator || isModerator;
   const publishedVersions = !isOwner
     ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
     : model?.modelVersions ?? [];
@@ -507,7 +508,7 @@ export default function ModelDetailsV2({
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
-                    {currentUser && isOwner && published && (
+                    {currentUser && isCreator && published && (
                       <Menu.Item
                         icon={<IconBan size={14} stroke={1.5} />}
                         color="yellow"

@@ -536,14 +536,16 @@ export const unpublishModelById = async ({
         data: {
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
           publishedAt: null,
-          meta: reason
-            ? {
-                ...meta,
-                unpublishedReason: reason,
-                unpublishedAt: new Date().toISOString(),
-                unpublishedBy: user.id,
-              }
-            : undefined,
+          meta: {
+            ...meta,
+            ...(reason
+              ? {
+                  unpublishedReason: reason,
+                }
+              : {}),
+            unpublishedAt: new Date().toISOString(),
+            unpublishedBy: user.id,
+          },
           modelVersions: {
             updateMany: {
               where: { status: ModelStatus.Published },

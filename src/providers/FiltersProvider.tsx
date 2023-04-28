@@ -40,7 +40,7 @@ const modelFilterSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
-  view: viewModeSchema,
+  view: viewModeSchema.default('feed'),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
