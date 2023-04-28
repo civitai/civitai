@@ -109,7 +109,13 @@ const localStorageSchemas: LocalStorageSchema = {
   models: { key: 'model-filters', schema: modelFilterSchema },
   questions: { key: 'question-filters', schema: questionFilterSchema },
   images: { key: 'image-filters', schema: imageFilterSchema },
-  modelImages: { key: 'model-image-filters', schema: imageFilterSchema },
+  modelImages: {
+    key: 'model-image-filters',
+    schema: imageFilterSchema.extend({
+      sort: z.nativeEnum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
+      period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
+    }),
+  },
   posts: { key: 'post-filters', schema: postFilterSchema },
 };
 
@@ -203,12 +209,8 @@ export const FiltersProvider = ({
   children: React.ReactNode;
   value: CookiesState;
 }) => {
-  const currentUser = useCurrentUser();
   const storeRef = useRef<FilterStore>();
-  if (!storeRef.current) {
-    if (!currentUser?.showNsfw) value.browsingMode = BrowsingMode.SFW;
-    storeRef.current = createFilterStore({ ...value });
-  }
+  if (!storeRef.current) storeRef.current = createFilterStore(value);
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
 };

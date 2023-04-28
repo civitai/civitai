@@ -18,11 +18,11 @@ import { NextApiRequest, NextApiResponse } from 'next';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
-    setTo = setTo.replace(/[^A-Za-z0-9_]/g, '');
+    setTo = setTo.split('@')[0].replace(/[^A-Za-z0-9_]/g, '');
     const { username } = await dbWrite.user.update({
       where: { id },
       data: {
-        username: `${setTo.split('@')[0]}${getRandomInt(100, 999)}`,
+        username: `${setTo}${getRandomInt(100, 999)}`,
       },
       select: {
         username: true,
