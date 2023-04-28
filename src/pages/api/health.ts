@@ -16,7 +16,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   const redisCheck = await redis
     .ping()
-    .then(() => true)
+    .then((res) => res === 'PONG')
     .catch(() => false);
 
   let healthy = writeDbCheck && readDbCheck && redisCheck;
