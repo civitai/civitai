@@ -93,8 +93,6 @@ function CategoryTitle({
   name: string;
   actions?: CategoryAction[];
 }) {
-  const router = useRouter();
-
   return (
     <Group spacing="xs">
       <Text
@@ -118,7 +116,6 @@ function CategoryTitle({
           variant="outline"
           size="xs"
           shallow={action.shallow}
-          // as={action.shallow ? router.asPath : undefined}
           compact
         >
           {typeof action.label === 'function' ? action.label({ id, name }) : action.label}
@@ -144,7 +141,6 @@ function CategoryCarousel<Item>({
 }: CategoryCarouselProps<Item>) {
   const { theme, classes } = useStyles();
   const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
-  const router = useRouter();
 
   return (
     <Box bg="black" mx={-8} p={8} sx={(theme) => ({ borderRadius: theme.radius.md })}>
@@ -182,7 +178,6 @@ function CategoryCarousel<Item>({
                   size="lg"
                   rightIcon={action.icon}
                   shallow={action.shallow}
-                  // as={action.shallow ? router.asPath : undefined}
                 >
                   {typeof action.label === 'function' ? action.label(data) : action.label}
                 </Button>

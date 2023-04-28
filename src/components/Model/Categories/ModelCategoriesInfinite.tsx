@@ -42,8 +42,8 @@ export function ModelCategoriesInfinite({
           shallow: true,
         },
         {
-          label: 'Make post',
-          href: (category) => `/posts/create?tag=${category.id}`,
+          label: 'Upload a model',
+          href: (category) => `/models/create?category=${category.id}`,
           icon: <IconPlus />,
           inTitle: true,
         },

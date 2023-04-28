@@ -7,6 +7,7 @@ import {
   IconShoppingCart,
   IconExclamationMark,
 } from '@tabler/icons';
+import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
@@ -34,8 +35,17 @@ const schema = modelUpsertSchema
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
   });
+const querySchema = z.object({
+  category: z.preprocess((arg) => {
+    return !!arg ? Number(arg) : undefined;
+  }, z.number().optional()),
+});
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
+  const router = useRouter();
+  const result = querySchema.safeParse(router.query);
+
+  const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues: z.infer<typeof schema> = {
     ...model,
     name: model?.name ?? '',
@@ -50,7 +60,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
-    category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id,
+    category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
   };
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useContext();
@@ -104,10 +114,10 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       form.reset({
         ...model,
         tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
-        category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id,
+        category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model]);
+  }, [defaultCategory, model]);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
