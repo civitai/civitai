@@ -58,7 +58,7 @@ export async function setReportStatusHandler({
     const { id, status } = input;
     const report = await getReportById({
       id,
-      select: { alsoReportedBy: true, previouslyReviewedCount: true, reason: true, type: true },
+      select: { alsoReportedBy: true, previouslyReviewedCount: true, reason: true },
     });
     if (!report) throw throwNotFoundError(`No report with id ${id}`);
 
@@ -71,13 +71,13 @@ export async function setReportStatusHandler({
       },
     });
 
-    await ctx.track.report({
-      type: 'StatusChange',
-      entityId: input.id,
-      entityType: report.type,
-      reason: report.reason,
-      status,
-    });
+    // await ctx.track.report({
+    //   type: 'StatusChange',
+    //   entityId: input.id,
+    //   entityType: report.type,
+    //   reason: report.reason,
+    //   status,
+    // });
 
     return updatedReport;
   } catch (e) {
