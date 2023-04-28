@@ -355,8 +355,8 @@ export const updateMetricsModelJob = createJob(
       await dbWrite.$transaction([
         dbWrite.$executeRawUnsafe(`TRUNCATE TABLE "ModelRank"`),
         dbWrite.$executeRawUnsafe(`INSERT INTO "ModelRank" SELECT * FROM "ModelRank_New"`),
-        dbWrite.$executeRawUnsafe(`VACUUM "ModelRank"`),
       ]);
+      dbWrite.$executeRawUnsafe(`VACUUM "ModelRank"`);
     };
 
     const refreshVersionModelRank = async () => {
@@ -367,6 +367,9 @@ export const updateMetricsModelJob = createJob(
       await dbWrite.$executeRawUnsafe(
         `ALTER TABLE "ModelVersionRank_New" ADD CONSTRAINT "pk_ModelVersionRank_New" PRIMARY KEY ("modelVersionId")`
       );
+      await dbWrite.$executeRawUnsafe(
+        `CREATE INDEX "ModelVersionRank_New_idx" ON "ModelVersionRank_New"("modelVersionId")`
+      );
 
       await dbWrite.$transaction([
         dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "ModelVersionRank";`),
@@ -375,6 +378,9 @@ export const updateMetricsModelJob = createJob(
         ),
         dbWrite.$executeRawUnsafe(
           `ALTER TABLE "ModelVersionRank" RENAME CONSTRAINT "pk_ModelVersionRank_New" TO "pk_ModelVersionRank";`
+        ),
+        dbWrite.$executeRawUnsafe(
+          `ALTER INDEX "ModelVersionRank_New_idx" RENAME TO "ModelVersionRank_idx";`
         ),
       ]);
     };
