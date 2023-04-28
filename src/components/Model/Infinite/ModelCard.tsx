@@ -507,9 +507,9 @@ export function AmbientModelCard({ data, width, height }: Props) {
                         <Group position="left" spacing={4}>
                           {modelText}
                         </Group>
-                        <Group position="apart" spacing={0}>
+                        <Group position="apart" spacing={4}>
                           {modelRating}
-                          <Group spacing={4} align="center" ml="auto">
+                          <Group spacing={4} align="center">
                             {modelLikes}
                             {modelComments}
                             {modelDownloads}
