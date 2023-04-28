@@ -58,7 +58,10 @@ export function TagsInput({ value = [], onChange, target, filter, ...props }: Ta
   };
 
   const selectedTags = useMemo(() => value.map((tag) => tag.name), [value]);
-  const isNewTag = search && !selectedTags.includes(search.trim().toLowerCase());
+  const isNewTag =
+    search &&
+    !selectedTags.includes(search.trim().toLowerCase()) &&
+    filter?.({ name: search.trim().toLowerCase() });
 
   return (
     <Input.Wrapper {...props}>
