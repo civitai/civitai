@@ -227,7 +227,9 @@ export function getDownloadFilename({
   let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
 
   // If the model name is empty (due to unsupported characters), we should keep the filename as is
-  const shouldKeepFilename = modelName.length === 0;
+  // OR if the type is LORA or LoCon
+  const shouldKeepFilename =
+    modelName.length === 0 || model.type === ModelType.LORA || model.type === ModelType.LoCon;
   if (shouldKeepFilename) return fileName;
 
   const ext = file.name.split('.').pop();

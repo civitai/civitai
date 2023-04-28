@@ -1559,7 +1559,6 @@ model AnswerRank {
   commentCountAllTimeRank Int
 }
 
-/// @view
 model ModelRank {
   model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
   modelId                  Int   @id
@@ -1638,7 +1637,6 @@ model ModelReportStat {
   claimUnactioned          Int
 }
 
-/// @view
 model ModelVersionRank {
   modelVersion             ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
   modelVersionId           Int          @id
@@ -1735,7 +1733,6 @@ model UserStat {
   answerAcceptCountAllTime Int
 }
 
-/// @view
 model UserRank {
   user                         User @relation(fields: [userId], references: [id], onDelete: NoAction)
   userId                       Int  @id
@@ -1808,7 +1805,6 @@ model TagStat {
   postCountAllTime     Int
 }
 
-/// @view
 model TagRank {
   tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
   tagId                    Int @id
@@ -1908,7 +1904,6 @@ model ImageStat {
   reactionCountAllTime Int   @default(0)
 }
 
-/// @view
 model ImageRank {
   imageId                  Int   @id
   image                    Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
@@ -2016,7 +2011,6 @@ model PostStat {
   reactionCountAllTime Int  @default(0)
 }
 
-/// @view
 model PostRank {
   postId                   Int  @id
   post                     Post @relation(fields: [postId], references: [id], onDelete: NoAction)

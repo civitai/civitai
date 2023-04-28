@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
+import { periodModeSchema } from '~/server/schema/base.schema';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
@@ -31,6 +32,7 @@ const viewModeSchema = z.enum(['categories', 'feed']).default('categories');
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  periodMode: periodModeSchema,
   sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
   types: z.nativeEnum(ModelType).array().optional(),
   checkpointType: z.nativeEnum(CheckpointType).optional(),
@@ -50,7 +52,8 @@ const questionFilterSchema = z.object({
 
 type ImageFilterSchema = z.infer<typeof imageFilterSchema>;
 const imageFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
+  periodMode: periodModeSchema,
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   view: viewModeSchema,
@@ -61,6 +64,7 @@ const imageFilterSchema = z.object({
 type PostFilterSchema = z.infer<typeof postFilterSchema>;
 const postFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
+  periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
   view: viewModeSchema,
 });
@@ -78,6 +82,10 @@ type StorageState = {
 };
 export type FilterSubTypes = keyof StorageState;
 export type ViewAdjustableTypes = 'models' | 'images' | 'posts';
+
+const periodModeTypes = ['models', 'images', 'posts'] as const;
+export type PeriodModeTypes = (typeof periodModeTypes)[number];
+export const hasPeriodMode = (type: string) => periodModeTypes.includes(type as any);
 
 type FilterState = CookiesState & StorageState;
 export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>;

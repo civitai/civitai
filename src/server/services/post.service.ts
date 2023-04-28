@@ -503,38 +503,41 @@ export const getPostsByCategory = async ({
     ORDER BY t."index"
   `;
 
+  let images: PostImageRaw[] = [];
   const postIds = postsRaw.map((p) => p.id);
-  const imageAND = [Prisma.sql`"postId" IN (${Prisma.join(postIds)})`];
-  applyUserPreferencesSql(imageAND, { ...input, userId });
-  applyModRulesSql(imageAND, { userId });
-  const images = await dbRead.$queryRaw<PostImageRaw[]>`
-    WITH all_images AS (
+  if (postIds.length) {
+    const imageAND = [Prisma.sql`"postId" IN (${Prisma.join(postIds)})`];
+    applyUserPreferencesSql(imageAND, { ...input, userId });
+    applyModRulesSql(imageAND, { userId });
+    images = await dbRead.$queryRaw<PostImageRaw[]>`
+      WITH all_images AS (
+        SELECT
+          i.id,
+          i.name,
+          i.url,
+          i.nsfw,
+          i.width,
+          i.height,
+          i.hash,
+          i.meta,
+          i."hideMeta",
+          i."generationProcess",
+          i."createdAt",
+          i."mimeType",
+          i."scannedAt",
+          i."needsReview",
+          i."postId",
+          row_number() OVER (PARTITION BY i."postId" ORDER BY i."index") row_number
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE ${Prisma.join(imageAND, ' AND ')}
+      )
       SELECT
-        i.id,
-        i.name,
-        i.url,
-        i.nsfw,
-        i.width,
-        i.height,
-        i.hash,
-        i.meta,
-        i."hideMeta",
-        i."generationProcess",
-        i."createdAt",
-        i."mimeType",
-        i."scannedAt",
-        i."needsReview",
-        i."postId",
-        row_number() OVER (PARTITION BY i."postId" ORDER BY i."index") row_number
-      FROM "Image" i
-      JOIN "Post" p ON p.id = i."postId"
-      WHERE ${Prisma.join(imageAND, ' AND ')}
-    )
-    SELECT
-      *
-    FROM all_images
-    ORDER BY row_number;
-  `;
+        *
+      FROM all_images
+      ORDER BY row_number;
+    `;
+  }
 
   // Convert raw to processed
   const usedImages = new Set();

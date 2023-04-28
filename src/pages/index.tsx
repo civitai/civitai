@@ -40,6 +40,7 @@ function Home() {
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
   const { username, favorites, hidden, query } = queryFilters;
   const periodMode = query ? ('stats' as PeriodMode) : undefined;
+  if (periodMode) queryFilters.periodMode = periodMode;
   const canToggleView = !username && !favorites && !hidden;
   const view = canToggleView ? queryView ?? storedView : 'feed';
 
@@ -101,7 +102,7 @@ function Home() {
             ) : (
               <>
                 <CategoryTags />
-                <ModelsInfinite filters={{ ...queryFilters, periodMode }} />
+                <ModelsInfinite filters={{ ...queryFilters }} />
               </>
             )}
           </Stack>

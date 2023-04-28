@@ -343,11 +343,47 @@ export const updateMetricsModelJob = createJob(
         await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
     };
 
-    const refreshModelRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ModelRank"');
+    const refreshModelRank = async () => {
+      await dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "ModelRank_New";`);
+      await dbWrite.$executeRawUnsafe(
+        `CREATE TABLE "ModelRank_New" AS SELECT * FROM "ModelRank_Live";`
+      );
+      await dbWrite.$executeRawUnsafe(
+        `ALTER TABLE "ModelRank_New" ADD CONSTRAINT "pk_ModelRank_New" PRIMARY KEY ("modelId")`
+      );
 
-    const refreshVersionModelRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ModelVersionRank"');
+      await dbWrite.$transaction([
+        dbWrite.$executeRawUnsafe(`TRUNCATE TABLE "ModelRank"`),
+        dbWrite.$executeRawUnsafe(`INSERT INTO "ModelRank" SELECT * FROM "ModelRank_New"`),
+      ]);
+      dbWrite.$executeRawUnsafe(`VACUUM "ModelRank"`);
+    };
+
+    const refreshVersionModelRank = async () => {
+      await dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "ModelVersionRank_New";`);
+      await dbWrite.$executeRawUnsafe(
+        `CREATE TABLE "ModelVersionRank_New" AS SELECT * FROM "ModelVersionRank_Live";`
+      );
+      await dbWrite.$executeRawUnsafe(
+        `ALTER TABLE "ModelVersionRank_New" ADD CONSTRAINT "pk_ModelVersionRank_New" PRIMARY KEY ("modelVersionId")`
+      );
+      await dbWrite.$executeRawUnsafe(
+        `CREATE INDEX "ModelVersionRank_New_idx" ON "ModelVersionRank_New"("modelVersionId")`
+      );
+
+      await dbWrite.$transaction([
+        dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "ModelVersionRank";`),
+        dbWrite.$executeRawUnsafe(
+          `ALTER TABLE "ModelVersionRank_New" RENAME TO "ModelVersionRank";`
+        ),
+        dbWrite.$executeRawUnsafe(
+          `ALTER TABLE "ModelVersionRank" RENAME CONSTRAINT "pk_ModelVersionRank_New" TO "pk_ModelVersionRank";`
+        ),
+        dbWrite.$executeRawUnsafe(
+          `ALTER INDEX "ModelVersionRank_New_idx" RENAME TO "ModelVersionRank_idx";`
+        ),
+      ]);
+    };
 
     const clearDayMetrics = async () =>
       await Promise.all(

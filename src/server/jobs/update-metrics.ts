@@ -1115,17 +1115,54 @@ export const updateMetricsJob = createJob(
       await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
     };
 
-    const refreshTagRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "TagRank"');
+    const recreateRankTable = async (
+      rankTable: string,
+      primaryKey: string,
+      indexes: string[] = []
+    ) => {
+      await dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}_New";`);
+      await dbWrite.$executeRawUnsafe(
+        `CREATE TABLE "${rankTable}_New" AS SELECT * FROM "${rankTable}_Live";`
+      );
+      await dbWrite.$executeRawUnsafe(
+        `ALTER TABLE "${rankTable}_New" ADD CONSTRAINT "pk_${rankTable}_New" PRIMARY KEY ("${primaryKey}")`
+      );
+      await dbWrite.$executeRawUnsafe(
+        `CREATE INDEX "${rankTable}_New_idx" ON "${rankTable}_New"("${primaryKey}")`
+      );
+      for (const index of indexes) {
+        await dbWrite.$executeRawUnsafe(
+          `CREATE INDEX "${rankTable}_New_${index}_idx" ON "${rankTable}_New"("${index}")`
+        );
+      }
 
+      await dbWrite.$transaction([
+        dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}";`),
+        dbWrite.$executeRawUnsafe(`ALTER TABLE "${rankTable}_New" RENAME TO "${rankTable}";`),
+        dbWrite.$executeRawUnsafe(
+          `ALTER TABLE "${rankTable}" RENAME CONSTRAINT "pk_${rankTable}_New" TO "pk_${rankTable}";`
+        ),
+        dbWrite.$executeRawUnsafe(
+          `ALTER INDEX "${rankTable}_New_idx" RENAME TO "${rankTable}_idx";`
+        ),
+        ...indexes.map((index) =>
+          dbWrite.$executeRawUnsafe(
+            `ALTER INDEX "${rankTable}_New_${index}_idx" RENAME TO "${rankTable}_${index}_idx";`
+          )
+        ),
+      ]);
+    };
+
+    const refreshTagRank = async () => await recreateRankTable('TagRank', 'tagId');
     const refreshUserRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "UserRank"');
-
+      await recreateRankTable('UserRank', 'userId', ['leaderboardRank']);
     const refreshImageRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ImageRank"');
-
+      await recreateRankTable('ImageRank', 'imageId', [
+        'reactionCountAllTimeRank',
+        'commentCountAllTimeRank',
+      ]);
     const refreshPostRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "PostRank"');
+      await recreateRankTable('PostRank', 'postId', ['reactionCountAllTimeRank']);
 
     const clearDayMetrics = async () =>
       await Promise.all(

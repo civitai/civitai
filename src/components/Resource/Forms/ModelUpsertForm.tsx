@@ -175,7 +175,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               description="Search or create tags for your model"
               target={[TagTarget.Model]}
               filter={(tag) =>
-                tag.id ? !categories.map((cat) => cat.value).includes(tag.id) : true
+                data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
               }
             />
             <InputRTE
