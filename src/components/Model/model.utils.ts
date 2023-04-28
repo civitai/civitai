@@ -37,7 +37,7 @@ export const useModelQueryParams = () => {
 
   return useMemo(() => {
     const result = modelQueryParamSchema.safeParse(query);
-    const data: ModelQueryParams = result.success ? result.data : { view: 'categories' };
+    const data: ModelQueryParams = result.success ? result.data : { view: 'feed' };
 
     return {
       ...data,
