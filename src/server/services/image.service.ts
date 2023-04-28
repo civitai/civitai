@@ -1072,6 +1072,8 @@ export const getImagesForModelVersion = async ({
   include?: Array<'meta'>;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
+  if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
+
   const imageWhere: Prisma.Sql[] = [
     Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
     Prisma.sql`i."needsReview" = false`,
