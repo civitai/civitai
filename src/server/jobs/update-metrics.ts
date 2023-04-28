@@ -1115,17 +1115,28 @@ export const updateMetricsJob = createJob(
       await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Image'`);
     };
 
-    const refreshTagRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "TagRank"');
+    const recreateRankTable = async (rankTable: string, primaryKey: string) => {
+      await dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}_New";`);
+      await dbWrite.$executeRawUnsafe(
+        `CREATE TABLE "${rankTable}_New" AS SELECT * FROM "${rankTable}_Live";`
+      );
+      await dbWrite.$executeRawUnsafe(
+        `ALTER TABLE "${rankTable}_New" ADD CONSTRAINT "pk_${rankTable}_New" PRIMARY KEY ("${primaryKey}")`
+      );
 
-    const refreshUserRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "UserRank"');
+      await dbWrite.$transaction([
+        dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}";`),
+        dbWrite.$executeRawUnsafe(`ALTER TABLE "${rankTable}_New" RENAME TO "${rankTable}";`),
+        dbWrite.$executeRawUnsafe(
+          `ALTER TABLE "${rankTable}" RENAME CONSTRAINT "pk_${rankTable}_New" TO "pk_${rankTable}";`
+        ),
+      ]);
+    };
 
-    const refreshImageRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "ImageRank"');
-
-    const refreshPostRank = async () =>
-      await dbWrite.$executeRawUnsafe('REFRESH MATERIALIZED VIEW "PostRank"');
+    const refreshTagRank = async () => await recreateRankTable('TagRank', 'tagId');
+    const refreshUserRank = async () => await recreateRankTable('UserRank', 'userId');
+    const refreshImageRank = async () => await recreateRankTable('ImageRank', 'imageId');
+    const refreshPostRank = async () => await recreateRankTable('PostRank', 'postId');
 
     const clearDayMetrics = async () =>
       await Promise.all(
