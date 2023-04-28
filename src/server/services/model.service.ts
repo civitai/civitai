@@ -661,6 +661,9 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
 
 export const getModelsByCategory = async ({
   user,
+  tag,
+  tagname,
+  cursor,
   ...input
 }: GetModelsByCategoryInput & { user?: SessionUser }) => {
   input.limit ??= 10;
@@ -668,18 +671,17 @@ export const getModelsByCategory = async ({
     type: 'model',
     excludeIds: input.excludedTagIds,
     limit: input.limit + 1,
-    cursor: input.cursor,
+    cursor,
   });
 
   let nextCursor: number | null = null;
   if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
   categories = shuffle(categories);
 
-  console.time('getModelsByCategory');
   const items = await Promise.all(
     categories.map((c) =>
       getModels({
-        input: { ...input, tag: c.name, take: input.modelLimit ?? 12 },
+        input: { ...input, tagname: c.name, take: Math.ceil((input.modelLimit ?? 12) * 1.25) },
         user,
         // Can we make this into a select schema? (low pri)
         select: {
@@ -727,7 +729,6 @@ export const getModelsByCategory = async ({
       }))
     )
   );
-  console.timeLog('getModelsByCategory');
 
   const modelVersionIds = items
     .flatMap((m) => m.items)

@@ -22,22 +22,24 @@ export function ModelCategoriesInfinite({
   const globalFilters = useModelFilters();
   const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
-  const { categories, isLoading, fetchNextPage, hasNextPage } = useQueryModelCategories(filters);
+  const { categories, isLoading, isRefetching, fetchNextPage, hasNextPage } =
+    useQueryModelCategories(filters);
   if (!categories) return null;
 
   return (
     <CategoryList
       data={categories}
       render={ModelCategoryCard}
-      isLoading={isLoading}
+      isLoading={isLoading || isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
       actions={[
         {
           label: 'View more',
-          href: (category) => `/?tags=${category.id}&view=feed`,
+          href: (category) => `/?tag=${encodeURIComponent(category.name)}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
+          shallow: true,
         },
         {
           label: 'Make post',

@@ -1,8 +1,19 @@
 import OneKeyMap from '@essentials/one-key-map';
 import { Carousel } from '@mantine/carousel';
-import { Box, Button, Center, createStyles, Group, Loader, Stack, Text } from '@mantine/core';
+import {
+  Box,
+  Button,
+  Center,
+  createStyles,
+  Group,
+  Loader,
+  LoadingOverlay,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 import trieMemoize from 'trie-memoize';
@@ -24,6 +35,7 @@ type CategoryAction = {
   href: string | ((category: { id: number; name: string }) => string);
   icon?: React.ReactNode;
   inTitle?: boolean;
+  shallow?: boolean;
 };
 
 export function CategoryList<Item>({
@@ -43,7 +55,8 @@ export function CategoryList<Item>({
   }, [fetchNextPage, inView]);
 
   return (
-    <Stack>
+    <Stack sx={{ position: 'relative' }}>
+      <LoadingOverlay visible={isLoading ?? false} zIndex={9} />
       {data.map((category) => (
         <Box key={category.id}>
           <Stack spacing={6}>
@@ -80,6 +93,8 @@ function CategoryTitle({
   name: string;
   actions?: CategoryAction[];
 }) {
+  const router = useRouter();
+
   return (
     <Group spacing="xs">
       <Text
@@ -102,6 +117,8 @@ function CategoryTitle({
           href={typeof action.href === 'function' ? action.href({ id, name }) : action.href}
           variant="outline"
           size="xs"
+          shallow={action.shallow}
+          // as={action.shallow ? router.asPath : undefined}
           compact
         >
           {typeof action.label === 'function' ? action.label({ id, name }) : action.label}
@@ -127,6 +144,8 @@ function CategoryCarousel<Item>({
 }: CategoryCarouselProps<Item>) {
   const { theme, classes } = useStyles();
   const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
+  const router = useRouter();
+
   return (
     <Box bg="black" mx={-8} p={8} sx={(theme) => ({ borderRadius: theme.radius.md })}>
       <Carousel
@@ -162,6 +181,8 @@ function CategoryCarousel<Item>({
                   radius="md"
                   size="lg"
                   rightIcon={action.icon}
+                  shallow={action.shallow}
+                  // as={action.shallow ? router.asPath : undefined}
                 >
                   {typeof action.label === 'function' ? action.label(data) : action.label}
                 </Button>
