@@ -3,6 +3,7 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
+import { useModelQueryParams } from '~/components/Model/model.utils';
 import { TagSort } from '~/server/common/enums';
 
 import { trpc } from '~/utils/trpc';
@@ -85,6 +86,7 @@ const useStyles = createStyles((theme) => ({
 export function CategoryTags() {
   const { classes, cx, theme } = useStyles();
   const router = useRouter();
+  const { set, tag: tagQuery } = useModelQueryParams();
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
@@ -107,6 +109,8 @@ export function CategoryTags() {
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
 
+  const handleSetTag = (tag: string | undefined) => set({ tag });
+
   return (
     <ScrollArea
       viewportRef={viewportRef}
@@ -126,36 +130,28 @@ export function CategoryTags() {
         </ActionIcon>
       </Box>
       <Group className={classes.tagsGroup} spacing={8} noWrap>
-        <Link href={router.asPath} shallow>
-          <Button
-            className={classes.tag}
-            variant={
-              !router.query.tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'
-            }
-            color={!router.query.tag ? 'blue' : 'gray'}
-            compact
-          >
-            All
-          </Button>
-        </Link>
+        <Button
+          className={classes.tag}
+          variant={!tagQuery ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          color={!tagQuery ? 'blue' : 'gray'}
+          onClick={() => handleSetTag(undefined)}
+          compact
+        >
+          All
+        </Button>
         {categories.map((tag) => {
-          const active = router.query.tag === tag.name;
+          const active = tagQuery === tag.name;
           return (
-            <Link
+            <Button
               key={tag.id}
-              href={!active ? `/?tag=${encodeURIComponent(tag.name)}` : router.asPath}
-              as={router.asPath}
-              shallow
+              className={classes.tag}
+              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              color={active ? 'blue' : 'gray'}
+              onClick={() => handleSetTag(!active ? tag.name : undefined)}
+              compact
             >
-              <Button
-                className={classes.tag}
-                variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                color={active ? 'blue' : 'gray'}
-                compact
-              >
-                {tag.name}
-              </Button>
-            </Link>
+              {tag.name}
+            </Button>
           );
         })}
       </Group>
