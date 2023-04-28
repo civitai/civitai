@@ -27,7 +27,6 @@ type DumbProps = {
   hideMode?: boolean;
 };
 function DumbPeriodFilter({ value, onChange, disabled, type, hideMode }: DumbProps) {
-  console.log(hideMode);
   const showPeriodMode = !hideMode && hasPeriodMode(type);
 
   return (
@@ -55,7 +54,6 @@ type StatefulProps = {
 function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
   const period = useFiltersContext((state) => state[type].period);
   const setFilters = useSetFilters(type);
-  console.log('smart');
 
   return (
     <DumbPeriodFilter
