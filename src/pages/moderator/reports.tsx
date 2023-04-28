@@ -506,9 +506,6 @@ const getReportLink = (report: ReportDetail) => {
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {
   // TODO.Briant - create a helper function for this
   const queryClient = useQueryClient();
-  // TODO.manuel - not sure why we use useQueryClient here to optimistically update the query
-  // but doing this hotfix for now
-  const queryUtils = trpc.useContext();
 
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
     onSuccess(_, request) {
@@ -520,15 +517,6 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
           if (item) item.status = request.status;
         })
       );
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Failed to set report status',
-        error: new Error(error.message),
-      });
-    },
-    async onSettled() {
-      await queryUtils.report.getAll.invalidate();
     },
   });
   const statusColor = reportStatusColorScheme[status];
