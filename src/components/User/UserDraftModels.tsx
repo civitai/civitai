@@ -74,18 +74,15 @@ export function UserDraftModels({ enabled = false }: Props) {
     },
   });
   const handleDeleteModel = (model: (typeof items)[number]) => {
-    const permaDelete = model.status === ModelStatus.Draft;
-
     openConfirmModal({
       title: 'Delete model',
-      children: `Are you sure you want to delete this model? This action is destructive and you will ${
-        permaDelete ? 'not be able' : 'have to contact support'
-      } to restore your data.`,
+      children:
+        'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {
-        deleteMutation.mutate({ id: model.id, permanently: model.status === ModelStatus.Draft });
+        deleteMutation.mutate({ id: model.id });
       },
     });
   };
