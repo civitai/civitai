@@ -31,7 +31,7 @@ const viewModeSchema = z.enum(['categories', 'feed']).default('categories');
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
   types: z.nativeEnum(ModelType).array().optional(),

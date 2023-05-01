@@ -1,10 +1,4 @@
-import {
-  GetModelsWithCategoriesSchema,
-  ModelMeta,
-  SetModelsCategoryInput,
-  ToggleModelLockInput,
-  UnpublishModelSchema,
-} from './../schema/model.schema';
+import { GetModelsWithCategoriesSchema, SetModelsCategoryInput } from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -25,14 +19,17 @@ import { ModelFileType } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { Context } from '~/server/createContext';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
+  GetModelsByCategoryInput,
   ModelInput,
+  ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
-  GetModelsByCategoryInput,
+  ToggleModelLockInput,
+  UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
@@ -276,19 +273,70 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
   });
 };
 
-export const deleteModelById = ({ id, userId }: GetByIdInput & { userId: number }) => {
-  return dbWrite.model.update({
-    where: { id },
-    data: { deletedAt: new Date(), status: 'Deleted', deletedBy: userId },
+export const deleteModelById = async ({ id, userId }: GetByIdInput & { userId: number }) => {
+  const deletedModel = await dbWrite.$transaction(async (tx) => {
+    const model = await tx.model.update({
+      where: { id },
+      data: {
+        deletedAt: new Date(),
+        status: 'Deleted',
+        deletedBy: userId,
+        modelVersions: {
+          updateMany: { where: { status: 'Published' }, data: { status: 'Deleted' } },
+        },
+      },
+      select: { id: true, userId: true, nsfw: true, modelVersions: { select: { id: true } } },
+    });
+    if (!model) return null;
+
+    await tx.post.updateMany({
+      where: {
+        userId: model.userId,
+        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+      },
+      data: { publishedAt: null },
+    });
+
+    return model;
   });
+
+  return deletedModel;
 };
 
 export const restoreModelById = ({ id }: GetByIdInput) => {
-  return dbWrite.model.update({ where: { id }, data: { deletedAt: null, status: 'Draft' } });
+  return dbWrite.model.update({
+    where: { id },
+    data: {
+      deletedAt: null,
+      status: 'Draft',
+      deletedBy: null,
+      modelVersions: {
+        updateMany: { where: { status: 'Deleted' }, data: { status: 'Draft' } },
+      },
+    },
+  });
 };
 
-export const permaDeleteModelById = ({ id }: GetByIdInput & { userId: number }) => {
-  return dbWrite.model.delete({ where: { id } });
+export const permaDeleteModelById = async ({ id }: GetByIdInput & { userId: number }) => {
+  const deletedModel = await dbWrite.$transaction(async (tx) => {
+    const model = await tx.model.findUnique({
+      where: { id },
+      select: { id: true, userId: true, nsfw: true, modelVersions: { select: { id: true } } },
+    });
+    if (!model) return null;
+
+    await tx.post.deleteMany({
+      where: {
+        userId: model.userId,
+        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+      },
+    });
+
+    const deletedModel = await tx.model.delete({ where: { id } });
+    return deletedModel;
+  });
+
+  return deletedModel;
 };
 
 const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
@@ -743,7 +791,6 @@ export const getModelsByCategory = async ({
         currentUserId: user?.id,
       })
     : [];
-  console.timeEnd('getModelsByCategory');
 
   const result = {
     nextCursor,

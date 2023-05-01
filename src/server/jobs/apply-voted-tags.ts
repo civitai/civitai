@@ -40,6 +40,24 @@ export const applyVotedTags = createJob('apply-voted-tags', '*/2 * * * *', async
     ON CONFLICT ("tagId", "imageId") DO NOTHING;
   `);
 
+  // Bring back disabled tag where voted by moderator
+  // --------------------------------------------
+  await dbWrite.$executeRawUnsafe(`
+    -- Enable upvoted moderation tags if voted by mod
+    WITH affected AS (
+      SELECT DISTINCT vote."imageId", vote."tagId"
+      FROM "TagsOnImageVote" vote
+      JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
+      WHERE vote."createdAt" > '${lastApplied}'
+        AND applied.disabled
+        AND vote.vote > 5
+    )
+    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+    WHERE ("tagId", "imageId") IN (
+      SELECT "tagId", "imageId" FROM affected
+    );
+  `);
+
   // Update NSFW baseline
   // --------------------------------------------
   await dbWrite.$executeRawUnsafe(`

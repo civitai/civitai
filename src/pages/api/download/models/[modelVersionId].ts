@@ -68,9 +68,7 @@ export default RateLimitedEndpoint(
     if (!modelVersionId) return res.status(400).json({ error: 'Missing modelVersionId' });
 
     const fileWhere: Prisma.ModelFileWhereInput = {};
-    const metaJson: FileMetadata = removeEmpty({ format, size, fp });
     if (type) fileWhere.type = type;
-    if (!isEmpty(metaJson)) fileWhere.metadata = { equals: metaJson };
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { id: modelVersionId },
@@ -108,6 +106,7 @@ export default RateLimitedEndpoint(
     if (!modelVersion) return notFound(req, res, 'Model not found');
 
     const { files } = modelVersion;
+    const metaJson: FileMetadata = removeEmpty({ format, size, fp }); // Get target file preferences from query params
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;
@@ -115,7 +114,8 @@ export default RateLimitedEndpoint(
       type != null || format != null
         ? castedFiles[0]
         : getPrimaryFile(castedFiles, {
-            metadata: session?.user?.filePreferences,
+            // Prioritize by query params, then by user preferences
+            metadata: { ...session?.user?.filePreferences, ...metaJson },
           });
     if (!file) return notFound(req, res, 'Model file not found');
 
