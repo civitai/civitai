@@ -1,11 +1,9 @@
 import { ActionIcon, Box, Button, createStyles, Group, ScrollArea } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
-import Link from 'next/link';
-import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
+
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { TagSort } from '~/server/common/enums';
-
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
@@ -85,7 +83,6 @@ const useStyles = createStyles((theme) => ({
 
 export function CategoryTags() {
   const { classes, cx, theme } = useStyles();
-  const router = useRouter();
   const { set, tag: tagQuery } = useModelQueryParams();
 
   const viewportRef = useRef<HTMLDivElement>(null);

@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   AspectRatio,
   Box,
   Card,
@@ -33,8 +34,9 @@ import {
   IconUpload,
   IconUsers,
 } from '@tabler/icons';
-
+import Link from 'next/link';
 import { useRouter } from 'next/router';
+
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -68,6 +70,7 @@ import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { useEffect } from 'react';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { NextLink } from '@mantine/next';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -296,7 +299,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           <Group spacing={4} noWrap>
                             <FollowUserButton userId={user.id} size="md" compact />
 
-                            {isMod && (
+                            {(isMod || isSameUser) && (
                               <Menu position="left" withinPortal>
                                 <Menu.Target>
                                   <ActionIcon loading={removeContentMutation.isLoading}>
@@ -304,38 +307,52 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                   </ActionIcon>
                                 </Menu.Target>
                                 <Menu.Dropdown>
-                                  <Menu.Item
-                                    color={user.bannedAt ? 'green' : 'red'}
-                                    icon={
-                                      !user.bannedAt ? (
-                                        <IconBan size={14} stroke={1.5} />
-                                      ) : (
-                                        <IconArrowBackUp size={14} stroke={1.5} />
-                                      )
-                                    }
-                                    onClick={handleToggleBan}
-                                  >
-                                    {user.bannedAt ? 'Restore user' : 'Ban user'}
-                                  </Menu.Item>
-                                  <Menu.Item
-                                    icon={
-                                      user.muted ? (
-                                        <IconMicrophone size={14} stroke={1.5} />
-                                      ) : (
-                                        <IconMicrophoneOff size={14} stroke={1.5} />
-                                      )
-                                    }
-                                    onClick={handleToggleMute}
-                                  >
-                                    {user.muted ? 'Unmute user' : 'Mute user'}
-                                  </Menu.Item>
-                                  <Menu.Item
-                                    color="red"
-                                    icon={<IconTrash size={14} stroke={1.5} />}
-                                    onClick={handleRemoveContent}
-                                  >
-                                    Remove all content
-                                  </Menu.Item>
+                                  <>
+                                    {isMod && (
+                                      <>
+                                        <Menu.Item
+                                          color={user.bannedAt ? 'green' : 'red'}
+                                          icon={
+                                            !user.bannedAt ? (
+                                              <IconBan size={14} stroke={1.5} />
+                                            ) : (
+                                              <IconArrowBackUp size={14} stroke={1.5} />
+                                            )
+                                          }
+                                          onClick={handleToggleBan}
+                                        >
+                                          {user.bannedAt ? 'Restore user' : 'Ban user'}
+                                        </Menu.Item>
+                                        <Menu.Item
+                                          color="red"
+                                          icon={<IconTrash size={14} stroke={1.5} />}
+                                          onClick={handleRemoveContent}
+                                        >
+                                          Remove all content
+                                        </Menu.Item>
+                                        <Menu.Item
+                                          icon={
+                                            user.muted ? (
+                                              <IconMicrophone size={14} stroke={1.5} />
+                                            ) : (
+                                              <IconMicrophoneOff size={14} stroke={1.5} />
+                                            )
+                                          }
+                                          onClick={handleToggleMute}
+                                        >
+                                          {user.muted ? 'Unmute user' : 'Mute user'}
+                                        </Menu.Item>
+                                      </>
+                                    )}
+                                    {isSameUser && (
+                                      <Menu.Item
+                                        component={NextLink}
+                                        href={`/user/${user.username}/manage-categories`}
+                                      >
+                                        Manage model categories
+                                      </Menu.Item>
+                                    )}
+                                  </>
                                 </Menu.Dropdown>
                               </Menu>
                             )}
