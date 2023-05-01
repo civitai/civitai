@@ -60,6 +60,7 @@ import {
   getAllModelsWithCategories,
   getModelsByCategory,
   getSimpleModelWithVersions,
+  setModelsCategory,
 } from '~/server/services/model.service';
 import { cacheIt } from '~/server/middleware.trpc';
 
@@ -204,8 +205,7 @@ export const modelRouter = router({
   getWithCategoriesSimple: publicProcedure
     .input(getModelsWithCategoriesSchema)
     .query(({ input }) => getAllModelsWithCategories(input)),
-  setCategory: protectedProcedure.input(setModelsCategorySchema).mutation(({ input }) => {
-    // TODO.justin: call the new service
-    console.log(input);
-  }),
+  setCategory: protectedProcedure
+    .input(setModelsCategorySchema)
+    .mutation(({ input, ctx }) => setModelsCategory({ ...input, userId: ctx.user?.id })),
 });

@@ -47,6 +47,7 @@ import { shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { getCategoryTags } from '~/server/services/system-cache';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -791,6 +792,9 @@ export const getAllModelsWithCategories = async ({
     userId,
   };
 
+  const modelCategories = await getCategoryTags('model');
+  const categoryIds = modelCategories.map((c) => c.id);
+
   try {
     const [models, count] = await dbRead.$transaction([
       dbRead.model.findMany({
@@ -801,8 +805,7 @@ export const getAllModelsWithCategories = async ({
           id: true,
           name: true,
           tagsOnModels: {
-            // TODO.justin: check if this is enough to get the category tags
-            where: { tag: { isCategory: true } },
+            where: { tagId: { in: categoryIds } },
             select: {
               tag: {
                 select: { id: true, name: true },
@@ -826,31 +829,38 @@ export const getAllModelsWithCategories = async ({
 };
 
 // TODO.justin: update with raw queries for better peformance when updating the tags
-export const setModelsCategory = async ({ categoryId, modelIds }: SetModelsCategoryInput) => {
+export const setModelsCategory = async ({
+  categoryId,
+  modelIds,
+  userId,
+}: SetModelsCategoryInput & { userId: number }) => {
   try {
-    const category = await dbRead.tag.findUnique({ where: { id: categoryId } });
+    const modelCategories = await getCategoryTags('model');
+    const category = modelCategories.find((c) => c.id === categoryId);
     if (!category) throw throwNotFoundError(`No category with id ${categoryId}`);
 
-    const affectedModels = (
-      await dbRead.$transaction(
-        modelIds.map((id) =>
-          dbRead.model.findUnique({
-            where: { id },
-            select: {
-              id: true,
-              tagsOnModels: {
-                select: { tag: { select: { id: true, name: true, isCategory: true } } },
-              },
-            },
-          })
-        )
-      )
-    ).filter(isDefined);
+    const models = Prisma.join(modelIds);
+    const allCategories = Prisma.join(modelCategories.map((c) => c.id));
 
-    // remove all tags with isCategory from affectedModels
-    const tagsToRemove = affectedModels.flatMap((m) =>
-      m.tagsOnModels.map((t) => t.tag).filter((t) => t.isCategory)
-    );
+    // Remove all categories from models
+    await dbWrite.$executeRaw`
+      DELETE FROM "TagsOnModels" tom
+      USING "Model" m
+      WHERE m.id = tom."modelId"
+        AND m."userId" = ${userId}
+        AND "modelId" IN (${models})
+        AND "tagId" IN (${allCategories})
+    `;
+
+    // Add category to models
+    await dbWrite.$executeRaw`
+      INSERT INTO "TagsOnModels" ("modelId", "tagId")
+      SELECT m.id, ${categoryId}
+      FROM "Model" m
+      WHERE m."userId" = ${userId}
+        AND m.id IN (${models})
+      ON CONFLICT ("modelId", "tagId") DO NOTHING;
+    `;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
