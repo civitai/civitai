@@ -25,7 +25,7 @@ export function ResourceReviewForm({
           label="Comments or feedback"
           includeControls={['formatting', 'link']}
           editorSize="md"
-          withLinkValidation
+          // withLinkValidation
         />
         {children}
       </Stack>
