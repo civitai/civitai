@@ -745,7 +745,6 @@ export const getModelsByCategory = async ({
         currentUserId: user?.id,
       })
     : [];
-  console.timeEnd('getModelsByCategory');
 
   const result = {
     nextCursor,
