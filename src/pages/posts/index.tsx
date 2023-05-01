@@ -12,17 +12,13 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 
 export default function PostsPage() {
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.posts.view);
   const { view: queryView, ...filters } = usePostQueryParams();
-  // return <NotFound />;
-  if (!features.posts) return <NotFound />;
 
   const view = queryView ?? storedView;
   return (
