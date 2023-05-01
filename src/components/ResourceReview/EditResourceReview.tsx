@@ -133,7 +133,7 @@ export function EditResourceReview({
                       innerRef={commentRef}
                       placeholder={`What did you think of ${modelName}?`}
                       styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
-                      withLinkValidation
+                      // withLinkValidation
                     />
                     <Group grow spacing="xs">
                       <Button size="xs" variant="default" onClick={toggleEditDetail}>

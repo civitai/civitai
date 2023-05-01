@@ -156,7 +156,7 @@ export const CommentForm = ({
           classNames={{
             content: classes.content,
           }}
-          withLinkValidation
+          // withLinkValidation
         />
         {focused && (
           <Group position="right">
