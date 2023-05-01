@@ -89,7 +89,7 @@ export function ListSearch({ onSearch }: Props) {
   };
 
   const handleSetQuery = (query: string) => {
-    set({ tag: undefined, query, username: undefined });
+    set({ tag: undefined, query, username: undefined }, '/');
   };
 
   const handleClear = () => {
