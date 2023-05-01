@@ -32,7 +32,6 @@ import {
   UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
-import { deleteImage } from '~/utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { decreaseDate } from '~/utils/date-helpers';
 import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
@@ -52,6 +51,7 @@ import { applyUserPreferences, UserPreferencesInput } from '~/server/middleware.
 import { nsfwLevelOrder } from '~/libs/moderation';
 import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { getTypeCategories } from '~/server/services/tag.service';
+import { deleteObject } from '~/utils/s3-utils';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -329,7 +329,8 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
 export const deleteImageById = async ({ id }: GetByIdInput) => {
   try {
     const image = await dbRead.image.findUnique({ where: { id }, select: { url: true } });
-    if (isProd && image && !imageUrlInUse({ url: image.url, id })) await deleteImage(image.url); // Remove from storage
+    if (isProd && image && !imageUrlInUse({ url: image.url, id }))
+      await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
   } catch {
     // Ignore errors
   }
