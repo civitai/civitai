@@ -40,7 +40,6 @@ import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -724,7 +723,10 @@ export const getModelsByCategory = async ({
 
   let nextCursor: number | null = null;
   if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = shuffle(categories);
+  categories = categories.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return Math.random() - 0.5;
+  });
 
   const items = await Promise.all(
     categories.map((c) =>

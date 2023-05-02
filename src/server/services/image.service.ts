@@ -49,7 +49,6 @@ import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { TRPCError } from '@trpc/server';
 import { applyUserPreferences, UserPreferencesInput } from '~/server/middleware.trpc';
 import { nsfwLevelOrder } from '~/libs/moderation';
-import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { deleteObject } from '~/utils/s3-utils';
 
@@ -1341,7 +1340,10 @@ export const getImagesByCategory = async ({
 
   let nextCursor: number | null = null;
   if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = shuffle(categories);
+  categories = categories.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return Math.random() - 0.5;
+  });
 
   const AND = [Prisma.sql`p."publishedAt" IS NOT NULL`];
 
