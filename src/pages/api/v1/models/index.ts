@@ -6,6 +6,7 @@ import { Session } from 'next-auth';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { BrowsingMode } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
@@ -30,7 +31,8 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  const apiCaller = appRouter.createCaller({ ...publicApiContext(req, res), user });
+  const browsingMode = req.query.nsfw === 'false' ? BrowsingMode.SFW : BrowsingMode.All;
+  const apiCaller = appRouter.createCaller({ ...publicApiContext(req, res), user, browsingMode });
   try {
     if (Object.keys(req.query).some((key: any) => authedOnlyOptions.includes(key)) && !user)
       return res.status(401).json({ error: 'Unauthorized' });
