@@ -140,10 +140,8 @@ export const useCFUploadStore = create<StoreProps>()(
             updateFile(uuid, { status: 'aborted' });
             resolve(false);
           });
-          xhr.open('POST', url, true);
-          const formData = new FormData();
-          formData.append('file', file);
-          xhr.send(formData);
+          xhr.open('PUT', url, true);
+          xhr.send(file);
         });
         const payload = { url: url.split('?')[0], id, meta, uuid } as any;
         await cb?.(payload);
