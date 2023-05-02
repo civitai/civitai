@@ -81,6 +81,7 @@ const processPost = (post?: PostEditDetail) => {
   return {
     id: post?.id ?? 0,
     title: post?.title ?? undefined,
+    detail: post?.detail ?? undefined,
     nsfw: post?.nsfw ?? false,
     publishedAt: post?.publishedAt ?? undefined,
     tags: post?.tags ?? [],

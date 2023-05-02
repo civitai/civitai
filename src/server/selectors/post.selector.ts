@@ -29,6 +29,7 @@ export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
   id: true,
   nsfw: true,
   title: true,
+  detail: true,
   modelVersionId: true,
   userId: true,
   publishedAt: true,
