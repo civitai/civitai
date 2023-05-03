@@ -60,7 +60,7 @@ export default function PostsPage() {
             ) : (
               <>
                 <PostCategories />
-                <PostsInfinite filters={filters} showEof={filters.period !== 'AllTime'} />
+                <PostsInfinite filters={filters} showEof />
               </>
             )}
           </Stack>

@@ -43,6 +43,7 @@ export default function ImagesInfinite({
   const { ref, inView } = useInView();
   const imageFilters = useImageFilters('images');
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
+  showEof = showEof && filters.period !== MetricTimeframe.AllTime;
 
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryImages(filters, {

@@ -1,4 +1,5 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
+import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
@@ -23,6 +24,7 @@ export function ModelsInfinite({
   const modelFilters = useModelFilters();
 
   const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
+  showEof = showEof && filters.period !== MetricTimeframe.AllTime;
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryModels(filters, {

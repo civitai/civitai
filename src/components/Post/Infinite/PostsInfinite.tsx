@@ -32,6 +32,7 @@ export default function PostsInfinite({
   const { ref, inView } = useInView();
   const postFilters = usePostFilters();
   const filters = removeEmpty({ ...postFilters, ...filterOverrides });
+  showEof = showEof && filters.period !== MetricTimeframe.AllTime;
 
   const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
     filters,
