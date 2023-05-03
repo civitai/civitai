@@ -1,13 +1,13 @@
-import { Button, Group, Popover, Text, PopoverProps, GroupProps } from '@mantine/core';
+import { Button, Group, Text, GroupProps } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
 import { IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons';
 import { capitalize } from 'lodash-es';
-import { useMemo, useState } from 'react';
+
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 
 export type ReactionMetrics = {
@@ -16,15 +16,6 @@ export type ReactionMetrics = {
   heartCount?: number;
   laughCount?: number;
   cryCount?: number;
-};
-
-type ReactionToEmoji = { [k in ReviewReactions]: string };
-const availableReactions: ReactionToEmoji = {
-  [ReviewReactions.Like]: '👍',
-  [ReviewReactions.Dislike]: '👎',
-  [ReviewReactions.Heart]: '❤️',
-  [ReviewReactions.Laugh]: '😂',
-  [ReviewReactions.Cry]: '😢',
 };
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
@@ -157,7 +148,7 @@ function ReactionsList({
   readonly?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const keys = Object.keys(availableReactions) as ReviewReactions[];
+  const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
   return (
     <>
       {keys
@@ -218,7 +209,9 @@ function ReactionBadge({
       compact
     >
       <Group spacing={4} align="center">
-        <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>{availableReactions[reaction]}</Text>
+        <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
+          {constants.availableReactions[reaction]}
+        </Text>
         <Text inherit>{count}</Text>
       </Group>
     </Button>
@@ -234,7 +227,7 @@ function ReactionSelector({
 }) {
   return (
     <Button size="xs" radius="xs" variant={'subtle'} color={hasReacted ? 'blue' : 'gray'}>
-      {availableReactions[reaction]}
+      {constants.availableReactions[reaction]}
     </Button>
   );
 }

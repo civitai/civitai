@@ -677,6 +677,7 @@ export const getAllImages = async ({
   include,
   nsfw,
   excludeCrossPosts,
+  reactions,
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: NsfwLevel }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
@@ -798,6 +799,12 @@ export const getAllImages = async ({
     }
   }
 
+  if (userId && !!reactions?.length) {
+    AND.push(
+      Prisma.sql`ir."userId" = ${userId} AND ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`
+    );
+  }
+
   const includeRank = cursorProp?.startsWith('r.');
 
   const queryFrom = Prisma.sql`
@@ -812,10 +819,10 @@ export const getAllImages = async ({
       !userId
         ? Prisma.sql``
         : Prisma.sql`LEFT JOIN (
-      SELECT "imageId", jsonb_agg(reaction) "reactions"
+      SELECT "imageId", jsonb_agg(reaction) "reactions", "userId"
       FROM "ImageReaction"
       WHERE "userId" = ${userId}
-      GROUP BY "imageId"
+      GROUP BY "imageId", "userId"
     ) ir ON ir."imageId" = i.id`
     }
     WHERE ${Prisma.join(AND, ' AND ')}
