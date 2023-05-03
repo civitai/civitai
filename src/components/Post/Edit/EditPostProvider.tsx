@@ -97,7 +97,10 @@ const createEditPostStore = ({
   handleUpload,
 }: {
   post?: PostEditDetail;
-  handleUpload: (args: HandleUploadArgs, toUpload: ImageUpload) => Promise<PostEditImage>;
+  handleUpload: (
+    args: HandleUploadArgs,
+    toUpload: ImageUpload
+  ) => Promise<PostEditImage | undefined>;
 }) => {
   return createStore<EditPostState>()(
     devtools(
@@ -178,41 +181,43 @@ const createEditPostStore = ({
                 .filter((x) => x.status === 'uploading')
                 .map(async (data) => {
                   const created = await handleUpload({ postId, modelVersionId }, data);
-                  set((state) => {
-                    const index = state.images.findIndex(
-                      (x) => x.type === 'upload' && x.data.uuid === data.uuid
-                    );
-                    if (index === -1) throw new Error('index out of bounds');
-                    state.images[index] = {
-                      type: 'image',
-                      data: { ...created, previewUrl: data.url },
-                    };
-                  });
-                  try {
-                    const result = await ingestImage(created);
-                    if (result.type === 'error') {
-                      // console.error(result.data.error);
-                    } else if (result.type === 'blocked') {
-                      set((state) => {
-                        const index = state.images.findIndex(
-                          (x) => x.type === 'image' && x.data.id === created.id
-                        );
-                        if (index === -1) throw new Error('index out of bounds');
-                        state.images[index].type = 'blocked';
-                        state.images[index].data = { ...result.data, uuid: data.uuid };
-                      });
-                    } else if (result.type === 'success') {
-                      const { count } = result.data;
-                      set((state) => {
-                        const index = state.images.findIndex(
-                          (x) => x.type === 'image' && x.data.id === created.id
-                        );
-                        if (index === -1) throw new Error('index out of bounds');
-                        (state.images[index].data as PostEditImage)._count = { tags: count };
-                      });
+                  if (created) {
+                    set((state) => {
+                      const index = state.images.findIndex(
+                        (x) => x.type === 'upload' && x.data.uuid === data.uuid
+                      );
+                      if (index === -1) throw new Error('index out of bounds');
+                      state.images[index] = {
+                        type: 'image',
+                        data: { ...created, previewUrl: data.url },
+                      };
+                    });
+                    try {
+                      const result = await ingestImage(created);
+                      if (result.type === 'error') {
+                        // console.error(result.data.error);
+                      } else if (result.type === 'blocked') {
+                        set((state) => {
+                          const index = state.images.findIndex(
+                            (x) => x.type === 'image' && x.data.id === created.id
+                          );
+                          if (index === -1) throw new Error('index out of bounds');
+                          state.images[index].type = 'blocked';
+                          state.images[index].data = { ...result.data, uuid: data.uuid };
+                        });
+                      } else if (result.type === 'success') {
+                        const { count } = result.data;
+                        set((state) => {
+                          const index = state.images.findIndex(
+                            (x) => x.type === 'image' && x.data.id === created.id
+                          );
+                          if (index === -1) throw new Error('index out of bounds');
+                          (state.images[index].data as PostEditImage)._count = { tags: count };
+                        });
+                      }
+                    } catch (error) {
+                      console.error(error);
                     }
-                  } catch (error) {
-                    console.error(error);
                   }
                 })
             );
@@ -275,7 +280,9 @@ export const EditPostProvider = ({
     { postId, modelVersionId }: HandleUploadArgs,
     { file, ...data }: ImageUpload
   ) => {
-    const { url, id, uuid, meta } = await upload<typeof data>({ file, meta: data });
+    const result = await upload<typeof data>({ file, meta: data });
+    if (!result.success) return;
+    const { url, id, uuid, meta } = result.data;
     clear((item) => item.uuid === uuid);
     return await mutateAsync({ ...meta, url: id, postId, modelVersionId });
   };

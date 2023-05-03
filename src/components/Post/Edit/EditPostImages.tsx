@@ -148,12 +148,22 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.meta.uuid === uuid);
   const removeFile = useEditPostContext((state) => state.removeFile);
+  const hasError =
+    trackedFile &&
+    (trackedFile.status === 'error' ||
+      trackedFile.status === 'aborted' ||
+      trackedFile.status === 'timeout');
 
   return (
     <Card className={classes.container} withBorder p={0}>
       <EdgeImage src={url} alt={name ?? undefined} />
       {trackedFile && (
-        <Card radius={0} p="sm" className={cx(classes.footer, classes.ambient)}>
+        <Alert
+          radius={0}
+          p="sm"
+          color={hasError ? 'red' : undefined}
+          className={cx(classes.footer, { [classes.ambient]: !hasError })}
+        >
           <Group noWrap>
             <Text>{trackedFile.status}</Text>
             <Progress
@@ -165,13 +175,13 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
               striped
               animate
             />
-            {trackedFile.status === 'error' && (
+            {hasError && (
               <ActionIcon color="red" onClick={() => removeFile(uuid)}>
                 <IconX />
               </ActionIcon>
             )}
           </Group>
-        </Card>
+        </Alert>
       )}
       {status === 'blocked' && (
         <>
@@ -300,6 +310,12 @@ const useStyles = createStyles((theme) => {
     },
     ambient: {
       backgroundColor: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.5),
+    },
+    error: {
+      backgroundColor: theme.fn.rgba(
+        theme.colorScheme === 'dark' ? theme.colors.red[8] : theme.colors.red[6],
+        0.5
+      ),
     },
   };
 });
