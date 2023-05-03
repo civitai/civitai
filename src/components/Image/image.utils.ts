@@ -1,4 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
@@ -23,6 +23,11 @@ export const imagesQueryParamSchema = z
     tags: numericStringArray(),
     view: z.enum(['categories', 'feed']),
     excludeCrossPosts: z.boolean(),
+    reactions: z.preprocess(
+      (val) => (Array.isArray(val) ? val : [val]),
+      z.array(z.nativeEnum(ReviewReactions))
+    ),
+    section: z.enum(['images', 'reactions']),
   })
   .partial();
 
@@ -64,8 +69,7 @@ export const useQueryImages = (
   const { data, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     { ...filters, browsingMode },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
       ...options,
     }

@@ -8,7 +8,8 @@ import { useImageFilters, useQueryImages } from '~/components/Image/image.utils'
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { useInView } from 'react-intersection-observer';
 import { IconCloudOff } from '@tabler/icons';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -19,6 +20,8 @@ type ImagesInfiniteState = {
   prioritizedUserIds?: number[];
   period?: MetricTimeframe;
   sort?: ImageSort;
+  reactions?: ReviewReactions[];
+  section?: string;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {
@@ -30,11 +33,13 @@ export const useImagesInfiniteContext = () => {
 type ImagesInfiniteProps = {
   withTags?: boolean;
   filters?: ImagesInfiniteState;
+  showEof?: boolean;
 };
 
 export default function ImagesInfinite({
   withTags,
   filters: filterOverrides = {},
+  showEof = false,
 }: ImagesInfiniteProps) {
   const { ref, inView } = useInView();
   const imageFilters = useImageFilters('images');
@@ -78,6 +83,7 @@ export default function ImagesInfinite({
               {inView && <Loader />}
             </Center>
           )}
+          {!hasNextPage && showEof && <EndOfFeed />}
         </div>
       ) : (
         <Stack align="center" py="lg">

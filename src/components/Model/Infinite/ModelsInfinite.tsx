@@ -1,19 +1,24 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons';
 import { useEffect } from 'react';
-
 import { useInView } from 'react-intersection-observer';
-import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
+
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
 import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
+  showEof?: boolean;
 };
 
-export function ModelsInfinite({ filters: filterOverrides = {} }: InfiniteModelsProps) {
+export function ModelsInfinite({
+  filters: filterOverrides = {},
+  showEof = false,
+}: InfiniteModelsProps) {
   const { ref, inView } = useInView();
   const modelFilters = useModelFilters();
 
@@ -58,6 +63,7 @@ export function ModelsInfinite({ filters: filterOverrides = {} }: InfiniteModels
               {inView && <Loader />}
             </Center>
           )}
+          {!hasNextPage && showEof && <EndOfFeed />}
         </div>
       ) : (
         <Stack align="center" py="lg">

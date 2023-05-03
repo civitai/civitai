@@ -165,6 +165,7 @@ const aDayAgo = dayjs().subtract(1, 'day').toDate();
 export function AmbientModelCard({ data, width, height }: Props) {
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
+  const hiddenQuery = router.query.hidden === 'true';
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const theme = useMantineTheme();
@@ -348,7 +349,7 @@ export function AmbientModelCard({ data, width, height }: Props) {
           label={isUpdated ? 'Updated' : 'New'}
           color="red"
           styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-          sx={{ opacity: isHidden ? 0.1 : undefined }}
+          sx={{ opacity: isHidden && !hiddenQuery ? 0.1 : undefined }}
         >
           <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
             {inView && (

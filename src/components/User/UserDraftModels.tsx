@@ -13,7 +13,6 @@ import {
   Text,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { ModelStatus } from '@prisma/client';
 import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -49,17 +48,14 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function UserDraftModels({ enabled = false }: Props) {
+export function UserDraftModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
 
-  const { data, isLoading } = trpc.model.getMyDraftModels.useQuery(
-    { page, limit: 10 },
-    { enabled }
-  );
+  const { data, isLoading } = trpc.model.getMyDraftModels.useQuery({ page, limit: 10 });
   const { items, ...pagination } = data || {
     items: [],
     totalItems: 0,
@@ -183,5 +179,3 @@ export function UserDraftModels({ enabled = false }: Props) {
     </Stack>
   );
 }
-
-type Props = { enabled?: boolean };
