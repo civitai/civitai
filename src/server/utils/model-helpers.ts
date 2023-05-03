@@ -24,28 +24,17 @@ export function getPrimaryFile<T extends FileFormatType>(
     },
   } = preferences;
 
+  const defaultMetadata = defaultFilePreferences.metadata;
+
   const getScore = (file: FileFormatType) => {
     const { format, size, fp } = file.metadata;
+    let score = 0;
 
-    if (size === preferredSize && format === preferredFormat && fp === preferredFp) return 5;
-    else if (size === preferredSize && format === preferredFormat) return 4;
-    else if (format === preferredFormat) return 3;
-    else if (size === preferredSize) return 2;
-    else if (fp === preferredFp) return 1;
-    else if (
-      size === defaultFilePreferences.metadata.size &&
-      format === defaultFilePreferences.metadata.format &&
-      fp === defaultFilePreferences.metadata.fp
-    )
-      return 0;
-    else if (
-      size === defaultFilePreferences.metadata.size &&
-      format === defaultFilePreferences.metadata.format
-    )
-      return -1;
-    else if (size === defaultFilePreferences.metadata.size) return -2;
-    else if (format === defaultFilePreferences.metadata.format) return -3;
-    else return -4;
+    score += format === preferredFormat ? 1000 : format === defaultMetadata.format ? -1000 : 0;
+    score += size === preferredSize ? 100 : size === defaultMetadata.size ? -100 : 0;
+    score += fp === preferredFp ? 10 : fp === defaultMetadata.fp ? -10 : 0;
+
+    return score;
   };
 
   return files
