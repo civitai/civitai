@@ -12,28 +12,28 @@ export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
   metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
 };
 
+type FileMetaKey = keyof FileMetadata;
+const preferenceWeight: Record<FileMetaKey, number> = {
+  format: 1000,
+  size: 100,
+  fp: 10,
+};
+
 export function getPrimaryFile<T extends FileFormatType>(
   files: Array<T>,
   preferences: Partial<FileFormatType> = defaultFilePreferences
 ) {
   if (!files.length) return null;
 
-  const {
-    metadata: { format: preferredFormat, fp: preferredFp, size: preferredSize } = {
-      ...defaultFilePreferences.metadata,
-    },
-  } = preferences;
-
-  const defaultMetadata = defaultFilePreferences.metadata;
+  const preferredMetadata = { ...defaultFilePreferences.metadata, ...preferences.metadata };
 
   const getScore = (file: FileFormatType) => {
-    const { format, size, fp } = file.metadata;
     let score = 0;
-
-    score += format === preferredFormat ? 1000 : format === defaultMetadata.format ? -1000 : 0;
-    score += size === preferredSize ? 100 : size === defaultMetadata.size ? -100 : 0;
-    score += fp === preferredFp ? 10 : fp === defaultMetadata.fp ? -10 : 0;
-
+    for (const [key, value] of Object.entries(file.metadata)) {
+      const weight = preferenceWeight[key as FileMetaKey];
+      if (value === preferredMetadata[key as FileMetaKey]) score += weight;
+      else if (value === defaultFilePreferences.metadata[key as FileMetaKey]) score -= weight;
+    }
     return score;
   };
 
