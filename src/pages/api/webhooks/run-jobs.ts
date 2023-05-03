@@ -24,6 +24,7 @@ import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-wi
 import { isProd } from '~/env/other';
 import { updateMetricsModelJob } from '~/server/jobs/update-metrics-models';
 import { updateDailyMetricsJob } from '~/server/jobs/update-daily-metrics';
+import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -42,6 +43,7 @@ const jobs: Job[] = [
   disabledVotedTags,
   removeOldDrafts,
   resetToDraftWithoutRequirements,
+  applyContestTags,
   ...applyDiscordRoles,
 ];
 
