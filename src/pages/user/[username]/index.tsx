@@ -210,7 +210,6 @@ export function UserImagesPage() {
                 sort,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : queryFilters.username,
-                section: undefined,
               }}
               withTags={!viewingReactions && (currentUser?.isModerator || isSameUser)}
             />
