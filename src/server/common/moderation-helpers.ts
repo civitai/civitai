@@ -14,17 +14,17 @@ export const unpublishReasons = {
   'mature-real-person': {
     optionLabel: 'Real person(s) displayed in a mature context',
     notificationMessage:
-      'Your images have been removed and your model unpublished. Images of real people in sexual or suggestive situtations are not allowed under our content rules.',
+      'Images of real people in sexual or suggestive situations are not allowed under our content rules.',
   },
   'mature-underage': {
     optionLabel: 'Minors displayed in a mature context',
     notificationMessage:
-      'Your images have been removed and your model unpublished. Images of individuals who appear to be underage in sexual or suggestive situtations are not allowed under our content rules.',
+      'Images of individuals who appear to be underage in sexual or suggestive situations are not allowed under our content rules.',
   },
   'photo-real-underage': {
     optionLabel: 'Photorealistic depiction of a minor',
     notificationMessage:
-      'Your images have been removed and your model unpublished. Photorealistic depictions of minors are not allowed under our content rules.',
+      'Photorealistic depictions of minors are not allowed under our content rules.',
   },
   'hate-speech': {
     optionLabel: 'Promotion of hate-speech or targeted attack',
