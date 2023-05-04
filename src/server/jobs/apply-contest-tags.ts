@@ -30,6 +30,13 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
     -- Apply contest tags
     WITH affected AS (
       SELECT DISTINCT i.id
+      FROM "Image" i
+      JOIN "TagsOnPost" top ON top."postId" = i."postId"
+      WHERE top."tagId" IN (${postTagIds}) AND i."createdAt" > ${lastApplied}
+
+      UNION
+
+      SELECT DISTINCT i.id
       FROM "TagsOnPost" top
       JOIN "Image" i ON i."postId" = top."postId"
       WHERE top."tagId" IN (${postTagIds}) AND top."createdAt" > ${lastApplied}
