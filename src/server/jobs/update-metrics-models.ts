@@ -1,6 +1,8 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
+import { clickhouse } from '~/server/clickhouse/client';
+import dayjs from 'dayjs';
 
 const log = createLogger('update-metrics', 'blue');
 
@@ -22,325 +24,230 @@ export const updateMetricsModelJob = createJob(
     );
     const lastUpdate = lastUpdateDate.toISOString();
 
-    const updateModelMetrics = async (target: 'models' | 'versions') => {
-      const [tableName, tableId, viewName, viewId] =
-        target === 'models'
-          ? ['ModelMetric', 'modelId', 'affected_models', 'model_id']
-          : ['ModelVersionMetric', 'modelVersionId', 'affected_versions', 'model_version_id'];
+    const updateModelMetrics = async () => {
+      const clickhouseLastUpdate = dayjs(lastUpdateDate).format('YYYY-MM-DD');
 
-      await dbWrite.$executeRawUnsafe(`
-        -- Get all user activities that have happened since then that affect metrics
-        WITH recent_activities AS
-        (
-          SELECT
-            CAST(a.details ->> 'modelId' AS INT) AS model_id,
-            CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id
-          FROM "UserActivity" a
-          WHERE (a."createdAt" > '${lastUpdate}')
-          AND (a.activity IN ('ModelDownload'))
-
-          UNION
-
-          SELECT muq.id AS model_id, mv.id AS model_version_id
-          FROM "MetricUpdateQueue" muq
-          JOIN "ModelVersion" mv ON mv."modelId" = muq.id
-          WHERE type = 'Model'
-        ),
-        -- Get all reviews that have been created/updated since then
-        recent_reviews AS
-        (
-          SELECT
-            r."modelId" AS model_id,
-            r."modelVersionId" AS model_version_id
-          FROM "ResourceReview" r
-          WHERE (r."createdAt" > '${lastUpdate}' OR r."updatedAt" > '${lastUpdate}')
-        ),
-        -- Get all favorites that have been created since then
-        recent_favorites AS
-        (
-          SELECT
-            "modelId" AS model_id
-          FROM "ModelEngagement"
-          WHERE ("createdAt" > '${lastUpdate}') AND type = 'Favorite'
-        ),
-        -- Get all comments that have been created since then
-        --recent_comments AS
-        --(
-        --  SELECT
-        --    t."modelId" AS model_id
-        --  FROM "CommentV2" c
-        --  JOIN "Thread" ct ON ct.id = c."threadId" AND ct."commentId" IS NOT NULL
-        --  JOIN "CommentV2" p ON p.id = ct."commentId"
-        --  JOIN "Thread" t ON t.id = p."threadId"
-        --  WHERE (c."createdAt" > '${lastUpdate}')
-        --
-        --  UNION ALL
-        --
-        --  SELECT
-        --    t."modelId" AS model_id
-        --  FROM "CommentV2" c
-        --  JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
-        --  WHERE (c."createdAt" > '${lastUpdate}')
-        --),
-        -- Bring back the old comments table for now
-        recent_comments AS
-        (
-          SELECT
-            "modelId" AS model_id
-          FROM "Comment"
-          WHERE ("createdAt" > '${lastUpdate}')
-        ),
-        -- Get all affected models
-        affected_models AS
-        (
-            SELECT DISTINCT
-                r.model_id
-            FROM recent_reviews r
-            WHERE r.model_id IS NOT NULL
-
-            UNION
-
-            SELECT DISTINCT
-                f.model_id
-            FROM recent_favorites f
-
-            UNION
-
-            SELECT DISTINCT
-                model_id
-            FROM recent_comments c
-
-            UNION
-
-            SELECT DISTINCT
-                a.model_id
-            FROM recent_activities a
-            JOIN "Model" m ON m.Id = a.model_id
-            WHERE a.model_id IS NOT NULL
-        ),
-        -- Get all affected versions
-        affected_versions AS
-        (
-            SELECT DISTINCT
-                r.model_version_id,
-                r.model_id
-            FROM recent_reviews r
-            WHERE r.model_version_id IS NOT NULL
-
-            UNION
-
-            SELECT DISTINCT
-                a.model_version_id,
-                a.model_id
-            FROM recent_activities a
-            JOIN "ModelVersion" m ON m.Id = a.model_version_id
-            WHERE a.model_version_id IS NOT NULL
-        )
-
-        -- upsert metrics for all affected models
-        -- perform a one-pass table scan producing all metrics for all affected models
-        INSERT INTO "${tableName}" ("${tableId}", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
-        SELECT
-          m.${viewId},
-          tf.timeframe,
-          CASE
-            WHEN tf.timeframe = 'AllTime' THEN download_count
-            WHEN tf.timeframe = 'Year' THEN year_download_count
-            WHEN tf.timeframe = 'Month' THEN month_download_count
-            WHEN tf.timeframe = 'Week' THEN week_download_count
-            WHEN tf.timeframe = 'Day' THEN day_download_count
-          END AS download_count,
-          CASE
-            WHEN tf.timeframe = 'AllTime' THEN rating_count
-            WHEN tf.timeframe = 'Year' THEN year_rating_count
-            WHEN tf.timeframe = 'Month' THEN month_rating_count
-            WHEN tf.timeframe = 'Week' THEN week_rating_count
-            WHEN tf.timeframe = 'Day' THEN day_rating_count
-          END AS rating_count,
-          CASE
-            WHEN tf.timeframe = 'AllTime' THEN rating
-            WHEN tf.timeframe = 'Year' THEN year_rating
-            WHEN tf.timeframe = 'Month' THEN month_rating
-            WHEN tf.timeframe = 'Week' THEN week_rating
-            WHEN tf.timeframe = 'Day' THEN day_rating
-          END AS rating,
-          CASE
-            WHEN tf.timeframe = 'AllTime' THEN favorite_count
-            WHEN tf.timeframe = 'Year' THEN year_favorite_count
-            WHEN tf.timeframe = 'Month' THEN month_favorite_count
-            WHEN tf.timeframe = 'Week' THEN week_favorite_count
-            WHEN tf.timeframe = 'Day' THEN day_favorite_count
-          END AS favorite_count,
-          CASE
-            WHEN tf.timeframe = 'AllTime' THEN comment_count
-            WHEN tf.timeframe = 'Year' THEN year_comment_count
-            WHEN tf.timeframe = 'Month' THEN month_comment_count
-            WHEN tf.timeframe = 'Week' THEN week_comment_count
-            WHEN tf.timeframe = 'Day' THEN day_comment_count
-          END AS comment_count
-        FROM
-        (
-          SELECT
-            m.${viewId},
-            COALESCE(ds.download_count, 0) AS download_count,
-            COALESCE(ds.year_download_count, 0) AS year_download_count,
-            COALESCE(ds.month_download_count, 0) AS month_download_count,
-            COALESCE(ds.week_download_count, 0) AS week_download_count,
-            COALESCE(ds.day_download_count, 0) AS day_download_count,
-            COALESCE(rs.rating_count, 0) AS rating_count,
-            COALESCE(rs.rating, 0) AS rating,
-            COALESCE(rs.year_rating_count, 0) AS year_rating_count,
-            COALESCE(rs.year_rating, 0) AS year_rating,
-            COALESCE(rs.month_rating_count, 0) AS month_rating_count,
-            COALESCE(rs.month_rating, 0) AS month_rating,
-            COALESCE(rs.week_rating_count, 0) AS week_rating_count,
-            COALESCE(rs.week_rating, 0) AS week_rating,
-            COALESCE(rs.day_rating_count, 0) AS day_rating_count,
-            COALESCE(rs.day_rating, 0) AS day_rating,
-            COALESCE(fs.favorite_count, 0) AS favorite_count,
-            COALESCE(fs.year_favorite_count, 0) AS year_favorite_count,
-            COALESCE(fs.month_favorite_count, 0) AS month_favorite_count,
-            COALESCE(fs.week_favorite_count, 0) AS week_favorite_count,
-            COALESCE(fs.day_favorite_count, 0) AS day_favorite_count,
-            COALESCE(cs.comment_count, 0) AS comment_count,
-            COALESCE(cs.year_comment_count, 0) AS year_comment_count,
-            COALESCE(cs.month_comment_count, 0) AS month_comment_count,
-            COALESCE(cs.week_comment_count, 0) AS week_comment_count,
-            COALESCE(cs.day_comment_count, 0) AS day_comment_count
-          FROM ${viewName} m
-          LEFT JOIN (
-            SELECT
-              ${viewId},
-              SUM(download_count) download_count,
-              SUM(year_download_count) year_download_count,
-              SUM(month_download_count) month_download_count,
-              SUM(week_download_count) week_download_count,
-              SUM(day_download_count) day_download_count
-            FROM (
-              (
-                SELECT
-                  a.${viewId},
-                  COUNT(a.${viewId}) AS download_count,
-                  SUM(CASE WHEN a.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_download_count,
-                  SUM(CASE WHEN a.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_download_count,
-                  SUM(CASE WHEN a.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_download_count,
-                  SUM(CASE WHEN a.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_download_count
-                FROM
-                (
-                  SELECT
-                    user_id,
-                    ${viewId},
-                    MAX(created_at) created_at
-                  FROM (
-                    SELECT
-                      COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
-                      CAST(a.details ->> 'modelId' AS INT) AS model_id,
-                      CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
-                      a."createdAt" AS created_at
-                    FROM "UserActivity" a
-                    WHERE a.activity = 'ModelDownload' AND a."createdAt" > current_date
-                  ) t
-                  JOIN "ModelVersion" mv ON mv.id = t.model_version_id
-                  GROUP BY user_id, model_id, model_version_id
-                ) a
-                GROUP BY a.${viewId}
-              )
-              UNION ALL
-              (
-                SELECT
-                  "${tableId}" ${viewId},
-                  SUM(count) download_count,
-                  SUM(CASE WHEN date >= (NOW() - interval '365 days') THEN count ELSE 0 END) AS year_download_count,
-                  SUM(CASE WHEN date >= (NOW() - interval '30 days') THEN count ELSE 0 END) AS month_download_count,
-                  SUM(CASE WHEN date >= (NOW() - interval '7 days') THEN count ELSE 0 END) AS week_download_count,
-                  SUM(CASE WHEN date >= (NOW() - interval '1 days') THEN count ELSE 0 END) AS day_download_count
-                FROM "ModelMetricDaily"
-                GROUP BY "${tableId}"
-              )
-            ) agg
-            GROUP BY agg.${viewId}
-          ) ds ON m.${viewId} = ds.${viewId}
-          LEFT JOIN (
-            SELECT
-              r.${viewId},
-              COUNT(r.${viewId}) AS rating_count,
-              AVG(r.rating) AS rating,
-              SUM(CASE WHEN r.created_at >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_rating_count,
-              AVG(CASE WHEN r.created_at >= (NOW() - interval '365 days') THEN r.rating ELSE NULL END) AS year_rating,
-              SUM(CASE WHEN r.created_at >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_rating_count,
-              AVG(CASE WHEN r.created_at >= (NOW() - interval '30 days') THEN r.rating ELSE NULL END) AS month_rating,
-              SUM(CASE WHEN r.created_at >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_rating_count,
-              AVG(CASE WHEN r.created_at >= (NOW() - interval '7 days') THEN r.rating ELSE NULL END) AS week_rating,
-              SUM(CASE WHEN r.created_at >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_rating_count,
-              AVG(CASE WHEN r.created_at >= (NOW() - interval '1 days') THEN r.rating ELSE NULL END) AS day_rating
-            FROM
-            (
+      async function updateVersionDownloadMetrics() {
+        await dbWrite.$executeRaw`
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+          SELECT mvm."modelVersionId", timeframe.timeframe, mvm."downloadCount", 0, 0, 0, 0
+          FROM unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+          CROSS JOIN LATERAL (
               SELECT
-                r."userId",
-                r."${tableId}" AS ${viewId},
-                MAX(r.rating) rating,
-                MAX(r."createdAt") AS created_at
+                  m."modelVersionId",
+                  SUM(m.count) AS "downloadCount"
+              FROM "ModelMetricDaily" m
+              WHERE CASE
+                  WHEN timeframe.timeframe = 'Day' THEN m.date >= CURRENT_DATE
+                  WHEN timeframe.timeframe = 'Week' THEN m.date >= CURRENT_DATE - interval '1 week'
+                  WHEN timeframe.timeframe = 'Month' THEN m.date >= CURRENT_DATE - interval '1 month'
+                  WHEN timeframe.timeframe = 'Year' THEN m.date >= CURRENT_DATE - interval '1 year'
+                  ELSE true
+              END
+              GROUP BY m."modelId", m."modelVersionId"
+          ) mvm
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+              SET "downloadCount" = EXCLUDED."downloadCount";
+        `;
+      }
+
+      async function updateVersionRatingMetrics() {
+        const affectedModelVersionsResponse = await clickhouse?.query({
+          query: `
+            SELECT DISTINCT modelVersionId
+            FROM resourceReviews
+            WHERE createdDate >= '${clickhouseLastUpdate}'
+          `,
+          format: 'JSONEachRow',
+        });
+
+        const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
+          {
+            modelVersionId: number;
+          }
+        ];
+
+        const affectedModelVersionsJson = JSON.stringify(
+          affectedModelVersions.map((x) => x.modelVersionId)
+        );
+
+        await dbWrite.$executeRaw`
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+          SELECT
+              rr."modelVersionId",
+              tf.timeframe,
+              0,
+              COALESCE(SUM(
+                  CASE
+                      WHEN tf.timeframe = 'AllTime' THEN 1
+                      WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 year', 1, 0)
+                      WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 month', 1, 0)
+                      WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 week', 1, 0)
+                      WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= CURRENT_DATE, 1, 0)
+                  END
+              ), 0),
+              COALESCE(AVG(
+                  CASE
+                      WHEN tf.timeframe = 'AllTime' THEN rating
+                      WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 year', rating, NULL)
+                      WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 month', rating, NULL)
+                      WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 week', rating, NULL)
+                      WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= CURRENT_DATE, rating, NULL)
+                  END
+              ), 0),
+              0,
+              0
+          FROM (
+              SELECT
+                  r."userId",
+                  r."modelVersionId",
+                  MAX(r.rating) rating,
+                  MAX(r."createdAt") AS created_at
               FROM "ResourceReview" r
               JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
-              WHERE r.exclude = FALSE AND r."tosViolation" = FALSE
-              GROUP BY r."userId", r."${tableId}"
-            ) r
-            GROUP BY r.${viewId}
-          ) rs ON m.${viewId} = rs.${viewId}
-          LEFT JOIN (
-            SELECT
-              f."modelId" AS model_id,
-              COUNT(f."modelId") AS favorite_count,
-              SUM(CASE WHEN f."createdAt" >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_favorite_count,
-              SUM(CASE WHEN f."createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_favorite_count,
-              SUM(CASE WHEN f."createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_favorite_count,
-              SUM(CASE WHEN f."createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_favorite_count
-            FROM "ModelEngagement" f
-            WHERE type = 'Favorite'
-            GROUP BY f."modelId"
-          ) fs ON m.model_id = fs.model_id
-          LEFT JOIN (
-            SELECT
-              c."modelId" AS model_id,
-              COUNT(c.id) AS comment_count,
-              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '365 days') THEN 1 ELSE 0 END) AS year_comment_count,
-              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '30 days') THEN 1 ELSE 0 END) AS month_comment_count,
-              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '7 days') THEN 1 ELSE 0 END) AS week_comment_count,
-              SUM(CASE WHEN c."createdAt" >= (NOW() - interval '1 days') THEN 1 ELSE 0 END) AS day_comment_count
-            -- FROM (
-            --   SELECT
-            --     t."modelId",
-            --     c.id,
-            --     c."createdAt"
-            --   FROM "CommentV2" c
-            --   JOIN "Thread" t ON t.id = c."threadId" AND t."modelId" IS NOT NULL
-            --   WHERE c."tosViolation" = FALSE
-            --   UNION
-            --   SELECT
-            --     t."modelId",
-            --     c.id,
-            --     c."createdAt"
-            --   FROM "CommentV2" p
-            --   JOIN "Thread" t ON t.id = p."threadId" AND t."modelId" IS NOT NULL
-            --   JOIN "Thread" ct ON ct."commentId" = p.id
-            --   JOIN "CommentV2" c ON c."threadId" = ct.id
-            --   WHERE c."tosViolation" = FALSE
-            -- ) c
+              WHERE r.exclude = FALSE
+              AND r."tosViolation" = FALSE
+              AND r."modelVersionId" = ANY (SELECT json_array_elements(${affectedModelVersionsJson}::json)::text::integer)
+              GROUP BY r."userId", r."modelVersionId"
+          ) rr
+          CROSS JOIN (
+            SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+          ) tf
+          GROUP BY rr."modelVersionId", tf.timeframe
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+              SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
+        `;
+      }
 
-            -- Bring back old comment count until we switch to v2
-            FROM "Comment" c WHERE "tosViolation" = FALSE
-            GROUP BY c."modelId"
-          ) cs ON m.model_id = cs.model_id
-        ) m
-        CROSS JOIN (
-          SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-        ) tf
-        ON CONFLICT ("${tableId}", timeframe) DO UPDATE
-          SET "downloadCount" = EXCLUDED."downloadCount", "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
-        `);
+      async function updateVersionFavoriteMetrics() {
+        const affectedModelsResponse = await clickhouse?.query({
+          query: `
+            SELECT DISTINCT modelId
+            FROM modelEngagements
+            WHERE createdDate >= '${clickhouseLastUpdate}'
+            AND type = 'Favorite'
+          `,
+          format: 'JSONEachRow',
+        });
 
-      if (target === 'versions')
-        await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Model'`);
+        const effectedModels = (await affectedModelsResponse?.json()) as [
+          {
+            modelId: number;
+          }
+        ];
+
+        const affectedModelsJson = JSON.stringify(effectedModels.map((x) => x.modelId));
+
+        await dbWrite.$executeRaw`
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+          SELECT
+              mv."id",
+              tf.timeframe,
+              0,
+              0,
+              0,
+              COALESCE(SUM(
+                  CASE
+                      WHEN tf.timeframe = 'AllTime' THEN 1
+                      WHEN tf.timeframe = 'Year' THEN IIF(f."createdAt" >= CURRENT_DATE - interval '1 year', 1, 0)
+                      WHEN tf.timeframe = 'Month' THEN IIF(f."createdAt" >= CURRENT_DATE - interval '1 month', 1, 0)
+                      WHEN tf.timeframe = 'Week' THEN IIF(f."createdAt" >= CURRENT_DATE - interval '1 week', 1, 0)
+                      WHEN tf.timeframe = 'Day' THEN IIF(f."createdAt" >= CURRENT_DATE, 1, 0)
+                  END
+              ), 0),
+              0
+          FROM (
+              SELECT
+                  f."modelId",
+                  f."createdAt"
+              FROM "ModelEngagement" f
+              WHERE f.type = 'Favorite'
+              AND f."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)
+          ) f
+          JOIN "ModelVersion" mv ON f."modelId" = mv."modelId"
+          CROSS JOIN (
+            SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+          ) tf
+          GROUP BY mv.id, tf.timeframe
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+              SET "favoriteCount" = EXCLUDED."favoriteCount";
+        `;
+      }
+
+      async function updateVersionCommentMetrics() {
+        const affectedModelsResponse = await clickhouse?.query({
+          query: `
+            SELECT DISTINCT entityId AS modelId
+            FROM comments
+            WHERE createdDate >= '${clickhouseLastUpdate}'
+            AND type = 'Model'
+          `,
+          format: 'JSONEachRow',
+        });
+
+        const affectedModels = (await affectedModelsResponse?.json()) as [
+          {
+            modelId: number;
+          }
+        ];
+
+        const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
+
+        await dbWrite.$executeRaw`
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+          SELECT
+              mv."id",
+              tf.timeframe,
+              0,
+              0,
+              0,
+              0,
+              COALESCE(SUM(
+                  CASE
+                      WHEN tf.timeframe = 'AllTime' THEN 1
+                      WHEN tf.timeframe = 'Year' THEN IIF(c."createdAt" >= CURRENT_DATE - interval '1 year', 1, 0)
+                      WHEN tf.timeframe = 'Month' THEN IIF(c."createdAt" >= CURRENT_DATE - interval '1 month', 1, 0)
+                      WHEN tf.timeframe = 'Week' THEN IIF(c."createdAt" >= CURRENT_DATE - interval '1 week', 1, 0)
+                      WHEN tf.timeframe = 'Day' THEN IIF(c."createdAt" >= CURRENT_DATE, 1, 0)
+                  END
+              ), 0)
+          FROM (
+              SELECT
+                  c."modelId",
+                  c."createdAt"
+              FROM "Comment" c
+              WHERE c."tosViolation" = false
+              AND c."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)
+          ) c
+          JOIN "ModelVersion" mv ON c."modelId" = mv."modelId"
+          CROSS JOIN (
+            SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+          ) tf
+          GROUP BY mv.id, tf.timeframe
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+              SET "commentCount" = EXCLUDED."commentCount";
+        `;
+      }
+
+      async function updateModelMetrics() {
+        await dbWrite.$executeRaw`
+          INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount")
+          SELECT mv."modelId", mvm.timeframe, SUM(mvm."downloadCount"), COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0), SUM(mvm."ratingCount"), SUM(mvm."favoriteCount"), SUM(mvm."commentCount")
+          FROM "ModelVersionMetric" mvm
+          JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
+          GROUP BY mv."modelId", mvm.timeframe
+          ON CONFLICT ("modelId", timeframe) DO UPDATE
+              SET  "downloadCount" = EXCLUDED."downloadCount", rating = EXCLUDED.rating, "ratingCount" = EXCLUDED."ratingCount", "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
+        `;
+      }
+
+      await updateVersionDownloadMetrics();
+      await updateVersionRatingMetrics();
+      await updateVersionFavoriteMetrics();
+      await updateVersionCommentMetrics();
+
+      // Update model metrics after all version metrics have been computed
+      await updateModelMetrics();
     };
 
     const refreshModelRank = async () => {
@@ -402,8 +309,7 @@ export const updateMetricsModelJob = createJob(
 
     // Update all affected metrics
     // --------------------------------------------
-    await updateModelMetrics('models');
-    await updateModelMetrics('versions');
+    await updateModelMetrics();
     log('Updated model metrics');
 
     // Update the last update time

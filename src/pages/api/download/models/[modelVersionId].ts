@@ -1,4 +1,5 @@
 import { ModelModifier, ModelType, Prisma, UserActivityType } from '@prisma/client';
+import dayjs from 'dayjs';
 import { isEmpty } from 'lodash-es';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
@@ -180,6 +181,12 @@ export default RateLimitedEndpoint(
           },
         },
       });
+
+      // Increase modelMetric daily download count
+      await dbWrite.$executeRaw`
+        INSERT INTO "ModelMetricDaily" ("modelId", "modelVersionId", type, date, count)
+        VALUES (${modelVersion.model.id}, ${modelVersion.id}, 'donwloads', CURRENT_DATE, 1)
+        ON CONFLICT ("modelId", "modelVersionId", type, date) DO UPDATE SET count = "ModelMetricDaily".count + 1;`;
 
       const tracker = new Tracker(req, res);
       await tracker.modelVersionEvent({

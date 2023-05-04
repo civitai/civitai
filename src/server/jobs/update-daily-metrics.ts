@@ -2,56 +2,85 @@ import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 import dayjs from 'dayjs';
+import { clickhouse } from '../clickhouse/client';
+import { Prisma } from '@prisma/client';
 
 const log = createLogger('update-daily-metrics', 'blue');
 
+async function updateMetrics(date: Date) {
+  const affectedModelVersionsResponse = await clickhouse?.query({
+    query: `SELECT modelId, modelVersionId, COUNT(*) AS count
+      FROM modelVersionEvents
+      WHERE time >= {startDate: Date}
+      AND type = 'Download'
+      GROUP BY modelId, modelVersionId;`,
+    query_params: {
+      startDate: dayjs(date).format('YYYY-MM-DD'),
+    },
+    format: 'JSONEachRow',
+  });
+
+  if (affectedModelVersionsResponse) {
+    const affectedModelVersions = (await affectedModelVersionsResponse.json()) as [
+      {
+        modelId: number;
+        modelVersionId: number;
+        count: string;
+      }
+    ];
+
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const affectedModelVersion of affectedModelVersions) {
+      try {
+        await dbWrite.$executeRaw`
+          INSERT INTO "ModelMetricDaily" ("modelId", "modelVersionId", type, date, count)
+          VALUES (${affectedModelVersion.modelId}, ${
+          affectedModelVersion.modelVersionId
+        }, 'donwloads', ${date}::date, ${parseInt(affectedModelVersion.count)})
+          ON CONFLICT ("modelId", "modelVersionId", type, date) DO UPDATE SET count = excluded.count;
+        `;
+
+        succeeded += 1;
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError) {
+          if (e.code === 'P2010') {
+            // This model or modelVersion does not exist, ignore for legitimate reasons
+            failed += 1;
+            continue;
+          }
+        }
+
+        throw e;
+      }
+    }
+
+    log(`Updated ${succeeded} daily metrics with ${failed} failed metrics;`);
+  }
+}
+
 export const updateDailyMetricsJob = createJob(
   'update-daily-metrics',
-  '0 0 * * *',
+  '0 * * * *', // refresh once per hour
   async () => {
     const lastRecord = await dbWrite.modelMetricDaily.aggregate({ _max: { date: true } });
-    const startDate = dayjs(lastRecord._max?.date ?? new Date(0)).toDate();
+    const date = lastRecord._max?.date ?? new Date(0);
 
-    await dbWrite.$executeRaw`
-      WITH user_model_downloads as (
-        SELECT
-          user_id,
-          model_id,
-          model_version_id,
-          MAX(created_at) created_at
-        FROM (
-          SELECT
-            COALESCE(CAST(a."userId" as text), a.details->>'ip') user_id,
-            CAST(a.details ->> 'modelId' AS INT) AS model_id,
-            CAST(a.details ->> 'modelVersionId' AS INT) AS model_version_id,
-            a."createdAt" AS created_at
-          FROM "UserActivity" a
-          WHERE a.activity = 'ModelDownload'
-            AND a."createdAt" > ${startDate}::timestamp
-            AND a."createdAt" < current_date
-        ) t
-        JOIN "ModelVersion" mv ON mv.id = t.model_version_id
-        GROUP BY user_id, model_id, model_version_id
-      ), daily_downloads as (
-        SELECT
-          model_id,
-          model_version_id,
-          date_trunc('day', created_at) date,
-          count(*) count
-        FROM user_model_downloads
-        GROUP BY model_id, model_version_id, date_trunc('day', created_at)
-      )
-      INSERT INTO "ModelMetricDaily" ("modelId", "modelVersionId", type, date, count)
-      SELECT
-        model_id,
-        model_version_id,
-        'downloads',
-        date,
-        count
-      FROM daily_downloads
-      ON CONFLICT ("modelId", "modelVersionId", type, date) DO UPDATE SET count = excluded.count;
-    `;
-    log('Updated daily metrics');
+    await updateMetrics(date);
+  },
+  {
+    lockExpiration: 10 * 60,
+  }
+);
+
+export const updateYesterdaysDailyMetricsJob = createJob(
+  'update-yesterdays-daily-metrics',
+  '15 0 * *', // 15 minutes after mindnight, we'll refresh yesterdays daily metrics
+  async () => {
+    const date = dayjs(new Date()).subtract(1, 'day').toDate();
+
+    await updateMetrics(date);
   },
   {
     lockExpiration: 10 * 60,
