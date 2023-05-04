@@ -58,23 +58,8 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
 import { NextLink } from '@mantine/next';
-
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ session }) => {
-    if (!session?.user?.isModerator || session.user?.bannedAt) {
-      return {
-        redirect: {
-          destination: '/',
-          permanent: false,
-        },
-      };
-    }
-  },
-});
 
 export default function Tags() {
   const queryUtils = trpc.useContext();
