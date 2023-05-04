@@ -1,3 +1,4 @@
+import { GetModelsWithCategoriesSchema, SetModelsCategoryInput } from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -37,12 +38,12 @@ import { getImagesForModelVersion, ingestNewImages } from '~/server/services/ima
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { getCategoryTags } from '~/server/services/system-cache';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -722,7 +723,10 @@ export const getModelsByCategory = async ({
 
   let nextCursor: number | null = null;
   if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = shuffle(categories);
+  categories = categories.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return Math.random() - 0.5;
+  });
 
   const items = await Promise.all(
     categories.map((c) =>
@@ -823,4 +827,91 @@ export const getModelsByCategory = async ({
   };
 
   return result;
+};
+
+export const getAllModelsWithCategories = async ({
+  userId,
+  limit,
+  page,
+}: GetModelsWithCategoriesSchema) => {
+  const { take, skip } = getPagination(limit, page);
+  const where: Prisma.ModelFindManyArgs['where'] = {
+    status: { in: [ModelStatus.Published, ModelStatus.Draft] },
+    deletedAt: null,
+    userId,
+  };
+
+  const modelCategories = await getCategoryTags('model');
+  const categoryIds = modelCategories.map((c) => c.id);
+
+  try {
+    const [models, count] = await dbRead.$transaction([
+      dbRead.model.findMany({
+        take,
+        skip,
+        where,
+        select: {
+          id: true,
+          name: true,
+          tagsOnModels: {
+            where: { tagId: { in: categoryIds } },
+            select: {
+              tag: {
+                select: { id: true, name: true },
+              },
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
+      }),
+      dbRead.model.count({ where }),
+    ]);
+    const items = models.map(({ tagsOnModels, ...model }) => ({
+      ...model,
+      tags: tagsOnModels.map(({ tag }) => tag),
+    }));
+
+    return getPagingData({ items, count }, take, page);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+// TODO.justin: update with raw queries for better peformance when updating the tags
+export const setModelsCategory = async ({
+  categoryId,
+  modelIds,
+  userId,
+}: SetModelsCategoryInput & { userId: number }) => {
+  try {
+    const modelCategories = await getCategoryTags('model');
+    const category = modelCategories.find((c) => c.id === categoryId);
+    if (!category) throw throwNotFoundError(`No category with id ${categoryId}`);
+
+    const models = Prisma.join(modelIds);
+    const allCategories = Prisma.join(modelCategories.map((c) => c.id));
+
+    // Remove all categories from models
+    await dbWrite.$executeRaw`
+      DELETE FROM "TagsOnModels" tom
+      USING "Model" m
+      WHERE m.id = tom."modelId"
+        AND m."userId" = ${userId}
+        AND "modelId" IN (${models})
+        AND "tagId" IN (${allCategories})
+    `;
+
+    // Add category to models
+    await dbWrite.$executeRaw`
+      INSERT INTO "TagsOnModels" ("modelId", "tagId")
+      SELECT m.id, ${categoryId}
+      FROM "Model" m
+      WHERE m."userId" = ${userId}
+        AND m.id IN (${models})
+      ON CONFLICT ("modelId", "tagId") DO NOTHING;
+    `;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
 };

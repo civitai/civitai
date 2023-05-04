@@ -196,7 +196,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                   setEditComment((state) => (state ? { ...state, content: value } : state))
                 }
                 hideToolbar
-                withLinkValidation
+                // withLinkValidation
               />
             )}
           </Stack>

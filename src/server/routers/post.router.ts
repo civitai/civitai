@@ -121,6 +121,6 @@ export const postRouter = router({
   getPostsByCategory: publicProcedure
     .input(getPostsByCategorySchema)
     .use(applyUserPreferences())
-    .use(cacheIt())
+    // .use(cacheIt())
     .query(({ input }) => getPostsByCategory(input)),
 });

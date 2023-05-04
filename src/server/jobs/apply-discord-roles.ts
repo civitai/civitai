@@ -12,18 +12,18 @@ const applyDiscordActivityRoles = createJob(
   async () => {
     const discordRoles = await discord.getAllRoles();
 
-    const enthusiastRole = discordRoles.find((r) => r.name === 'Entusiast');
+    const enthusiastRole = discordRoles.find((r) => r.name === 'Enthusiast');
     if (enthusiastRole) {
       const existingEntusiasts = await getAccountsInRole(enthusiastRole);
 
       const enthusiastCutoff = dayjs().subtract(ENTHUSIAST_ROLE_CUTOFF, 'day').toDate();
       const enthusiasts =
         (
-          (await dbRead.$queryRaw`
+          await dbRead.$queryRaw<{ providerAccountId: string }[]>`
         SELECT DISTINCT a."providerAccountId"
         FROM "Image" i
         JOIN "Account" a ON a."userId" = i."userId" AND a.provider = 'discord'
-        WHERE i."createdAt" > ${enthusiastCutoff}`) as { providerAccountId: string }[]
+        WHERE i."createdAt" > ${enthusiastCutoff}`
         )?.map((x) => x.providerAccountId) ?? [];
 
       const newEntusiasts = enthusiasts.filter((u) => !existingEntusiasts.includes(u));

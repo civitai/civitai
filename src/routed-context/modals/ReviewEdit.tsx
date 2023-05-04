@@ -134,7 +134,7 @@ export default createRoutedContext({
               label="Comments or feedback"
               includeControls={['formatting', 'link']}
               editorSize="md"
-              withLinkValidation
+              // withLinkValidation
             />
             <InputImageUpload
               name="images"

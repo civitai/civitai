@@ -49,7 +49,6 @@ import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { TRPCError } from '@trpc/server';
 import { applyUserPreferences, UserPreferencesInput } from '~/server/middleware.trpc';
 import { nsfwLevelOrder } from '~/libs/moderation';
-import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { deleteObject } from '~/utils/s3-utils';
 
@@ -678,6 +677,7 @@ export const getAllImages = async ({
   include,
   nsfw,
   excludeCrossPosts,
+  reactions,
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: NsfwLevel }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
@@ -799,6 +799,12 @@ export const getAllImages = async ({
     }
   }
 
+  if (userId && !!reactions?.length) {
+    AND.push(
+      Prisma.sql`ir."userId" = ${userId} AND ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`
+    );
+  }
+
   const includeRank = cursorProp?.startsWith('r.');
 
   const queryFrom = Prisma.sql`
@@ -813,10 +819,10 @@ export const getAllImages = async ({
       !userId
         ? Prisma.sql``
         : Prisma.sql`LEFT JOIN (
-      SELECT "imageId", jsonb_agg(reaction) "reactions"
+      SELECT "imageId", jsonb_agg(reaction) "reactions", "userId"
       FROM "ImageReaction"
       WHERE "userId" = ${userId}
-      GROUP BY "imageId"
+      GROUP BY "imageId", "userId"
     ) ir ON ir."imageId" = i.id`
     }
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -1341,7 +1347,10 @@ export const getImagesByCategory = async ({
 
   let nextCursor: number | null = null;
   if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = shuffle(categories);
+  categories = categories.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return Math.random() - 0.5;
+  });
 
   const AND = [Prisma.sql`p."publishedAt" IS NOT NULL`];
 

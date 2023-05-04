@@ -63,21 +63,6 @@ import {
 } from 'mantine-react-table';
 import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ session }) => {
-    if (!session?.user?.isModerator || session.user?.bannedAt) {
-      return {
-        redirect: {
-          destination: '/',
-          permanent: false,
-        },
-      };
-    }
-  },
-});
 
 const limit = constants.reportingFilterDefaults.limit;
 

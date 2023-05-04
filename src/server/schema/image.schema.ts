@@ -1,5 +1,10 @@
 import { BrowsingMode, ImageSort } from './../common/enums';
-import { ImageGenerationProcess, MetricTimeframe, NsfwLevel } from '@prisma/client';
+import {
+  ImageGenerationProcess,
+  MetricTimeframe,
+  NsfwLevel,
+  ReviewReactions,
+} from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -208,6 +213,7 @@ export const getInfiniteImagesSchema = z
     tagReview: z.boolean().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
     excludeCrossPosts: z.boolean().optional(),
+    reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
   })
   .transform((value) => {
     if (value.withTags) {

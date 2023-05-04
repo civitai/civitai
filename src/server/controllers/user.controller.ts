@@ -18,6 +18,7 @@ import {
   getUserCosmetics,
   acceptTOS,
   completeOnboarding,
+  isUsernamePermitted,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -44,7 +45,6 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { isUUID } from '~/utils/string-helpers';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import { dbWrite } from '~/server/db/client';
@@ -89,6 +89,7 @@ export const getUsernameAvailableHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    if (!isUsernamePermitted(input.username)) return false;
     const user = await getUserByUsername({ ...input, select: { id: true } });
     return !user || user.id === ctx.user.id;
   } catch (error) {
@@ -186,9 +187,10 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, showNsfw, ...data } = input;
+  const { id, badgeId, nameplateId, showNsfw, username, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
+  if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
 
   if (data.image) {
     const valid = verifyAvatar(data.image);
@@ -205,6 +207,7 @@ export const updateUserHandler = async ({
       id,
       data: {
         ...data,
+        username,
         showNsfw,
         cosmetics: !isSettingCosmetics
           ? undefined

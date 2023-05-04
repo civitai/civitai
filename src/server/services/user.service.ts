@@ -19,6 +19,7 @@ import {
 } from '~/server/services/user-cache.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
+import blockedUsernames from '~/utils/blocklist-username.json';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -118,6 +119,16 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
     where: { username, deletedAt: null, id: { not: -1 } },
     select,
   });
+};
+
+export const isUsernamePermitted = (username: string) => {
+  const lower = username.toLowerCase();
+  const isPermitted = !(
+    blockedUsernames.partial.some((x) => lower.includes(x)) ||
+    blockedUsernames.exact.some((x) => lower === x)
+  );
+
+  return isPermitted;
 };
 
 export const updateUserById = ({ id, data }: { id: number; data: Prisma.UserUpdateInput }) => {

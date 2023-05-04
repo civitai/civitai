@@ -107,17 +107,14 @@ export default RateLimitedEndpoint(
     if (!modelVersion) return notFound(req, res, 'Model not found');
 
     const { files } = modelVersion;
-    const metaJson: FileMetadata = removeEmpty({ format, size, fp }); // Get target file preferences from query params
+    const metadata: FileMetadata = {
+      ...session?.user?.filePreferences,
+      ...removeEmpty({ format, size, fp }),
+    };
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;
-    const file =
-      type != null || format != null
-        ? castedFiles[0]
-        : getPrimaryFile(castedFiles, {
-            // Prioritize by query params, then by user preferences
-            metadata: { ...session?.user?.filePreferences, ...metaJson },
-          });
+    const file = getPrimaryFile(castedFiles, { metadata });
     if (!file) return notFound(req, res, 'Model file not found');
 
     // Handle non-published models

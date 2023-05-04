@@ -160,7 +160,7 @@ export default function ImagesAsPostsInfinite({
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>
-            <ImageCategories />
+            {/* <ImageCategories /> */}
             {isLoading ? (
               <Paper style={{ minHeight: 200, position: 'relative' }}>
                 <LoadingOverlay visible zIndex={10} />

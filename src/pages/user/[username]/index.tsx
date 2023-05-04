@@ -4,24 +4,29 @@ import {
   Box,
   Card,
   Center,
+  Chip,
   Container,
-  createStyles,
   Group,
   Loader,
   Menu,
   Rating,
+  SegmentedControl,
+  SegmentedControlItem,
+  SegmentedControlProps,
   Stack,
   Tabs,
   Text,
   Title,
+  createStyles,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
+import { NextLink } from '@mantine/next';
+import { MetricTimeframe, ReviewReactions } from '@prisma/client';
 import {
   IconAlbum,
   IconArrowBackUp,
   IconBan,
   IconBox,
-  IconBoxOff,
   IconDotsVertical,
   IconDownload,
   IconHeart,
@@ -33,19 +38,29 @@ import {
   IconUpload,
   IconUsers,
 } from '@tabler/icons';
-
 import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
+
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
+import { ImageSort } from '~/server/common/enums';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -53,21 +68,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
-import { trpc } from '~/utils/trpc';
-
-import { MetricTimeframe } from '@prisma/client';
-
-import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { useImageQueryParams } from '~/components/Image/image.utils';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { constants } from '~/server/common/constants';
-import { ImageSort } from '~/server/common/enums';
-import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
-import { useEffect } from 'react';
-import { TrackView } from '~/components/TrackView/TrackView';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -84,17 +86,70 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const segments = [
+  { label: 'My Images', value: 'images' },
+  { label: 'My Reactions', value: 'reactions' },
+] as const;
+type Segment = (typeof segments)[number]['value'];
+
+const availableReactions = Object.keys(constants.availableReactions) as ReviewReactions[];
+
+const useChipStyles = createStyles((theme) => ({
+  label: {
+    fontSize: 12,
+    fontWeight: 500,
+    padding: `0 ${theme.spacing.xs * 0.75}px`,
+
+    '&[data-variant="filled"]': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
+
+      '&[data-checked]': {
+        backgroundColor:
+          theme.colorScheme === 'dark'
+            ? theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.5)
+            : theme.fn.rgba(theme.colors.blue[theme.fn.primaryShade()], 0.2),
+      },
+    },
+
+    [theme.fn.smallerThan('xs')]: {
+      padding: `4px ${theme.spacing.sm}px !important`,
+      fontSize: 18,
+      height: 'auto',
+
+      '&[data-checked]': {
+        padding: `4px ${theme.spacing.sm}px`,
+      },
+    },
+  },
+
+  iconWrapper: {
+    display: 'none',
+  },
+
+  chipGroup: {
+    [theme.fn.smallerThan('xs')]: {
+      width: '100%',
+    },
+  },
+}));
+
 export function UserImagesPage() {
   const currentUser = useCurrentUser();
-  const { set, ...queryFilters } = useImageQueryParams();
+  const { classes } = useChipStyles();
+
+  const { set, reactions, section: querySection, ...queryFilters } = useImageQueryParams();
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
   const sort = queryFilters.sort ?? ImageSort.Newest;
+  const username = queryFilters.username ?? '';
+  const isSameUser =
+    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+
+  const [section, setSection] = useState<Segment>(isSameUser ? querySection ?? 'images' : 'images');
+
+  const viewingReactions = section === 'reactions';
 
   // currently not showing any content if the username is undefined
-  if (!queryFilters.username) return <NotFound />;
-  const isSameUser =
-    !!currentUser &&
-    postgresSlugify(currentUser.username) === postgresSlugify(queryFilters.username);
+  if (!username) return <NotFound />;
 
   return (
     <Tabs.Panel value="/images">
@@ -105,18 +160,86 @@ export function UserImagesPage() {
       >
         <MasonryContainer fluid>
           <Stack spacing="xs">
-            <Group position="apart" spacing={0}>
-              <SortFilter type="images" value={sort} onChange={(x) => set({ sort: x as any })} />
-              <PeriodFilter type="images" value={period} onChange={(x) => set({ period: x })} />
+            <Group spacing={8}>
+              {isSameUser && (
+                <ContentToggle
+                  size="xs"
+                  value={section}
+                  onChange={(value) => {
+                    setSection(value);
+                    set({ section: value });
+                  }}
+                />
+              )}
+              {viewingReactions && (
+                <Chip.Group
+                  spacing={4}
+                  value={reactions ?? []}
+                  onChange={(reactions: ReviewReactions[]) => set({ reactions })}
+                  className={classes.chipGroup}
+                  multiple
+                  noWrap
+                >
+                  {availableReactions.map((reaction, index) => (
+                    <Chip
+                      key={index}
+                      value={reaction}
+                      classNames={classes}
+                      variant="filled"
+                      radius="sm"
+                      size="xs"
+                    >
+                      {constants.availableReactions[reaction as ReviewReactions]}
+                    </Chip>
+                  ))}
+                </Chip.Group>
+              )}
+              <SortFilter
+                type="images"
+                value={sort}
+                onChange={(x) => set({ sort: x as ImageSort })}
+              />
+              <Box ml="auto">
+                <PeriodFilter type="images" value={period} onChange={(x) => set({ period: x })} />
+              </Box>
             </Group>
             <ImagesInfinite
-              filters={{ ...queryFilters, period, sort }}
-              withTags={currentUser?.isModerator || isSameUser}
+              filters={{
+                ...queryFilters,
+                period,
+                sort,
+                reactions: viewingReactions ? reactions ?? availableReactions : undefined,
+                username: viewingReactions ? undefined : queryFilters.username,
+              }}
+              withTags={!viewingReactions && (currentUser?.isModerator || isSameUser)}
             />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
     </Tabs.Panel>
+  );
+}
+
+function ContentToggle({
+  value,
+  onChange,
+  ...props
+}: Omit<SegmentedControlProps, 'value' | 'onChange' | 'data'> & {
+  value: Segment;
+  onChange: (value: Segment) => void;
+}) {
+  return (
+    <SegmentedControl
+      {...props}
+      value={value}
+      onChange={onChange}
+      data={segments as unknown as SegmentedControlItem[]}
+      sx={(theme) => ({
+        [theme.fn.smallerThan('sm')]: {
+          width: '100%',
+        },
+      })}
+    />
   );
 }
 
@@ -296,7 +419,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           <Group spacing={4} noWrap>
                             <FollowUserButton userId={user.id} size="md" compact />
 
-                            {isMod && (
+                            {(isMod || isSameUser) && (
                               <Menu position="left" withinPortal>
                                 <Menu.Target>
                                   <ActionIcon loading={removeContentMutation.isLoading}>
@@ -304,38 +427,52 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                   </ActionIcon>
                                 </Menu.Target>
                                 <Menu.Dropdown>
-                                  <Menu.Item
-                                    color={user.bannedAt ? 'green' : 'red'}
-                                    icon={
-                                      !user.bannedAt ? (
-                                        <IconBan size={14} stroke={1.5} />
-                                      ) : (
-                                        <IconArrowBackUp size={14} stroke={1.5} />
-                                      )
-                                    }
-                                    onClick={handleToggleBan}
-                                  >
-                                    {user.bannedAt ? 'Restore user' : 'Ban user'}
-                                  </Menu.Item>
-                                  <Menu.Item
-                                    icon={
-                                      user.muted ? (
-                                        <IconMicrophone size={14} stroke={1.5} />
-                                      ) : (
-                                        <IconMicrophoneOff size={14} stroke={1.5} />
-                                      )
-                                    }
-                                    onClick={handleToggleMute}
-                                  >
-                                    {user.muted ? 'Unmute user' : 'Mute user'}
-                                  </Menu.Item>
-                                  <Menu.Item
-                                    color="red"
-                                    icon={<IconTrash size={14} stroke={1.5} />}
-                                    onClick={handleRemoveContent}
-                                  >
-                                    Remove all content
-                                  </Menu.Item>
+                                  <>
+                                    {isMod && (
+                                      <>
+                                        <Menu.Item
+                                          color={user.bannedAt ? 'green' : 'red'}
+                                          icon={
+                                            !user.bannedAt ? (
+                                              <IconBan size={14} stroke={1.5} />
+                                            ) : (
+                                              <IconArrowBackUp size={14} stroke={1.5} />
+                                            )
+                                          }
+                                          onClick={handleToggleBan}
+                                        >
+                                          {user.bannedAt ? 'Restore user' : 'Ban user'}
+                                        </Menu.Item>
+                                        <Menu.Item
+                                          color="red"
+                                          icon={<IconTrash size={14} stroke={1.5} />}
+                                          onClick={handleRemoveContent}
+                                        >
+                                          Remove all content
+                                        </Menu.Item>
+                                        <Menu.Item
+                                          icon={
+                                            user.muted ? (
+                                              <IconMicrophone size={14} stroke={1.5} />
+                                            ) : (
+                                              <IconMicrophoneOff size={14} stroke={1.5} />
+                                            )
+                                          }
+                                          onClick={handleToggleMute}
+                                        >
+                                          {user.muted ? 'Unmute user' : 'Mute user'}
+                                        </Menu.Item>
+                                      </>
+                                    )}
+                                    {isSameUser && (
+                                      <Menu.Item
+                                        component={NextLink}
+                                        href={`/user/${user.username}/manage-categories`}
+                                      >
+                                        Manage model categories
+                                      </Menu.Item>
+                                    )}
+                                  </>
                                 </Menu.Dropdown>
                               </Menu>
                             )}
@@ -452,11 +589,6 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                     <Tabs.Tab value="/models" icon={<IconBox size="1rem" />}>
                       Models
                     </Tabs.Tab>
-                    {isSameUser && (
-                      <Tabs.Tab value="/drafts" icon={<IconBoxOff size="1rem" />}>
-                        Draft models
-                      </Tabs.Tab>
-                    )}
                   </Tabs.List>
                 </Stack>
               </Container>

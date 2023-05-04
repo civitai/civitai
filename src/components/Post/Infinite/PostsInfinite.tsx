@@ -1,17 +1,15 @@
-import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
-import { PostsCard } from '~/components/Post/Infinite/PostsCard';
-import { trpc } from '~/utils/trpc';
-import { createContext, useMemo, useContext, useEffect } from 'react';
-import { useRouter } from 'next/router';
-import { Alert, Center, Loader, LoadingOverlay, Stack, ThemeIcon, Text } from '@mantine/core';
-import { QS } from '~/utils/qs';
-import { removeEmpty } from '~/utils/object-helpers';
-import { useInView } from 'react-intersection-observer';
-import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
-import { IconCloudOff } from '@tabler/icons';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
+import { IconCloudOff } from '@tabler/icons';
+import { useEffect } from 'react';
+import { useInView } from 'react-intersection-observer';
+
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { PostsCard } from '~/components/Post/Infinite/PostsCard';
+import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
 import { PostSort } from '~/server/common/enums';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
@@ -24,12 +22,17 @@ type PostsInfiniteState = {
 
 type PostsInfiniteProps = {
   filters?: PostsInfiniteState;
+  showEof?: boolean;
 };
 
-export default function PostsInfinite({ filters: filterOverrides = {} }: PostsInfiniteProps) {
+export default function PostsInfinite({
+  filters: filterOverrides = {},
+  showEof = false,
+}: PostsInfiniteProps) {
   const { ref, inView } = useInView();
   const postFilters = usePostFilters();
   const filters = removeEmpty({ ...postFilters, ...filterOverrides });
+  showEof = showEof && filters.period !== MetricTimeframe.AllTime;
 
   const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
     filters,
@@ -69,6 +72,7 @@ export default function PostsInfinite({ filters: filterOverrides = {} }: PostsIn
               {inView && <Loader />}
             </Center>
           )}
+          {!hasNextPage && showEof && <EndOfFeed />}
         </div>
       ) : (
         <Stack align="center" py="lg">

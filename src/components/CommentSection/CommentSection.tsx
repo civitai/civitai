@@ -155,7 +155,7 @@ export function CommentSection({ comments, modelId, review, parent, highlights }
                   innerRef={editorRef}
                   onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
                   hideToolbar
-                  withLinkValidation
+                  // withLinkValidation
                 />
               </Box>
               {showCommentActions ? (

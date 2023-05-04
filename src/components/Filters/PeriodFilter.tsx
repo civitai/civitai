@@ -1,4 +1,5 @@
 import { MetricTimeframe } from '@prisma/client';
+import { useRouter } from 'next/router';
 import { PeriodModeToggle } from '~/components/Filters/PeriodModeToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
@@ -9,6 +10,7 @@ import {
   useFiltersContext,
   useSetFilters,
 } from '~/providers/FiltersProvider';
+import { removeEmpty } from '~/utils/object-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type PeriodFilterProps = StatefulProps | DumbProps;
@@ -52,14 +54,25 @@ type StatefulProps = {
   hideMode?: boolean;
 };
 function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
-  const period = useFiltersContext((state) => state[type].period);
-  const setFilters = useSetFilters(type);
+  const { query, pathname, replace } = useRouter();
+  const globalPeriod = useFiltersContext((state) => state[type].period);
+  const queryPeriod = query.period as typeof globalPeriod | undefined;
 
+  const setFilters = useSetFilters(type);
+  const setPeriod = (period: typeof globalPeriod) => {
+    if (queryPeriod && queryPeriod !== period)
+      replace({ pathname, query: removeEmpty({ ...query, period: undefined }) }, undefined, {
+        shallow: true,
+      });
+    setFilters({ period: period as any });
+  };
+
+  const period = queryPeriod ? queryPeriod : globalPeriod;
   return (
     <DumbPeriodFilter
       type={type}
       value={period}
-      onChange={(period) => setFilters({ period })}
+      onChange={setPeriod}
       disabled={disabled}
       hideMode={hideMode}
     />

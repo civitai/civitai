@@ -114,7 +114,7 @@ export default function QuestionPage(
           ))}
           {!answers?.some((x) => x.user.id === user?.id) && !user?.muted && (
             <Stack>
-              <Title order={3}>Your anwser</Title>
+              <Title order={3}>Your answer</Title>
               <AnswerForm questionId={id} />
             </Stack>
           )}

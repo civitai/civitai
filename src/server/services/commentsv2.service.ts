@@ -9,6 +9,7 @@ import {
   CommentConnectorInput,
 } from './../schema/commentv2.schema';
 import { CommentV2Sort } from '~/server/common/enums';
+import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 
 export const upsertComment = async ({
   userId,
@@ -59,8 +60,10 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   cursor,
   select,
   sort,
+  excludedUserIds,
 }: GetCommentsV2Input & {
   select: TSelect;
+  excludedUserIds?: number[];
 }) => {
   const orderBy: Prisma.Enumerable<Prisma.CommentV2OrderByWithRelationInput> = [];
   if (sort === CommentV2Sort.Newest) orderBy.push({ createdAt: 'desc' });
@@ -71,6 +74,7 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       thread: { [`${entityType}Id`]: entityId },
+      userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
     },
     orderBy,
     select,

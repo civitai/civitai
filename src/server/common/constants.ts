@@ -1,5 +1,5 @@
 import { ImageSort, PostSort, QuestionSort, BrowsingMode } from './enums';
-import { MetricTimeframe, ModelStatus } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
 export const constants = {
@@ -73,6 +73,13 @@ export const constants = {
   },
   timeCutOffs: {
     updatedModel: 2 * 60 * 60 * 1000,
+  },
+  availableReactions: {
+    [ReviewReactions.Like]: '👍',
+    [ReviewReactions.Dislike]: '👎',
+    [ReviewReactions.Heart]: '❤️',
+    [ReviewReactions.Laugh]: '😂',
+    [ReviewReactions.Cry]: '😢',
   },
 } as const;
 

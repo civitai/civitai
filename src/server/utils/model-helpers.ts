@@ -12,40 +12,29 @@ export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
   metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
 };
 
+type FileMetaKey = keyof FileMetadata;
+const preferenceWeight: Record<FileMetaKey, number> = {
+  format: 1000,
+  size: 100,
+  fp: 10,
+};
+
 export function getPrimaryFile<T extends FileFormatType>(
   files: Array<T>,
   preferences: Partial<FileFormatType> = defaultFilePreferences
 ) {
   if (!files.length) return null;
 
-  const {
-    metadata: { format: preferredFormat, fp: preferredFp, size: preferredSize } = {
-      ...defaultFilePreferences.metadata,
-    },
-  } = preferences;
+  const preferredMetadata = { ...defaultFilePreferences.metadata, ...preferences.metadata };
 
   const getScore = (file: FileFormatType) => {
-    const { format, size, fp } = file.metadata;
-
-    if (size === preferredSize && format === preferredFormat && fp === preferredFp) return 5;
-    else if (size === preferredSize && format === preferredFormat) return 4;
-    else if (format === preferredFormat) return 3;
-    else if (size === preferredSize) return 2;
-    else if (fp === preferredFp) return 1;
-    else if (
-      size === defaultFilePreferences.metadata.size &&
-      format === defaultFilePreferences.metadata.format &&
-      fp === defaultFilePreferences.metadata.fp
-    )
-      return 0;
-    else if (
-      size === defaultFilePreferences.metadata.size &&
-      format === defaultFilePreferences.metadata.format
-    )
-      return -1;
-    else if (size === defaultFilePreferences.metadata.size) return -2;
-    else if (format === defaultFilePreferences.metadata.format) return -3;
-    else return -4;
+    let score = 0;
+    for (const [key, value] of Object.entries(file.metadata)) {
+      const weight = preferenceWeight[key as FileMetaKey];
+      if (value === preferredMetadata[key as FileMetaKey]) score += weight;
+      else if (value === defaultFilePreferences.metadata[key as FileMetaKey]) score -= weight;
+    }
+    return score;
   };
 
   return files

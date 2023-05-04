@@ -11,7 +11,7 @@ import { constants } from '~/server/common/constants';
 
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
-import { getByIdSchema, periodModeSchema } from '~/server/schema/base.schema';
+import { getByIdSchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -227,4 +227,15 @@ export const getModelsByCategorySchema = z.object({
   excludedTagIds: z.array(z.number()).optional(),
   excludedImageIds: z.array(z.number()).optional(),
   earlyAccess: z.boolean().optional(),
+});
+
+export type GetModelsWithCategoriesSchema = z.infer<typeof getModelsWithCategoriesSchema>;
+export const getModelsWithCategoriesSchema = paginationSchema.extend({
+  userId: z.number().optional(),
+});
+
+export type SetModelsCategoryInput = z.infer<typeof setModelsCategorySchema>;
+export const setModelsCategorySchema = z.object({
+  modelIds: z.array(z.number()),
+  categoryId: z.number(),
 });

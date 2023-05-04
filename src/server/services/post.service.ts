@@ -28,8 +28,6 @@ import {
   applyUserPreferencesSql,
   getImagesForPosts,
 } from '~/server/services/image.service';
-import { redis } from '~/server/redis/client';
-import { indexOfOr, shuffle } from '~/utils/array-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 import { getTypeCategories } from '~/server/services/tag.service';
@@ -412,7 +410,10 @@ export const getPostsByCategory = async ({
 
   let nextCursor: number | null = null;
   if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = shuffle(categories);
+  categories = categories.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return Math.random() - 0.5;
+  });
 
   const AND = [Prisma.sql`1 = 1`];
 

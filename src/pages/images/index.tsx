@@ -62,7 +62,7 @@ export default function ImagesPage() {
             ) : (
               <>
                 <ImageCategories />
-                <ImagesInfinite filters={filters} />
+                <ImagesInfinite filters={filters} showEof />
               </>
             )}
           </Stack>

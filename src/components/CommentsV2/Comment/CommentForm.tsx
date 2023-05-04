@@ -8,7 +8,7 @@ import produce from 'immer';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { IconLock } from '@tabler/icons';
-import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
+import { useCommentsContext, useNewCommentStore } from '~/components/CommentsV2/CommentsProvider';
 import { removeDuplicates } from '~/utils/array-helpers';
 
 /*
@@ -17,7 +17,8 @@ import { removeDuplicates } from '~/utils/array-helpers';
       - create message
         - show rte, hide cancel/submit buttons until rte focused
 */
-//TODO.comments- handle adding new comments - store their data outside of react query context
+
+const { comments, ...store } = useNewCommentStore.getState();
 
 export const CommentForm = ({
   comment,
@@ -31,7 +32,7 @@ export const CommentForm = ({
   replyTo?: SimpleUser;
 }) => {
   const { classes } = useStyles();
-  const { entityId, entityType, isMuted, data, setCreated, limit } = useCommentsContext();
+  const { entityId, entityType, isMuted, data, limit } = useCommentsContext();
   const editorRef = useRef<EditorCommandsRef | null>(null);
   // const replySetRef = useRef(false);
   const [focused, setFocused] = useState(autoFocus);
@@ -96,18 +97,13 @@ export const CommentForm = ({
               );
               if (pageIndex > -1 && commentIndex > -1)
                 data.pages[pageIndex].comments[commentIndex].content = request.content;
-              else
-                setCreated(
-                  produce((state) => {
-                    const index = state.findIndex((x) => x.id === request.id);
-                    if (index === -1) state.push(response);
-                    state[index].content = response.content;
-                  })
-                );
+              else store.editComment(entityType, entityId, response);
             }
           })
         );
-      } else setCreated((state) => [...state, response]);
+      } else {
+        store.addComment(entityType, entityId, response);
+      }
       // update comment count
       queryUtils.commentv2.getCount.setData({ entityType, entityId }, (old = 0) => old + 1);
       handleCancel();
@@ -156,7 +152,7 @@ export const CommentForm = ({
           classNames={{
             content: classes.content,
           }}
-          withLinkValidation
+          // withLinkValidation
         />
         {focused && (
           <Group position="right">

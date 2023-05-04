@@ -1,9 +1,8 @@
-import { Center, Group, Stack, Tabs } from '@mantine/core';
+import { Center, Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons';
-import { useRouter } from 'next/router';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -17,24 +16,31 @@ import { ModelSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 
 import { UserProfileLayout } from './';
+import { useState } from 'react';
+import { UserDraftModels } from '~/components/User/UserDraftModels';
 
 export default function UserModelsPage() {
   const currentUser = useCurrentUser();
-  const { set, ...queryFilters } = useModelQueryParams();
+  const { set, section: querySection, ...queryFilters } = useModelQueryParams();
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
   const sort = queryFilters.sort ?? ModelSort.Newest;
+  const username = queryFilters.username ?? '';
+  const selfView =
+    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+
+  const [section, setSection] = useState<'published' | 'draft'>(
+    selfView ? querySection ?? 'published' : 'published'
+  );
+  const viewingPublished = section === 'published';
 
   // currently not showing any content if the username is undefined
-  if (!queryFilters.username) return <NotFound />;
-  const selfView =
-    !!currentUser &&
-    postgresSlugify(currentUser.username) === postgresSlugify(queryFilters.username);
+  if (!username) return <NotFound />;
 
   return (
     <Tabs.Panel value="/models">
       {selfView && (
         <Center>
-          <AlertWithIcon maw={600} icon={<IconInfoCircle />} title="Metric Period Mode">
+          <AlertWithIcon maw={600} mb="sm" icon={<IconInfoCircle />} title="Metric Period Mode">
             Since you are viewing your own profile, we show all of your creations and the period
             filter instead only adjusts the timeframe for the metrics that are displayed.
           </AlertWithIcon>
@@ -47,30 +53,79 @@ export default function UserModelsPage() {
       >
         <MasonryContainer fluid>
           <Stack spacing="xs">
-            <Group position="apart">
-              <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as any })} />
-              <Group spacing="xs">
-                <PeriodFilter
-                  type="models"
-                  value={period}
-                  onChange={(x) => set({ period: x })}
-                  hideMode={selfView}
+            <Group spacing={8}>
+              {selfView && (
+                <ContentToggle
+                  size="xs"
+                  value={section}
+                  onChange={(section) => {
+                    setSection(section);
+                    set({ section });
+                  }}
                 />
-                <ModelFiltersDropdown />
-              </Group>
+              )}
+              {viewingPublished && (
+                <>
+                  <SortFilter
+                    type="models"
+                    value={sort}
+                    onChange={(x) => set({ sort: x as ModelSort })}
+                  />
+                  <Group spacing="xs" ml="auto">
+                    <PeriodFilter
+                      type="models"
+                      value={period}
+                      onChange={(x) => set({ period: x })}
+                      hideMode={selfView}
+                    />
+                    <ModelFiltersDropdown />
+                  </Group>
+                </>
+              )}
             </Group>
-            <ModelsInfinite
-              filters={{
-                ...queryFilters,
-                sort,
-                period,
-                periodMode: selfView ? 'stats' : undefined,
-              }}
-            />
+            {viewingPublished ? (
+              <ModelsInfinite
+                filters={{
+                  ...queryFilters,
+                  sort,
+                  period,
+                  periodMode: selfView ? 'stats' : undefined,
+                }}
+              />
+            ) : (
+              <UserDraftModels />
+            )}
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
     </Tabs.Panel>
+  );
+}
+
+function ContentToggle({
+  value,
+  onChange,
+  ...props
+}: Omit<SegmentedControlProps, 'value' | 'onChange' | 'data'> & {
+  value: 'published' | 'draft';
+  onChange: (value: 'published' | 'draft') => void;
+}) {
+  return (
+    <SegmentedControl
+      {...props}
+      value={value}
+      onChange={onChange}
+      data={[
+        { label: 'Published', value: 'published' },
+        { label: 'Draft', value: 'draft' },
+      ]}
+      sx={(theme) => ({
+        [theme.fn.smallerThan('sm')]: {
+          // flex: 1,
+          width: '100%',
+        },
+      })}
+    />
   );
 }
 

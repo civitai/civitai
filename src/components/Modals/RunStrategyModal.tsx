@@ -43,8 +43,7 @@ const { openModal: openRunStrategyModal, Modal } = createContextModal<{ modelVer
         .map((partner) => ({
           ...partner,
           available: partner.strategies.length > 0,
-        }))
-        .sort((a, b) => Number(b.available) - Number(a.available)) ?? [];
+        })) ?? [];
 
     const defaultBadgeProps: BadgeProps = {
       variant: 'outline',

@@ -3,12 +3,19 @@ import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import negate from 'lodash/negate';
 
-type UploadResult<T extends Record<string, unknown>> = {
-  url: string;
-  id: string;
-  uuid: string;
-  meta: T;
-};
+type UploadResult<T extends Record<string, unknown>> =
+  | {
+      success: false;
+    }
+  | {
+      success: true;
+      data: {
+        url: string;
+        id: string;
+        uuid: string;
+        meta: T;
+      };
+    };
 
 type TrackedFile = {
   file: File;
@@ -17,7 +24,7 @@ type TrackedFile = {
   size: number;
   speed: number;
   timeRemaining: number;
-  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'timeout';
   abort: () => void;
   uuid: string;
   meta: Record<string, unknown>;
@@ -39,7 +46,7 @@ type StoreProps = {
       file: File;
       meta: T;
     },
-    cb?: ({ url, id, meta }: UploadResult<T>) => Promise<void>
+    cb?: (result: UploadResult<T>) => Promise<void>
   ) => Promise<UploadResult<T>>;
 };
 
@@ -75,7 +82,11 @@ export const useCFUploadStore = create<StoreProps>()(
         const item = get().items.find((x) => x.uuid === uuid);
         item?.abort();
       },
-      upload: async ({ file, meta }, cb) => {
+      upload: async <T extends Record<string, unknown>>(
+        args: { file: File; meta: T },
+        cb?: (result: UploadResult<T>) => Promise<void>
+      ) => {
+        const { file, meta } = args;
         const uuid = uuidv4();
 
         set((state) => {
@@ -85,9 +96,7 @@ export const useCFUploadStore = create<StoreProps>()(
         const filename = encodeURIComponent(file.name);
         const res = await fetch('/api/image-upload', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename, metadata: {} }),
         });
 
@@ -101,9 +110,10 @@ export const useCFUploadStore = create<StoreProps>()(
         const { id, uploadURL: url } = data;
 
         const xhr = new XMLHttpRequest();
-
-        await new Promise((resolve) => {
+        // xhr.timeout = 2000;
+        const xhrResult = await new Promise<boolean>((resolve) => {
           let uploadStart = Date.now();
+
           xhr.upload.addEventListener('loadstart', () => {
             uploadStart = Date.now();
           });
@@ -124,12 +134,15 @@ export const useCFUploadStore = create<StoreProps>()(
                 timeRemaining,
                 speed,
                 status: 'uploading',
+                abort: () => xhr.abort(),
               });
             }
           });
           xhr.addEventListener('loadend', () => {
             const success = xhr.readyState === 4 && xhr.status === 200;
-            if (success) updateFile(uuid, { status: 'success' });
+            if (success) {
+              updateFile(uuid, { status: 'success' });
+            }
             resolve(success);
           });
           xhr.addEventListener('error', () => {
@@ -140,10 +153,23 @@ export const useCFUploadStore = create<StoreProps>()(
             updateFile(uuid, { status: 'aborted' });
             resolve(false);
           });
+          xhr.addEventListener('timeout', () => {
+            updateFile(uuid, { status: 'timeout' });
+            resolve(false);
+          });
           xhr.open('PUT', url, true);
           xhr.send(file);
         });
-        const payload = { url: url.split('?')[0], id, meta, uuid } as any;
+
+        const payload = (
+          xhrResult
+            ? {
+                success: true,
+                data: { url: url.split('?')[0], id, meta, uuid },
+              }
+            : { success: false }
+        ) satisfies UploadResult<T>;
+
         await cb?.(payload);
         return payload;
       },

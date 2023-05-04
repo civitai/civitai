@@ -41,6 +41,8 @@ import {
   reorderModelVersionsSchema,
   toggleModelLockSchema,
   unpublishModelSchema,
+  getModelsWithCategoriesSchema,
+  setModelsCategorySchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -54,7 +56,12 @@ import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
 import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import { BrowsingMode } from '~/server/common/enums';
-import { getModelsByCategory, getSimpleModelWithVersions } from '~/server/services/model.service';
+import {
+  getAllModelsWithCategories,
+  getModelsByCategory,
+  getSimpleModelWithVersions,
+  setModelsCategory,
+} from '~/server/services/model.service';
 import { cacheIt } from '~/server/middleware.trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -144,6 +151,7 @@ export const modelRouter = router({
     .query(getModelsPagedSimpleHandler),
   getAllWithVersions: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
+    .use(applyUserPreferences)
     .query(getModelsWithVersionsHandler),
   getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
   getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
@@ -194,4 +202,10 @@ export const modelRouter = router({
     .use(applyUserPreferences)
     .use(cacheIt())
     .query(({ input, ctx }) => getModelsByCategory({ ...input, user: ctx.user })),
+  getWithCategoriesSimple: publicProcedure
+    .input(getModelsWithCategoriesSchema)
+    .query(({ input }) => getAllModelsWithCategories(input)),
+  setCategory: protectedProcedure
+    .input(setModelsCategorySchema)
+    .mutation(({ input, ctx }) => setModelsCategory({ ...input, userId: ctx.user?.id })),
 });
