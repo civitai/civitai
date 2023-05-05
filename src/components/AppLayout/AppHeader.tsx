@@ -52,7 +52,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
@@ -325,7 +324,7 @@ export function AppHeader() {
       <Grid className={classes.header} m={0} gutter="xs" align="center">
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
-            <Link href={homeUrl} passHref>
+            <Link href={homeUrl ?? '/'} passHref>
               <Anchor variant="text" onClick={() => closeBurger()}>
                 <Logo />
               </Anchor>

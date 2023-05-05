@@ -17,10 +17,13 @@ export async function middleware(request: NextRequest) {
    */
   const { pathname } = request.nextUrl;
   if (pathname.startsWith('/moderator')) {
+    const useSecureCookies = request.url.startsWith('https://');
+    const cookiePrefix = useSecureCookies ? '__Secure-' : '';
+    const cookieName = `${cookiePrefix}civitai-token`;
     const token = await getToken({
       req: request,
       secret: process.env.NEXTAUTH_SECRET,
-      cookieName: 'civitai-token',
+      cookieName,
     });
     if (!token) {
       const url = new URL(`/login`, request.url);
