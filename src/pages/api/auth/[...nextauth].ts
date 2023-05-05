@@ -15,6 +15,7 @@ import { refreshToken, invalidateSession } from '~/server/utils/session-helpers'
 import { getSessionUser, updateAccountScope } from '~/server/services/user.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -34,10 +35,7 @@ const setUserName = async (id: number, setTo: string) => {
   }
 };
 
-const useSecureCookies = env.NEXTAUTH_URL.startsWith('https://');
-const cookiePrefix = useSecureCookies ? '__Secure-' : '';
 const { hostname } = new URL(env.NEXTAUTH_URL);
-const cookieName = `${cookiePrefix}civitai-token`;
 
 export function createAuthOptions(): NextAuthOptions {
   return {
@@ -124,7 +122,7 @@ export function createAuthOptions(): NextAuthOptions {
     ],
     cookies: {
       sessionToken: {
-        name: cookieName,
+        name: civitaiTokenCookieName,
         options: {
           httpOnly: true,
           sameSite: 'lax',

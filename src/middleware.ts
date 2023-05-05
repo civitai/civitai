@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { SessionUser } from 'next-auth';
+import { civitaiTokenCookieName } from '~/libs/auth';
 
 function handleRedirects(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -17,13 +18,10 @@ export async function middleware(request: NextRequest) {
    */
   const { pathname } = request.nextUrl;
   if (pathname.startsWith('/moderator')) {
-    const useSecureCookies = request.url.startsWith('https://');
-    const cookiePrefix = useSecureCookies ? '__Secure-' : '';
-    const cookieName = `${cookiePrefix}civitai-token`;
     const token = await getToken({
       req: request,
       secret: process.env.NEXTAUTH_SECRET,
-      cookieName,
+      cookieName: civitaiTokenCookieName,
     });
     if (!token) {
       const url = new URL(`/login`, request.url);
