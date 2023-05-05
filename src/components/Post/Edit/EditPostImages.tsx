@@ -162,6 +162,7 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
           radius={0}
           p="sm"
           color={hasError ? 'red' : undefined}
+          variant={hasError ? 'filled' : undefined}
           className={cx(classes.footer, { [classes.ambient]: !hasError })}
         >
           <Group noWrap>
@@ -175,8 +176,12 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
               striped
               animate
             />
-            {hasError && (
+            {hasError ? (
               <ActionIcon color="red" onClick={() => removeFile(uuid)}>
+                <IconX />
+              </ActionIcon>
+            ) : (
+              <ActionIcon onClick={trackedFile.abort}>
                 <IconX />
               </ActionIcon>
             )}

@@ -1,5 +1,5 @@
 import { Text } from '@mantine/core';
-import { useCommentsContext } from '../CommentsProvider';
+import { useCommentsContext, useNewCommentStore } from '../CommentsProvider';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
@@ -22,7 +22,7 @@ export function DeleteComment({
   id: number;
 } & CommentConnectorInput) {
   const queryUtils = trpc.useContext();
-  const { created, setCreated } = useCommentsContext();
+  const { created } = useCommentsContext();
   const { mutate, isLoading } = trpc.commentv2.delete.useMutation({
     async onSuccess(response, request) {
       showSuccessNotification({
@@ -30,7 +30,8 @@ export function DeleteComment({
         message: 'Successfully deleted the comment',
       });
       if (created.some((x) => x.id === request.id)) {
-        setCreated((state) => state.filter((x) => x.id !== request.id));
+        useNewCommentStore.getState().deleteComment(entityType, entityId, id);
+        // setCreated((state) => state.filter((x) => x.id !== request.id));
       } else {
         //TODO.comments - possiby add optimistic updates
         await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });

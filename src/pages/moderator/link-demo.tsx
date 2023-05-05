@@ -21,6 +21,21 @@ import { useCivitaiLink, useCivitaiLinkStore } from '~/components/CivitaiLink/Ci
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { Meta } from '~/components/Meta/Meta';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+// export const getServerSideProps = createServerSideProps({
+//   useSession: true,
+//   resolver: async ({ session }) => {
+//     if (!session?.user?.isModerator || session.user?.bannedAt) {
+//       return {
+//         redirect: {
+//           destination: '/',
+//           permanent: false,
+//         },
+//       };
+//     }
+//   },
+// });
 
 function Home() {
   // const activities = useCivitaiLinkStore((state) => state.activities);

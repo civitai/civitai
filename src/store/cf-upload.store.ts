@@ -110,6 +110,7 @@ export const useCFUploadStore = create<StoreProps>()(
         const { id, uploadURL: url } = data;
 
         const xhr = new XMLHttpRequest();
+        // xhr.timeout = 2000;
         const xhrResult = await new Promise<boolean>((resolve) => {
           let uploadStart = Date.now();
 
@@ -133,6 +134,7 @@ export const useCFUploadStore = create<StoreProps>()(
                 timeRemaining,
                 speed,
                 status: 'uploading',
+                abort: () => xhr.abort(),
               });
             }
           });

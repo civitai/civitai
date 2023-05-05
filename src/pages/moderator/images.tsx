@@ -47,19 +47,19 @@ import { ImageGetInfinite } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ session }) => {
-    if (!session?.user?.isModerator || session.user?.bannedAt) {
-      return {
-        redirect: {
-          destination: '/',
-          permanent: false,
-        },
-      };
-    }
-  },
-});
+// export const getServerSideProps = createServerSideProps({
+//   useSession: true,
+//   resolver: async ({ session }) => {
+//     if (!session?.user?.isModerator || session.user?.bannedAt) {
+//       return {
+//         redirect: {
+//           destination: '/',
+//           permanent: false,
+//         },
+//       };
+//     }
+//   },
+// });
 
 const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
 const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
