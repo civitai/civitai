@@ -5,11 +5,11 @@ import { TagSort } from '~/server/common/enums';
 import { parseNumericStringArray } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function ImageCategories() {
+export function ArticleCategories() {
   const router = useRouter();
   const { data: { items } = { items: [] } } = trpc.tag.getAll.useQuery({
-    entityType: ['Image'],
-    sort: TagSort.MostImages,
+    entityType: ['Article'],
+    sort: TagSort.MostArticles,
     unlisted: false,
     categories: true,
     limit: 100,

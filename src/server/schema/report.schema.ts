@@ -9,6 +9,7 @@ export enum ReportEntity {
   CommentV2 = 'commentV2',
   Image = 'image',
   ResourceReview = 'resourceReview',
+  Article = 'article',
 }
 
 // #region [report reason detail schemas]

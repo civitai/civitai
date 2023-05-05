@@ -5,7 +5,7 @@ import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import {
   FilterSubTypes,
   hasPeriodMode,
-  PeriodModeTypes,
+  PeriodModeType,
   useFiltersContext,
   useSetFilters,
 } from '~/providers/FiltersProvider';
@@ -38,7 +38,7 @@ function DumbPeriodFilter({ value, onChange, disabled, type, hideMode }: DumbPro
         value={value}
         disabled={disabled}
       >
-        {showPeriodMode && <PeriodModeToggle type={type as PeriodModeTypes} />}
+        {showPeriodMode && <PeriodModeToggle type={type as PeriodModeType} />}
       </SelectMenu>
     </IsClient>
   );

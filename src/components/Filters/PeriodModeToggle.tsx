@@ -1,12 +1,12 @@
 import { Box, BoxProps, Divider, SegmentedControl } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { PeriodModeTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+import { PeriodModeType, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type Props = {
-  type: PeriodModeTypes;
+  type: PeriodModeType;
 } & Omit<BoxProps, 'children'>;
 
 const options = [

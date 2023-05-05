@@ -157,6 +157,14 @@ export const createReport = async ({
           },
         });
         break;
+      case ReportEntity.Article:
+        await tx.articleReport.create({
+          data: {
+            article: { connect: { id } },
+            report,
+          },
+        });
+        break;
       default:
         throw new Error('unhandled report type');
     }

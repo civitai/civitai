@@ -71,6 +71,7 @@ export enum TagSort {
   MostModels = 'Most Models',
   MostImages = 'Most Images',
   MostPosts = 'Most Posts',
+  MostArticles = 'Most Articles',
 }
 
 export enum ImageScanType {
@@ -82,4 +83,10 @@ export enum ImageScanType {
 export enum CommentV2Sort {
   Newest = 'Newest',
   Oldest = 'Oldest',
+}
+
+export enum ArticleSort {
+  MostReactions = 'Most Reactions',
+  MostComments = 'Most Comments',
+  Newest = 'Newest',
 }

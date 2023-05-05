@@ -123,6 +123,8 @@ model User {
   tagModelVotes           TagsOnModelsVote[]
   tagPostVotes            TagsOnPostVote[]
   resourceReviewReactions ResourceReviewReaction[]
+  articleReactions        ArticleReaction[]
+  articles                Article[]
 }
 
 model CustomerSubscription {
@@ -600,6 +602,7 @@ model Report {
   commentV2      CommentV2Report?
   image          ImageReport?
   resourceReview ResourceReviewReport?
+  article        ArticleReport?
 }
 
 model ResourceReviewReport {
@@ -652,6 +655,13 @@ model ImageReport {
   image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
   reportId Int    @unique
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+}
+
+model ArticleReport {
+  articleId Int
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  reportId  Int     @unique
+  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 }
 
 model Review {
@@ -904,6 +914,7 @@ enum TagTarget {
   Image
   Post
   Tag
+  Article
 }
 
 enum TagType {
@@ -934,6 +945,7 @@ model Tag {
   tagsOnImage          TagsOnImage[]
   tagsOnImageVotes     TagsOnImageVote[]
   tagsOnPosts          TagsOnPost[]
+  tagsOnArticles       TagsOnArticle[]
   tagsOnImageComposite ImageTag[]
   tagsOnModelComposite ModelTag[]
   usersEngaged         TagEngagement[]
@@ -1038,6 +1050,17 @@ model TagsOnPost {
 
   @@id([tagId, postId])
   @@index([postId], type: Hash)
+}
+
+model TagsOnArticle {
+  articleId Int
+  article   Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, articleId])
+  @@index([articleId], type: Hash)
 }
 
 model TagsOnPostVote {
@@ -1334,6 +1357,8 @@ model Thread {
   comment    CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
   modelId    Int?            @unique
   model      Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  articleId  Int?            @unique
+  article    Article?        @relation(fields: [articleId], references: [id], onDelete: SetNull)
   metadata   Json            @default("{}")
 
   comments CommentV2[] @relation("thread")
@@ -1342,6 +1367,7 @@ model Thread {
   @@index([postId], type: Hash)
   @@index([questionId], type: Hash)
   @@index([imageId], type: Hash)
+  @@index([articleId], type: Hash)
 }
 
 model QuestionReaction {
@@ -1407,6 +1433,19 @@ model PostReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([postId, userId, reaction])
+}
+
+model ArticleReaction {
+  id        Int             @id @default(autoincrement())
+  articleId Int
+  article   Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([articleId, userId, reaction])
 }
 
 enum TagEngagementType {
@@ -1475,6 +1514,26 @@ model UserCosmetic {
   equippedAt DateTime?
 
   @@id([userId, cosmeticId])
+}
+
+model Article {
+  id           Int       @id @default(autoincrement())
+  createdAt    DateTime? @default(now())
+  updatedAt    DateTime? @updatedAt
+  nsfw         Boolean   @default(false)
+  tosViolation Boolean   @default(false)
+  metadata     Json?
+  title        String
+  content      String
+  cover        String
+  publishedAt  DateTime?
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  thread    Thread?
+  reactions ArticleReaction[]
+  tags      TagsOnArticle[]
+  reports   ArticleReport[]
 }
 
 /// @view

@@ -14,6 +14,7 @@ export const loginRedirectReasons = {
   'hide-content': 'You need to be logged in to hide content',
   'notify-version': 'You need to be logged in to subscribe for notifications',
   'discord-link': 'Login with Discord to link your account',
+  'create-article': 'You need to be logged in to create an article',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

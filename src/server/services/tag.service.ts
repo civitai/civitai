@@ -14,7 +14,6 @@ import {
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
-import { indexOfOr } from '~/utils/array-helpers';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -97,6 +96,7 @@ export const getTags = async ({
     if (entityType?.includes(TagTarget.Model)) sort = TagSort.MostModels;
     else if (entityType?.includes(TagTarget.Image)) sort = TagSort.MostImages;
     else if (entityType?.includes(TagTarget.Post)) sort = TagSort.MostPosts;
+    else if (entityType?.includes(TagTarget.Article)) sort = TagSort.MostArticles;
   }
 
   if (query) {
@@ -107,6 +107,7 @@ export const getTags = async ({
   } else if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
   else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
   else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
+  // TODO.articles: Missing articleCountAllTimeRank
 
   const isCategory =
     !categories && !!categoryTags?.length
@@ -457,7 +458,7 @@ export const getTypeCategories = async ({
   limit,
   cursor,
 }: {
-  type: 'image' | 'model' | 'post';
+  type: 'image' | 'model' | 'post' | 'article';
   excludeIds?: number[];
   limit?: number;
   cursor?: number;
