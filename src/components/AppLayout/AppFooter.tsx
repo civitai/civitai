@@ -129,16 +129,23 @@ export function AppFooter() {
             Status
           </Button>
         </Group>
-        <Button
-          component="a"
-          href="/github/discussions/categories/ideas"
-          ml="auto"
-          variant="light"
-          color="yellow"
-          target="_blank"
-        >
+        <Group ml="auto" spacing={0} sx={{ flexWrap: 'nowrap' }}>
+          <Button component="a" href="/canny/bugs" {...buttonProps} target="_blank">
+            🪲 Bugs
+          </Button>
+          <Button
+            component="a"
+            href="/canny/feedback"
+            variant="light"
+            color="yellow"
+            target="_blank"
+          >
+            💡 Ideas
+          </Button>
+          {/* <Button component={NextLink} href="/feedback" ml="auto" variant="light" color="yellow">
           💡 Ideas!
-        </Button>
+        </Button> */}
+        </Group>
       </Group>
     </Footer>
   );

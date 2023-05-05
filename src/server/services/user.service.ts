@@ -20,6 +20,7 @@ import {
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
+import { createCannyToken } from '~/server/canny/canny';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -436,7 +437,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
       : undefined;
 
-  return { ...rest, tier };
+  const cannyToken = await createCannyToken(user);
+
+  return { ...rest, tier, cannyToken };
 };
 
 export const removeAllContent = ({ id }: { id: number }) => {

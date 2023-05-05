@@ -76,6 +76,7 @@ export const serverSchema = z.object({
   PLAYFAB_TITLE_ID: z.string().optional(),
   PLAYFAB_SECRET_KEY: z.string().optional(),
   TRPC_ORIGINS: stringArray().optional(),
+  CANNY_SECRET: z.string().optional(),
 });
 
 /**
@@ -89,6 +90,10 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
   NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
+  NEXT_PUBLIC_CANNY_FEEDBACK_BOARD: z.string().optional(),
+  NEXT_PUBLIC_CANNY_BUG_BOARD: z.string().optional(),
+  NEXT_PUBLIC_CANNY_TOKEN: z.string().optional(),
+  NEXT_PUBLIC_CANNY_APP_ID: z.string().optional(),
 });
 
 /**
@@ -103,4 +108,8 @@ export const clientEnv = {
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
+  NEXT_PUBLIC_CANNY_FEEDBACK_BOARD: process.env.NEXT_PUBLIC_CANNY_FEEDBACK_BOARD,
+  NEXT_PUBLIC_CANNY_BUG_BOARD: process.env.NEXT_PUBLIC_CANNY_BUG_BOARD,
+  NEXT_PUBLIC_CANNY_TOKEN: process.env.NEXT_PUBLIC_CANNY_TOKEN,
+  NEXT_PUBLIC_CANNY_APP_ID: process.env.NEXT_PUBLIC_CANNY_APP_ID,
 };

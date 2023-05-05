@@ -93,6 +93,7 @@
     "gray-matter": "^4.0.3",
     "idb-keyval": "^6.2.0",
     "immer": "^9.0.15",
+    "jose": "^4.14.4",
     "lodash": "^4.17.21",
     "lodash-es": "^4.17.21",
     "mantine-react-table": "^0.9.5",
