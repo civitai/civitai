@@ -17,7 +17,7 @@ import {
   BadgeProps,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -143,16 +143,17 @@ function ImageController({
   );
 }
 
-function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
+function ImageUpload({ url, name, uuid, status, message, file }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
-  const trackedFile = items.find((x) => x.meta.uuid === uuid);
+  const trackedFile = items.find((x) => x.file === file);
   const removeFile = useEditPostContext((state) => state.removeFile);
   const hasError =
-    trackedFile &&
-    (trackedFile.status === 'error' ||
-      trackedFile.status === 'aborted' ||
-      trackedFile.status === 'timeout');
+    trackedFile && (trackedFile.status === 'error' || trackedFile.status === 'aborted');
+
+  useEffect(() => {
+    if (trackedFile?.status === 'dequeued') removeFile(uuid);
+  }, [trackedFile?.status]); //eslint-disable-line
 
   return (
     <Card className={classes.container} withBorder p={0}>
@@ -180,11 +181,11 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
               <ActionIcon color="red" onClick={() => removeFile(uuid)}>
                 <IconX />
               </ActionIcon>
-            ) : (
+            ) : trackedFile.status !== 'success' ? (
               <ActionIcon onClick={trackedFile.abort}>
                 <IconX />
               </ActionIcon>
-            )}
+            ) : null}
           </Group>
         </Alert>
       )}

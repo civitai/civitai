@@ -10,6 +10,7 @@ import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { IngestImageReturnType } from '~/server/services/image.service';
+import { PostImage } from '~/server/selectors/post.selector';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -90,7 +91,7 @@ const processPost = (post?: PostEditDetail) => {
   };
 };
 
-type HandleUploadArgs = { postId: number; modelVersionId?: number };
+type HandleUploadProps = ImageUpload & { postId: number; modelVersionId?: number };
 
 const createEditPostStore = ({
   post,
@@ -98,9 +99,9 @@ const createEditPostStore = ({
 }: {
   post?: PostEditDetail;
   handleUpload: (
-    args: HandleUploadArgs,
-    toUpload: ImageUpload
-  ) => Promise<PostEditImage | undefined>;
+    props: HandleUploadProps,
+    cb: (created: PostImage) => Promise<void>
+  ) => Promise<void>;
 }) => {
   return createStore<EditPostState>()(
     devtools(
@@ -180,8 +181,8 @@ const createEditPostStore = ({
                 // do not upload images that have been rejected due to image prompt keywords
                 .filter((x) => x.status === 'uploading')
                 .map(async (data) => {
-                  const created = await handleUpload({ postId, modelVersionId }, data);
-                  if (created) {
+                  await handleUpload({ postId, modelVersionId, ...data }, async (created) => {
+                    if (!created) return;
                     set((state) => {
                       const index = state.images.findIndex(
                         (x) => x.type === 'upload' && x.data.uuid === data.uuid
@@ -218,7 +219,7 @@ const createEditPostStore = ({
                     } catch (error) {
                       console.error(error);
                     }
-                  }
+                  });
                 })
             );
           },
@@ -277,14 +278,15 @@ export const EditPostProvider = ({
   const clear = useCFUploadStore((state) => state.clear);
 
   const handleUpload = async (
-    { postId, modelVersionId }: HandleUploadArgs,
-    { file, ...data }: ImageUpload
+    { postId, modelVersionId, file, ...data }: HandleUploadProps,
+    cb: (created: PostImage) => Promise<void>
   ) => {
-    const result = await upload<typeof data>({ file, meta: data });
-    if (!result.success) return;
-    const { url, id, uuid, meta } = result.data;
-    clear((item) => item.uuid === uuid);
-    return await mutateAsync({ ...meta, url: id, postId, modelVersionId });
+    await upload(file, async (result) => {
+      if (!result.success) return;
+      const { url, id, uuid } = result.data;
+      clear((item) => item.uuid === uuid);
+      mutateAsync({ ...data, url: id, postId, modelVersionId }).then(cb);
+    });
   };
 
   const storeRef = useRef<EditPostStore>();
