@@ -118,10 +118,9 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         updateFile({ status: 'aborted' });
         resolve(false);
       });
-      xhr.open('POST', url, true);
-      const formData = new FormData();
-      formData.append('file', file);
-      xhr.send(formData);
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.send(file);
     });
 
     return { url: url.split('?')[0], id };
