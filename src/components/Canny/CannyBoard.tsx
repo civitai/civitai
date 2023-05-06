@@ -10,6 +10,7 @@ declare global {
   }
 }
 
+/*
 let initialized = false;
 const useCanny = ({ boardToken, basePath }: { boardToken?: string; basePath?: string }) => {
   const { colorScheme: theme } = useMantineColorScheme();
@@ -55,9 +56,11 @@ const useCanny = ({ boardToken, basePath }: { boardToken?: string; basePath?: st
     };
   }, [theme, ssoToken]);
 };
+*/
 
 export function CannyBoard({ boardToken, basePath }: { boardToken?: string; basePath?: string }) {
-  useCanny({ boardToken, basePath });
-  if (!boardToken) return <Alert color="yellow">Canny has not been configured.</Alert>;
-  return <div data-canny></div>;
+  return <Alert color="yellow">Canny has been disabled.</Alert>;
+  // useCanny({ boardToken, basePath });
+  // if (!boardToken) return <Alert color="yellow">Canny has not been configured.</Alert>;
+  // return <div data-canny></div>;
 }

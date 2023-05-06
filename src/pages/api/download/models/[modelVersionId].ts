@@ -56,6 +56,7 @@ export default RateLimitedEndpoint(
       ).split(',');
       if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
     }
+    if (session?.user?.id === 131778) console.log('------------- here -----------------');
 
     const queryResults = schema.safeParse(req.query);
     if (!queryResults.success)
@@ -102,6 +103,7 @@ export default RateLimitedEndpoint(
         },
       },
     });
+    if (session?.user?.id === 131778) console.log('------------- here2 -----------------');
     if (!modelVersion) return notFound(req, res, 'Model not found');
 
     const { files } = modelVersion;
@@ -114,6 +116,7 @@ export default RateLimitedEndpoint(
     >;
     const file = getPrimaryFile(castedFiles, { metadata });
     if (!file) return notFound(req, res, 'Model file not found');
+    if (session?.user?.id === 131778) console.log('------------- here3 -----------------');
 
     // Handle non-published models
     const isMod = session?.user?.isModerator;
@@ -137,6 +140,7 @@ export default RateLimitedEndpoint(
           getLoginLink({ reason: 'download-auth', returnUrl: `/models/${modelVersion.model.id}` })
         );
     }
+    if (session?.user?.id === 131778) console.log('------------- here4 -----------------');
 
     // Handle early access
     if (!session?.user?.tier && !session?.user?.isModerator) {
@@ -155,6 +159,7 @@ export default RateLimitedEndpoint(
           );
       }
     }
+    if (session?.user?.id === 131778) console.log('------------- here5 -----------------');
 
     // Track download
     try {
@@ -177,6 +182,8 @@ export default RateLimitedEndpoint(
         },
       });
 
+      if (session?.user?.id === 131778) console.log('------------- here6 -----------------');
+
       const tracker = new Tracker(req, res);
       await tracker.modelVersionEvent({
         type: 'Download',
@@ -185,19 +192,26 @@ export default RateLimitedEndpoint(
         nsfw: modelVersion.model.nsfw,
       });
 
+      if (session?.user?.id === 131778) console.log('------------- here7 -----------------');
+
       if (userId)
         await playfab.trackEvent(userId, {
           eventName: 'user_download_model',
           modelId: modelVersion.model.id,
           modelVersionId: modelVersion.id,
         });
+
+      if (session?.user?.id === 131778) console.log('------------- here8 -----------------');
     } catch (error) {
       return res.status(500).json({ error: 'Invalid database operation', cause: error });
     }
 
     const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
+    if (session?.user?.id === 131778) console.log('------------- here9 -----------------');
+
     try {
       const { url } = await getDownloadUrl(file.url, fileName);
+      if (session?.user?.id === 131778) console.log('------------- here10 -----------------');
       res.redirect(url);
     } catch (err: unknown) {
       const error = err as Error;
