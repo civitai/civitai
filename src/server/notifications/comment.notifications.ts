@@ -200,7 +200,7 @@ export const commentNotifications = createNotificationProcessor({
 
       return {
         message: `${details.username} responded to your review on the ${details.modelName} model`,
-        url: `/review/${details.reviewId}?highlight=${details.commentId}`,
+        url: `/reviews/${details.reviewId}?highlight=${details.commentId}`,
       };
     },
     prepareQuery: ({ lastSent }) => `
