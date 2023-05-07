@@ -67,30 +67,33 @@ export type TrackRequest = {
 };
 
 export class Tracker {
-  constructor(private req?: NextApiRequest, private res?: NextApiResponse) {}
+  private actor: TrackRequest = {
+    userId: 0,
+    ip: 'unknown',
+    userAgent: 'unknown',
+  };
+  constructor(req?: NextApiRequest, res?: NextApiResponse) {
+    if (req && res) {
+      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
+      this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
+      getServerAuthSession({ req, res }).then((session) => {
+        this.actor.userId = session?.user?.id ?? this.actor.userId;
+      });
+    }
+  }
 
   private async track(table: string, custom: object) {
     if (!clickhouse) return;
 
-    const values =
-      this.req && this.res
-        ? {
-            ip: requestIp.getClientIp(this.req),
-            userAgent: this.req.headers['user-agent'],
-            userId: (await getServerAuthSession({ req: this.req, res: this.res }))?.user?.id,
-            ...custom,
-          }
-        : {
-            ip: 'unknown',
-            userEngagement: 'unknown',
-            userId: 0,
-            ...custom,
-          };
-
     // do not await as we do not want to fail on tracker issues
     clickhouse.insert({
       table: table,
-      values: [values],
+      values: [
+        {
+          ...this.actor,
+          ...custom,
+        },
+      ],
       format: 'JSONEachRow',
     });
   }
