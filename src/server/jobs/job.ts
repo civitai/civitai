@@ -30,14 +30,10 @@ export function createJob(
   } as Job;
 }
 
-export async function getJobDate(key: string) {
-  const date = new Date(
-    ((
-      await dbWrite.keyValue.findUnique({
-        where: { key },
-      })
-    )?.value as number) ?? 0
-  );
+export async function getJobDate(key: string, defaultValue?: Date) {
+  defaultValue ??= new Date(0);
+  const stored = await dbWrite.keyValue.findUnique({ where: { key } });
+  const date = stored ? new Date(stored.value as number) : defaultValue;
 
   const set = async (date?: Date) => {
     date ??= new Date();

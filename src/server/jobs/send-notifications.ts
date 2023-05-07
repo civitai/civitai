@@ -1,43 +1,30 @@
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('send-notifications', 'blue');
 
-const NOTIFICATIONS_LAST_SENT_KEY = 'last-sent-notifications';
 export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async () => {
   try {
-    // Get the last run time from keyValue
-    const lastSent = new Date(
-      ((
-        await dbWrite.keyValue.findUnique({
-          where: { key: NOTIFICATIONS_LAST_SENT_KEY },
-        })
-      )?.value as number) ?? 0
-    ).toISOString();
-
-    // Run all processors in batches by priority
-    // --------------------------------------------
-    // Prepare batches
+    const [lastRun, setLastRun] = await getJobDate('last-sent-notifications');
 
     // Run batches
     for (const batch of notificationBatches) {
-      const promises = batch.map(async ({ prepareQuery }) => {
-        const query = await prepareQuery?.({ lastSent });
-        if (query) await dbWrite.$executeRawUnsafe(query);
+      const promises = batch.map(async ({ prepareQuery, key }) => {
+        const [lastSent, setLastSent] = await getJobDate('last-sent-notification-' + key, lastRun);
+        const query = await prepareQuery?.({ lastSent: lastSent.toISOString() });
+        if (query) {
+          const now = new Date(); // Use time before query is executed to avoid gaps
+          await dbWrite.$executeRawUnsafe(query);
+          await setLastSent(now);
+        }
       });
       await Promise.all(promises);
     }
     log('sent notifications');
 
-    // Update the last sent time
-    // --------------------------------------------
-    await dbWrite?.keyValue.upsert({
-      where: { key: NOTIFICATIONS_LAST_SENT_KEY },
-      create: { key: NOTIFICATIONS_LAST_SENT_KEY, value: new Date().getTime() },
-      update: { value: new Date().getTime() },
-    });
+    await setLastRun();
   } catch {
     log('failed to send notifications');
   }
