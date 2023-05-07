@@ -376,6 +376,7 @@ export const toggleBlockedTag = async ({
     select: { type: true },
   });
 
+  let isHidden = false;
   if (matchedTag) {
     if (matchedTag.type === 'Hide')
       await dbWrite.tagEngagement.delete({
@@ -386,12 +387,12 @@ export const toggleBlockedTag = async ({
         where: { userId_tagId: { userId, tagId } },
         data: { type: 'Hide' },
       });
-    return false;
   } else {
     await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
-    return true;
+    isHidden = true;
   }
   await refreshAllHiddenForUser({ userId });
+  return isHidden;
 };
 
 export const updateAccountScope = async ({
