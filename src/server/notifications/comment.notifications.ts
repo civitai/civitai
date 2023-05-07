@@ -190,45 +190,56 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-review-response': {
     displayName: 'New review responses',
-    prepareMessage: ({ details }) => ({
-      message: `${details.username} responded to your review on the ${details.modelName} model`,
-      url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      if (details.version !== 2) {
+        return {
+          message: `${details.username} responded to your review on the ${details.modelName} model`,
+          url: `/models/${details.modelId}?modal=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
+        };
+      }
+
+      return {
+        message: `${details.username} responded to your review on the ${details.modelName} model`,
+        url: `/review/${details.reviewId}?highlight=${details.commentId}`,
+      };
+    },
     prepareQuery: ({ lastSent }) => `
-      WITH new_review_response AS (
-        SELECT DISTINCT
-          r."userId" "ownerId",
-          JSONB_BUILD_OBJECT(
-            'modelId', c."modelId",
-            'commentId', c.id,
-            'reviewId', r.id,
-            'modelName', m.name,
-            'username', u.username
-          ) "details"
-        FROM "Comment" c
-        JOIN "Review" r ON r.id = c."reviewId"
-        JOIN "User" u ON c."userId" = u.id
-        JOIN "Model" m ON m.id = c."modelId"
-        WHERE m."userId" > 0
-          AND c."createdAt" > '${lastSent}'
-          AND c."userId" != r."userId"
+    WITH new_review_response AS (
+      SELECT DISTINCT
+        r."userId" "ownerId",
+        JSONB_BUILD_OBJECT(
+          'version', 2,
+          'modelId', r."modelId",
+          'commentId', c.id,
+          'reviewId', r.id,
+          'modelName', m.name,
+          'username', u.username
+        ) "details"
+      FROM "CommentV2" c
+      JOIN "Thread" t ON t.id = c."threadId"
+      JOIN "ResourceReview" r ON r.id = t."reviewId"
+      JOIN "User" u ON c."userId" = u.id
+      JOIN "Model" m ON m.id = r."modelId"
+      WHERE m."userId" > 0
+        AND c."createdAt" > '${lastSent}'
+        AND c."userId" != r."userId"
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
-        "ownerId"    "userId",
-        'new-review-response' "type",
-        details
+      REPLACE(gen_random_uuid()::text, '-', ''),
+      "ownerId"    "userId",
+      'new-review-response' "type",
+      details
       FROM new_review_response r
       WHERE
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM "Notification" n
-          WHERE n."userId" = r."ownerId"
-              AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
-              AND n.details->>'commentId' = r.details->>'commentId'
-        );
+      NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "Notification" n
+        WHERE n."userId" = r."ownerId"
+            AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
+            AND n.details->>'commentId' = r.details->>'commentId'
+      );
     `,
   },
   'new-image-comment': {
