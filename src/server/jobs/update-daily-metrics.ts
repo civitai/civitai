@@ -38,7 +38,7 @@ async function updateMetrics(date: Date) {
           INSERT INTO "ModelMetricDaily" ("modelId", "modelVersionId", type, date, count)
           VALUES (${affectedModelVersion.modelId}, ${
           affectedModelVersion.modelVersionId
-        }, 'donwloads', ${date}::date, ${parseInt(affectedModelVersion.count)})
+        }, 'downloads', ${date}::date, ${parseInt(affectedModelVersion.count)})
           ON CONFLICT ("modelId", "modelVersionId", type, date) DO UPDATE SET count = excluded.count;
         `;
 
