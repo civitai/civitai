@@ -23,7 +23,7 @@ export function ModelsInfinite({
   const { ref, inView } = useInView();
   const modelFilters = useModelFilters();
 
-  const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
+  const filters = { ...removeEmpty(modelFilters), ...removeEmpty(filterOverrides) };
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
