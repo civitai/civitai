@@ -330,10 +330,11 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     const image = await dbRead.image.findUnique({ where: { id }, select: { url: true } });
     if (isProd && image && !imageUrlInUse({ url: image.url, id }))
       await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
+
+    await dbWrite.image.delete({ where: { id } });
   } catch {
     // Ignore errors
   }
-  return await dbWrite.image.delete({ where: { id } });
 };
 
 // consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
@@ -361,7 +362,7 @@ export const moderateImages = async ({
   delete?: boolean;
 }) => {
   if (deleteImages) {
-    await Promise.all(ids.map((id) => deleteImageById({ id })));
+    for (const id of ids) await deleteImageById({ id });
   } else {
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },

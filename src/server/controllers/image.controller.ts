@@ -205,8 +205,7 @@ export const deleteImageHandler = async ({
       },
     });
 
-    const image = await deleteImageById(input);
-    if (!image) throw throwNotFoundError(`No image with id ${input.id} found`);
+    await deleteImageById(input);
 
     await ctx.track.image({
       type: 'Delete',
