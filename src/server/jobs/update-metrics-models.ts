@@ -36,7 +36,7 @@ export const updateMetricsModelJob = createJob(
                 AND time >= '${clickhouseSince}'
             )
             SELECT
-                mve.modelVersionId,
+                mve.modelVersionId AS modelVersionId,
                 SUM(if(mve.time >= subtractDays(now(), 1), 1, null)) AS downloads24Hours,
                 SUM(if(mve.time >= subtractDays(now(), 7), 1, null)) AS downloads1Week,
                 SUM(if(mve.time >= subtractMonths(now(), 1), 1, null)) AS downloads1Month,
@@ -46,7 +46,6 @@ export const updateMetricsModelJob = createJob(
             JOIN modelVersionUniqueDownloads mve
                 ON mv.modelVersionId = mve.modelVersionId
             GROUP BY mve.modelVersionId
-            ORDER BY downloadsAll DESC
           `,
           format: 'JSONEachRow',
         });
