@@ -22,33 +22,76 @@ export const updateMetricsModelJob = createJob(
     const lastUpdateDate = new Date(
       (dates.find((d) => d.key === METRIC_LAST_UPDATED_MODELS_KEY)?.value as number) ?? 0
     );
-    const lastUpdate = lastUpdateDate.toISOString();
-
-    const updateModelMetrics = async () => {
-      const clickhouseLastUpdate = dayjs(lastUpdateDate).format('YYYY-MM-DD');
+    const updateModelMetrics = async (since: Date) => {
+      const clickhouseSince = dayjs(since).format('YYYY-MM-DD');
 
       async function updateVersionDownloadMetrics() {
-        await dbWrite.$executeRaw`
-          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
-          SELECT mvm."modelVersionId", timeframe.timeframe, mvm."downloadCount", 0, 0, 0, 0
-          FROM unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-          CROSS JOIN LATERAL (
+        const affectedModelVersionsResponse = await clickhouse?.query({
+          query: `
+            SELECT DISTINCT modelVersionId
+            FROM resourceReviews
+            WHERE createdDate >= '${clickhouseSince}'
+          `,
+          format: 'JSONEachRow',
+        });
+
+        const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
+          {
+            modelVersionId: number;
+          }
+        ];
+
+        for (const affectedModelVersion of affectedModelVersions) {
+          const modelVersionDownloadCountsResponse = await clickhouse?.query({
+            query: `
               SELECT
-                  m."modelVersionId",
-                  SUM(m.count) AS "downloadCount"
-              FROM "ModelMetricDaily" m
-              WHERE CASE
-                  WHEN timeframe.timeframe = 'Day' THEN m.date >= CURRENT_DATE
-                  WHEN timeframe.timeframe = 'Week' THEN m.date >= CURRENT_DATE - interval '1 week'
-                  WHEN timeframe.timeframe = 'Month' THEN m.date >= CURRENT_DATE - interval '1 month'
-                  WHEN timeframe.timeframe = 'Year' THEN m.date >= CURRENT_DATE - interval '1 year'
-                  ELSE true
-              END
-              GROUP BY m."modelId", m."modelVersionId"
-          ) mvm
-          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+                  COUNT(DISTINCT if(mve.time >= subtractDays(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads24Hours,
+                  COUNT(DISTINCT if(mve.time >= subtractDays(now(), 7), coalesce(mve.userId, mve.ip), null)) AS downloads1Week,
+                  COUNT(DISTINCT if(mve.time >= subtractMonths(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads1Month,
+                  COUNT(DISTINCT if(mve.time >= subtractYears(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads1Year,
+                  COUNT(DISTINCT mve.ip) AS downloadsAll
+              FROM modelVersionEvents mve
+              WHERE mve.modelVersionId = ${affectedModelVersion.modelVersionId}
+              AND mve.type = 'Download';
+            `,
+            format: 'JSONEachRow',
+          });
+
+          const modelVersionDownloadCounts = (await modelVersionDownloadCountsResponse?.json()) as [
+            {
+              downloads24Hours: string;
+              downloads1Week: string;
+              downloads1Month: string;
+              downloads1Year: string;
+              downloadsAll: string;
+            }
+          ];
+
+          if (modelVersionDownloadCounts.length > 0) {
+            const modelVersionDownloadCount = modelVersionDownloadCounts[0];
+            await dbWrite.$executeRaw`
+              INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+              VALUES 
+                (${affectedModelVersion.modelVersionId}, 'Day', ${parseInt(
+              modelVersionDownloadCount.downloads24Hours
+            )}, 0, 0, 0, 0),
+                (${affectedModelVersion.modelVersionId}, 'Week', ${parseInt(
+              modelVersionDownloadCount.downloads1Week
+            )}, 0, 0, 0, 0),
+                (${affectedModelVersion.modelVersionId}, 'Month', ${parseInt(
+              modelVersionDownloadCount.downloads1Month
+            )}, 0, 0, 0, 0),
+                (${affectedModelVersion.modelVersionId}, 'Year', ${parseInt(
+              modelVersionDownloadCount.downloads1Year
+            )}, 0, 0, 0, 0),
+                (${affectedModelVersion.modelVersionId}, 'AllTime', ${parseInt(
+              modelVersionDownloadCount.downloadsAll
+            )}, 0, 0, 0, 0)
+              ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
               SET "downloadCount" = EXCLUDED."downloadCount";
-        `;
+            `;
+          }
+        }
       }
 
       async function updateVersionRatingMetrics() {
@@ -56,7 +99,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT modelVersionId
             FROM resourceReviews
-            WHERE createdDate >= '${clickhouseLastUpdate}'
+            WHERE createdDate >= '${clickhouseSince}'
           `,
           format: 'JSONEachRow',
         });
@@ -80,19 +123,19 @@ export const updateMetricsModelJob = createJob(
               COALESCE(SUM(
                   CASE
                       WHEN tf.timeframe = 'AllTime' THEN 1
-                      WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 year', 1, 0)
-                      WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 month', 1, 0)
-                      WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 week', 1, 0)
-                      WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= CURRENT_DATE, 1, 0)
+                      WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
+                      WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
+                      WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
+                      WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
                   END
               ), 0),
               COALESCE(AVG(
                   CASE
                       WHEN tf.timeframe = 'AllTime' THEN rating
-                      WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 year', rating, NULL)
-                      WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 month', rating, NULL)
-                      WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= CURRENT_DATE - interval '1 week', rating, NULL)
-                      WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= CURRENT_DATE, rating, NULL)
+                      WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', rating, NULL)
+                      WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', rating, NULL)
+                      WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', rating, NULL)
+                      WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', rating, NULL)
                   END
               ), 0),
               0,
@@ -124,7 +167,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT modelId
             FROM modelEngagements
-            WHERE createdDate >= '${clickhouseLastUpdate}'
+            WHERE createdDate >= '${clickhouseSince}'
             AND type = 'Favorite'
           `,
           format: 'JSONEachRow',
@@ -149,10 +192,10 @@ export const updateMetricsModelJob = createJob(
               COALESCE(SUM(
                   CASE
                       WHEN tf.timeframe = 'AllTime' THEN 1
-                      WHEN tf.timeframe = 'Year' THEN IIF(f."createdAt" >= CURRENT_DATE - interval '1 year', 1, 0)
-                      WHEN tf.timeframe = 'Month' THEN IIF(f."createdAt" >= CURRENT_DATE - interval '1 month', 1, 0)
-                      WHEN tf.timeframe = 'Week' THEN IIF(f."createdAt" >= CURRENT_DATE - interval '1 week', 1, 0)
-                      WHEN tf.timeframe = 'Day' THEN IIF(f."createdAt" >= CURRENT_DATE, 1, 0)
+                      WHEN tf.timeframe = 'Year' THEN IIF(f."createdAt" >= NOW() - interval '1 year', 1, 0)
+                      WHEN tf.timeframe = 'Month' THEN IIF(f."createdAt" >= NOW() - interval '1 month', 1, 0)
+                      WHEN tf.timeframe = 'Week' THEN IIF(f."createdAt" >= NOW() - interval '1 week', 1, 0)
+                      WHEN tf.timeframe = 'Day' THEN IIF(f."createdAt" >= NOW() - interval '1 day', 1, 0)
                   END
               ), 0),
               0
@@ -179,7 +222,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT entityId AS modelId
             FROM comments
-            WHERE createdDate >= '${clickhouseLastUpdate}'
+            WHERE createdDate >= '${clickhouseSince}'
             AND type = 'Model'
           `,
           format: 'JSONEachRow',
@@ -205,10 +248,10 @@ export const updateMetricsModelJob = createJob(
               COALESCE(SUM(
                   CASE
                       WHEN tf.timeframe = 'AllTime' THEN 1
-                      WHEN tf.timeframe = 'Year' THEN IIF(c."createdAt" >= CURRENT_DATE - interval '1 year', 1, 0)
-                      WHEN tf.timeframe = 'Month' THEN IIF(c."createdAt" >= CURRENT_DATE - interval '1 month', 1, 0)
-                      WHEN tf.timeframe = 'Week' THEN IIF(c."createdAt" >= CURRENT_DATE - interval '1 week', 1, 0)
-                      WHEN tf.timeframe = 'Day' THEN IIF(c."createdAt" >= CURRENT_DATE, 1, 0)
+                      WHEN tf.timeframe = 'Year' THEN IIF(c."createdAt" >= NOW() - interval '1 year', 1, 0)
+                      WHEN tf.timeframe = 'Month' THEN IIF(c."createdAt" >= NOW() - interval '1 month', 1, 0)
+                      WHEN tf.timeframe = 'Week' THEN IIF(c."createdAt" >= NOW() - interval '1 week', 1, 0)
+                      WHEN tf.timeframe = 'Day' THEN IIF(c."createdAt" >= NOW() - interval '1 day', 1, 0)
                   END
               ), 0)
           FROM (
@@ -292,32 +335,30 @@ export const updateMetricsModelJob = createJob(
       ]);
     };
 
-    const clearDayMetrics = async () =>
-      await Promise.all(
-        [
-          `UPDATE "ModelMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-          `UPDATE "ModelVersionMetric" SET "downloadCount" = 0, "ratingCount" = 0, rating = 0, "favoriteCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';`,
-        ].map((x) => dbWrite.$executeRawUnsafe(x))
-      );
+    const currentDate = new Date();
 
-    // If this is the first metric update of the day, reset the day metrics
+    // If this is the first metric update of the day, recompute all recently affected metrics
     // -------------------------------------------------------------------
-    if (lastUpdateDate.getDate() !== new Date().getDate()) {
-      await clearDayMetrics();
-      log('Cleared day metrics');
+    if (lastUpdateDate.getDate() !== currentDate.getDate()) {
+      // Pick a refresh start that at least includes the last 24 hours plus some
+      const refreshStartDate = dayjs(lastUpdateDate)
+        .subtract(1, 'day')
+        .subtract(1, 'hour')
+        .toDate();
+      await updateModelMetrics(refreshStartDate);
+      log('Refreshed model metrics');
+    } else {
+      // Otherwise we can update the metrics from our last update-date
+      await updateModelMetrics(lastUpdateDate);
+      log('Updated model metrics');
     }
-
-    // Update all affected metrics
-    // --------------------------------------------
-    await updateModelMetrics();
-    log('Updated model metrics');
 
     // Update the last update time
     // --------------------------------------------
     await dbWrite?.keyValue.upsert({
       where: { key: METRIC_LAST_UPDATED_MODELS_KEY },
-      create: { key: METRIC_LAST_UPDATED_MODELS_KEY, value: new Date().getTime() },
-      update: { value: new Date().getTime() },
+      create: { key: METRIC_LAST_UPDATED_MODELS_KEY, value: currentDate.getTime() },
+      update: { value: currentDate.getTime() },
     });
 
     // Update rank views
