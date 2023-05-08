@@ -49,7 +49,7 @@ export const updateMetricsModelJob = createJob(
                   COUNT(DISTINCT if(mve.time >= subtractDays(now(), 7), coalesce(mve.userId, mve.ip), null)) AS downloads1Week,
                   COUNT(DISTINCT if(mve.time >= subtractMonths(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads1Month,
                   COUNT(DISTINCT if(mve.time >= subtractYears(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads1Year,
-                  COUNT(DISTINCT mve.ip) AS downloadsAll
+                  COUNT(DISTINCT coalesce(mve.userId, mve.ip)) AS downloadsAll
               FROM modelVersionEvents mve
               WHERE mve.modelVersionId = ${affectedModelVersion.modelVersionId}
               AND mve.type = 'Download';
