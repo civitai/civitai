@@ -9,19 +9,19 @@ Using our app to do anything other than access the links to this "Terms of Servi
 Your use of our website to do anything beyond simply accessing/viewing it (that is, uploading, downloading, commenting, etc.), constitutes not merely your consent, but also your electronic signature, meaning that you are contractually bound by these terms.
 
 ## Content
-You are solely responsible for the Content you post, publish, display or otherwise make available on our Website, and for any other action or omission that results from your use of the Services (including our Content or other user's Content), or the use by a person or an entity that you have authorized under your Account.
+You are solely responsible for the Content you post, publish, display, or otherwise make available on our Website, and for any action or omission that results from your use of the Services (including our Content or other user's Content), or the use by a person or an entity that you have authorized under your Account.
 
-You represent and warrant that you have ownership, control, and responsibility for the Content you post or otherwise make available on our Website, or otherwise have the right to do so. Your Content must not be misleading or unlawful, and must not violate any of these Terms, applicable law and regulation, or infringe or misappropriate any rights of any person or entity. We may remove your Content at any time, at our sole discretion, if we have a concern about your Content.
+You represent and warrant that you have ownership, control, and responsibility for the Content you post or otherwise make available on our Website, or otherwise have the right to do so. Your Content must not be misleading or unlawful, and must not violate any of these Terms, applicable law and regulation, or infringe or misappropriate any rights of any person or entity. We may remove your Content at any time, at our sole discretion, if we have concerns about your Content.
 
-You own the Content you create! We will not sell your Content, nor will we use it in any other way as permitted under these Terms. However, by posting your Content or otherwise making it available on our Website, you must be aware that:
+By posting your Content or otherwise making it available on our Website, you acknowledge and agree that:
 
-- You hereby grant us a worldwide, royalty-free and non-exclusive license to use, display, publish, reproduce, distribute, and make derivative works of such Content to provide Services and as otherwise permitted under these Terms and our Privacy Policy; and,
-- Your Content will be viewed by others, and therefore:
-  - If you decide to set your Content public, you grant each User a perpetual, irrevocable, worldwide, royalty-free, non-exclusive license to use, display, publish, reproduce, distribute, and make derivative works of your Content through our Services and functionalities;
-  - If you decide to set your Content private, we will use reasonable and appropriate measures designed to keep your Content confidential, and protected from any unauthorized access or disclosure. However, we may access or share your private information pursuant to the terms.
-- When Content contains notice of a reasonable and customary license, (such as an open source license) such Content is intended to remain under the terms of such license when further accessed, distributed, or used. Neither party is permitted to remove reference to any such license.
+- You own the Content you create, but you grant us a worldwide, royalty-free, and non-exclusive license to use, display, publish, reproduce, distribute, and make derivative works of such Content to provide Services and as otherwise permitted under these Terms and our Privacy Policy.
+- Your Content will be viewed by others, and as a result:
+  - If you set your Content as public, you grant each User a perpetual, irrevocable, worldwide, royalty-free, non-exclusive license to use, display, publish, reproduce, distribute, and make derivative works of your Content through our Services and functionalities.
+  - If you set your Content as private, we will use reasonable and appropriate measures designed to keep your Content confidential and protected from unauthorized access or disclosure. However, we may access or share your private information pursuant to these Terms and our Privacy Policy.
+- When Content contains a reasonable and customary license notice (such as an open-source license), such Content should remain under the terms of that license when further accessed, distributed, or used. Neither party is permitted to remove reference to any such license.
 
-Any Content you download, access or use from us or another User, is at your own risk and subject to these Terms and/or the terms accompanying such Content.
+You agree that any Content you download, access, or use from us or another User is at your own risk and subject to these Terms and/or the terms accompanying such Content.
 
 ## Content Rules
 These rules apply to all Content posted on Civitai. Moderators consider context and intent while enforcing the community rules. Moderators may flag or remove content or users at their discretion.
@@ -52,13 +52,14 @@ If you believe your content has been removed unfairly, you can submit an appeal 
 ## Intellectual Property
 By uploading a file or other content or by making a review, you represent and warrant to us that (1) doing so does not violate or infringe anyone else's rights; and (2) you created the file or other content you are uploading, or otherwise have sufficient intellectual property rights to upload the material consistent with these terms. With regard to any file or content you upload to the public portions of our site, you grant Civitai a non-exclusive, royalty-free, perpetual, irrevocable worldwide license (with sublicense and assignment rights) to use, to display online and in any present or future media, to create derivative works of, to allow downloads of, and/or distribute any such file or content. To the extent that you delete any such file or content from the public portions of our site, the license you grant to Civitai pursuant to the preceding sentence will automatically terminate, but will not be revoked with respect to any file or content Civitai has already copied and sublicensed or designated for sublicense. Also, of course, anything you post to a public portion of our site may be used by the public pursuant to the following paragraph even after you delete it.
 
-USE OF CIVITAI CONTENT
-By downloading a file or image or copying other user-generated content (UGC) from Civitai, you agree that you do not claim any rights to it. The following conditions apply:
+### Use of Civitai Content
+By downloading a file or image or copying other user-generated content (UGC) from Civitai, you agree that you do not claim any rights to it. The following conditions apply to your use of UGC:
 
-- You may use UGC for personal, non-commercial purposes.
-- You may use UGC for anything that qualifies as fair use under copyright law, for example journalism (news, comment, criticism, etc.), but please include an attribute ("Civitai" or "courtesy of Civitai") next to where it is displayed.
-- Your use of UGC is at your own risk. Civitai MAKES NO WARRANTIES OF NON-INFRINGEMENT, and you will indemnify and hold Civitai harmless from any copyright infringement claims arising out of your use of the UGC. (See our general disclaimers below.)
+1. Personal, Non-commercial Use: You may use UGC for personal, non-commercial purposes, in addition to any other specific rights granted by the content creator or as permitted under these Terms.
+2. Fair Use: You may use UGC for anything that qualifies as fair use under copyright law, such as journalism (news, comment, criticism, etc.), provided that you include an attribute ("Civitai" or "courtesy of Civitai") next to where it is displayed.
+3. Risk and Warranty: Your use of UGC is at your own risk. Civitai makes no warranties of non-infringement, and you will indemnify and hold Civitai harmless from any copyright infringement claims arising out of your use of the UGC.
 
+These conditions apply in addition to any specific license terms that may be provided by the content creator, and are not intended to limit or restrict any rights granted by such license terms. When Content contains notice of a reasonable and customary license (such as an open-source license), such Content is intended to remain under the terms of such license when further accessed, distributed, or used.
 
 ## Indemnity
 You are solely and exclusively responsible for your use of Civitai.
