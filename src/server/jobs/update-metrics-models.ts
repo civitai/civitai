@@ -28,10 +28,25 @@ export const updateMetricsModelJob = createJob(
       async function updateVersionDownloadMetrics() {
         const affectedModelVersionsResponse = await clickhouse?.query({
           query: `
-            SELECT DISTINCT modelVersionId
-            FROM modelVersionEvents
-            WHERE createdDate >= '${clickhouseSince}'
-            AND type = 'Download';
+            WITH CTE_AffectedModelVersions AS
+            (
+                SELECT DISTINCT modelVersionId
+                FROM modelVersionEvents
+                WHERE type = 'Download'
+                AND time >= '${clickhouseSince}'
+            )
+            SELECT
+                mve.modelVersionId,
+                SUM(if(mve.time >= subtractDays(now(), 1), 1, null)) AS downloads24Hours,
+                SUM(if(mve.time >= subtractDays(now(), 7), 1, null)) AS downloads1Week,
+                SUM(if(mve.time >= subtractMonths(now(), 1), 1, null)) AS downloads1Month,
+                SUM(if(mve.time >= subtractYears(now(), 1), 1, null)) AS downloads1Year,
+                COUNT() AS downloadsAll
+            FROM CTE_AffectedModelVersions mv
+            JOIN modelVersionUniqueDownloads mve
+                ON mv.modelVersionId = mve.modelVersionId
+            GROUP BY mve.modelVersionId
+            ORDER BY downloadsAll DESC
           `,
           format: 'JSONEachRow',
         });
@@ -39,59 +54,53 @@ export const updateMetricsModelJob = createJob(
         const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
           {
             modelVersionId: number;
+            downloads24Hours: string;
+            downloads1Week: string;
+            downloads1Month: string;
+            downloads1Year: string;
+            downloadsAll: string;
           }
         ];
 
-        for (const affectedModelVersion of affectedModelVersions) {
-          const modelVersionDownloadCountsResponse = await clickhouse?.query({
-            query: `
-              SELECT
-                  COUNT(DISTINCT if(mve.time >= subtractDays(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads24Hours,
-                  COUNT(DISTINCT if(mve.time >= subtractDays(now(), 7), coalesce(mve.userId, mve.ip), null)) AS downloads1Week,
-                  COUNT(DISTINCT if(mve.time >= subtractMonths(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads1Month,
-                  COUNT(DISTINCT if(mve.time >= subtractYears(now(), 1), coalesce(mve.userId, mve.ip), null)) AS downloads1Year,
-                  COUNT(DISTINCT coalesce(mve.userId, mve.ip)) AS downloadsAll
-              FROM modelVersionEvents mve
-              WHERE mve.modelVersionId = ${affectedModelVersion.modelVersionId}
-              AND mve.type = 'Download';
-            `,
-            format: 'JSONEachRow',
-          });
+        // We batch the affected model versions up when sending it to the db
+        const batchSize = 500;
+        const batchCount = Math.ceil(affectedModelVersions.length / batchSize);
+        for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
+          const batch = affectedModelVersions.slice(
+            batchNumber * batchSize,
+            batchNumber * batchSize + batchSize
+          );
 
-          const modelVersionDownloadCounts = (await modelVersionDownloadCountsResponse?.json()) as [
-            {
-              downloads24Hours: string;
-              downloads1Week: string;
-              downloads1Month: string;
-              downloads1Year: string;
-              downloadsAll: string;
-            }
-          ];
+          const batchJson = JSON.stringify(batch);
 
-          if (modelVersionDownloadCounts.length > 0) {
-            const modelVersionDownloadCount = modelVersionDownloadCounts[0];
-            await dbWrite.$executeRaw`
-              INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
-              VALUES 
-                (${affectedModelVersion.modelVersionId}, 'Day', ${parseInt(
-              modelVersionDownloadCount.downloads24Hours
-            )}, 0, 0, 0, 0),
-                (${affectedModelVersion.modelVersionId}, 'Week', ${parseInt(
-              modelVersionDownloadCount.downloads1Week
-            )}, 0, 0, 0, 0),
-                (${affectedModelVersion.modelVersionId}, 'Month', ${parseInt(
-              modelVersionDownloadCount.downloads1Month
-            )}, 0, 0, 0, 0),
-                (${affectedModelVersion.modelVersionId}, 'Year', ${parseInt(
-              modelVersionDownloadCount.downloads1Year
-            )}, 0, 0, 0, 0),
-                (${affectedModelVersion.modelVersionId}, 'AllTime', ${parseInt(
-              modelVersionDownloadCount.downloadsAll
-            )}, 0, 0, 0, 0)
-              ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+          await dbWrite.$executeRaw`
+            INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+            SELECT
+                mvm.modelVersionId, mvm.timeframe, mvm.downloads, 0, 0, 0, 0
+            FROM
+            (
+                SELECT
+                    CAST(mvs::json->>'modelVersionId' AS INT) AS modelVersionId,
+                    tf.timeframe,
+                    CAST(
+                      CASE
+                        WHEN tf.timeframe = 'Day' THEN mvs::json->>'downloads24Hours'
+                        WHEN tf.timeframe = 'Week' THEN mvs::json->>'downloads1Week'
+                        WHEN tf.timeframe = 'Month' THEN mvs::json->>'downloads1Month'
+                        WHEN tf.timeframe = 'Year' THEN mvs::json->>'downloads1Year'
+                        WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'downloadsAll'
+                      END
+                    AS int) as downloads
+                FROM json_array_elements(${batchJson}::json) mvs
+                CROSS JOIN (
+                    SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+                ) tf
+            ) mvm
+            WHERE mvm.downloads IS NOT NULL
+            AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
+            ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
               SET "downloadCount" = EXCLUDED."downloadCount";
-            `;
-          }
+          `;
         }
       }
 
