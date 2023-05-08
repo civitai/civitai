@@ -17,7 +17,7 @@ import {
   BadgeProps,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -143,17 +143,29 @@ function ImageController({
   );
 }
 
-function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
+function ImageUpload({ url, name, uuid, status, message, file }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
-  const trackedFile = items.find((x) => x.meta.uuid === uuid);
+  const trackedFile = items.find((x) => x.file === file);
   const removeFile = useEditPostContext((state) => state.removeFile);
+  const hasError =
+    trackedFile && (trackedFile.status === 'error' || trackedFile.status === 'aborted');
+
+  useEffect(() => {
+    if (trackedFile?.status === 'dequeued') removeFile(uuid);
+  }, [trackedFile?.status]); //eslint-disable-line
 
   return (
     <Card className={classes.container} withBorder p={0}>
       <EdgeImage src={url} alt={name ?? undefined} />
       {trackedFile && (
-        <Card radius={0} p="sm" className={cx(classes.footer, classes.ambient)}>
+        <Alert
+          radius={0}
+          p="sm"
+          color={hasError ? 'red' : undefined}
+          variant={hasError ? 'filled' : undefined}
+          className={cx(classes.footer, { [classes.ambient]: !hasError })}
+        >
           <Group noWrap>
             <Text>{trackedFile.status}</Text>
             <Progress
@@ -165,13 +177,17 @@ function ImageUpload({ url, name, uuid, status, message }: ImageUpload) {
               striped
               animate
             />
-            {trackedFile.status === 'error' && (
+            {hasError ? (
               <ActionIcon color="red" onClick={() => removeFile(uuid)}>
                 <IconX />
               </ActionIcon>
-            )}
+            ) : trackedFile.status !== 'success' ? (
+              <ActionIcon onClick={trackedFile.abort}>
+                <IconX />
+              </ActionIcon>
+            ) : null}
           </Group>
-        </Card>
+        </Alert>
       )}
       {status === 'blocked' && (
         <>
@@ -300,6 +316,12 @@ const useStyles = createStyles((theme) => {
     },
     ambient: {
       backgroundColor: theme.fn.rgba(theme.colorScheme === 'dark' ? '#000' : '#fff', 0.5),
+    },
+    error: {
+      backgroundColor: theme.fn.rgba(
+        theme.colorScheme === 'dark' ? theme.colors.red[8] : theme.colors.red[6],
+        0.5
+      ),
     },
   };
 });

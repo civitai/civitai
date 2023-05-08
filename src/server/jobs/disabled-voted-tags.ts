@@ -22,7 +22,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > '${lastApplied}' AND applied."disabled" = FALSE AND applied."needsReview" = FALSE AND applied."automated" = TRUE
+      WHERE vote."createdAt" > ('${lastApplied}'::timestamp - INTERVAL '1 minute') AND applied."disabled" = FALSE AND applied."needsReview" = FALSE AND applied."automated" = TRUE
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -50,7 +50,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > '${lastApplied}' AND applied."disabled" = FALSE
+      WHERE vote."createdAt" > ('${lastApplied}'::timestamp - INTERVAL '1 minute') AND applied."disabled" = FALSE
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -81,7 +81,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > '${lastApplied}' AND applied."disabled" = FALSE AND applied."needsReview" = FALSE
+      WHERE vote."createdAt" > ('${lastApplied}'::timestamp - INTERVAL '1 minute') AND applied."disabled" = FALSE AND applied."needsReview" = FALSE
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -115,7 +115,7 @@ export const disabledVotedTags = createJob('disable-voted-tags', '*/2 * * * *', 
         JOIN "Tag" t ON t.id = toi."tagId"
         WHERE
           toi.disabled AND t.type = 'Moderation' AND toi."imageId" = i.id
-          AND toi."disabledAt" > '${lastApplied}'
+          AND toi."disabledAt" > ('${lastApplied}'::timestamp - INTERVAL '1 minute')
       )
       -- And there aren't any remaining moderation tags
       AND NOT EXISTS (

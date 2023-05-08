@@ -613,9 +613,9 @@ export const toggleBlockedTagHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const result = await toggleBlockedTag({ ...input, userId });
+    const isHidden = await toggleBlockedTag({ ...input, userId });
     ctx.track.tagEngagement({
-      type: result ? 'Hide' : 'Allow',
+      type: isHidden ? 'Hide' : 'Allow',
       tagId: input.tagId,
     });
   } catch (error) {

@@ -2,13 +2,18 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import negate from 'lodash/negate';
+import { Queue } from '~/utils/queue';
 
-type UploadResult<T extends Record<string, unknown>> = {
-  url: string;
-  id: string;
-  uuid: string;
-  meta: T;
-};
+type UploadResult =
+  | { success: false }
+  | {
+      success: true;
+      data: {
+        url: string;
+        id: string;
+        uuid: string;
+      };
+    };
 
 type TrackedFile = {
   file: File;
@@ -17,10 +22,9 @@ type TrackedFile = {
   size: number;
   speed: number;
   timeRemaining: number;
-  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'dequeued';
   abort: () => void;
   uuid: string;
-  meta: Record<string, unknown>;
 };
 
 type StoreProps = {
@@ -34,14 +38,12 @@ type StoreProps = {
     aborted: number;
   };
   abort: (uuid: string) => void;
-  upload: <T extends Record<string, unknown>>(
-    args: {
-      file: File;
-      meta: T;
-    },
-    cb?: ({ url, id, meta }: UploadResult<T>) => Promise<void>
-  ) => Promise<UploadResult<T>>;
+  upload: (file: File, cb?: (result: UploadResult) => Promise<void>) => void;
 };
+
+const maxConcurrency = 5;
+const concurrency = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency ?? 1 : 1;
+const queue = new Queue(Math.min(maxConcurrency, concurrency));
 
 export const useCFUploadStore = create<StoreProps>()(
   immer((set, get) => {
@@ -73,79 +75,110 @@ export const useCFUploadStore = create<StoreProps>()(
       },
       abort: (uuid) => {
         const item = get().items.find((x) => x.uuid === uuid);
-        item?.abort();
+        if (!item) return;
+        item.abort();
       },
-      upload: async ({ file, meta }, cb) => {
+      upload: (file, cb) => {
         const uuid = uuidv4();
 
+        const task = async () => {
+          const filename = encodeURIComponent(file.name);
+          const controller = new AbortController();
+
+          // allow abort of fetch request
+          updateFile(uuid, {
+            status: 'uploading',
+            abort: () => {
+              controller.abort();
+              updateFile(uuid, { status: 'aborted' });
+            },
+          });
+
+          const res = await fetch('/api/image-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, metadata: {} }),
+            signal: controller.signal,
+          });
+
+          const data = await res.json();
+
+          if (data.error) throw data.error;
+
+          const { id, uploadURL: url } = data;
+
+          const xhr = new XMLHttpRequest();
+          const xhrResult = await new Promise<boolean>((resolve) => {
+            let uploadStart = Date.now();
+
+            // allow abort of xhr request
+            updateFile(uuid, { abort: () => xhr.abort() });
+
+            xhr.upload.addEventListener('loadstart', () => {
+              uploadStart = Date.now();
+            });
+            xhr.upload.addEventListener('progress', ({ loaded, total }) => {
+              const uploaded = loaded ?? 0;
+              const size = total ?? 0;
+
+              if (uploaded) {
+                const secondsElapsed = (Date.now() - uploadStart) / 1000;
+                const speed = uploaded / secondsElapsed;
+                const timeRemaining = (size - uploaded) / speed;
+                const progress = size ? (uploaded / size) * 100 : 0;
+
+                updateFile(uuid, {
+                  uploaded,
+                  size,
+                  progress,
+                  timeRemaining,
+                  speed,
+                });
+              }
+            });
+            xhr.addEventListener('loadend', () => {
+              const success = xhr.readyState === 4 && xhr.status === 200;
+              if (success) {
+                updateFile(uuid, { status: 'success' });
+              }
+              resolve(success);
+            });
+            xhr.addEventListener('error', () => {
+              updateFile(uuid, { status: 'error' });
+              resolve(false);
+            });
+            xhr.addEventListener('abort', () => {
+              updateFile(uuid, { status: 'aborted' });
+              resolve(false);
+            });
+            xhr.open('PUT', url, true);
+            xhr.send(file);
+          });
+
+          const payload: UploadResult = xhrResult
+            ? {
+                success: true,
+                data: { url: url.split('?')[0], id, uuid },
+              }
+            : { success: false };
+
+          await cb?.(payload);
+        };
+
+        // set initial value
         set((state) => {
-          state.items.push({ ...pendingTrackedFile, uuid, file, meta });
+          state.items.push({
+            ...pendingTrackedFile,
+            uuid,
+            file,
+            abort: () => {
+              queue.dequeue(task);
+              updateFile(uuid, { status: 'dequeued' });
+            },
+          });
         });
 
-        const filename = encodeURIComponent(file.name);
-        const res = await fetch('/api/image-upload', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ filename, metadata: {} }),
-        });
-
-        const data = await res.json();
-
-        if (data.error) {
-          console.error(data.error);
-          throw data.error;
-        }
-
-        const { id, uploadURL: url } = data;
-
-        const xhr = new XMLHttpRequest();
-
-        await new Promise((resolve) => {
-          let uploadStart = Date.now();
-          xhr.upload.addEventListener('loadstart', () => {
-            uploadStart = Date.now();
-          });
-          xhr.upload.addEventListener('progress', ({ loaded, total }) => {
-            const uploaded = loaded ?? 0;
-            const size = total ?? 0;
-
-            if (uploaded) {
-              const secondsElapsed = (Date.now() - uploadStart) / 1000;
-              const speed = uploaded / secondsElapsed;
-              const timeRemaining = (size - uploaded) / speed;
-              const progress = size ? (uploaded / size) * 100 : 0;
-
-              updateFile(uuid, {
-                uploaded,
-                size,
-                progress,
-                timeRemaining,
-                speed,
-                status: 'uploading',
-              });
-            }
-          });
-          xhr.addEventListener('loadend', () => {
-            const success = xhr.readyState === 4 && xhr.status === 200;
-            if (success) updateFile(uuid, { status: 'success' });
-            resolve(success);
-          });
-          xhr.addEventListener('error', () => {
-            updateFile(uuid, { status: 'error' });
-            resolve(false);
-          });
-          xhr.addEventListener('abort', () => {
-            updateFile(uuid, { status: 'aborted' });
-            resolve(false);
-          });
-          xhr.open('PUT', url, true);
-          xhr.send(file);
-        });
-        const payload = { url: url.split('?')[0], id, meta, uuid } as any;
-        await cb?.(payload);
-        return payload;
+        queue.enqueu(task);
       },
     };
   })

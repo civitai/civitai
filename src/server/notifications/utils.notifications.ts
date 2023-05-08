@@ -20,10 +20,13 @@ const notificationProcessors = {
 };
 
 // Sort notifications by priority and group them by priority
-const notificationBatches: NotificationProcessor[][] = [[]];
-const notifications = Object.values(notificationProcessors).sort(
-  (a, b) => (a.priority ?? 0) - (b.priority ?? 0)
-);
+const notifications = Object.entries(notificationProcessors)
+  .map(([key, v]) => ({
+    ...v,
+    key,
+  }))
+  .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+const notificationBatches: (typeof notifications)[] = [[]];
 let currentBatch = notificationBatches[0];
 for (const notification of notifications) {
   const priority = notification.priority ?? 0;

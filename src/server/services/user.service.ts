@@ -20,6 +20,7 @@ import {
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
+// import { createCannyToken } from '~/server/canny/canny';
 
 // const xprisma = prisma.$extends({
 //   result: {
@@ -375,6 +376,7 @@ export const toggleBlockedTag = async ({
     select: { type: true },
   });
 
+  let isHidden = false;
   if (matchedTag) {
     if (matchedTag.type === 'Hide')
       await dbWrite.tagEngagement.delete({
@@ -385,12 +387,12 @@ export const toggleBlockedTag = async ({
         where: { userId_tagId: { userId, tagId } },
         data: { type: 'Hide' },
       });
-    return false;
   } else {
     await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
-    return true;
+    isHidden = true;
   }
   await refreshAllHiddenForUser({ userId });
+  return isHidden;
 };
 
 export const updateAccountScope = async ({
@@ -436,7 +438,13 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
       : undefined;
 
-  return { ...rest, tier };
+  // const cannyToken = await createCannyToken(user); // We don't need this for now
+
+  return {
+    ...rest,
+    tier,
+    /// cannyToken,
+  };
 };
 
 export const removeAllContent = ({ id }: { id: number }) => {

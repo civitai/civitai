@@ -1,7 +1,9 @@
+import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { ArticleSort, ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type SortFilterProps = StatefulProps | DumbProps;
 
@@ -43,14 +45,19 @@ type StatefulProps = {
   onChange?: undefined;
 };
 function StatefulSortFilter({ type }: StatefulProps) {
-  const sort = useFiltersContext((state) => state[type].sort);
-  const setFilters = useSetFilters(type);
+  const { query, pathname, replace } = useRouter();
+  const globalSort = useFiltersContext((state) => state[type].sort);
+  const querySort = query.sort as typeof globalSort | undefined;
 
-  return (
-    <DumbSortFilter
-      type={type}
-      value={sort}
-      onChange={(sort) => setFilters({ sort: sort as any })}
-    />
-  );
+  const setFilters = useSetFilters(type);
+  const setSort = (sort: typeof globalSort) => {
+    if (querySort && querySort !== sort)
+      replace({ pathname, query: removeEmpty({ ...query, sort: undefined }) }, undefined, {
+        shallow: true,
+      });
+    setFilters({ sort: sort as any });
+  };
+
+  const sort = querySort ? querySort : globalSort;
+  return <DumbSortFilter type={type} value={sort} onChange={setSort} />;
 }

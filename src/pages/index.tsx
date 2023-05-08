@@ -102,10 +102,7 @@ function Home() {
             ) : (
               <>
                 <CategoryTags />
-                <ModelsInfinite
-                  filters={{ ...queryFilters }}
-                  showEof={queryFilters.period !== 'AllTime'}
-                />
+                <ModelsInfinite filters={queryFilters} showEof />
               </>
             )}
           </Stack>

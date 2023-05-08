@@ -17,6 +17,7 @@ import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { CommentType } from '../clickhouse/client';
+import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -30,8 +31,10 @@ export const getInfiniteCommentsV2Handler = async ({
   try {
     const limit = input.limit + 1;
 
+    const excludedUserIds = await getHiddenUsersForUser({ userId: ctx.user?.id });
     const comments = await getComments({
       ...input,
+      excludedUserIds,
       limit,
       select: commentV2Select,
     });

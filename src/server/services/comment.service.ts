@@ -13,9 +13,10 @@ import {
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-export const getComments = <TSelect extends Prisma.CommentSelect>({
+export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
   select,
   user,
@@ -28,15 +29,17 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
   const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
+  const excludedUserIds = await getHiddenUsersForUser({ userId: user?.id });
+
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  return dbRead.comment.findMany({
+  const comments = await dbRead.comment.findMany({
     take: limit,
     skip,
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       modelId,
-      userId,
+      userId: userId ? userId : excludedUserIds ? { notIn: excludedUserIds } : undefined,
       reviewId: { equals: null },
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
@@ -56,6 +59,8 @@ export const getComments = <TSelect extends Prisma.CommentSelect>({
     },
     select,
   });
+
+  return comments;
 };
 
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({

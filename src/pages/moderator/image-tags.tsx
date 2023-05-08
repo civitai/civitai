@@ -44,19 +44,19 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImageGetInfinite } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ session }) => {
-    if (!session?.user?.isModerator || session.user?.bannedAt) {
-      return {
-        redirect: {
-          destination: '/',
-          permanent: false,
-        },
-      };
-    }
-  },
-});
+// export const getServerSideProps = createServerSideProps({
+//   useSession: true,
+//   resolver: async ({ session }) => {
+//     if (!session?.user?.isModerator || session.user?.bannedAt) {
+//       return {
+//         redirect: {
+//           destination: '/',
+//           permanent: false,
+//         },
+//       };
+//     }
+//   },
+// });
 
 export default function ImageTags() {
   const { ref, inView } = useInView();

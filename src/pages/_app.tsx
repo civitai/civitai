@@ -42,6 +42,7 @@ import PlausibleProvider from 'next-plausible';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
+import { CannyIdentityProvider } from '~/components/Canny/CannyProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -120,6 +121,7 @@ function MyApp(props: CustomAppProps) {
                       <FreezeProvider>
                         <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                       </FreezeProvider>
+                      <CannyIdentityProvider />
                       <RoutedContextProvider2 />
                     </NotificationsProvider>
                   </CustomModalsProvider>

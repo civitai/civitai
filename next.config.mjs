@@ -96,6 +96,16 @@ export default defineNextConfig({
         destination: 'https://forms.clickup.com/8459928/f/825mr-5844/5NXSA2EIT3YOS2JSF7',
         permanent: true,
       },
+      {
+        source: '/canny/feedback',
+        destination: 'https://civitai.canny.io/feature-requests',
+        permanent: true,
+      },
+      {
+        source: '/canny/bugs',
+        destination: 'https://civitai.canny.io/bugs',
+        permanent: true,
+      }
     ];
   },
   output: 'standalone',

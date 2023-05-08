@@ -4,13 +4,16 @@ import {
   FetchPreviousPageOptions,
   InfiniteQueryObserverResult,
 } from '@tanstack/react-query';
-import { createContext, Dispatch, SetStateAction, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 
 type CommentsResult = InfiniteCommentResults['comments'];
+type CommentModel = InfiniteCommentResults['comments'][0];
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -54,7 +57,6 @@ type ChildProps = {
 
 type CommentsContext = CommentConnectorInput &
   ChildProps & {
-    setCreated: Dispatch<SetStateAction<CommentsResult>>;
     fetchNextPage: (
       options?: FetchNextPageOptions | undefined
     ) => Promise<InfiniteQueryObserverResult<InfiniteCommentResults>>;
@@ -81,7 +83,10 @@ export function CommentsProvider({
   badges,
 }: Props) {
   const currentUser = useCurrentUser();
-  const [created, setCreated] = useState<CommentsResult>([]);
+  const storeKey = getKey(entityType, entityId);
+  const created = useNewCommentStore(
+    useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
+  );
   const { items, nextCursor } = useMemo(() => {
     const data = [...(initialData ?? [])];
     return {
@@ -143,7 +148,6 @@ export function CommentsProvider({
         hasPreviousPage,
         fetchPreviousPage,
         created,
-        setCreated,
         badges,
         limit,
       }}
@@ -164,3 +168,49 @@ export function CommentsProvider({
     </CommentsCtx.Provider>
   );
 }
+
+/**
+ * When adding comments to an infinite list, new comments are displayed in the ui at the bottom of the list.
+ * It's important to recognize that our infinite list may only be displaying a partial list (user needs to 'load more'), and new
+ * comments will appear below the partial list.
+ *
+ * If a user were to click 'load more' and the action were to retrieve the comment the user just created,
+ * we would no longer need to display the new comment at the end of the list
+ *
+ * We use a zustand store because the above mentioned functionality is difficult to achieve using solely the react-query cache
+ */
+
+type StoreProps = {
+  /** dictionary of [entityType_entityId]: [...comments] */
+  comments: Record<string, CommentModel[]>;
+  addComment: (entityType: string, entityId: number, comment: CommentModel) => void;
+  editComment: (entityType: string, entityId: number, comment: CommentModel) => void;
+  deleteComment: (entityType: string, entityId: number, commentId: number) => void;
+};
+
+const getKey = (entityType: string, entityId: number) => `${entityId}_${entityType}`;
+
+export const useNewCommentStore = create<StoreProps>()(
+  immer((set, get) => {
+    return {
+      comments: {},
+      addComment: (entityType, entityId, comment) =>
+        set((state) => {
+          const key = getKey(entityType, entityId);
+          if (!state.comments[key]?.length) state.comments[key] = [comment];
+          else state.comments[key].push(comment);
+        }),
+      editComment: (entityType, entityId, comment) =>
+        set((state) => {
+          const key = getKey(entityType, entityId);
+          const index = state.comments[key].findIndex((x) => x.id === comment.id);
+          if (index > -1) state.comments[key][index].content = comment.content;
+        }),
+      deleteComment: (entityType, entityId, commentId) =>
+        set((state) => {
+          const key = getKey(entityType, entityId);
+          state.comments[key] = state.comments[key].filter((x) => x.id !== commentId);
+        }),
+    };
+  })
+);
