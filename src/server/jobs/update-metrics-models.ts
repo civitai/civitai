@@ -23,7 +23,7 @@ export const updateMetricsModelJob = createJob(
       (dates.find((d) => d.key === METRIC_LAST_UPDATED_MODELS_KEY)?.value as number) ?? 0
     );
     const updateModelMetrics = async (since: Date) => {
-      const clickhouseSince = dayjs(since).format('YYYY-MM-DD');
+      const clickhouseSince = dayjs(since).toISOString();
 
       async function updateVersionDownloadMetrics() {
         const affectedModelVersionsResponse = await clickhouse?.query({
@@ -33,7 +33,7 @@ export const updateMetricsModelJob = createJob(
                 SELECT DISTINCT modelVersionId
                 FROM modelVersionEvents
                 WHERE type = 'Download'
-                AND time >= '${clickhouseSince}'
+                AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
             )
             SELECT
                 mve.modelVersionId AS modelVersionId,
@@ -108,7 +108,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT modelVersionId
             FROM resourceReviews
-            WHERE createdDate >= '${clickhouseSince}'
+            WHERE createdDate >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
           `,
           format: 'JSONEachRow',
         });
@@ -176,7 +176,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT modelId
             FROM modelEngagements
-            WHERE createdDate >= '${clickhouseSince}'
+            WHERE createdDate >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
             AND type = 'Favorite'
           `,
           format: 'JSONEachRow',
@@ -231,7 +231,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT entityId AS modelId
             FROM comments
-            WHERE createdDate >= '${clickhouseSince}'
+            WHERE createdDate >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
             AND type = 'Model'
           `,
           format: 'JSONEachRow',
