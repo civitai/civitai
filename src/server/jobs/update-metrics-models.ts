@@ -29,8 +29,9 @@ export const updateMetricsModelJob = createJob(
         const affectedModelVersionsResponse = await clickhouse?.query({
           query: `
             SELECT DISTINCT modelVersionId
-            FROM resourceReviews
+            FROM modelVersionEvents
             WHERE createdDate >= '${clickhouseSince}'
+            AND type = 'Download';
           `,
           format: 'JSONEachRow',
         });
