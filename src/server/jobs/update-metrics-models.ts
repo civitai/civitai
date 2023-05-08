@@ -350,10 +350,7 @@ export const updateMetricsModelJob = createJob(
     // -------------------------------------------------------------------
     if (lastUpdateDate.getDate() !== currentDate.getDate()) {
       // Pick a refresh start that at least includes the last 24 hours plus some
-      const refreshStartDate = dayjs(lastUpdateDate)
-        .subtract(1, 'day')
-        .subtract(1, 'hour')
-        .toDate();
+      const refreshStartDate = dayjs(lastUpdateDate).subtract(1.5, 'day').toDate();
       await updateModelMetrics(refreshStartDate);
       log('Refreshed model metrics');
     } else {
