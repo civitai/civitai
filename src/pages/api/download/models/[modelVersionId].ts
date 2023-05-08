@@ -179,12 +179,6 @@ export default RateLimitedEndpoint(
         },
       });
 
-      // Increase modelMetric daily download count
-      await dbWrite.$executeRaw`
-        INSERT INTO "ModelMetricDaily" ("modelId", "modelVersionId", type, date, count)
-        VALUES (${modelVersion.model.id}, ${modelVersion.id}, 'donwloads', CURRENT_DATE, 1)
-        ON CONFLICT ("modelId", "modelVersionId", type, date) DO UPDATE SET count = "ModelMetricDaily".count + 1;`;
-
       const tracker = new Tracker(req, res);
       await tracker.modelVersionEvent({
         type: 'Download',
