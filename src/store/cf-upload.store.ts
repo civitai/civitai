@@ -48,7 +48,6 @@ const queue = new Queue(Math.min(maxConcurrency, concurrency));
 export const useCFUploadStore = create<StoreProps>()(
   immer((set, get) => {
     function updateFile(uuid: string, trackedFile: Partial<TrackedFile>) {
-      // console.log('updating', uuid, trackedFile);
       set((state) => {
         const index = state.items.findIndex((x) => x.uuid === uuid);
         if (index > -1) state.items[index] = { ...state.items[index], ...trackedFile };
@@ -60,7 +59,6 @@ export const useCFUploadStore = create<StoreProps>()(
       clear: (predicate) => {
         set((state) => {
           state.items = predicate ? state.items.filter(negate(predicate)) : [];
-          // if (state.items.length === 0) deregisterCatchNavigation();
         });
       },
       getStatus: () => {
@@ -163,6 +161,11 @@ export const useCFUploadStore = create<StoreProps>()(
             : { success: false };
 
           await cb?.(payload);
+
+          // clear tracked file after success
+          setTimeout(() => {
+            get().clear((x) => x.file === file);
+          }, 3000);
         };
 
         // set initial value

@@ -39,7 +39,7 @@ import {
   IconUsers,
 } from '@tabler/icons';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -137,14 +137,20 @@ export function UserImagesPage() {
   const currentUser = useCurrentUser();
   const { classes } = useChipStyles();
 
-  const { set, reactions, section: querySection, ...queryFilters } = useImageQueryParams();
-  const period = queryFilters.period ?? MetricTimeframe.AllTime;
-  const sort = queryFilters.sort ?? ImageSort.Newest;
-  const username = queryFilters.username ?? '';
+  const {
+    replace,
+    query: {
+      period = MetricTimeframe.AllTime,
+      sort = ImageSort.Newest,
+      username = '',
+      reactions = [],
+      ...query
+    },
+  } = useImageQueryParams();
+
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
-
-  const [section, setSection] = useState<Segment>(isSameUser ? querySection ?? 'images' : 'images');
+  const section = isSameUser ? query.section ?? 'images' : 'images';
 
   const viewingReactions = section === 'reactions';
 
@@ -165,17 +171,14 @@ export function UserImagesPage() {
                 <ContentToggle
                   size="xs"
                   value={section}
-                  onChange={(value) => {
-                    setSection(value);
-                    set({ section: value });
-                  }}
+                  onChange={(section) => replace({ section })}
                 />
               )}
               {viewingReactions && (
                 <Chip.Group
                   spacing={4}
-                  value={reactions ?? []}
-                  onChange={(reactions: ReviewReactions[]) => set({ reactions })}
+                  value={reactions}
+                  onChange={(reactions: ReviewReactions[]) => replace({ reactions })}
                   className={classes.chipGroup}
                   multiple
                   noWrap
@@ -197,19 +200,23 @@ export function UserImagesPage() {
               <SortFilter
                 type="images"
                 value={sort}
-                onChange={(x) => set({ sort: x as ImageSort })}
+                onChange={(x) => replace({ sort: x as ImageSort })}
               />
               <Box ml="auto">
-                <PeriodFilter type="images" value={period} onChange={(x) => set({ period: x })} />
+                <PeriodFilter
+                  type="images"
+                  value={period}
+                  onChange={(x) => replace({ period: x })}
+                />
               </Box>
             </Group>
             <ImagesInfinite
               filters={{
-                ...queryFilters,
+                ...query,
                 period,
                 sort,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
-                username: viewingReactions ? undefined : queryFilters.username,
+                username: viewingReactions ? undefined : username,
               }}
               withTags={!viewingReactions && (currentUser?.isModerator || isSameUser)}
             />

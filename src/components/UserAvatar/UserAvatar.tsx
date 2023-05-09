@@ -1,16 +1,14 @@
 import {
-  Anchor,
   Avatar,
   AvatarProps,
   BadgeProps,
-  createStyles,
   Group,
   MantineNumberSize,
   MantineSize,
   Stack,
   Text,
 } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink } from '@mantine/next';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
@@ -41,7 +39,6 @@ export function UserAvatar({
   subTextSize,
   includeAvatar = true,
 }: Props) {
-  const { classes } = useStyles();
   const currentUser = useCurrentUser();
 
   if (!user) return null;
@@ -52,30 +49,34 @@ export function UserAvatar({
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       {includeAvatar && (
-        <Avatar
-          src={
-            user.image && !userDeleted
-              ? getEdgeUrl(user.image, {
-                  width: 96,
-                  anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
-                })
-              : undefined
-          }
-          alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
-          radius="xl"
-          size={size}
-          {...avatarProps}
-        >
-          {user.username && !userDeleted ? getInitials(user.username) : null}
-        </Avatar>
+        <UserProfileLink user={user} linkToProfile={linkToProfile}>
+          <Avatar
+            src={
+              user.image && !userDeleted
+                ? getEdgeUrl(user.image, {
+                    width: 96,
+                    anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
+                  })
+                : undefined
+            }
+            alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
+            radius="xl"
+            size={size}
+            {...avatarProps}
+          >
+            {user.username && !userDeleted ? getInitials(user.username) : null}
+          </Avatar>
+        </UserProfileLink>
       )}
       {withUsername || subText ? (
         <Stack spacing={0}>
           {withUsername && (
-            <Group spacing={4} align="center">
-              <Username {...user} size={textSize} />
-              {badge}
-            </Group>
+            <UserProfileLink user={user} linkToProfile={linkToProfile}>
+              <Group spacing={4} align="center">
+                <Username {...user} size={textSize} />
+                {badge}
+              </Group>
+            </UserProfileLink>
           )}
           {subText && (typeof subText === 'string' || subTextForce) ? (
             <Text size={subTextSize} color="dimmed" my={-2} lineClamp={1}>
@@ -89,23 +90,38 @@ export function UserAvatar({
     </Group>
   );
 
+  return avatar;
+}
+
+const UserProfileLink = ({
+  children,
+  user,
+  linkToProfile,
+}: {
+  children: React.ReactNode;
+  user?: Partial<UserWithCosmetics> | null;
+  linkToProfile?: boolean;
+}) => {
+  if (!user || !linkToProfile || !!user.deletedAt) return <>{children}</>;
+
   let href = `/user/${user.username}`;
   if (!user.username) href += `?id=${user.id}`;
 
-  return linkToProfile && !userDeleted ? (
-    <Link href={href} passHref>
-      <Anchor
-        variant="text"
-        className={classes.link}
-        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
-      >
-        {avatar}
-      </Anchor>
-    </Link>
-  ) : (
-    avatar
+  return (
+    <NextLink href={href} onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}>
+      {children}
+    </NextLink>
   );
-}
+
+  // return (
+  //   <Link href={href} passHref>
+  //     <Anchor
+  //       variant="text"
+  //       onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+  //     ></Anchor>
+  //   </Link>
+  // );
+};
 
 type Props = {
   user?: Partial<UserWithCosmetics> | null;
@@ -122,11 +138,3 @@ type Props = {
   subTextSize?: MantineSize;
   includeAvatar?: boolean;
 };
-
-const useStyles = createStyles(() => ({
-  link: {
-    '&:hover': {
-      // textDecoration: 'underline',
-    },
-  },
-}));

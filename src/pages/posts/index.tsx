@@ -3,6 +3,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
@@ -55,14 +56,16 @@ export default function PostsPage() {
                 <ViewToggle type="posts" />
               </Group>
             </Group>
-            {view === 'categories' ? (
-              <PostCategoriesInfinite filters={filters} />
-            ) : (
-              <>
-                <PostCategories />
-                <PostsInfinite filters={filters} showEof />
-              </>
-            )}
+            <IsClient>
+              {view === 'categories' ? (
+                <PostCategoriesInfinite filters={filters} />
+              ) : (
+                <>
+                  <PostCategories />
+                  <PostsInfinite filters={filters} showEof />
+                </>
+              )}
+            </IsClient>
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

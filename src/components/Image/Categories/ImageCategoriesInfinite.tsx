@@ -1,5 +1,3 @@
-import { useMemo } from 'react';
-import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';

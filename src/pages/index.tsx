@@ -18,6 +18,7 @@ import { constants } from '~/server/common/constants';
 import { PeriodMode } from '~/server/schema/base.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModelCategoriesInfinite } from '~/components/Model/Categories/ModelCategoriesInfinite';
+import { IsClient } from '~/components/IsClient/IsClient';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -97,14 +98,16 @@ function Home() {
                 {canToggleView && <ViewToggle type="models" />}
               </Group>
             </Group>
-            {view === 'categories' ? (
-              <ModelCategoriesInfinite />
-            ) : (
-              <>
-                <CategoryTags />
-                <ModelsInfinite filters={queryFilters} showEof />
-              </>
-            )}
+            <IsClient>
+              {view === 'categories' ? (
+                <ModelCategoriesInfinite />
+              ) : (
+                <>
+                  <CategoryTags />
+                  <ModelsInfinite filters={queryFilters} showEof />
+                </>
+              )}
+            </IsClient>
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

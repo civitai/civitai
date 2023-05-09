@@ -18,7 +18,6 @@ import { setCookie } from '~/utils/cookies-helpers';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { z } from 'zod';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { periodModeSchema } from '~/server/schema/base.schema';
@@ -27,7 +26,7 @@ type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
 
 export type ViewMode = z.infer<typeof viewModeSchema>;
-const viewModeSchema = z.enum(['categories', 'feed']).default('categories');
+const viewModeSchema = z.enum(['categories', 'feed']);
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
@@ -56,9 +55,13 @@ const imageFilterSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  view: viewModeSchema,
+  view: viewModeSchema.default('categories'),
   excludeCrossPosts: z.boolean().optional(),
-  // excludeCrossPosts: z.preprocess((value) => value !== 'true', z.boolean()).optional(),
+});
+
+const modelImageFilterSchema = imageFilterSchema.extend({
+  sort: z.nativeEnum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
 });
 
 type PostFilterSchema = z.infer<typeof postFilterSchema>;
@@ -66,7 +69,7 @@ const postFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
-  view: viewModeSchema,
+  view: viewModeSchema.default('categories'),
 });
 
 export type CookiesState = {
@@ -109,13 +112,7 @@ const localStorageSchemas: LocalStorageSchema = {
   models: { key: 'model-filters', schema: modelFilterSchema },
   questions: { key: 'question-filters', schema: questionFilterSchema },
   images: { key: 'image-filters', schema: imageFilterSchema },
-  modelImages: {
-    key: 'model-image-filters',
-    schema: imageFilterSchema.extend({
-      sort: z.nativeEnum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
-      period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
-    }),
-  },
+  modelImages: { key: 'model-image-filters', schema: modelImageFilterSchema },
   posts: { key: 'post-filters', schema: postFilterSchema },
 };
 
