@@ -6,7 +6,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { constants } from '~/server/common/constants';
 import { PostGetByCategoryPostModel } from '~/types/router';
 
 export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel }) {
@@ -84,7 +83,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
 const useStyles = createStyles((theme) => ({
   container: {
     position: 'relative',
-    width: constants.cardSizes.image,
+    // width: constants.cardSizes.image,
     [theme.fn.smallerThan('sm')]: {
       width: '100%',
     },
