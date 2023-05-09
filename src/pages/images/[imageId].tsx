@@ -3,15 +3,15 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
-import { parseImagesQuery } from '~/components/Image/image.utils';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 
 export default function ImagePage() {
   const router = useRouter();
   const imageId = Number(router.query.imageId);
-  const filters = parseImagesQuery(router.query);
+  const { query } = useImageQueryParams();
 
   return (
-    <ImageDetailProvider imageId={imageId} filters={filters}>
+    <ImageDetailProvider imageId={imageId} filters={query}>
       <ImageDetail />
     </ImageDetailProvider>
   );

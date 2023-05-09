@@ -1,7 +1,7 @@
 import { MetricTimeframe, ReviewReactions } from '@prisma/client';
-import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext, FilterKeys } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schema/image.schema';
@@ -31,33 +31,12 @@ export const imagesQueryParamSchema = z
   })
   .partial();
 
-type ImageQueryParams = z.output<typeof imagesQueryParamSchema>;
-export const parseImagesQuery = (params: unknown) => {
-  const result = imagesQueryParamSchema.safeParse(params);
-  return result.success ? result.data : {};
-};
-
-export const useImageQueryParams = () => {
-  const { query, pathname, replace } = useRouter();
-
-  return useMemo(() => {
-    const result = imagesQueryParamSchema.safeParse(query);
-    const data: ImageQueryParams = result.success ? result.data : { view: 'categories' };
-
-    return {
-      ...data,
-      set: (filters: Partial<ImageQueryParams>) => {
-        replace({ pathname, query: { ...query, ...filters } }, undefined, { shallow: true });
-      },
-    };
-  }, [query, pathname, replace]);
-};
+export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
 export const useImageFilters = (type: FilterKeys<'images' | 'modelImages'>) => {
-  const router = useRouter();
   const storeFilters = useFiltersContext((state) => state[type]);
-  const parsedParams = parseImagesQuery(router.query); // router params are the overrides
-  return removeEmpty({ ...storeFilters, ...parsedParams });
+  const { query } = useImageQueryParams(); // router params are the overrides
+  return removeEmpty({ ...storeFilters, ...query });
 };
 
 export const useQueryImages = (

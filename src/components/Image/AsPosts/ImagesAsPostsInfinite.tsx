@@ -20,7 +20,6 @@ import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
-import { ImageCategories } from '~/components/Image/Infinite/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';

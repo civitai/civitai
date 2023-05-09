@@ -1,10 +1,13 @@
 import { createStyles, Container, ContainerProps } from '@mantine/core';
 import React, { CSSProperties, useRef, createContext, useContext } from 'react';
 import { useColumnCount, useContainerWidth } from '~/components/MasonryColumns/masonry.utils';
-import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
+import {
+  MasonryContextState,
+  useMasonryContext,
+} from '~/components/MasonryColumns/MasonryProvider';
 
 type MasonryContainerProps = ContainerProps;
-type MasonryContainerState = {
+type MasonryContainerState = MasonryContextState & {
   columnCount: number;
   combinedWidth: number;
   containerWidth: number;
@@ -19,7 +22,8 @@ export const useMasonryContainerContext = () => {
 
 export function MasonryContainer({ children, ...containerProps }: MasonryContainerProps) {
   const containerRef = useRef(null);
-  const { columnWidth, columnGap, maxColumnCount } = useMasonryContext();
+  const masonryProviderState = useMasonryContext();
+  const { columnWidth, columnGap, maxColumnCount } = masonryProviderState;
 
   const containerWidth = useContainerWidth(containerRef);
   const [columnCount, combinedWidth] = useColumnCount(
@@ -35,6 +39,8 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
     maxColumnCount,
   });
 
+  console.log({ columnWidth });
+
   return (
     <Container {...containerProps}>
       <div ref={containerRef} className={classes.container}>
@@ -42,7 +48,9 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
           className={classes.queries}
         >
-          <MasonryContainerContext.Provider value={{ containerWidth, columnCount, combinedWidth }}>
+          <MasonryContainerContext.Provider
+            value={{ containerWidth, columnCount, combinedWidth, ...masonryProviderState }}
+          >
             {children}
           </MasonryContainerContext.Provider>
         </div>

@@ -2,6 +2,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
@@ -10,11 +11,6 @@ import { usernameSchema } from '~/server/schema/user.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-export const useModelFilters = () => {
-  const storeFilters = useFiltersContext((state) => state.models);
-  return removeEmpty(storeFilters);
-};
 
 const modelQueryParamSchema = z
   .object({
@@ -38,7 +34,7 @@ export const useModelQueryParams = () => {
 
   return useMemo(() => {
     const result = modelQueryParamSchema.safeParse(query);
-    const data: ModelQueryParams = result.success ? result.data : { view: 'feed' };
+    const data: ModelQueryParams = result.success ? result.data : {};
 
     return {
       ...data,
@@ -56,6 +52,13 @@ export const useModelQueryParams = () => {
       },
     };
   }, [query, pathname, replace]);
+};
+
+export const useModelQueryParams2 = () => useZodRouteParams(modelQueryParamSchema);
+
+export const useModelFilters = () => {
+  const storeFilters = useFiltersContext((state) => state.models);
+  return removeEmpty(storeFilters);
 };
 
 export const useQueryModels = (

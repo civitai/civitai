@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { closeRoutedContext } from '~/providers/RoutedContextProvider';
-import Router from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 
 export type RoutedContext = {
@@ -32,20 +32,18 @@ export function createRoutedContext<TSchema extends z.AnyZodObject>({
     const isClient = useIsClient();
     const user = useCurrentUser();
     const result = schema?.safeParse(props) ?? { success: true, data: {} };
+    const router = useRouter();
 
     /*
-      This is necessary in order to maintain scroll position on Router.back
+      This is necessary in order to maintain scroll position on router.back
     */
     useEffect(() => {
-      Router.beforePopState(({ as, url }) => {
-        if (as !== Router.asPath) {
-          Router.replace(url, as, { shallow: true });
-          return false;
-        }
+      router.beforePopState((state) => {
+        state.options.scroll = false;
         return true;
       });
 
-      return () => Router.beforePopState(() => true);
+      return () => router.beforePopState(() => true);
     }, []);
 
     if (!result.success) return null;

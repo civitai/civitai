@@ -1,6 +1,6 @@
 import React, { createContext, useContext } from 'react';
 
-type LayoutState = {
+export type MasonryContextState = {
   columnWidth: number;
   columnGap: number;
   rowGap: number;
@@ -8,7 +8,7 @@ type LayoutState = {
   maxSingleColumnWidth?: number;
 };
 
-const MasonryContext = createContext<LayoutState | null>(null);
+const MasonryContext = createContext<MasonryContextState | null>(null);
 export const useMasonryContext = () => {
   const context = useContext(MasonryContext);
   if (!context) throw new Error('MasonryContext not in tree');
@@ -32,7 +32,7 @@ export function MasonryProvider({
   gap = 16,
   columnGap = gap,
   rowGap = gap,
-  maxSingleColumnWidth,
+  maxSingleColumnWidth = columnWidth,
 }: Props) {
   return (
     <MasonryContext.Provider

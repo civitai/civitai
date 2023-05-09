@@ -395,7 +395,6 @@ const useStyles = createStyles((theme) => {
   return {
     card: {
       position: 'relative',
-      width: constants.cardSizes.model,
       [theme.fn.smallerThan('sm')]: {
         width: '100%',
       },

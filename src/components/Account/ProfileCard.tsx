@@ -229,6 +229,7 @@ export function ProfileCard() {
                   )}
                   <Paper
                     component={ScrollArea}
+                    type="auto"
                     p="xs"
                     sx={{
                       position: 'relative',
@@ -258,7 +259,7 @@ export function ProfileCard() {
                                 onClick={() =>
                                   form.setValue('badgeId', cosmetic.id, { shouldDirty: true })
                                 }
-                                sx={{ height: '100%' }}
+                                sx={{ height: 64, width: 64 }}
                               >
                                 <EdgeImage src={cosmetic.data.url as string} width={64} />
                               </Button>
