@@ -30,7 +30,8 @@ export function NavigateBack({
     if (hasHistory) router.back();
     else {
       const navigate = options.replace ? router.replace : router.push;
-      navigate(url, as, { shallow: true, ...options });
+
+      navigate(url, as, options);
     }
   };
 
