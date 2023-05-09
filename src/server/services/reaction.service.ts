@@ -162,6 +162,11 @@ const createReaction = async ({
         data: { ...data, reviewId: entityId },
         select: { reaction: true },
       });
+    case 'article':
+      return await dbWrite.articleReaction.create({
+        data: { ...data, articleId: entityId },
+        select: { reaction: true },
+      });
     default:
       throw throwBadRequestError();
   }

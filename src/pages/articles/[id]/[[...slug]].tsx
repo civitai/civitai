@@ -1,16 +1,15 @@
 import {
   Badge,
+  Box,
   Container,
   Divider,
   Group,
-  Image,
   Stack,
   Text,
   Title,
   useMantineTheme,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
-import { SessionUser } from 'next-auth';
 import Link from 'next/link';
 import React from 'react';
 import { z } from 'zod';
@@ -20,16 +19,15 @@ import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { Collection } from '~/components/Collection/Collection';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -55,54 +53,13 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const fakeArticle: ArticleGetById = {
-  id: 1,
-  title: 'Article title',
-  content: `<h2>Pokemon list 1</h2><p>
-  Shieldon kangaskhan escavalier krabby shedinja totodile blitzle gyarados poochyena swellow metapod doduo lucario hoppip venonat solosis rampardos crawdaunt phanpy joltik rapidash garbodor voltorb tympole electivire lairon feraligatr vaporeon wartortle snorlax.
-  </p>
-  <h3>More pokemons</h3><p>
-  Staryu gloom tympole kingler drifloon raikou bastiodon sandshrew simisage lapras gabite clamperl mightyena flareon grotle bulbasaur feebas natu donphan emolga herdier shroomish mr skiploom salamence lugia aipom nincada gulpin weavile.
-  </p>
-  <p>
-  Hitmontop scrafty yanma blissey marill elgyem smeargle mightyena donphan lumineon bellossom carracosta meloetta pikachu nidoran unown krabby machoke braviary beheeyem mime druddigon persian beautifly simisage nuzleaf doduo whimsicott celebi geodude.
-  </p>
-  <p>
-  Surskit cobalion omanyte onix kyogre regigigas bayleef pawniard jellicent alakazam, pawniard bonsly starmie spinarak infernape joltik axew mime garbodor arbok shellder chandelure miltank swellow beartic noctowl nidoran koffing mime whiscash.
-  </p>
-  <p>
-  Nidoran slakoth cryogonal jynx lotad klang seel absol totodile emboar slowking blissey mienshao sharpedo raichu cobalion dodrio rattata registeel lombre metang munna lillipup cascoon kricketune arceus glaceon articuno buizel dustox!
-  </p>`,
-  cover: 'https://picsum.photos/1320?random=1',
-  publishedAt: new Date(),
-  createdAt: new Date(),
-  updatedAt: new Date(),
-  nsfw: true,
-  tags: [
-    { id: 1, name: 'Lorem', isCategory: true },
-    { id: 2, name: 'ipsum', isCategory: false },
-    { id: 3, name: 'dolor', isCategory: false },
-    { id: 4, name: 'sit', isCategory: false },
-  ],
-  reactions: [],
-  user: {
-    id: 4,
-    username: 'civitai',
-    image: 'https://picsum.photos/200?random=1',
-    deletedAt: null,
-    cosmetics: [],
-  },
-};
-
 export default function ArticleDetailsPage({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
 
-  const { data: article = fakeArticle, isLoading } = trpc.article.getById.useQuery({
-    id,
-  });
+  const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
 
   // TODO.articles: add meta description
   const meta = <Meta title={`Civitai | ${article?.title}`} />;
@@ -110,7 +67,7 @@ export default function ArticleDetailsPage({
   if (isLoading) return <PageLoader />;
   if (!article) return <NotFound />;
 
-  if (article?.nsfw && !currentUser)
+  if (article.nsfw && !currentUser)
     return (
       <>
         {meta}
@@ -178,15 +135,14 @@ export default function ArticleDetailsPage({
             </Group>
           </Stack>
 
-          <Image
-            radius="md"
-            h={'calc(100vh / 3)'}
-            src={article.cover}
-            height={'100%'}
-            styles={{ imageWrapper: { height: '100%' }, figure: { height: '100%' } }}
-            // width={1320}
-            alt={article.title}
-          />
+          <Box
+            sx={(theme) => ({
+              height: 'calc(100vh / 3)',
+              '& > img': { height: '100%', objectFit: 'cover', borderRadius: theme.radius.md },
+            })}
+          >
+            <EdgeImage src={article.cover} width={1320} />
+          </Box>
           <RenderHtml html={article.content} />
           <Divider />
           <Group position="apart" align="flex-start">

@@ -28,6 +28,7 @@ export const upsertArticleInput = z.object({
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),
+  // TODO.articles: check what's going to be stored on metadata
   // metadata: z.object({}).nullish(),
 });
 

@@ -1,16 +1,16 @@
-import { Center, Container, Group, Loader, Stack, Title } from '@mantine/core';
+import { Center, Container, Loader } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React from 'react';
 import { z } from 'zod';
 
 import { ArticleUpsertForm } from '~/components/Article/ArticleUpsertForm';
-import { BackButton } from '~/components/BackButton/BackButton';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const querySchema = z.object({ id: z.number() });
+const querySchema = z.object({ id: z.preprocess(parseNumericString, z.number()) });
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -45,19 +45,13 @@ export default function ArticleEditPage({
 
   return (
     <Container size="lg">
-      <Stack spacing="xl">
-        <Group spacing={4}>
-          <BackButton url={`/articles/${id}`} />
-          <Title>Editing Article</Title>
-        </Group>
-        {isLoading && !data ? (
-          <Center p="xl">
-            <Loader size="lg" />
-          </Center>
-        ) : (
-          <ArticleUpsertForm article={data} />
-        )}
-      </Stack>
+      {isLoading && !data ? (
+        <Center p="xl">
+          <Loader size="lg" />
+        </Center>
+      ) : (
+        <ArticleUpsertForm article={data} />
+      )}
     </Container>
   );
 }

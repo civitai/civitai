@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark } from '@tabler/icons';
+import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { z } from 'zod';
 
@@ -31,17 +32,16 @@ import { upsertArticleInput } from '~/server/schema/article.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = upsertArticleInput.extend({
   categoryId: z.number(),
-  cover: z
-    .array(imageSchema)
-    .transform((val) => {
-      if (val && val.length) return val[0].url;
-    })
-    .nullish(),
+  cover: z.array(imageSchema).transform((val) => {
+    if (val && val.length) return val[0].url;
+    else return '';
+  }),
 });
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -60,6 +60,9 @@ const useStyles = createStyles((theme) => ({
 
 export function ArticleUpsertForm({ article }: Props) {
   const { classes } = useStyles();
+  const queryUtils = trpc.useContext();
+  const router = useRouter();
+
   const defaultValues = {
     ...article,
     title: article?.title ?? '',
@@ -67,7 +70,7 @@ export function ArticleUpsertForm({ article }: Props) {
     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? -1,
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
   };
-  const form = useForm({ schema, defaultValues });
+  const form = useForm({ schema, defaultValues, shouldUnregister: false });
 
   const [publishing, setPublishing] = useState(false);
 
@@ -86,8 +89,22 @@ export function ArticleUpsertForm({ article }: Props) {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
-    console.log({ rest, tags, publishing });
-    // upsertArticleMutation.mutate({ ...rest, tags, publishedAt: publishing ? new Date() : null });
+    upsertArticleMutation.mutate(
+      { ...rest, tags, publishedAt: publishing ? new Date() : null },
+      {
+        async onSuccess(result) {
+          await router.push(`/articles/${result.id}`);
+          await queryUtils.article.getById.invalidate({ id: result.id });
+          await queryUtils.article.getInfinite.invalidate();
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to save article',
+            error: new Error(error.message),
+          });
+        },
+      }
+    );
   };
 
   return (
@@ -97,7 +114,7 @@ export function ArticleUpsertForm({ article }: Props) {
           <Stack spacing="xl">
             <Group spacing={4}>
               <BackButton url="/articles" />
-              <Title>Create an Article</Title>
+              <Title>{article?.id ? 'Editing article' : 'Create an Article'}</Title>
             </Group>
             <InputText
               name="title"
@@ -120,7 +137,8 @@ export function ArticleUpsertForm({ article }: Props) {
               <Button
                 type="submit"
                 variant="default"
-                loading={upsertArticleMutation.isLoading}
+                loading={upsertArticleMutation.isLoading && !publishing}
+                disabled={upsertArticleMutation.isLoading}
                 onClick={() => setPublishing(false)}
                 fullWidth
               >
@@ -128,14 +146,17 @@ export function ArticleUpsertForm({ article }: Props) {
               </Button>
               <Button
                 type="submit"
-                loading={upsertArticleMutation.isLoading}
+                loading={upsertArticleMutation.isLoading && publishing}
+                disabled={upsertArticleMutation.isLoading}
                 onClick={() => setPublishing(true)}
                 fullWidth
               >
                 Publish
               </Button>
               {article?.publishedAt ? (
-                <Text>Published at {formatDate(article.publishedAt)}</Text>
+                <Text size="xs" color="dimmed">
+                  Published at {formatDate(article.publishedAt)}
+                </Text>
               ) : (
                 <Text size="xs" color="dimmed">
                   Your article is currently{' '}
@@ -177,7 +198,14 @@ export function ArticleUpsertForm({ article }: Props) {
               loading={loadingCategories}
               withAsterisk
             />
-            <InputTags name="tags" label="Tags" target={[TagTarget.Article]} />
+            <InputTags
+              name="tags"
+              label="Tags"
+              target={[TagTarget.Article]}
+              filter={(tag) =>
+                data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
+              }
+            />
           </Stack>
         </Grid.Col>
       </Grid>

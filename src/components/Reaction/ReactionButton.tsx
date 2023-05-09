@@ -96,11 +96,18 @@ export function ReactionButton({
     e.preventDefault();
     e.stopPropagation();
     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-    mutate({
-      entityId,
-      entityType,
-      reaction,
-    });
+    mutate(
+      {
+        entityId,
+        entityType,
+        reaction,
+      }
+      // {
+      //   onError(error) {
+      //     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
+      //   },
+      // }
+    );
   };
 
   if (noEmpty && count < 1) return null;

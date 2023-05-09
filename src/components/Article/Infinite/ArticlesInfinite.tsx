@@ -11,24 +11,11 @@ import {
 } from '~/components/Article/article.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { removeEmpty } from '~/utils/object-helpers';
-
-const fakeArticles = Array.from({ length: 10 }, (_, i) => ({
-  id: i + 1,
-  title: 'Lorem ipsum dolor sit amet consectetur adipisicing elit.',
-  cover: `https://picsum.photos/450/450?random=${i}`,
-  publishedAt: new Date(),
-  tags: [
-    { id: i + 1, name: 'Lorem', isCategory: true },
-    { id: i + 2, name: 'ipsum', isCategory: false },
-  ],
-}));
 
 export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
   const { ref, inView } = useInView();
   const articlesFilters = useArticleFilters();
-  const user = useCurrentUser();
 
   const filters = removeEmpty({ ...articlesFilters, ...filterOverrides });
 
@@ -51,12 +38,11 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
         <Center p="xl">
           <Loader size="xl" />
         </Center>
-      ) : !!fakeArticles.length ? (
+      ) : !!articles.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <MasonryColumns
-            // TODO.articles: update when db is ready
-            data={fakeArticles.map((article) => ({ ...article, user: user as any }))}
+            data={articles}
             imageDimensions={(data) => {
               // TODO.articles: check if this is necessary
               // const width = data.image?.width ?? 450;

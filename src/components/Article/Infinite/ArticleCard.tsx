@@ -1,8 +1,9 @@
-import { Badge, Card, Group, Image, Stack, Text } from '@mantine/core';
+import { Badge, Box, Card, Group, Stack, Text } from '@mantine/core';
 import { IconEye, IconHeart } from '@tabler/icons';
 import Link from 'next/link';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ArticleGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -22,7 +23,7 @@ export function ArticleCard({ data, height }: Props) {
             <UserAvatar
               user={user}
               size="sm"
-              subText={publishedAt ? formatDate(publishedAt) : ''}
+              subText={publishedAt ? formatDate(publishedAt) : 'Draft'}
               withUsername
             />
             <ArticleContextMenu article={data} />
@@ -44,7 +45,9 @@ export function ArticleCard({ data, height }: Props) {
               {category.name}
             </Badge>
           )}
-          <Image src={cover} height={height / 2} alt={title} />
+          <Box sx={{ height: height / 2, '& > img': { height: '100%', objectFit: 'cover' } }}>
+            <EdgeImage src={cover} width={450} />
+          </Box>
         </Card.Section>
         <Card.Section py="xs" inheritPadding>
           <Stack spacing={4}>
