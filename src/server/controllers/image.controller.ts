@@ -205,14 +205,16 @@ export const deleteImageHandler = async ({
       },
     });
 
-    await deleteImageById(input);
+    const image = await deleteImageById(input);
 
-    await ctx.track.image({
-      type: 'Delete',
-      imageId: image.id,
-      nsfw: image.nsfw,
-      tags: imageTags.map((x) => x.tagName),
-    });
+    if (image) {
+      await ctx.track.image({
+        type: 'Delete',
+        imageId: image.id,
+        nsfw: image.nsfw,
+        tags: imageTags.map((x) => x.tagName),
+      });
+    }
 
     return image;
   } catch (error) {

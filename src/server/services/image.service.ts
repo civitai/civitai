@@ -331,7 +331,7 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     if (isProd && image && !imageUrlInUse({ url: image.url, id }))
       await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
 
-    await dbWrite.image.delete({ where: { id } });
+    return await dbWrite.image.delete({ where: { id } });
   } catch {
     // Ignore errors
   }
