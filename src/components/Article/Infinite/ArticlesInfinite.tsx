@@ -3,7 +3,7 @@ import { IconCloudOff } from '@tabler/icons';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 
-import { ArticlesCard } from '~/components/Article/Infinite/ArticlesCard';
+import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
 import {
   ArticleQueryParams,
   useArticleFilters,
@@ -15,7 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const fakeArticles = Array.from({ length: 10 }, (_, i) => ({
-  id: i,
+  id: i + 1,
   title: 'Lorem ipsum dolor sit amet consectetur adipisicing elit.',
   cover: `https://picsum.photos/450/450?random=${i}`,
   publishedAt: new Date(),
@@ -55,15 +55,17 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <MasonryColumns
+            // TODO.articles: update when db is ready
             data={fakeArticles.map((article) => ({ ...article, user: user as any }))}
             imageDimensions={(data) => {
+              // TODO.articles: check if this is necessary
               // const width = data.image?.width ?? 450;
               // const height = data.image?.height ?? 450;
               return { width: 450, height: 450 };
             }}
             adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
             maxItemHeight={600}
-            render={ArticlesCard}
+            render={ArticleCard}
             itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (

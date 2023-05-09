@@ -52,6 +52,7 @@ const reports = [
       ReportEntity.CommentV2,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
+      ReportEntity.Article,
     ],
   },
   {
@@ -64,6 +65,7 @@ const reports = [
       ReportEntity.CommentV2,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
+      ReportEntity.Article,
     ],
   },
   {

@@ -65,6 +65,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   withMeta?: boolean;
   reset?: number;
   extra?: React.ReactNode;
+  sortable?: boolean;
 };
 
 //TODO File Safety: Limit to the specific file extensions we want to allow
@@ -76,6 +77,7 @@ export function ImageUpload({
   max = 10,
   hasPrimaryImage,
   withMeta = true,
+  sortable = true,
   reset = 0,
   ...inputWrapperProps
 }: Props) {
@@ -199,12 +201,12 @@ export function ImageUpload({
             onDragStart={handleDragStart}
             onDragCancel={handleDragCancel}
           >
-            <SortableContext items={files.map((x) => x.url)}>
+            <SortableContext items={files.map((x) => x.url)} disabled={!sortable}>
               {files.length > 0 ? (
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: `repeat(3, 1fr)`,
+                    gridTemplateColumns: `repeat(${max > 1 ? 3 : 1}, 1fr)`,
                     gridGap: 10,
                   }}
                 >
@@ -234,6 +236,7 @@ export function ImageUpload({
                         withMeta={withMeta}
                         filesHandler={filesHandler}
                         isPrimary={hasPrimaryImage === true && index === 0}
+                        sortable={sortable}
                       />
                     );
                   })}
@@ -287,6 +290,7 @@ function UploadedImage({
   filesHandler,
   removeImage,
   withMeta,
+  sortable = true,
 }: {
   image: CustomFile;
   index: number;
@@ -294,6 +298,7 @@ function UploadedImage({
   filesHandler: ReturnType<typeof useImageUpload>['filesHandler'];
   removeImage: ReturnType<typeof useCFImageUpload>['removeImage'];
   withMeta?: boolean;
+  sortable?: boolean;
 }) {
   const isError = image.status === 'error';
   const isComplete = image.status === 'complete';
@@ -305,7 +310,7 @@ function UploadedImage({
   }, [image.id, image.analysis, image.status]);
 
   return (
-    <ImageUploadPreview image={image} isPrimary={isPrimary} id={image.url}>
+    <ImageUploadPreview image={image} isPrimary={isPrimary} id={image.url} disabled={!sortable}>
       {showLoading && (
         <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <Overlay blur={2} zIndex={10} color="#000" />

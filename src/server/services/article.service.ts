@@ -196,28 +196,12 @@ export const upsertArticle = async ({
   }
 };
 
-export const getArticleThreadById = async ({ id }: GetByIdInput) => {
+export const deleteArticleById = async ({ id }: GetByIdInput) => {
   try {
-    const article = await dbRead.article.findUnique({
-      where: { id },
-      select: {
-        thread: {
-          select: {
-            comment: {
-              select: {
-                id: true,
-                createdAt: true,
-                content: true,
-                reactions: { select: { reaction: true, id: true } },
-              },
-            },
-          },
-        },
-      },
-    });
+    const article = await dbWrite.article.delete({ where: { id } });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
-    return article.thread;
+    return article;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

@@ -1,16 +1,18 @@
-import { ActionIcon, Card, Group, Image, Menu, Stack, Text } from '@mantine/core';
-import { IconDotsVertical, IconEye, IconHeart } from '@tabler/icons';
+import { Badge, Card, Group, Image, Stack, Text } from '@mantine/core';
+import { IconEye, IconHeart } from '@tabler/icons';
 import Link from 'next/link';
 
-import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ArticleGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { slugit } from '~/utils/string-helpers';
 
-export function ArticlesCard({ data, height }: Props) {
-  const { id, title, cover, publishedAt, user } = data;
+import { ArticleContextMenu } from '../ArticleContextMenu';
+
+export function ArticleCard({ data, height }: Props) {
+  const { id, title, cover, publishedAt, user, tags } = data;
+  const category = tags?.find((tag) => tag.isCategory);
 
   return (
     <Link href={`/articles/${id}/${slugit(title)}`} passHref>
@@ -23,23 +25,25 @@ export function ArticlesCard({ data, height }: Props) {
               subText={publishedAt ? formatDate(publishedAt) : ''}
               withUsername
             />
-            <Menu>
-              <Menu.Target>
-                <ActionIcon
-                  variant="transparent"
-                  p={0}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                >
-                  <IconDotsVertical size={24} />
-                </ActionIcon>
-              </Menu.Target>
-            </Menu>
+            <ArticleContextMenu article={data} />
           </Group>
         </Card.Section>
-        <Card.Section>
+        <Card.Section style={{ position: 'relative' }}>
+          {category && (
+            <Badge
+              size="sm"
+              variant="gradient"
+              gradient={{ from: 'cyan', to: 'blue' }}
+              sx={(theme) => ({
+                position: 'absolute',
+                top: theme.spacing.xs,
+                right: theme.spacing.xs,
+                zIndex: 1,
+              })}
+            >
+              {category.name}
+            </Badge>
+          )}
           <Image src={cover} height={height / 2} alt={title} />
         </Card.Section>
         <Card.Section py="xs" inheritPadding>

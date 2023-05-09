@@ -20,7 +20,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ArticleCreate() {
   return (
-    <Container size="lg">
+    <Container size="lg" py="xl">
       <ArticleUpsertForm />
     </Container>
   );

@@ -5,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import { ArticleSort, BrowsingMode } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type GetInfiniteArticlesSchema = z.infer<typeof getInfiniteArticlesSchema>;
 export const getInfiniteArticlesSchema = getAllQuerySchema.extend({
@@ -22,8 +23,8 @@ export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
-  content: z.string().min(1),
-  cover: z.string().url().nullish(),
+  content: getSanitizedStringSchema(),
+  cover: z.string().min(1),
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),

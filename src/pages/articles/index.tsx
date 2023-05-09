@@ -1,8 +1,8 @@
 import { Group, Stack, Title } from '@mantine/core';
+
 import { Announcements } from '~/components/Announcements/Announcements';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
-
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { SortFilter, PeriodFilter, ViewToggle } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';

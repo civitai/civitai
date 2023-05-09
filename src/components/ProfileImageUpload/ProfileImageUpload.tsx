@@ -8,9 +8,15 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: string;
   onChange?: (value: string) => void;
+  previewWidth?: number;
 };
 
-export function ProfileImageUpload({ value, onChange, ...props }: SimpleImageUploadProps) {
+export function ProfileImageUpload({
+  value,
+  onChange,
+  previewWidth = 96,
+  ...props
+}: SimpleImageUploadProps) {
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
 
@@ -57,7 +63,7 @@ export function ProfileImageUpload({ value, onChange, ...props }: SimpleImageUpl
 
           return (
             <div key={index}>
-              <EdgeImage src={image.url} width={96} />
+              <EdgeImage src={image.previewUrl ?? image.url} width={previewWidth} />
             </div>
           );
         })}
