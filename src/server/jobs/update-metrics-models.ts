@@ -108,7 +108,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT modelVersionId
             FROM resourceReviews
-            WHERE createdDate >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+            WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
           `,
           format: 'JSONEachRow',
         });
@@ -176,7 +176,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT modelId
             FROM modelEngagements
-            WHERE createdDate >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+            WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
             AND type = 'Favorite'
           `,
           format: 'JSONEachRow',
@@ -231,7 +231,7 @@ export const updateMetricsModelJob = createJob(
           query: `
             SELECT DISTINCT entityId AS modelId
             FROM comments
-            WHERE createdDate >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+            WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
             AND type = 'Model'
           `,
           format: 'JSONEachRow',
