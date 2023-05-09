@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import { getReactionsSelect } from '~/server/selectors/reaction.selector';
+import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
@@ -18,6 +18,6 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
     select: userWithCosmeticsSelect,
   },
   reactions: {
-    select: getReactionsSelect,
+    select: getReactionsSelectV2,
   },
 });

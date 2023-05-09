@@ -22,12 +22,14 @@ import { Collection } from '~/components/Collection/Collection';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -53,9 +55,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const fakeArticle = (user?: SessionUser | null) => ({
+const fakeArticle: ArticleGetById = {
   id: 1,
-  user,
   title: 'Article title',
   content: `<h2>Pokemon list 1</h2><p>
   Shieldon kangaskhan escavalier krabby shedinja totodile blitzle gyarados poochyena swellow metapod doduo lucario hoppip venonat solosis rampardos crawdaunt phanpy joltik rapidash garbodor voltorb tympole electivire lairon feraligatr vaporeon wartortle snorlax.
@@ -74,6 +75,8 @@ const fakeArticle = (user?: SessionUser | null) => ({
   </p>`,
   cover: 'https://picsum.photos/1320?random=1',
   publishedAt: new Date(),
+  createdAt: new Date(),
+  updatedAt: new Date(),
   nsfw: true,
   tags: [
     { id: 1, name: 'Lorem', isCategory: true },
@@ -82,7 +85,14 @@ const fakeArticle = (user?: SessionUser | null) => ({
     { id: 4, name: 'sit', isCategory: false },
   ],
   reactions: [],
-});
+  user: {
+    id: 4,
+    username: 'civitai',
+    image: 'https://picsum.photos/200?random=1',
+    deletedAt: null,
+    cosmetics: [],
+  },
+};
 
 export default function ArticleDetailsPage({
   id,
@@ -90,7 +100,7 @@ export default function ArticleDetailsPage({
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
 
-  const { data: article = fakeArticle(currentUser), isLoading } = trpc.article.getById.useQuery({
+  const { data: article = fakeArticle, isLoading } = trpc.article.getById.useQuery({
     id,
   });
 
@@ -130,7 +140,6 @@ export default function ArticleDetailsPage({
               {category && (
                 <>
                   <Divider orientation="vertical" />
-
                   <Link href={`/articles?tags=${category.id}`} passHref>
                     <Badge
                       component="a"
@@ -181,10 +190,7 @@ export default function ArticleDetailsPage({
           <RenderHtml html={article.content} />
           <Divider />
           <Group position="apart" align="flex-start">
-            <ReactionPicker
-              reactions={article.reactions}
-              onSelect={(emoji) => console.log(emoji)}
-            />
+            <Reactions entityType="article" reactions={article.reactions} entityId={article.id} />
             <CreatorCard user={article.user} />
           </Group>
           <Title order={2}>Comments</Title>

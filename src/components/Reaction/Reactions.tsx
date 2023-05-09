@@ -58,7 +58,7 @@ export function PostReactions({
 
 export function Reactions({
   reactions,
-  metrics = {},
+  metrics,
   entityType,
   entityId,
   readonly,
@@ -71,16 +71,18 @@ export function Reactions({
     defaultValue: false,
   });
 
-  const hasAllReactions = Object.entries(metrics).every(([key, value]) => {
-    // ie. converts the key `likeCount` to `Like`
-    const reactionType = capitalize(key).replace(/count/, '');
-    const hasReaction =
-      storedReactions[reactionType] !== undefined
-        ? storedReactions[reactionType]
-        : !!reactions.find((x) => x.reaction === reactionType);
+  const hasAllReactions =
+    !!metrics &&
+    Object.entries(metrics).every(([key, value]) => {
+      // ie. converts the key `likeCount` to `Like`
+      const reactionType = capitalize(key).replace(/count/, '');
+      const hasReaction =
+        storedReactions[reactionType] !== undefined
+          ? storedReactions[reactionType]
+          : !!reactions.find((x) => x.reaction === reactionType);
 
-    return value > 0 || !!storedReactions[reactionType] || hasReaction;
-  });
+      return value > 0 || !!storedReactions[reactionType] || hasReaction;
+    });
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
