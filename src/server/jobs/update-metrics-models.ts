@@ -284,7 +284,7 @@ export const updateMetricsModelJob = createJob(
       async function updateModelMetrics() {
         await dbWrite.$executeRaw`
           INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount")
-          SELECT mv."modelId", mvm.timeframe, SUM(mvm."downloadCount"), COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0), SUM(mvm."ratingCount"), SUM(mvm."favoriteCount"), SUM(mvm."commentCount")
+          SELECT mv."modelId", mvm.timeframe, SUM(mvm."downloadCount"), COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0), SUM(mvm."ratingCount"), MAX(mvm."favoriteCount"), MAX(mvm."commentCount")
           FROM "ModelVersionMetric" mvm
           JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
           GROUP BY mv."modelId", mvm.timeframe

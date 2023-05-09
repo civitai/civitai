@@ -4,7 +4,6 @@ import requestIp from 'request-ip';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { ReviewReactions, ReportReason, ReportStatus, NsfwLevel } from '@prisma/client';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
-import { Session } from 'next-auth';
 
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 export const clickhouse = shouldConnect
