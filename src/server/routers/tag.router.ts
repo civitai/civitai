@@ -64,7 +64,7 @@ export const tagRouter = router({
   getAll: publicProcedure
     .input(getTagsInput.optional())
     .use(applyUserPreferences)
-    .use(cacheIt({ ttl: 60 }))
+    // .use(cacheIt({ ttl: 60 }))
     .query(getAllTagsHandler),
   getTrending: publicProcedure
     .input(getTrendingTagsSchema)

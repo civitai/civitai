@@ -100,7 +100,7 @@ export const getArticlesByCategory = async ({
 }) => {
   input.limit ??= 10;
   let categories = await getTypeCategories({
-    type: 'model',
+    type: 'article',
     excludeIds: input.excludedTagIds,
     limit: input.limit + 1,
     cursor,

@@ -2,6 +2,7 @@ import { Group, Stack, Title } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
+import { ArticleCategoriesInfinite } from '~/components/Article/Categories/ArticleCategoriesInfinite';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { SortFilter, PeriodFilter, ViewToggle } from '~/components/Filters';
@@ -59,7 +60,7 @@ export default function ArticlesPage() {
               </Group>
             </Group>
             {view === 'categories' ? (
-              <Title>Categories view goes here</Title>
+              <ArticleCategoriesInfinite />
             ) : (
               <>
                 <ArticleCategories />

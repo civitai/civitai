@@ -11,7 +11,7 @@ import { slugit } from '~/utils/string-helpers';
 
 import { ArticleContextMenu } from '../ArticleContextMenu';
 
-export function ArticleCard({ data, height }: Props) {
+export function ArticleCard({ data, height = 450 }: Props) {
   const { id, title, cover, publishedAt, user, tags } = data;
   const category = tags?.find((tag) => tag.isCategory);
 
@@ -68,8 +68,6 @@ export function ArticleCard({ data, height }: Props) {
 }
 
 type Props = {
-  index: number;
   data: ArticleGetAll['items'][number];
-  width: number;
-  height: number;
+  height?: number;
 };
