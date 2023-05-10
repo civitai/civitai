@@ -33,7 +33,7 @@ export function ModelCategoriesInfinite({
       isLoading={isLoading || isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      actions={[
+      actions={(items) => [
         {
           label: 'View more',
           href: (category) => `/?tag=${encodeURIComponent(category.name)}&view=feed`,

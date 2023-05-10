@@ -10,6 +10,7 @@ import { useInView } from 'react-intersection-observer';
 import { IconCloudOff } from '@tabler/icons';
 import { MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { IsClient } from '~/components/IsClient/IsClient';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -59,45 +60,47 @@ export default function ImagesInfinite({
   // #endregion
 
   return (
-    <ImagesInfiniteContext.Provider value={filters}>
-      {isLoading ? (
-        <Center p="xl">
-          <Loader />
-        </Center>
-      ) : !!images.length ? (
-        <div style={{ position: 'relative' }}>
-          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryColumns
-            data={images}
-            imageDimensions={(data) => {
-              const width = data?.width ?? 450;
-              const height = data?.height ?? 450;
-              return { width, height };
-            }}
-            maxItemHeight={600}
-            render={ImagesCard}
-            itemId={(data) => data.id}
-          />
-          {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
-              {inView && <Loader />}
-            </Center>
-          )}
-          {!hasNextPage && showEof && <EndOfFeed />}
-        </div>
-      ) : (
-        <Stack align="center" py="lg">
-          <ThemeIcon size={128} radius={100}>
-            <IconCloudOff size={80} />
-          </ThemeIcon>
-          <Text size={32} align="center">
-            No results found
-          </Text>
-          <Text align="center">
-            {"Try adjusting your search or filters to find what you're looking for"}
-          </Text>
-        </Stack>
-      )}
-    </ImagesInfiniteContext.Provider>
+    <IsClient>
+      <ImagesInfiniteContext.Provider value={filters}>
+        {isLoading ? (
+          <Center p="xl">
+            <Loader />
+          </Center>
+        ) : !!images.length ? (
+          <div style={{ position: 'relative' }}>
+            <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+            <MasonryColumns
+              data={images}
+              imageDimensions={(data) => {
+                const width = data?.width ?? 450;
+                const height = data?.height ?? 450;
+                return { width, height };
+              }}
+              maxItemHeight={600}
+              render={ImagesCard}
+              itemId={(data) => data.id}
+            />
+            {hasNextPage && !isLoading && !isRefetching && (
+              <Center ref={ref} sx={{ height: 36 }} mt="md">
+                {inView && <Loader />}
+              </Center>
+            )}
+            {!hasNextPage && showEof && <EndOfFeed />}
+          </div>
+        ) : (
+          <Stack align="center" py="lg">
+            <ThemeIcon size={128} radius={100}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
+            <Text size={32} align="center">
+              No results found
+            </Text>
+            <Text align="center">
+              {"Try adjusting your search or filters to find what you're looking for"}
+            </Text>
+          </Stack>
+        )}
+      </ImagesInfiniteContext.Provider>
+    </IsClient>
   );
 }

@@ -46,6 +46,8 @@ Content containing nudity, sexual situations, provocative/revealing attire, bloo
   - Nationality, ethnicity, or race
   - Gender or sexual orientation
   - Disability or medical conditions
+- Content Duplication and false impersonation.
+  - Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the site.
 
 If you believe your content has been removed unfairly, you can submit an appeal through our [Appeal Form](/appeal) for further review by a team separate from the moderation team.
 

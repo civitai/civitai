@@ -4,22 +4,20 @@ import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ImageCategoriesInfinite } from '~/components/Image/Categories/ImageCategoriesInfinite';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { useImageQueryParams } from '~/components/Image/image.utils';
+import { useImageFilters } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 
 export default function ImagesPage() {
   const currentUser = useCurrentUser();
-  const storedView = useFiltersContext((state) => state.images.view);
-  const { view: queryView, ...filters } = useImageQueryParams();
+  const { view } = useImageFilters('images');
 
-  const view = queryView ?? storedView;
   return (
     <>
       <Meta
@@ -57,14 +55,16 @@ export default function ImagesPage() {
                 {/* <ImageFiltersDropdown /> */}
               </Group>
             </Group>
-            {view === 'categories' ? (
-              <ImageCategoriesInfinite filters={filters} />
-            ) : (
-              <>
-                <ImageCategories />
-                <ImagesInfinite filters={filters} showEof />
-              </>
-            )}
+            <IsClient>
+              {view === 'categories' ? (
+                <ImageCategoriesInfinite />
+              ) : (
+                <>
+                  <ImageCategories />
+                  <ImagesInfinite showEof />
+                </>
+              )}
+            </IsClient>
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

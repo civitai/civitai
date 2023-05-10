@@ -35,7 +35,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { useDidUpdate, useListState, useLocalStorage } from '@mantine/hooks';
+import { UseListStateHandlers, useDidUpdate, useListState, useLocalStorage } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconPencil,
@@ -50,7 +50,6 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { useImageUpload } from '~/hooks/useImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SimpleTag } from '~/server/selectors/tag.selector';
@@ -291,7 +290,7 @@ function UploadedImage({
   image: CustomFile;
   index: number;
   isPrimary: boolean;
-  filesHandler: ReturnType<typeof useImageUpload>['filesHandler'];
+  filesHandler: UseListStateHandlers<CustomFile>;
   removeImage: ReturnType<typeof useCFImageUpload>['removeImage'];
   withMeta?: boolean;
 }) {

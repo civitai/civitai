@@ -11,13 +11,11 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 import trieMemoize from 'trie-memoize';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
-import { constants } from '~/server/common/constants';
 
 type Props<Item> = {
   data: { id: number; name: string; items: Item[] }[];
@@ -26,7 +24,7 @@ type Props<Item> = {
   isLoading?: boolean;
   fetchNextPage?: () => void;
   hasNextPage?: boolean;
-  actions?: CategoryAction[];
+  actions?: CategoryAction[] | ((items: Item[]) => CategoryAction[]);
 };
 
 type CategoryAction = {
@@ -47,33 +45,42 @@ export function CategoryList<Item>({
   actions,
 }: Props<Item>) {
   const { ref, inView } = useInView();
-  const { columnCount } = useMasonryContainerContext();
+  const { columnCount, maxSingleColumnWidth } = useMasonryContainerContext();
 
   useEffect(() => {
     if (inView) fetchNextPage?.();
   }, [fetchNextPage, inView]);
 
   return (
-    <Stack sx={{ position: 'relative' }}>
+    <Stack
+      sx={{
+        position: 'relative',
+        width: columnCount === 1 ? maxSingleColumnWidth : '100%',
+        maxWidth: '100%',
+        margin: '0 auto',
+      }}
+    >
       <LoadingOverlay visible={isLoading ?? false} zIndex={9} />
-      {data.map((category) => (
-        <Box key={category.id}>
-          <Stack spacing={6}>
-            <CategoryTitle
-              id={category.id}
-              name={category.name}
-              actions={actions?.filter((x) => x.inTitle)}
-            />
-            <CategoryCarousel
-              data={category}
-              render={RenderComponent}
-              itemId={itemId}
-              slidesToScroll={columnCount}
-              actions={actions}
-            />
-          </Stack>
-        </Box>
-      ))}
+      {data.map((category) => {
+        const actionableActions = typeof actions === 'function' ? actions(category.items) : actions;
+        return (
+          <Box key={category.id}>
+            <Stack spacing={6}>
+              <CategoryTitle
+                id={category.id}
+                name={category.name}
+                actions={actionableActions?.filter((x) => x.inTitle)}
+              />
+              <CategoryCarousel
+                data={category}
+                render={RenderComponent}
+                itemId={itemId}
+                actions={actionableActions}
+              />
+            </Stack>
+          </Box>
+        );
+      })}
       {hasNextPage && !isLoading && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">
           {inView && <Loader />}
@@ -128,30 +135,31 @@ type CategoryCarouselProps<Item> = {
   data: Props<Item>['data'][0];
   render: Props<Item>['render'];
   itemId?: Props<Item>['itemId'];
-  slidesToScroll?: number;
   actions?: CategoryAction[];
 };
 function CategoryCarousel<Item>({
   data,
   render: RenderComponent,
   itemId,
-  slidesToScroll = 2,
   actions,
 }: CategoryCarouselProps<Item>) {
-  const { theme, classes } = useStyles();
-  const mobile = useMediaQuery(`(max-width: ${theme.breakpoints.sm}px)`);
+  const { classes } = useStyles();
+  const { columnCount } = useMasonryContainerContext();
+  /**
+   * items length + the context menu/buttons item
+   */
+  const totalItems = data.items.length + (actions?.length ? 1 : 0);
 
   return (
     <Box bg="black" mx={-8} p={8} sx={(theme) => ({ borderRadius: theme.radius.md })}>
       <Carousel
         classNames={classes}
         key={data.id}
-        slideSize={constants.cardSizes.image}
-        breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 5 }]}
+        slideSize={`${100 / columnCount}%`}
         slideGap="md"
-        align="start"
-        withControls={data.items.length + (actions?.length ? 1 : 0) > slidesToScroll ? true : false}
-        slidesToScroll={mobile ? 1 : slidesToScroll}
+        align={totalItems <= columnCount ? 'start' : 'end'}
+        withControls={totalItems > columnCount ? true : false}
+        slidesToScroll={columnCount}
         loop
       >
         {data.items.map((item, index) => {

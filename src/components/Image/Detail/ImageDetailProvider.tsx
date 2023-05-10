@@ -8,7 +8,6 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 
 type ImageDetailState = {
   images: ImageV2Model[];

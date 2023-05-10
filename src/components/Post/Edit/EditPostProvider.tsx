@@ -275,7 +275,6 @@ export const EditPostProvider = ({
   const { mutateAsync } = trpc.post.addImage.useMutation();
 
   const upload = useCFUploadStore((state) => state.upload);
-  const clear = useCFUploadStore((state) => state.clear);
 
   const handleUpload = async (
     { postId, modelVersionId, file, ...data }: HandleUploadProps,
@@ -284,7 +283,6 @@ export const EditPostProvider = ({
     await upload(file, async (result) => {
       if (!result.success) return;
       const { url, id, uuid } = result.data;
-      clear((item) => item.uuid === uuid);
       mutateAsync({ ...data, url: id, postId, modelVersionId }).then(cb);
     });
   };
@@ -297,7 +295,6 @@ export const EditPostProvider = ({
   useEffect(() => {
     return () => {
       storeRef.current?.getState().cleanup(); // removes object urls
-      clear(); // removes tracked files
     };
   }, []); //eslint-disable-line
 
