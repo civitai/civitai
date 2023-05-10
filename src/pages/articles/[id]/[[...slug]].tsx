@@ -97,7 +97,7 @@ export default function ArticleDetailsPage({
               {category && (
                 <>
                   <Divider orientation="vertical" />
-                  <Link href={`/articles?tags=${category.id}`} passHref>
+                  <Link href={`/articles?view=feed&tags=${category.id}`} passHref>
                     <Badge
                       component="a"
                       size="sm"
@@ -116,7 +116,7 @@ export default function ArticleDetailsPage({
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link key={tag.id} href={`/articles?tags=${tag.id}`} passHref>
+                      <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
                         <Badge
                           component="a"
                           color="gray"
@@ -127,7 +127,6 @@ export default function ArticleDetailsPage({
                         </Badge>
                       </Link>
                     )}
-                    limit={2}
                     grouped
                   />
                 </>

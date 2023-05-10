@@ -107,7 +107,7 @@ export const getTags = async ({
   } else if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
   else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
   else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
-  // TODO.articles: Missing articleCountAllTimeRank
+  // TODO.justin: Missing articleCountAllTimeRank
 
   const isCategory =
     !categories && !!categoryTags?.length
@@ -337,6 +337,16 @@ export const addTags = async ({ tags, entityIds, entityType }: AdjustTagsSchema)
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled" = false, "needsReview" = false, automated = false
     `);
     updateImageNSFWLevels(entityIds);
+  } else if (entityType === 'article') {
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "TagsOnArticle" ("articleId", "tagId")
+      SELECT
+        a."id", t."id"
+      FROM "Article" a
+      JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
+      WHERE a."id" IN (${entityIds.join(', ')})
+      ON CONFLICT DO NOTHING
+    `);
   } else if (entityType === 'tag') {
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "TagsOnTags" ("fromTagId", "toTagId")

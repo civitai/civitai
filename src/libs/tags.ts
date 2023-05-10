@@ -2,7 +2,7 @@ import { NsfwLevel, TagType } from '@prisma/client';
 import { z } from 'zod';
 import { moderationDisplayNames } from '~/libs/moderation';
 
-export const taggableEntitySchema = z.enum(['model', 'image', 'tag']);
+export const taggableEntitySchema = z.enum(['model', 'image', 'tag', 'article']);
 export type TaggableEntityType = z.infer<typeof taggableEntitySchema>;
 
 export const tagVotableEntitySchema = z.enum(['model', 'image']);

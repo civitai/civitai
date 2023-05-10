@@ -25,16 +25,33 @@ export const getArticles = async ({
   period,
   sort,
   browsingMode,
-  user,
-}: GetInfiniteArticlesSchema & { user?: SessionUser }) => {
+  sessionUser,
+  excludedIds,
+  excludedUserIds,
+  excludedTagIds,
+}: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
-    const isMod = user?.isModerator ?? false;
+    const isMod = sessionUser?.isModerator ?? false;
 
     const AND: Prisma.Enumerable<Prisma.ArticleWhereInput> = [];
 
     if (query) AND.push({ title: { contains: query } });
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
+
+    if (excludedUserIds && excludedUserIds.length) {
+      AND.push({ userId: { notIn: excludedUserIds } });
+    }
+    if (excludedTagIds && excludedTagIds.length) {
+      AND.push({
+        tags: { none: { tagId: { in: excludedTagIds } } },
+      });
+    }
+    if (excludedIds && excludedIds.length) {
+      AND.push({ id: { notIn: excludedIds } });
+    }
+
+    // TODO.justin: add period filter when metrics are in place
 
     const where: Prisma.ArticleFindManyArgs['where'] = {
       publishedAt: isMod ? undefined : { not: null },
@@ -118,7 +135,8 @@ export const getArticlesByCategory = async ({
       getArticles({
         ...input,
         limit: Math.ceil((input.articleLimit ?? 12) * 1.25),
-        user,
+        tags: [c.id],
+        sessionUser: user,
       }).then(({ items }) => ({ ...c, items }))
     )
   );

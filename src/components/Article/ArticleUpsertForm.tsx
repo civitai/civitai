@@ -20,28 +20,27 @@ import { BackButton } from '~/components/BackButton/BackButton';
 import { hiddenLabel, matureLabel } from '~/components/Post/Edit/EditPostControls';
 import {
   Form,
-  InputImageUpload,
   InputCheckbox,
   InputRTE,
   InputSelect,
   InputTags,
   InputText,
   useForm,
+  InputSimpleImageUpload,
 } from '~/libs/form';
 import { upsertArticleInput } from '~/server/schema/article.schema';
-import { imageSchema } from '~/server/schema/image.schema';
 import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = upsertArticleInput.extend({
   categoryId: z.number(),
-  cover: z.array(imageSchema).transform((val) => {
-    if (val && val.length) return val[0].url;
-    else return '';
-  }),
+});
+const querySchema = z.object({
+  category: z.preprocess(parseNumericString, z.number().optional()),
 });
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -62,12 +61,14 @@ export function ArticleUpsertForm({ article }: Props) {
   const { classes } = useStyles();
   const queryUtils = trpc.useContext();
   const router = useRouter();
+  const result = querySchema.safeParse(router.query);
 
+  const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues = {
     ...article,
     title: article?.title ?? '',
     content: article?.content,
-    categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? -1,
+    categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
@@ -181,14 +182,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 </Group>
               }
             />
-            <InputImageUpload
-              name="cover"
-              label="Cover Image"
-              max={1}
-              withMeta={false}
-              sortable={false}
-              withAsterisk
-            />
+            <InputSimpleImageUpload name="cover" label="Cover Image" withAsterisk />
             <InputSelect
               name="categoryId"
               label="Category"

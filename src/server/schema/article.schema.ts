@@ -17,13 +17,17 @@ export const getInfiniteArticlesSchema = getAllQuerySchema.extend({
   tags: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),
+  userIds: z.array(z.number()).optional(),
+  excludedIds: z.array(z.number()).optional(),
 });
 
 export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
-  content: getSanitizedStringSchema(),
+  content: getSanitizedStringSchema().refine((data) => {
+    return data && data.length > 0 && data !== '<p></p>';
+  }, 'Cannot be empty'),
   cover: z.string().min(1),
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),

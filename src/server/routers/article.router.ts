@@ -12,7 +12,7 @@ import {
 export const articleRouter = router({
   getInfinite: publicProcedure
     .input(getInfiniteArticlesSchema)
-    .query(({ input, ctx }) => getArticles({ ...input, user: ctx?.user })),
+    .query(({ input, ctx }) => getArticles({ ...input, sessionUser: ctx?.user })),
   getByCategory: publicProcedure
     .input(getInfiniteArticlesSchema)
     .query(({ input, ctx }) => getArticlesByCategory({ ...input, user: ctx?.user })),

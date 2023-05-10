@@ -39,8 +39,6 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
     maxColumnCount,
   });
 
-  console.log({ columnWidth });
-
   return (
     <Container {...containerProps}>
       <div ref={containerRef} className={classes.container}>

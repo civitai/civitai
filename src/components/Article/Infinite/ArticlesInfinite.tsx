@@ -44,7 +44,7 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
           <MasonryColumns
             data={articles}
             imageDimensions={(data) => {
-              // TODO.articles: check if this is necessary
+              // TODO.justin: check if this is necessary
               // const width = data.image?.width ?? 450;
               // const height = data.image?.height ?? 450;
               return { width: 450, height: 450 };

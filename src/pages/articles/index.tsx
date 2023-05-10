@@ -1,4 +1,4 @@
-import { Group, Stack, Title } from '@mantine/core';
+import { Group, Stack } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
