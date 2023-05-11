@@ -5,6 +5,7 @@ import {
   CommercialUse,
   CheckpointType,
   ModelModifier,
+  AssociationType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -24,7 +25,16 @@ const licensingSchema = z.object({
   allowDifferentLicense: z.boolean().optional(),
 });
 
-export const getAllModelsSchema = licensingSchema.extend({
+export type UserPreferencesForModelsInput = z.infer<typeof userPreferencesForModelsSchema>;
+export const userPreferencesForModelsSchema = z.object({
+  excludedIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  excludedImageTagIds: z.array(z.number()).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
+});
+
+export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModelsSchema).extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
@@ -70,13 +80,9 @@ export const getAllModelsSchema = licensingSchema.extend({
     (val) => val === true || val === 'true',
     z.boolean().optional().default(false)
   ),
-  excludedIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageTagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
   needsReview: z.boolean().optional(),
   earlyAccess: z.boolean().optional(),
+  ids: z.number().array().optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
@@ -239,3 +245,24 @@ export const setModelsCategorySchema = z.object({
   modelIds: z.array(z.number()),
   categoryId: z.number(),
 });
+
+// #region [Associated Models]
+export type FindModelsToAssociateSchema = z.infer<typeof findModelsToAssociateSchema>;
+export const findModelsToAssociateSchema = z.object({
+  query: z.string(),
+  limit: z.number().default(5),
+});
+
+export type GetAssociatedModelsInput = z.infer<typeof getAssociatedModelsSchema>;
+export const getAssociatedModelsSchema = z.object({
+  fromId: z.number(),
+  type: z.nativeEnum(AssociationType),
+});
+
+export type SetAssociatedModelsInput = z.infer<typeof setAssociatedModelsSchema>;
+export const setAssociatedModelsSchema = z.object({
+  fromId: z.number(),
+  type: z.nativeEnum(AssociationType),
+  associatedIds: z.number().array(),
+});
+// #endregion

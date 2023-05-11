@@ -799,6 +799,7 @@ export default function ModelDetailsV2({
             !loadingImages &&
             (!model.locked ? (
               <>
+                <Divider />
                 <Stack spacing="md">
                   <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                     <Group spacing="xs">

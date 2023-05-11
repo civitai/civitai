@@ -50,7 +50,13 @@ import { trpc } from '~/utils/trpc';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel }) {
+export function ModelCategoryCard({
+  data,
+  height,
+}: {
+  data: ModelGetByCategoryModel;
+  height: number;
+}) {
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -226,7 +232,7 @@ export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel }) {
       styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
       sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
-      <MasonryCard shadow="sm" p={0} height={320}>
+      <MasonryCard shadow="sm" p={0} height={height}>
         <NextLink
           href={`/models/${id}/${slugit(name)}`}
           className={classes.link}
