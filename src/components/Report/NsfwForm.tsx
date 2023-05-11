@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { createReportForm } from './create-report-form';
 import { withWatcher } from '~/libs/form/hoc/withWatcher';
 import { withController } from '~/libs/form/hoc/withController';
-import { reportNsfwDetailsSchema } from '~/server/schema/report.schema';
+import { reportNsfwDetailsSchema, reportNsfwSchema } from '~/server/schema/report.schema';
 import { Accordion, Badge, Chip, Group, Input, InputWrapperProps, Text } from '@mantine/core';
 import { entityModerationCategories } from '~/libs/moderation';
 import { InputTextArea } from '~/libs/form';
@@ -26,6 +26,17 @@ export const ModelNsfwForm = createReportForm({
     return (
       <>
         <InputModerationTags type="model" name="tags" label="Select all that apply" required />
+        <InputTextArea name="comment" label="Comment (optional)" />
+      </>
+    );
+  },
+});
+
+export const ArticleNsfwForm = createReportForm({
+  schema: reportNsfwSchema,
+  Element: () => {
+    return (
+      <>
         <InputTextArea name="comment" label="Comment (optional)" />
       </>
     );

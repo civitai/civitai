@@ -97,6 +97,7 @@ export function ArticleUpsertForm({ article }: Props) {
           await router.push(`/articles/${result.id}`);
           await queryUtils.article.getById.invalidate({ id: result.id });
           await queryUtils.article.getInfinite.invalidate();
+          await queryUtils.article.getByCategory.invalidate();
         },
         onError(error) {
           showErrorNotification({

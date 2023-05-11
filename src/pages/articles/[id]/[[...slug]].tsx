@@ -42,10 +42,7 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const result = querySchema.safeParse(ctx.query);
-    if (!result.success) {
-      console.log(result.error.flatten());
-      return { notFound: true };
-    }
+    if (!result.success) return { notFound: true };
 
     if (ssg) await ssg.article.getById.prefetch({ id: result.data.id });
 

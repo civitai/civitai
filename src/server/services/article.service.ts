@@ -9,13 +9,14 @@ import {
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getArticles = async ({
   limit,
@@ -29,27 +30,19 @@ export const getArticles = async ({
   excludedIds,
   excludedUserIds,
   excludedTagIds,
+  userIds,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
 
     const AND: Prisma.Enumerable<Prisma.ArticleWhereInput> = [];
-
     if (query) AND.push({ title: { contains: query } });
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
-
-    if (excludedUserIds && excludedUserIds.length) {
-      AND.push({ userId: { notIn: excludedUserIds } });
-    }
-    if (excludedTagIds && excludedTagIds.length) {
-      AND.push({
-        tags: { none: { tagId: { in: excludedTagIds } } },
-      });
-    }
-    if (excludedIds && excludedIds.length) {
-      AND.push({ id: { notIn: excludedIds } });
-    }
+    if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
+    if (!!excludedIds?.length) AND.push({ id: { notIn: excludedIds } });
+    if (!!userIds?.length) AND.push({ userId: { in: userIds } });
+    if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
 
     // TODO.justin: add period filter when metrics are in place
 
@@ -93,10 +86,14 @@ export const getArticles = async ({
   }
 };
 
-export const getArticleById = async ({ id }: GetByIdInput) => {
+export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   try {
-    const article = await dbRead.article.findUnique({
-      where: { id },
+    const isMod = user?.isModerator ?? false;
+    const article = await dbRead.article.findFirst({
+      where: {
+        id,
+        OR: !isMod ? [{ publishedAt: { not: null } }, { userId: user?.id }] : undefined,
+      },
       select: articleDetailSelect,
     });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
@@ -222,6 +219,47 @@ export const deleteArticleById = async ({ id }: GetByIdInput) => {
     return article;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getDraftArticlesByUserId = async ({
+  userId,
+  page,
+  limit,
+}: GetAllSchema & { userId: number }) => {
+  try {
+    const { take, skip } = getPagination(limit, page);
+    const where: Prisma.ArticleFindManyArgs['where'] = {
+      userId,
+      publishedAt: null,
+    };
+
+    const articles = await dbRead.article.findMany({
+      take,
+      skip,
+      where,
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        createdAt: true,
+        updatedAt: true,
+        tags: {
+          where: { tag: { isCategory: true } },
+          select: { tag: { select: { id: true, name: true } } },
+        },
+      },
+    });
+    const count = await dbRead.article.count({ where });
+
+    const items = articles.map(({ tags, ...article }) => ({
+      ...article,
+      category: tags.at(0)?.tag,
+    }));
+
+    return getPagingData({ items, count }, take, page);
+  } catch (error) {
     throw throwDbError(error);
   }
 };

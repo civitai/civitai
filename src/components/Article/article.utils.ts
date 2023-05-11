@@ -24,6 +24,7 @@ const articleQueryParamSchema = z
     view: z.enum(['categories', 'feed']),
     period: z.nativeEnum(MetricTimeframe),
     sort: z.nativeEnum(ArticleSort),
+    section: z.enum(['published', 'draft']),
   })
   .partial();
 export type ArticleQueryParams = z.output<typeof articleQueryParamSchema>;
@@ -44,7 +45,7 @@ export const useArticleQueryParams = () => {
 };
 
 export const useQueryArticles = (
-  filters?: Partial<GetArticlesByCategorySchema>,
+  filters?: Partial<GetInfiniteArticlesSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
@@ -64,7 +65,7 @@ export const useQueryArticles = (
 };
 
 export const useQueryArticleCategories = (
-  filters?: Partial<GetInfiniteArticlesSchema>,
+  filters?: Partial<GetArticlesByCategorySchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};

@@ -4,13 +4,10 @@ import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
-import {
-  ArticleQueryParams,
-  useArticleFilters,
-  useQueryArticles,
-} from '~/components/Article/article.utils';
+import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
@@ -79,6 +76,6 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
 }
 
 type Props = {
-  filters?: Partial<Omit<ArticleQueryParams, 'view'>>;
+  filters?: Partial<GetInfiniteArticlesSchema>;
   showEof?: boolean;
 };
