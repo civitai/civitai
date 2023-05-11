@@ -107,7 +107,7 @@ export const getTags = async ({
   } else if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
   else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
   else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
-  // TODO.justin: Missing articleCountAllTimeRank
+  else if (sort === TagSort.MostArticles) orderBy = `r."articleCountAllTimeRank"`;
 
   const isCategory =
     !categories && !!categoryTags?.length

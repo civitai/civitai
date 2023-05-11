@@ -1085,6 +1085,7 @@ model TagMetric {
   modelCount    Int             @default(0)
   imageCount    Int             @default(0)
   postCount     Int             @default(0)
+  articleCount  Int             @default(0)
   hiddenCount   Int             @default(0)
   followerCount Int             @default(0)
 
@@ -1534,6 +1535,23 @@ model Article {
   reactions ArticleReaction[]
   tags      TagsOnArticle[]
   reports   ArticleReport[]
+  metrics   ArticleMetric[]
+  rank      ArticleRank?
+}
+
+model ArticleMetric {
+  article      Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  articleId    Int
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+  commentCount Int             @default(0)
+  viewCount    Int             @default(0)
+
+  @@id([articleId, timeframe])
 }
 
 /// @view
@@ -1734,6 +1752,51 @@ model ModelVersionRank {
   ratingAllTimeRank        Int          @default(0)
 }
 
+model ArticleRank {
+  articleId                Int     @id
+  article                  Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  cryCountDayRank          Int     @default(0)
+  cryCountWeekRank         Int     @default(0)
+  cryCountMonthRank        Int     @default(0)
+  cryCountYearRank         Int     @default(0)
+  cryCountAllTimeRank      Int     @default(0)
+  dislikeCountDayRank      Int     @default(0)
+  dislikeCountWeekRank     Int     @default(0)
+  dislikeCountMonthRank    Int     @default(0)
+  dislikeCountYearRank     Int     @default(0)
+  dislikeCountAllTimeRank  Int     @default(0)
+  heartCountDayRank        Int     @default(0)
+  heartCountWeekRank       Int     @default(0)
+  heartCountMonthRank      Int     @default(0)
+  heartCountYearRank       Int     @default(0)
+  heartCountAllTimeRank    Int     @default(0)
+  laughCountDayRank        Int     @default(0)
+  laughCountWeekRank       Int     @default(0)
+  laughCountMonthRank      Int     @default(0)
+  laughCountYearRank       Int     @default(0)
+  laughCountAllTimeRank    Int     @default(0)
+  likeCountDayRank         Int     @default(0)
+  likeCountWeekRank        Int     @default(0)
+  likeCountMonthRank       Int     @default(0)
+  likeCountYearRank        Int     @default(0)
+  likeCountAllTimeRank     Int     @default(0)
+  commentCountDayRank      Int     @default(0)
+  commentCountWeekRank     Int     @default(0)
+  commentCountMonthRank    Int     @default(0)
+  commentCountYearRank     Int     @default(0)
+  commentCountAllTimeRank  Int     @default(0)
+  reactionCountDayRank     Int     @default(0)
+  reactionCountWeekRank    Int     @default(0)
+  reactionCountMonthRank   Int     @default(0)
+  reactionCountYearRank    Int     @default(0)
+  reactionCountAllTimeRank Int     @default(0)
+  viewCountDayRank         Int     @default(0)
+  viewCountWeekRank        Int     @default(0)
+  viewCountMonthRank       Int     @default(0)
+  viewCountYearRank        Int     @default(0)
+  viewCountAllTimeRank     Int     @default(0)
+}
+
 /// @view
 model UserStat {
   user                     User  @relation(fields: [userId], references: [id], onDelete: NoAction)
@@ -1898,6 +1961,11 @@ model TagRank {
   postCountMonthRank       Int @default(0)
   postCountYearRank        Int @default(0)
   postCountAllTimeRank     Int @default(0)
+  articleCountDayRank      Int @default(0)
+  articleCountWeekRank     Int @default(0)
+  articleCountMonthRank    Int @default(0)
+  articleCountYearRank     Int @default(0)
+  articleCountAllTimeRank  Int @default(0)
 
   @@index([tagId])
 }

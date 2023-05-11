@@ -24,6 +24,7 @@ export const getArticles = async ({
   query,
   tags,
   period,
+  periodMode,
   sort,
   browsingMode,
   sessionUser,
@@ -44,7 +45,7 @@ export const getArticles = async ({
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
     if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
 
-    // TODO.justin: add period filter when metrics are in place
+    // TODO.manuel: add period filter when metrics are in place
 
     const where: Prisma.ArticleFindManyArgs['where'] = {
       publishedAt: isMod ? undefined : { not: null },

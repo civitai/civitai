@@ -114,7 +114,7 @@ const deleteReaction = async ({
       return;
     case 'article':
       await dbWrite.articleReaction.deleteMany({ where: { id } });
-      // TODO.justin: queueMetricUpdate?
+      await queueMetricUpdate('Article', entityId);
       return;
     default:
       throw throwBadRequestError();
