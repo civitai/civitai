@@ -16,7 +16,7 @@ export enum ReportEntity {
 const baseDetailSchema = z.object({ comment: z.string().optional() });
 
 export const reportNsfwDetailsSchema = baseDetailSchema.extend({
-  tags: z.string().array().min(1, 'Please select at least one reason'),
+  tags: z.string().array().optional(),
 });
 
 export const reportOwnershipDetailsSchema = baseDetailSchema.extend({

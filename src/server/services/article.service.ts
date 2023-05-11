@@ -25,7 +25,6 @@ export const getArticles = async ({
   tags,
   period,
   sort,
-  browsingMode,
   sessionUser,
   excludedIds,
   excludedUserIds,
@@ -44,15 +43,18 @@ export const getArticles = async ({
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
     if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
 
-    // TODO.manuel: add period filter when metrics are in place
-
     const where: Prisma.ArticleFindManyArgs['where'] = {
       publishedAt: isMod ? undefined : { not: null },
-      AND,
+      AND: AND.length ? AND : undefined,
     };
 
-    const orderBy: Prisma.ArticleFindManyArgs['orderBy'] = {};
-    if (sort === ArticleSort.Newest) orderBy.publishedAt = 'desc';
+    const orderBy: Prisma.ArticleFindManyArgs['orderBy'] = [
+      { publishedAt: { sort: 'desc', nulls: 'last' } },
+    ];
+    if (sort === ArticleSort.MostComments)
+      orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostReactions)
+      orderBy.unshift({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
 
     const articles = await dbRead.article.findMany({
       take,
@@ -65,6 +67,15 @@ export const getArticles = async ({
         publishedAt: true,
         user: { select: userWithCosmeticsSelect },
         tags: { select: { tag: { select: simpleTagSelect } } },
+        // TODO.articles: replace with stats
+        metrics: {
+          where: { timeframe: period },
+          select: {
+            viewCount: true,
+            likeCount: true,
+            commentCount: true,
+          },
+        },
       },
       orderBy,
     });

@@ -2,14 +2,17 @@ import React, { useMemo } from 'react';
 import { createReportForm } from './create-report-form';
 import { withWatcher } from '~/libs/form/hoc/withWatcher';
 import { withController } from '~/libs/form/hoc/withController';
-import { reportNsfwDetailsSchema, reportNsfwSchema } from '~/server/schema/report.schema';
+import { reportNsfwDetailsSchema } from '~/server/schema/report.schema';
 import { Accordion, Badge, Chip, Group, Input, InputWrapperProps, Text } from '@mantine/core';
 import { entityModerationCategories } from '~/libs/moderation';
 import { InputTextArea } from '~/libs/form';
 import { TagVotableEntityType } from '~/libs/tags';
+import { z } from 'zod';
 
 export const ImageNsfwForm = createReportForm({
-  schema: reportNsfwDetailsSchema,
+  schema: reportNsfwDetailsSchema.extend({
+    tags: z.array(z.string()).min(1, 'Please select at least one reason'),
+  }),
   Element: () => {
     return (
       <>
@@ -21,7 +24,9 @@ export const ImageNsfwForm = createReportForm({
 });
 
 export const ModelNsfwForm = createReportForm({
-  schema: reportNsfwDetailsSchema,
+  schema: reportNsfwDetailsSchema.extend({
+    tags: z.array(z.string()).min(1, 'Please select at least one reason'),
+  }),
   Element: () => {
     return (
       <>
@@ -33,7 +38,7 @@ export const ModelNsfwForm = createReportForm({
 });
 
 export const ArticleNsfwForm = createReportForm({
-  schema: reportNsfwSchema,
+  schema: reportNsfwDetailsSchema,
   Element: () => {
     return (
       <>
