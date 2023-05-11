@@ -48,7 +48,7 @@ export function SfwToggle({ children }: { children: React.ReactElement }) {
               <IconLock />
             </ThemeIcon>
             <Text size="sm" weight={500} sx={{ flex: 1 }}>
-              You must be logged in to view adult content
+              You must be logged in to view this content
             </Text>
           </Group>
 

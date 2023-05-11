@@ -25,6 +25,11 @@ export async function getModerationTags() {
   return tags;
 }
 
+export async function getAllowedAnonymousTags() {
+  const cachedTags = await redis.get(`system:anonymous-tags`);
+  return JSON.parse(cachedTags ?? '[]') as number[];
+}
+
 export async function getSystemTags() {
   const cachedTags = await redis.get(`system:system-tags`);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
