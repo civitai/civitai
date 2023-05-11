@@ -1064,7 +1064,7 @@ export const setAssociatedModels = async (
 
   if (!fromModel) throw throwNotFoundError();
   // only allow moderators or model owners to add/remove associated models
-  if (!user?.isModerator || fromModel.userId !== user?.id) throw throwAuthorizationError();
+  if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
   const existingAssociatedModelIds = fromModel.associatedFrom.map((x) => x.toModelId);
   const associationsToRemove = existingAssociatedModelIds.filter(
     (existingToId) => !associatedIds.includes(existingToId)

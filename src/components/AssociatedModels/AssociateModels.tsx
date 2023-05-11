@@ -53,6 +53,7 @@ export function AssociateModels({
     onSuccess: () => {
       queryUtils.model.getAssociatedModelsSimple.setData({ fromId, type }, () => associatedModels);
       queryUtils.model.getAssociatedModelsCardData.invalidate({ fromId, type });
+      setChanged(false);
       onSave?.();
     },
   });
@@ -100,8 +101,8 @@ export function AssociateModels({
     setAssociatedModels(data);
   };
   const handleSave = () => {
-    console.log({ associatedModels });
-    // mutate({ fromId, type, associatedIds: associatedModels.map((x) => x.id) });
+    // console.log({ associatedModels });
+    mutate({ fromId, type, associatedIds: associatedModels.map((x) => x.id) });
   };
 
   return (
