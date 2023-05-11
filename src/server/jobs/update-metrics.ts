@@ -2,6 +2,8 @@ import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { clickhouse } from '~/server/clickhouse/client';
+import { chunk } from 'lodash-es';
 
 const log = createLogger('update-metrics', 'blue');
 
@@ -1140,6 +1142,77 @@ export const updateMetricsJob = createJob(
     };
 
     const updateArticleMetrics = async () => {
+      const viewedArticlesResponse = await clickhouse?.query({
+        query: `
+          WITH affected AS
+          (
+              SELECT DISTINCT entityId
+              FROM uniqueViews
+              WHERE type = 'ArticleView'
+              AND time >= parseDateTimeBestEffortOrNull('${lastUpdate}')
+          )
+          SELECT
+              uv.entityId as entityId,
+              SUM(if(uv.time >= subtractDays(now(), 1), 1, null)) AS viewsDay,
+              SUM(if(uv.time >= subtractDays(now(), 7), 1, null)) AS viewsWeek,
+              SUM(if(uv.time >= subtractMonths(now(), 1), 1, null)) AS viewsMonth,
+              SUM(if(uv.time >= subtractYears(now(), 1), 1, null)) AS viewsYear,
+              COUNT() AS viewsAll
+          FROM affected a
+          JOIN uniqueViews uv ON a.entityId = uv.entityId
+          GROUP BY uv.entityId
+        `,
+        format: 'JSONEachRow',
+      });
+
+      const viewedArticles = (await viewedArticlesResponse?.json()) as [
+        {
+          entityId: number;
+          viewsDay: string;
+          viewsWeek: string;
+          viewsMonth: string;
+          viewsYear: string;
+          viewsAll: string;
+        }
+      ];
+
+      // We batch the affected model versions up when sending it to the db
+      const batchSize = 500;
+      const batches = chunk(viewedArticles, batchSize);
+      for (const batch of batches) {
+        const batchJson = JSON.stringify(batch);
+
+        await dbWrite.$executeRaw`
+          INSERT INTO "ArticleMetric" ("articleId", timeframe, "viewCount")
+          SELECT
+              a.entityId, a.timeframe, a.views
+          FROM
+          (
+              SELECT
+                  CAST(js::json->>'entityId' AS INT) AS entityId,
+                  tf.timeframe,
+                  CAST(
+                    CASE
+                      WHEN tf.timeframe = 'Day' THEN js::json->>'viewsDay'
+                      WHEN tf.timeframe = 'Week' THEN js::json->>'viewsWeek'
+                      WHEN tf.timeframe = 'Month' THEN js::json->>'viewsMonth'
+                      WHEN tf.timeframe = 'Year' THEN js::json->>'viewsYear'
+                      WHEN tf.timeframe = 'AllTime' THEN js::json->>'viewsAll'
+                    END
+                  AS int) as views
+              FROM json_array_elements(${batchJson}::json) js
+              CROSS JOIN (
+                  SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+              ) tf
+          ) a
+          WHERE
+            a.views IS NOT NULL
+            AND a.entityId IN (SELECT id FROM "Article")
+          ON CONFLICT ("articleId", timeframe) DO UPDATE
+            SET "viewCount" = EXCLUDED."viewCount";
+        `;
+      }
+
       await dbWrite.$executeRawUnsafe(`
       WITH recent_engagements AS
       (
