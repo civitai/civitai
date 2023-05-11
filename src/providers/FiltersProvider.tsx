@@ -78,7 +78,7 @@ const articleFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(ArticleSort.MostReactions),
-  view: viewModeSchema.default('categories'),
+  view: viewModeSchema.default('feed'),
 });
 
 export type CookiesState = {

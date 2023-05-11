@@ -25,6 +25,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -78,6 +79,7 @@ export default function ArticleDetailsPage({
   return (
     <>
       {meta}
+      <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
       <Container size="md">
         <Stack spacing="xl">
           <Stack spacing={0}>

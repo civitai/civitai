@@ -1,6 +1,6 @@
-import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import React, { MouseEventHandler, MouseEvent } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
 
 export type Props = {
@@ -11,8 +11,9 @@ export type Props = {
 
 export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
-  const { data: session } = useSession();
-  return !session
+  const user = useCurrentUser();
+
+  return !user
     ? React.cloneElement(children, {
         ...children.props,
         onClick: (e: MouseEvent<HTMLElement>) => {

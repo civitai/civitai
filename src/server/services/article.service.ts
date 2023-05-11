@@ -24,7 +24,6 @@ export const getArticles = async ({
   query,
   tags,
   period,
-  periodMode,
   sort,
   browsingMode,
   sessionUser,

@@ -1,8 +1,10 @@
 import {
   Button,
+  ButtonProps,
   Grid,
   Group,
   Stack,
+  StackProps,
   Text,
   ThemeIcon,
   Title,
@@ -13,7 +15,7 @@ import {
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark } from '@tabler/icons';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -28,6 +30,7 @@ import {
   useForm,
   InputSimpleImageUpload,
 } from '~/libs/form';
+import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -112,7 +115,7 @@ export function ArticleUpsertForm({ article }: Props) {
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Grid gutter="xl">
-        <Grid.Col span={8}>
+        <Grid.Col xs={12} md={8}>
           <Stack spacing="xl">
             <Group spacing={4}>
               <BackButton url="/articles" />
@@ -133,43 +136,22 @@ export function ArticleUpsertForm({ article }: Props) {
             />
           </Stack>
         </Grid.Col>
-        <Grid.Col span={4}>
+        <Grid.Col xs={12} md={4}>
           <Stack className={classes.sidebar} spacing="xl">
-            <Stack spacing={8}>
-              <Button
-                type="submit"
-                variant="default"
-                loading={upsertArticleMutation.isLoading && !publishing}
-                disabled={upsertArticleMutation.isLoading}
-                onClick={() => setPublishing(false)}
-                fullWidth
-              >
-                Save Draft
-              </Button>
-              <Button
-                type="submit"
-                loading={upsertArticleMutation.isLoading && publishing}
-                disabled={upsertArticleMutation.isLoading}
-                onClick={() => setPublishing(true)}
-                fullWidth
-              >
-                Publish
-              </Button>
-              {article?.publishedAt ? (
-                <Text size="xs" color="dimmed">
-                  Published at {formatDate(article.publishedAt)}
-                </Text>
-              ) : (
-                <Text size="xs" color="dimmed">
-                  Your article is currently{' '}
-                  <Tooltip label={hiddenLabel} {...tooltipProps}>
-                    <Text span underline>
-                      hidden
-                    </Text>
-                  </Tooltip>
-                </Text>
-              )}
-            </Stack>
+            <ActionButtons
+              article={article}
+              saveButtonProps={{
+                loading: upsertArticleMutation.isLoading && !publishing,
+                disabled: upsertArticleMutation.isLoading,
+                onClick: () => setPublishing(false),
+              }}
+              publishButtonProps={{
+                loading: upsertArticleMutation.isLoading && publishing,
+                disabled: upsertArticleMutation.isLoading,
+                onClick: () => setPublishing(true),
+              }}
+              sx={hideMobile}
+            />
             <InputCheckbox
               name="nsfw"
               label={
@@ -201,6 +183,20 @@ export function ArticleUpsertForm({ article }: Props) {
                 data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
               }
             />
+            <ActionButtons
+              article={article}
+              saveButtonProps={{
+                loading: upsertArticleMutation.isLoading && !publishing,
+                disabled: upsertArticleMutation.isLoading,
+                onClick: () => setPublishing(false),
+              }}
+              publishButtonProps={{
+                loading: upsertArticleMutation.isLoading && publishing,
+                disabled: upsertArticleMutation.isLoading,
+                onClick: () => setPublishing(true),
+              }}
+              sx={showMobile}
+            />
           </Stack>
         </Grid.Col>
       </Grid>
@@ -209,3 +205,46 @@ export function ArticleUpsertForm({ article }: Props) {
 }
 
 type Props = { article?: ArticleGetById };
+
+function ActionButtons({
+  article,
+  className,
+  saveButtonProps,
+  publishButtonProps,
+  ...stackProps
+}: ActionButtonProps) {
+  return (
+    <Stack spacing={8} {...stackProps}>
+      <Button {...saveButtonProps} type="submit" variant="default" fullWidth>
+        Save Draft
+      </Button>
+      <Button {...publishButtonProps} type="submit" fullWidth>
+        Publish
+      </Button>
+      {article?.publishedAt ? (
+        <Text size="xs" color="dimmed">
+          Published at {formatDate(article.publishedAt)}
+        </Text>
+      ) : (
+        <Text size="xs" color="dimmed">
+          Your article is currently{' '}
+          <Tooltip label={hiddenLabel} {...tooltipProps}>
+            <Text span underline>
+              hidden
+            </Text>
+          </Tooltip>
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+type FormButtonProps = Pick<ButtonProps, 'disabled' | 'loading'> & {
+  onClick: React.MouseEventHandler<HTMLButtonElement>;
+};
+
+type ActionButtonProps = StackProps & {
+  saveButtonProps: FormButtonProps;
+  publishButtonProps: FormButtonProps;
+  article?: ArticleGetById;
+};

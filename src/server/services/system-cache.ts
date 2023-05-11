@@ -26,7 +26,7 @@ export async function getModerationTags() {
 }
 
 export async function getSystemTags() {
-  const cachedTags = await redis.get(`dev:system-tags`);
+  const cachedTags = await redis.get(`system:system-tags`);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
   log('getting system tags');
@@ -34,7 +34,7 @@ export async function getSystemTags() {
     where: { type: TagType.System },
     select: { id: true, name: true },
   });
-  await redis.set(`dev:system-tags`, JSON.stringify(tags), {
+  await redis.set(`system:system-tags`, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 

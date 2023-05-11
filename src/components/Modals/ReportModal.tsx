@@ -134,7 +134,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
       },
       async onSuccess(_, variables) {
         showSuccessNotification({
-          title: 'Model reported',
+          title: 'Resource reported',
           message: 'Your request has been received',
         });
         context.close();
@@ -189,6 +189,20 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               if (modelId) {
                 await queryUtils.model.getAll.invalidate();
               }
+              break;
+            case ReportEntity.Article:
+              queryUtils.article.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) {
+                    if (variables.reason === ReportReason.NSFW) {
+                      old.nsfw = true;
+                    }
+                  }
+                })
+              );
+              await queryUtils.article.getInfinite.invalidate();
+              await queryUtils.article.getByCategory.invalidate();
               break;
             default:
               break;
