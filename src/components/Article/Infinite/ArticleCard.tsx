@@ -1,5 +1,5 @@
 import { Badge, Box, Card, Group, Stack, Text } from '@mantine/core';
-import { IconEye, IconHeart } from '@tabler/icons';
+import { IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons';
 import Link from 'next/link';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -10,10 +10,21 @@ import { formatDate } from '~/utils/date-helpers';
 import { slugit } from '~/utils/string-helpers';
 
 import { ArticleContextMenu } from '../ArticleContextMenu';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function ArticleCard({ data, height = 450 }: Props) {
-  const { id, title, cover, publishedAt, user, tags } = data;
+  const { id, title, cover, publishedAt, user, tags, metrics } = data;
   const category = tags?.find((tag) => tag.isCategory);
+  // TODO.articles: replace with stats values
+  const { likeCount, commentCount, viewCount } = metrics.reduce(
+    (acc, metric) => {
+      acc.likeCount += metric.likeCount;
+      acc.commentCount += metric.commentCount;
+      acc.viewCount += metric.viewCount;
+      return acc;
+    },
+    { likeCount: 0, commentCount: 0, viewCount: 0 }
+  );
 
   return (
     <Link href={`/articles/${id}/${slugit(title)}`} passHref>
@@ -53,11 +64,16 @@ export function ArticleCard({ data, height = 450 }: Props) {
           <Stack spacing={4}>
             <Text lineClamp={2}>{title}</Text>
             <Group position="apart">
-              <IconBadge icon={<IconHeart size={14} />} color="dark">
-                <Text size="xs">10K</Text>
-              </IconBadge>
+              <Group spacing={4}>
+                <IconBadge icon={<IconMoodSmile size={14} />} color="dark">
+                  <Text size="xs">{abbreviateNumber(likeCount)}</Text>
+                </IconBadge>
+                <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
+                  <Text size="xs">{abbreviateNumber(commentCount)}</Text>
+                </IconBadge>
+              </Group>
               <IconBadge icon={<IconEye size={14} />} color="dark">
-                <Text size="xs">2.1M</Text>
+                <Text size="xs">{abbreviateNumber(viewCount)}</Text>
               </IconBadge>
             </Group>
           </Stack>
