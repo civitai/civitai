@@ -1,4 +1,4 @@
-import { ImageSort, PostSort, QuestionSort, BrowsingMode } from './enums';
+import { ImageSort, PostSort, QuestionSort, BrowsingMode, ArticleSort } from './enums';
 import { MetricTimeframe, ModelStatus, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
@@ -21,6 +21,12 @@ export const constants = {
     sort: PostSort.MostReactions,
     period: MetricTimeframe.AllTime,
     browsingMode: BrowsingMode.All,
+    limit: 50,
+  },
+  articleFilterDefaults: {
+    sort: ArticleSort.Newest,
+    period: MetricTimeframe.AllTime,
+    browsingMode: BrowsingMode.SFW,
     limit: 50,
   },
   baseModels: [
@@ -66,6 +72,7 @@ export const constants = {
   cardSizes: {
     model: 320,
     image: 320,
+    articles: 450,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {

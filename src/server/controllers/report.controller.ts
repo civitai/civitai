@@ -47,13 +47,7 @@ export async function createReportHandler({
   }
 }
 
-export async function setReportStatusHandler({
-  input,
-  ctx,
-}: {
-  input: SetReportStatusInput;
-  ctx: DeepNonNullable<Context>;
-}) {
+export async function setReportStatusHandler({ input }: { input: SetReportStatusInput }) {
   try {
     const { id, status } = input;
     const report = await getReportById({
@@ -177,6 +171,20 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        article: {
+          select: {
+            article: {
+              select: {
+                id: true,
+                nsfw: true,
+                title: true,
+                publishedAt: true,
+                tosViolation: true,
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
       },
     });
     return {
@@ -193,6 +201,7 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             modelVersionId: item.image.image.connections?.modelVersionId,
             reviewId: item.image.image.connections?.reviewId,
           },
+          article: item.article?.article,
         };
       }),
       ...result,

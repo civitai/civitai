@@ -62,3 +62,9 @@ export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items']
 type PostRouter = RouterOutput['post'];
 export type PostGetByCategoryModel = PostRouter['getPostsByCategory']['items'][number];
 export type PostGetByCategoryPostModel = PostGetByCategoryModel['items'][number];
+
+type ArticleRouter = RouterOutput['article'];
+export type ArticleGetAll = ArticleRouter['getInfinite'];
+export type ArticleGetById = ArticleRouter['getById'];
+export type ArticleGetByCategoryModel = ArticleRouter['getByCategory']['items'][number];
+export type ArticleGetByCategoryArticleModel = ArticleGetByCategoryModel['items'][number];

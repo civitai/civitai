@@ -5,6 +5,7 @@ export const loginRedirectReasons = {
   'report-content': 'You need to be logged in to report this content',
   'report-model': 'You need to be logged in to report this model',
   'report-review': 'You need to be logged in to report this review',
+  'report-article': 'You need to be logged in to report this article',
   'create-review': 'You need to be logged in to add a review',
   'upload-model': 'You need to be logged in to upload a model',
   'favorite-model': 'You need to be logged in to like a model',
@@ -14,6 +15,7 @@ export const loginRedirectReasons = {
   'hide-content': 'You need to be logged in to hide content',
   'notify-version': 'You need to be logged in to subscribe for notifications',
   'discord-link': 'Login with Discord to link your account',
+  'create-article': 'You need to be logged in to create an article',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

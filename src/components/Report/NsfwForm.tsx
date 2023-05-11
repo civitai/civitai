@@ -7,9 +7,12 @@ import { Accordion, Badge, Chip, Group, Input, InputWrapperProps, Text } from '@
 import { entityModerationCategories } from '~/libs/moderation';
 import { InputTextArea } from '~/libs/form';
 import { TagVotableEntityType } from '~/libs/tags';
+import { z } from 'zod';
 
 export const ImageNsfwForm = createReportForm({
-  schema: reportNsfwDetailsSchema,
+  schema: reportNsfwDetailsSchema.extend({
+    tags: z.array(z.string()).min(1, 'Please select at least one reason'),
+  }),
   Element: () => {
     return (
       <>
@@ -21,11 +24,24 @@ export const ImageNsfwForm = createReportForm({
 });
 
 export const ModelNsfwForm = createReportForm({
-  schema: reportNsfwDetailsSchema,
+  schema: reportNsfwDetailsSchema.extend({
+    tags: z.array(z.string()).min(1, 'Please select at least one reason'),
+  }),
   Element: () => {
     return (
       <>
         <InputModerationTags type="model" name="tags" label="Select all that apply" required />
+        <InputTextArea name="comment" label="Comment (optional)" />
+      </>
+    );
+  },
+});
+
+export const ArticleNsfwForm = createReportForm({
+  schema: reportNsfwDetailsSchema,
+  Element: () => {
+    return (
+      <>
         <InputTextArea name="comment" label="Comment (optional)" />
       </>
     );

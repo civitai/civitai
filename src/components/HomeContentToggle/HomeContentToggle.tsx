@@ -6,6 +6,7 @@ const homeOptions = {
   models: '/',
   images: '/images',
   posts: '/posts',
+  articles: '/articles',
 } as const;
 type HomeOptions = keyof typeof homeOptions;
 
@@ -32,6 +33,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
     { label: 'Models', value: 'models' },
     { label: 'Images', value: 'images' },
     { label: 'Posts', value: 'posts' },
+    { label: 'Articles', value: 'articles' },
   ];
 
   return (
@@ -48,9 +50,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
           },
         },
       })}
-      value={
-        router.pathname === '/images' ? 'images' : router.pathname === '/posts' ? 'posts' : 'models'
-      }
+      value={router.pathname.split('/').pop() || 'models'}
       onChange={(value) => {
         const url = set(value as HomeOptions);
         router.push(url);

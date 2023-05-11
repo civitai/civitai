@@ -4,6 +4,7 @@ import { accountRouter } from './account.router';
 import { announcementRouter } from './announcement.router';
 import { answerRouter } from './answer.router';
 import { apiKeyRouter } from './apiKey.router';
+import { articleRouter } from './article.router';
 import { authRouter } from './auth.router';
 import { commentRouter } from './comment.router';
 import { commentv2Router } from './commentv2.router';
@@ -13,7 +14,7 @@ import { imageRouter } from './image.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
 import { modelRouter } from './model.router';
-import { moderationRouter } from '~/server/routers/moderation.router';
+import { moderationRouter } from './moderation.router';
 import { notificationRouter } from './notification.router';
 import { partnerRouter } from './partner.router';
 import { postRouter } from './post.router';
@@ -33,6 +34,7 @@ export const appRouter = router({
   announcement: announcementRouter,
   answer: answerRouter,
   apiKey: apiKeyRouter,
+  article: articleRouter,
   auth: authRouter,
   comment: commentRouter,
   commentv2: commentv2Router,

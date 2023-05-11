@@ -13,6 +13,7 @@ export const toggleReactionSchema = z.object({
     'image',
     'post',
     'resourceReview',
+    'article',
   ]),
   reaction: z.nativeEnum(ReviewReactions),
 });

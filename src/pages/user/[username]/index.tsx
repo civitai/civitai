@@ -32,6 +32,7 @@ import {
   IconHeart,
   IconMicrophone,
   IconMicrophoneOff,
+  IconNotebook,
   IconPhoto,
   IconStar,
   IconTrash,
@@ -595,6 +596,9 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                     </Tabs.Tab>
                     <Tabs.Tab value="/models" icon={<IconBox size="1rem" />}>
                       Models
+                    </Tabs.Tab>
+                    <Tabs.Tab value="/articles" icon={<IconNotebook size="1rem" />}>
+                      Articles
                     </Tabs.Tab>
                   </Tabs.List>
                 </Stack>

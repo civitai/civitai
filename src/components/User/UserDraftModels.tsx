@@ -160,7 +160,7 @@ export function UserDraftModels() {
               })
             ) : (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <Center py="md">
                     <NoContent message="You have no draft models" />
                   </Center>

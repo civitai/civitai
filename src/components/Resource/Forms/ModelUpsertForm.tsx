@@ -24,6 +24,7 @@ import {
 import { TagSort } from '~/server/common/enums';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { showErrorNotification } from '~/utils/notifications';
+import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -36,9 +37,7 @@ const schema = modelUpsertSchema
     path: ['checkpointType'],
   });
 const querySchema = z.object({
-  category: z.preprocess((arg) => {
-    return !!arg ? Number(arg) : undefined;
-  }, z.number().optional()),
+  category: z.preprocess(parseNumericString, z.number().optional()),
 });
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {

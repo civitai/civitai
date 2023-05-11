@@ -1,0 +1,106 @@
+import { ActionIcon, Menu } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import { NextLink } from '@mantine/next';
+import { IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons';
+import { useRouter } from 'next/router';
+
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { SimpleUser } from '~/server/selectors/user.selector';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+
+export function ArticleContextMenu({ article }: Props) {
+  const queryUtils = trpc.useContext();
+  const router = useRouter();
+  const currentUser = useCurrentUser();
+  const isModerator = currentUser?.isModerator;
+  const isOwner = currentUser?.id === article.user?.id;
+
+  const deleteArticleMutation = trpc.article.delete.useMutation();
+  const handleDeleteArticle = () => {
+    openConfirmModal({
+      title: 'Delete article',
+      children:
+        'Are you sure you want to delete this article? This action is destructive and cannot be reverted.',
+      labels: { cancel: "No, don't delete it", confirm: 'Delete article' },
+      confirmProps: { color: 'red' },
+      onConfirm: () =>
+        deleteArticleMutation.mutate(
+          { id: article.id },
+          {
+            async onSuccess() {
+              showSuccessNotification({
+                title: 'Article deleted',
+                message: 'Successfully deleted article',
+              });
+
+              if (router.pathname === '/articles/[id]/[[...slug]]') await router.push('/articles');
+              await queryUtils.article.getInfinite.invalidate();
+            },
+            onError(error) {
+              showErrorNotification({
+                title: 'Failed to delete article',
+                error: new Error(error.message),
+              });
+            },
+          }
+        ),
+    });
+  };
+
+  return (
+    <Menu position="left-start" withArrow offset={-5} withinPortal>
+      <Menu.Target>
+        <ActionIcon
+          variant="transparent"
+          p={0}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <IconDotsVertical size={24} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        {currentUser && isOwner && (
+          <>
+            <Menu.Item
+              color="red"
+              icon={<IconTrash size={14} stroke={1.5} />}
+              onClick={handleDeleteArticle}
+            >
+              Delete
+            </Menu.Item>
+            <Menu.Item
+              component={NextLink}
+              href={`/articles/${article.id}/edit`}
+              icon={<IconPencil size={14} stroke={1.5} />}
+            >
+              Edit
+            </Menu.Item>
+          </>
+        )}
+        {(!isOwner || isModerator) && (
+          <LoginRedirect reason="report-article">
+            <Menu.Item
+              icon={<IconFlag size={14} stroke={1.5} />}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openContext('report', { entityType: ReportEntity.Article, entityId: article.id });
+              }}
+            >
+              Report article
+            </Menu.Item>
+          </LoginRedirect>
+        )}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
+type Props = { article: { id: number; user: SimpleUser } };

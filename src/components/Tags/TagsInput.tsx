@@ -33,12 +33,13 @@ export function TagsInput({ value = [], onChange, target, filter, ...props }: Ta
   const { classes } = useStyles();
   const [search, setSearch] = useDebouncedState<string>('', 300);
   const [adding, { open, close }] = useDisclosure(false);
+  const trimmedSearch = search.trim().toLowerCase();
 
   const { data, isFetching } = trpc.tag.getAll.useQuery({
     limit: 20,
     entityType: target,
     categories: false,
-    query: search.trim().toLowerCase(),
+    query: trimmedSearch,
   });
   const filteredItems = useMemo(
     () => (filter ? data?.items?.filter(filter) ?? [] : data?.items ?? []),
@@ -59,9 +60,9 @@ export function TagsInput({ value = [], onChange, target, filter, ...props }: Ta
 
   const selectedTags = useMemo(() => value.map((tag) => tag.name), [value]);
   const isNewTag =
-    search &&
-    !selectedTags.includes(search.trim().toLowerCase()) &&
-    filter?.({ name: search.trim().toLowerCase() });
+    !!trimmedSearch &&
+    !selectedTags.includes(trimmedSearch) &&
+    (filter?.({ name: trimmedSearch }) ?? true);
 
   return (
     <Input.Wrapper {...props}>
@@ -128,9 +129,7 @@ export function TagsInput({ value = [], onChange, target, filter, ...props }: Ta
                   'Enter',
                   () => {
                     if (!isNewTag) return;
-                    const existing = filteredItems.find(
-                      (tag) => tag.name === search.trim().toLowerCase()
-                    );
+                    const existing = filteredItems.find((tag) => tag.name === trimmedSearch);
                     handleAddTag({ id: existing?.id, value: existing?.name ?? search });
                   },
                 ],

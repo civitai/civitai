@@ -1,9 +1,9 @@
+import { useRouter } from 'next/router';
+
 import { TagScroller } from '~/components/Tags/TagScroller';
 import { TagSort } from '~/server/common/enums';
-import { trpc } from '~/utils/trpc';
-import { useRouter } from 'next/router';
 import { parseNumericStringArray } from '~/utils/query-string-helpers';
-import { unknown } from 'zod';
+import { trpc } from '~/utils/trpc';
 
 export function ImageCategories() {
   const router = useRouter();
