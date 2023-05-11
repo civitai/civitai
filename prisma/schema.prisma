@@ -567,6 +567,7 @@ model UserActivity {
 
   @@index([userId, createdAt])
   @@index([createdAt])
+  @@index([activity])
 }
 
 enum ReportReason {
@@ -655,6 +656,8 @@ model ImageReport {
   image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
   reportId Int    @unique
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, imageId])
 }
 
 model ArticleReport {
@@ -662,6 +665,8 @@ model ArticleReport {
   article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
   reportId  Int     @unique
   report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, articleId])
 }
 
 model Review {
@@ -776,6 +781,9 @@ model Post {
   imageTags      PostImageTag[]
   tagsComposite  PostTag[]
   tagVotes       TagsOnPostVote[]
+
+  @@index([modelVersionId])
+  @@index([publishedAt])
 }
 
 model PostMetric {
@@ -851,6 +859,7 @@ model Image {
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
+  @@index([userId, postId])
 }
 
 model ImageResource {
@@ -865,6 +874,7 @@ model ImageResource {
 
   @@unique([modelVersionId, name, imageId])
   @@index([imageId], type: Hash)
+  @@index([imageId, modelVersionId])
 }
 
 model ImageMetric {
@@ -1537,6 +1547,7 @@ model Article {
   reports   ArticleReport[]
   metrics   ArticleMetric[]
   rank      ArticleRank?
+  stats     ArticleStat?
 }
 
 model ArticleMetric {
@@ -1636,6 +1647,7 @@ model AnswerRank {
   commentCountAllTimeRank Int
 }
 
+/// @view
 model ModelRank {
   model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
   modelId                  Int   @id
@@ -1690,9 +1702,6 @@ model ModelRank {
   commentCountYearRank     Int   @default(0)
   commentCountAllTimeRank  Int   @default(0)
   newRank                  Int   @default(0)
-
-  @@index([modelId])
-  @@index([ratingAllTimeRank])
 }
 
 /// @view
@@ -1717,6 +1726,7 @@ model ModelReportStat {
   claimUnactioned          Int
 }
 
+/// @view
 model ModelVersionRank {
   modelVersion             ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
   modelVersionId           Int          @id
@@ -1752,6 +1762,53 @@ model ModelVersionRank {
   ratingAllTimeRank        Int          @default(0)
 }
 
+/// @view
+model ArticleStat {
+  articleId            Int     @id
+  article              Article @relation(fields: [articleId], references: [id], onDelete: NoAction)
+  cryCountDay          Int     @default(0)
+  cryCountWeek         Int     @default(0)
+  cryCountMonth        Int     @default(0)
+  cryCountYear         Int     @default(0)
+  cryCountAllTime      Int     @default(0)
+  dislikeCountDay      Int     @default(0)
+  dislikeCountWeek     Int     @default(0)
+  dislikeCountMonth    Int     @default(0)
+  dislikeCountYear     Int     @default(0)
+  dislikeCountAllTime  Int     @default(0)
+  heartCountDay        Int     @default(0)
+  heartCountWeek       Int     @default(0)
+  heartCountMonth      Int     @default(0)
+  heartCountYear       Int     @default(0)
+  heartCountAllTime    Int     @default(0)
+  laughCountDay        Int     @default(0)
+  laughCountWeek       Int     @default(0)
+  laughCountMonth      Int     @default(0)
+  laughCountYear       Int     @default(0)
+  laughCountAllTime    Int     @default(0)
+  likeCountDay         Int     @default(0)
+  likeCountWeek        Int     @default(0)
+  likeCountMonth       Int     @default(0)
+  likeCountYear        Int     @default(0)
+  likeCountAllTime     Int     @default(0)
+  commentCountDay      Int     @default(0)
+  commentCountWeek     Int     @default(0)
+  commentCountMonth    Int     @default(0)
+  commentCountYear     Int     @default(0)
+  commentCountAllTime  Int     @default(0)
+  reactionCountDay     Int     @default(0)
+  reactionCountWeek    Int     @default(0)
+  reactionCountMonth   Int     @default(0)
+  reactionCountYear    Int     @default(0)
+  reactionCountAllTime Int     @default(0)
+  viewCountDay         Int     @default(0)
+  viewCountWeek        Int     @default(0)
+  viewCountMonth       Int     @default(0)
+  viewCountYear        Int     @default(0)
+  viewCountAllTime     Int     @default(0)
+}
+
+/// @view
 model ArticleRank {
   articleId                Int     @id
   article                  Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
@@ -1858,6 +1915,7 @@ model UserStat {
   answerAcceptCountAllTime Int
 }
 
+/// @view
 model UserRank {
   user                         User @relation(fields: [userId], references: [id], onDelete: NoAction)
   userId                       Int  @id
@@ -1897,9 +1955,6 @@ model UserRank {
   answerAcceptCountYearRank    Int  @default(0)
   answerAcceptCountAllTimeRank Int  @default(0)
   leaderboardRank              Int  @default(0)
-
-  @@index([userId])
-  @@index([leaderboardRank])
 }
 
 /// @view
@@ -1933,6 +1988,7 @@ model TagStat {
   postCountAllTime     Int
 }
 
+/// @view
 model TagRank {
   tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
   tagId                    Int @id
@@ -1966,8 +2022,6 @@ model TagRank {
   articleCountMonthRank    Int @default(0)
   articleCountYearRank     Int @default(0)
   articleCountAllTimeRank  Int @default(0)
-
-  @@index([tagId])
 }
 
 /// @view
@@ -2039,6 +2093,7 @@ model ImageStat {
   reactionCountAllTime Int   @default(0)
 }
 
+/// @view
 model ImageRank {
   imageId                  Int   @id
   image                    Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
@@ -2077,9 +2132,6 @@ model ImageRank {
   reactionCountMonthRank   Int   @default(0)
   reactionCountYearRank    Int   @default(0)
   reactionCountAllTimeRank Int   @default(0)
-
-  @@index([imageId])
-  @@index([reactionCountAllTimeRank])
 }
 
 /// @view
@@ -2149,6 +2201,7 @@ model PostStat {
   reactionCountAllTime Int  @default(0)
 }
 
+/// @view
 model PostRank {
   postId                   Int  @id
   post                     Post @relation(fields: [postId], references: [id], onDelete: NoAction)
@@ -2187,9 +2240,6 @@ model PostRank {
   reactionCountMonthRank   Int  @default(0)
   reactionCountYearRank    Int  @default(0)
   reactionCountAllTimeRank Int  @default(0)
-
-  @@index([postId])
-  @@index([reactionCountAllTimeRank])
 }
 
 /// @view

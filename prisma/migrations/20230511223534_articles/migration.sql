@@ -1,12 +1,87 @@
+/*
+  Warnings:
+
+  - This migration handles cleaning up from wonkiness in production...
+
+*/
+
+-- CreateIndex
+CREATE INDEX "Image_userId_postId_idx" ON "Image"("userId", "postId");
+
+-- CreateIndex
+CREATE INDEX "ImageResource_imageId_modelVersionId_idx" ON "ImageResource"("imageId", "modelVersionId");
+
+-- CreateIndex
+CREATE INDEX "Post_modelVersionId_idx" ON "Post"("modelVersionId");
+
+-- CreateIndex
+CREATE INDEX "Post_publishedAt_idx" ON "Post"("publishedAt");
+
+-- CreateIndex
+CREATE INDEX "UserActivity_activity_idx" ON "UserActivity"("activity");
+
+-- AlterTable
+ALTER TABLE "ImageReport" ADD CONSTRAINT "ImageReport_pkey" PRIMARY KEY ("reportId", "imageId");
+
+/*
+  Articles Migration
+*/
+
+
+-- AlterEnum
+ALTER TYPE "TagTarget" ADD VALUE 'Article';
+
 -- AlterTable
 ALTER TABLE "TagMetric" ADD COLUMN     "articleCount" INTEGER NOT NULL DEFAULT 0;
 
 -- AlterTable
-ALTER TABLE "TagRank" ADD COLUMN     "articleCountAllTimeRank" INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN     "articleCountDayRank" INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN     "articleCountMonthRank" INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN     "articleCountWeekRank" INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN     "articleCountYearRank" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Thread" ADD COLUMN     "articleId" INTEGER;
+
+-- CreateTable
+CREATE TABLE "ArticleReport" (
+    "articleId" INTEGER NOT NULL,
+    "reportId" INTEGER NOT NULL,
+
+    CONSTRAINT "ArticleReport_pkey" PRIMARY KEY ("reportId","articleId")
+);
+
+-- CreateTable
+CREATE TABLE "TagsOnArticle" (
+    "articleId" INTEGER NOT NULL,
+    "tagId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "TagsOnArticle_pkey" PRIMARY KEY ("tagId","articleId")
+);
+
+-- CreateTable
+CREATE TABLE "ArticleReaction" (
+    "id" SERIAL NOT NULL,
+    "articleId" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "reaction" "ReviewReactions" NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "ArticleReaction_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Article" (
+    "id" SERIAL NOT NULL,
+    "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3),
+    "nsfw" BOOLEAN NOT NULL DEFAULT false,
+    "tosViolation" BOOLEAN NOT NULL DEFAULT false,
+    "metadata" JSONB,
+    "title" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "cover" TEXT NOT NULL,
+    "publishedAt" TIMESTAMP(3),
+    "userId" INTEGER NOT NULL,
+
+    CONSTRAINT "Article_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "ArticleMetric" (
@@ -22,6 +97,67 @@ CREATE TABLE "ArticleMetric" (
 
     CONSTRAINT "ArticleMetric_pkey" PRIMARY KEY ("articleId","timeframe")
 );
+
+-- Create ArticleStat View
+CREATE OR REPLACE VIEW "ArticleStat" AS
+WITH timeframe_stats AS (
+  SELECT
+		m."articleId",
+        COALESCE(m."heartCount", 0) AS "heartCount",
+        COALESCE(m."likeCount", 0) AS "likeCount",
+        COALESCE(m."dislikeCount", 0) AS "dislikeCount",
+        COALESCE(m."laughCount", 0) AS "laughCount",
+        COALESCE(m."cryCount", 0) AS "cryCount",
+        COALESCE(m."commentCount", 0) AS "commentCount",
+        COALESCE(m."viewCount", 0) AS "viewCount",
+		m.timeframe
+	FROM "ArticleMetric" m
+)
+SELECT
+	"articleId",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountAllTime"
+FROM timeframe_stats ts
+GROUP BY "articleId";
+
 
 -- Create ArticleRank_Live view
 CREATE VIEW "ArticleRank_Live" AS
@@ -180,6 +316,45 @@ FROM "TagStat";
 DROP TABLE IF EXISTS "TagRank";
 CREATE TABLE "TagRank"
   AS SELECT * FROM "TagRank_Live";
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ArticleReport_reportId_key" ON "ArticleReport"("reportId");
+
+-- CreateIndex
+CREATE INDEX "TagsOnArticle_articleId_idx" ON "TagsOnArticle" USING HASH ("articleId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ArticleReaction_articleId_userId_reaction_key" ON "ArticleReaction"("articleId", "userId", "reaction");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Thread_articleId_key" ON "Thread"("articleId");
+
+-- CreateIndex
+CREATE INDEX "Thread_articleId_idx" ON "Thread" USING HASH ("articleId");
+
+-- AddForeignKey
+ALTER TABLE "ArticleReport" ADD CONSTRAINT "ArticleReport_articleId_fkey" FOREIGN KEY ("articleId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ArticleReport" ADD CONSTRAINT "ArticleReport_reportId_fkey" FOREIGN KEY ("reportId") REFERENCES "Report"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TagsOnArticle" ADD CONSTRAINT "TagsOnArticle_articleId_fkey" FOREIGN KEY ("articleId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TagsOnArticle" ADD CONSTRAINT "TagsOnArticle_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "Tag"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Thread" ADD CONSTRAINT "Thread_articleId_fkey" FOREIGN KEY ("articleId") REFERENCES "Article"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ArticleReaction" ADD CONSTRAINT "ArticleReaction_articleId_fkey" FOREIGN KEY ("articleId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ArticleReaction" ADD CONSTRAINT "ArticleReaction_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Article" ADD CONSTRAINT "Article_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ArticleMetric" ADD CONSTRAINT "ArticleMetric_articleId_fkey" FOREIGN KEY ("articleId") REFERENCES "Article"("id") ON DELETE CASCADE ON UPDATE CASCADE;
