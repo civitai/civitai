@@ -1,7 +1,7 @@
 import { Alert, useMantineColorScheme } from '@mantine/core';
-import { env } from 'process';
 import { useEffect } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 declare global {
