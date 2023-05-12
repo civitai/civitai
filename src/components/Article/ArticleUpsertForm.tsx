@@ -20,15 +20,16 @@ import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { hiddenLabel, matureLabel } from '~/components/Post/Edit/EditPostControls';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import {
   Form,
   InputCheckbox,
   InputRTE,
   InputSelect,
+  InputSimpleImageUpload,
   InputTags,
   InputText,
   useForm,
-  InputSimpleImageUpload,
 } from '~/libs/form';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
@@ -75,6 +76,8 @@ export function ArticleUpsertForm({ article }: Props) {
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
+  const { isDirty, isSubmitted } = form.formState;
+  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
 
   const [publishing, setPublishing] = useState(false);
 
@@ -131,7 +134,7 @@ export function ArticleUpsertForm({ article }: Props) {
               name="content"
               label="Content"
               editorSize="xl"
-              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
+              includeControls={['heading', 'formatting', 'list', 'link', 'media']}
               withAsterisk
             />
           </Stack>
@@ -215,12 +218,20 @@ function ActionButtons({
 }: ActionButtonProps) {
   return (
     <Stack spacing={8} {...stackProps}>
-      <Button {...saveButtonProps} type="submit" variant="default" fullWidth>
-        Save Draft
-      </Button>
-      <Button {...publishButtonProps} type="submit" fullWidth>
-        Publish
-      </Button>
+      {article?.publishedAt ? (
+        <Button {...publishButtonProps} type="submit" fullWidth>
+          Save
+        </Button>
+      ) : (
+        <>
+          <Button {...saveButtonProps} type="submit" variant="default" fullWidth>
+            Save Draft
+          </Button>
+          <Button {...publishButtonProps} type="submit" fullWidth>
+            Publish
+          </Button>
+        </>
+      )}
       {article?.publishedAt ? (
         <Text size="xs" color="dimmed">
           Published at {formatDate(article.publishedAt)}

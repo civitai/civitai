@@ -3,7 +3,7 @@ import { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
 
 /** 'dev' AND ('mod' OR 'public' OR etc...)  */
-const featureAvailability = ['dev', 'mod', 'public', 'founder'] as const;
+const featureAvailability = ['dev', 'mod', 'public', 'founder', 'granted'] as const;
 type FeatureAvailability = (typeof featureAvailability)[number];
 
 const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(dictionary: T) =>
@@ -16,6 +16,8 @@ const featureFlags = createTypedDictionary({
   ambientCard: ['public'],
   gallery: ['mod', 'founder'],
   posts: ['mod', 'founder'],
+  articles: ['mod', 'founder', 'granted'],
+  articleCreate: ['mod', 'granted'],
   civitaiLink: ['mod'],
   stripe: ['mod'],
 });
@@ -44,14 +46,15 @@ export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {
 
     const flags = featureFlags[key];
     const devRequirement = flags.includes('dev') ? isDev : flags.length > 0;
-    const otherRequirement =
+    const grantedAccess = flags.includes('granted') ? !!user?.permissions?.includes(key) : false;
+    const roleAccess =
       flags.filter((x) => x !== 'dev').length > 0
         ? (flags.includes('mod') && user?.isModerator) ||
           flags.includes('public') ||
           (!!user?.tier && flags.includes(user.tier as FeatureAvailability))
         : true;
 
-    acc[key] = devRequirement && otherRequirement;
+    acc[key] = devRequirement && (grantedAccess || roleAccess);
 
     return acc;
   }, {} as FeatureFlags);

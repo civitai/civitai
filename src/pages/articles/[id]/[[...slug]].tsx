@@ -28,6 +28,7 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -41,7 +42,11 @@ const querySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx, ssg }) => {
+  useSession: true,
+  resolver: async ({ ctx, ssg, session }) => {
+    const features = getFeatureFlags({ user: session?.user });
+    if (!features.articles) return { notFound: true };
+
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
@@ -144,7 +149,18 @@ export default function ArticleDetailsPage({
           <RenderHtml html={article.content} />
           <Divider />
           <Group position="apart" align="flex-start">
-            <Reactions entityType="article" reactions={article.reactions} entityId={article.id} />
+            <Reactions
+              entityType="article"
+              reactions={article.reactions}
+              entityId={article.id}
+              metrics={{
+                likeCount: article.stats?.likeCountAllTime,
+                dislikeCount: article.stats?.dislikeCountAllTime,
+                heartCount: article.stats?.heartCountAllTime,
+                laughCount: article.stats?.laughCountAllTime,
+                cryCount: article.stats?.cryCountAllTime,
+              }}
+            />
             <CreatorCard user={article.user} />
           </Group>
           <Title order={2}>Comments</Title>

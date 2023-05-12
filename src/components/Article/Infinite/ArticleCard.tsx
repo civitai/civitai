@@ -2,29 +2,24 @@ import { Badge, Box, Card, Group, Stack, Text } from '@mantine/core';
 import { IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons';
 import Link from 'next/link';
 
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ArticleGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
-import { slugit } from '~/utils/string-helpers';
-
-import { ArticleContextMenu } from '../ArticleContextMenu';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { slugit } from '~/utils/string-helpers';
+import { ArticleContextMenu } from '../ArticleContextMenu';
 
 export function ArticleCard({ data, height = 450 }: Props) {
-  const { id, title, cover, publishedAt, user, tags, metrics } = data;
+  const { id, title, cover, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
-  // TODO.articles: replace with stats values
-  const { likeCount, commentCount, viewCount } = metrics.reduce(
-    (acc, metric) => {
-      acc.likeCount += metric.likeCount;
-      acc.commentCount += metric.commentCount;
-      acc.viewCount += metric.viewCount;
-      return acc;
-    },
-    { likeCount: 0, commentCount: 0, viewCount: 0 }
-  );
+  const { commentCount, viewCount, ...reactionStats } = stats || {
+    commentCount: 0,
+    viewCount: 0,
+    likeCount: 0,
+  };
+  const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
 
   return (
     <Link href={`/articles/${id}/${slugit(title)}`} passHref>
@@ -66,7 +61,7 @@ export function ArticleCard({ data, height = 450 }: Props) {
             <Group position="apart">
               <Group spacing={4}>
                 <IconBadge icon={<IconMoodSmile size={14} />} color="dark">
-                  <Text size="xs">{abbreviateNumber(likeCount)}</Text>
+                  <Text size="xs">{abbreviateNumber(reactionCount)}</Text>
                 </IconBadge>
                 <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
                   <Text size="xs">{abbreviateNumber(commentCount)}</Text>

@@ -11,7 +11,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
     <CommentsProvider
       entityType="article"
       entityId={articleId}
-      limit={3}
+      limit={10}
       badges={[{ userId, label: 'op', color: 'violet' }]}
     >
       {({ data, created, isInitialLoading, isFetching }) =>

@@ -5,19 +5,33 @@ import { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
+import { UserDraftArticles } from '~/components/Article/UserDraftArticles';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { UserDraftModels } from '~/components/User/UserDraftModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort } from '~/server/common/enums';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
 import { UserProfileLayout } from './';
-import { UserDraftArticles } from '~/components/Article/UserDraftArticles';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ ctx, session }) => {
+    const features = getFeatureFlags({ user: session?.user });
+    if (!features.articles)
+      return {
+        redirect: {
+          destination: `/user/${ctx.query.username}`,
+          permanent: false,
+        },
+      };
+  },
+});
 
 export default function UserArticlesPage() {
   const currentUser = useCurrentUser();

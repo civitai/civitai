@@ -5,15 +5,31 @@ import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategoriesInfinite } from '~/components/Article/Categories/ArticleCategoriesInfinite';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { SortFilter, PeriodFilter, ViewToggle } from '~/components/Filters';
+import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showMobile, hideMobile } from '~/libs/sx-helpers';
+import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    const features = getFeatureFlags({ user: session?.user });
+    if (!features.articles)
+      return {
+        redirect: {
+          destination: '/',
+          permanent: false,
+        },
+      };
+  },
+});
 
 export default function ArticlesPage() {
   const currentUser = useCurrentUser();
