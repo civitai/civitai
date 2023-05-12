@@ -143,7 +143,7 @@ export function UserImagesPage() {
       period = MetricTimeframe.AllTime,
       sort = ImageSort.Newest,
       username = '',
-      reactions = [],
+      reactions,
       ...query
     },
   } = useImageQueryParams();
@@ -177,7 +177,7 @@ export function UserImagesPage() {
               {viewingReactions && (
                 <Chip.Group
                   spacing={4}
-                  value={reactions}
+                  value={reactions ?? []}
                   onChange={(reactions: ReviewReactions[]) => replace({ reactions })}
                   className={classes.chipGroup}
                   multiple
