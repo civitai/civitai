@@ -17,6 +17,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { getCategoryTags } from '~/server/services/system-cache';
 
 export const getArticles = async ({
   limit,
@@ -88,9 +89,13 @@ export const getArticles = async ({
       nextCursor = nextItem?.id;
     }
 
+    const articleCategories = await getCategoryTags('article');
     const items = articles.map(({ tags, stats, ...article }) => ({
       ...article,
-      tags: tags.map(({ tag }) => tag),
+      tags: tags.map(({ tag }) => ({
+        ...tag,
+        isCategory: articleCategories.some((c) => c.id === tag.id),
+      })),
       stats: stats
         ? {
             commentCount: stats[`commentCount${period}`],
@@ -122,7 +127,14 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
-    return { ...article, tags: article.tags.map(({ tag }) => tag) };
+    const articleCategories = await getCategoryTags('article');
+    return {
+      ...article,
+      tags: article.tags.map(({ tag }) => ({
+        ...tag,
+        isCategory: articleCategories.some((c) => c.id === tag.id),
+      })),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
