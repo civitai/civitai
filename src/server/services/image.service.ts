@@ -636,6 +636,7 @@ type GetAllImagesRaw = {
   userId: number;
   index: number;
   postId: number;
+  postTitle: string;
   modelVersionId: number | null;
   publishedAt: Date | null;
   username: string | null;
@@ -843,6 +844,7 @@ export const getAllImages = async ({
       i."needsReview",
       i."userId",
       i."postId",
+      p."title" "postTitle",
       i."index",
       p."publishedAt",
       p."modelVersionId",

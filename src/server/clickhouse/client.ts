@@ -88,6 +88,9 @@ export class Tracker {
         this.actor.userId = session?.user?.id ?? this.actor.userId;
         return this.actor.userId;
       });
+      this.session.catch(() => {
+        // ignore
+      });
     }
   }
 
