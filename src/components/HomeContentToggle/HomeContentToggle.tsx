@@ -35,7 +35,6 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
     { label: 'Models', value: 'models' },
     { label: 'Images', value: 'images' },
     { label: 'Posts', value: 'posts' },
-    { label: 'Articles', value: 'articles' },
   ];
   if (features.articles) data.push({ label: 'Articles', value: 'articles' });
 
