@@ -96,6 +96,7 @@ import { parseBrowsingMode } from '~/server/createContext';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -436,6 +437,7 @@ export default function ModelDetailsV2({
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
 
   return (
     <>
@@ -794,11 +796,10 @@ export default function ModelDetailsV2({
               }}
             />
           )}
-          {isClient &&
-            !loadingModel &&
-            !loadingImages &&
+          {canLoadBelowTheFold &&
             (!model.locked ? (
               <>
+                <Divider />
                 <Stack spacing="md">
                   <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                     <Group spacing="xs">
@@ -882,7 +883,15 @@ export default function ModelDetailsV2({
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
         ) : null}
       </Container>
-      {isClient && !loadingImages && !model.locked && model.mode !== ModelModifier.TakenDown && (
+      {canLoadBelowTheFold && (
+        <AssociatedModels
+          fromId={model.id}
+          type="Suggested"
+          label="Suggested Resources"
+          ownerId={model.user.id}
+        />
+      )}
+      {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
             modelId={model.id}

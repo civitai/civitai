@@ -50,7 +50,13 @@ import { trpc } from '~/utils/trpc';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel }) {
+export function ModelCategoryCard({
+  data,
+  height,
+}: {
+  data: ModelGetByCategoryModel;
+  height: number;
+}) {
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -226,13 +232,19 @@ export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel }) {
       styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
       sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
-      <MasonryCard shadow="sm" p={0} height={320}>
+      <MasonryCard
+        shadow="sm"
+        p={0}
+        // height={height}
+        style={{ paddingTop: '100%', position: 'relative' }}
+      >
         <NextLink
           href={`/models/${id}/${slugit(name)}`}
           className={classes.link}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
           }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         >
           <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
           <ImageGuard

@@ -162,7 +162,7 @@ const useStyles = createStyles((theme) => {
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function AmbientModelCard({ data, width, height }: Props) {
+export function AmbientModelCard({ data, height }: Props) {
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const hiddenQuery = router.query.hidden === 'true';
@@ -533,6 +533,5 @@ export function AmbientModelCard({ data, width, height }: Props) {
 type Props = {
   index: number;
   data: ModelGetAll['items'][number];
-  width: number;
   height: number;
 };

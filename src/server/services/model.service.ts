@@ -1,4 +1,12 @@
-import { GetModelsWithCategoriesSchema, SetModelsCategoryInput } from './../schema/model.schema';
+import {
+  FindModelsToAssociateSchema,
+  GetAssociatedModelsInput,
+  GetModelsWithCategoriesSchema,
+  SetAssociatedModelsInput,
+  SetModelsCategoryInput,
+  UserPreferencesForModelsInput,
+  getAllModelsSchema,
+} from './../schema/model.schema';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -38,12 +46,17 @@ import { getImagesForModelVersion, ingestNewImages } from '~/server/services/ima
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getCategoryTags } from '~/server/services/system-cache';
+import { associatedResourceSelect } from '~/server/selectors/model.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -66,7 +79,20 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
 };
 
 export const getModels = async <TSelect extends Prisma.ModelSelect>({
-  input: {
+  input,
+  select,
+  user: sessionUser,
+  count = false,
+}: {
+  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+    take?: number;
+    skip?: number;
+  };
+  select: TSelect;
+  user?: SessionUser;
+  count?: boolean;
+}) => {
+  const {
     take,
     skip,
     cursor,
@@ -78,7 +104,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     baseModels,
     types,
     sort,
-    period = MetricTimeframe.AllTime,
+    period,
     periodMode,
     rating,
     favorites,
@@ -96,20 +122,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     ids,
     needsReview,
     earlyAccess,
-  },
-  select,
-  user: sessionUser,
-  count = false,
-}: {
-  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
-    take?: number;
-    skip?: number;
-    ids?: number[];
-  };
-  select: TSelect;
-  user?: SessionUser;
-  count?: boolean;
-}) => {
+  } = input;
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
@@ -914,3 +927,168 @@ export const setModelsCategory = async ({
     throw throwDbError(error);
   }
 };
+
+// #region [associated models]
+export const getAssociatedModelsCardData = async (
+  { fromId, type, ...userPreferences }: GetAssociatedModelsInput & UserPreferencesForModelsInput,
+  user?: SessionUser
+) => {
+  const period = MetricTimeframe.AllTime;
+  const associatedModels = await dbRead.modelAssociations.findMany({
+    where: { fromModelId: fromId, type },
+    orderBy: { index: 'asc' },
+    select: { toModelId: true },
+  });
+  const ids = associatedModels.map((x) => x.toModelId);
+  const input = getAllModelsSchema.parse({ ...userPreferences, ids });
+  const { items } = await getModels({
+    input,
+    user,
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      status: true,
+      createdAt: true,
+      lastVersionAt: true,
+      publishedAt: true,
+      locked: true,
+      earlyAccessDeadline: true,
+      mode: true,
+      rank: {
+        select: {
+          [`downloadCount${period}`]: true,
+          [`favoriteCount${period}`]: true,
+          [`commentCount${period}`]: true,
+          [`ratingCount${period}`]: true,
+          [`rating${period}`]: true,
+        },
+      },
+      modelVersions: {
+        orderBy: { index: 'asc' },
+        take: 1,
+        select: {
+          id: true,
+          earlyAccessTimeFrame: true,
+          createdAt: true,
+        },
+      },
+      user: { select: simpleUserSelect },
+      hashes: {
+        select: modelHashSelect,
+        where: {
+          hashType: ModelHashType.SHA256,
+          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+        },
+      },
+    },
+  });
+
+  // sort models
+  const models = ids.map((id) => items.find((x) => x.id === id)).filter(isDefined);
+
+  const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+  const images = !!modelVersionIds.length
+    ? await getImagesForModelVersion({
+        modelVersionIds,
+        excludedTagIds: input.excludedImageTagIds,
+        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+        excludedUserIds: input.excludedUserIds,
+        currentUserId: user?.id,
+      })
+    : [];
+
+  return models
+    .map(({ hashes, modelVersions, rank, ...model }) => {
+      const [version] = modelVersions;
+      if (!version) return null;
+      const [image] = images.filter((i) => i.modelVersionId === version.id);
+      const showImageless =
+        (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
+      if (!image && !showImageless) return null;
+
+      return {
+        ...model,
+        hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+        rank: {
+          downloadCount: rank?.downloadCountAllTime ?? 0,
+          favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
+          commentCount: rank?.[`commentCount${period}`] ?? 0,
+          ratingCount: rank?.[`ratingCount${period}`] ?? 0,
+          rating: rank?.[`rating${period}`] ?? 0,
+        },
+        image:
+          model.mode !== ModelModifier.TakenDown
+            ? (image as (typeof images)[0] | undefined)
+            : undefined,
+        // earlyAccess,
+      };
+    })
+    .filter(isDefined);
+};
+
+export const findModelsToAssociate = async (args: FindModelsToAssociateSchema) => {
+  const validated = getAllModelsSchema.parse(args);
+  const { items } = await getModels({
+    input: { ...validated, take: validated.limit },
+    select: associatedResourceSelect,
+  });
+  return items;
+};
+
+export const getAssociatedModelsSimple = async ({ fromId, type }: GetAssociatedModelsInput) => {
+  const associations = await dbWrite.modelAssociations.findMany({
+    where: { fromModelId: fromId, type },
+    orderBy: { index: 'asc' },
+    select: {
+      toModel: {
+        select: associatedResourceSelect,
+      },
+    },
+  });
+
+  return associations.map(({ toModel }) => toModel);
+};
+
+export const setAssociatedModels = async (
+  { fromId, type, associatedIds }: SetAssociatedModelsInput,
+  user?: SessionUser
+) => {
+  const fromModel = await dbWrite.model.findUnique({
+    where: { id: fromId },
+    select: {
+      userId: true,
+      associations: {
+        where: { type },
+        select: { toModelId: true },
+        orderBy: { index: 'asc' },
+      },
+    },
+  });
+
+  if (!fromModel) throw throwNotFoundError();
+  // only allow moderators or model owners to add/remove associated models
+  if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
+  const existingAssociatedModelIds = fromModel.associations.map((x) => x.toModelId);
+  const associationsToRemove = existingAssociatedModelIds.filter(
+    (existingToId) => !associatedIds.includes(existingToId)
+  );
+
+  return await dbWrite.$transaction([
+    // remove associated models not included in payload
+    dbWrite.modelAssociations.deleteMany({
+      where: { fromModelId: fromId, type, toModelId: { in: associationsToRemove } },
+    }),
+    // add or update associated models
+    ...associatedIds.map((toId, index) => {
+      const data = { fromModelId: fromId, toModelId: toId, type };
+      return dbWrite.modelAssociations.upsert({
+        where: { fromModelId_toModelId_type: { ...data } },
+        update: { index },
+        create: { ...data, associatedById: user?.id, index },
+      });
+    }),
+  ]);
+};
+// #endregion

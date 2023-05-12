@@ -1,70 +1,8 @@
-import { Prisma } from '@prisma/client';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { MetricTimeframe, ModelHashType, Prisma } from '@prisma/client';
+import { ModelFileType } from '~/server/common/constants';
+import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
-
-export const getAllModelsSelect = Prisma.validator<Prisma.ModelSelect>()({
-  id: true,
-  name: true,
-  type: true,
-  nsfw: true,
-  status: true,
-  allowNoCredit: true,
-  allowCommercialUse: true,
-  allowDerivatives: true,
-  allowDifferentLicense: true,
-  licenses: true,
-  modelVersions: {
-    orderBy: { index: 'asc' },
-    take: 1,
-    select: {
-      images: {
-        orderBy: {
-          index: 'asc',
-        },
-        take: 1,
-        select: {
-          image: {
-            select: imageSelect,
-          },
-        },
-      },
-    },
-  },
-  rank: {
-    select: {
-      downloadCountDay: true,
-      downloadCountWeek: true,
-      downloadCountMonth: true,
-      downloadCountYear: true,
-      downloadCountAllTime: true,
-      commentCountDay: true,
-      commentCountWeek: true,
-      commentCountMonth: true,
-      commentCountYear: true,
-      commentCountAllTime: true,
-      favoriteCountDay: true,
-      favoriteCountWeek: true,
-      favoriteCountMonth: true,
-      favoriteCountYear: true,
-      favoriteCountAllTime: true,
-      ratingCountDay: true,
-      ratingCountWeek: true,
-      ratingCountMonth: true,
-      ratingCountYear: true,
-      ratingCountAllTime: true,
-      ratingDay: true,
-      ratingWeek: true,
-      ratingMonth: true,
-      ratingYear: true,
-      ratingAllTime: true,
-      downloadCountAllTimeRank: true,
-      favoriteCountAllTimeRank: true,
-      commentCountAllTimeRank: true,
-      ratingCountAllTimeRank: true,
-      ratingAllTimeRank: true,
-    },
-  },
-});
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 
 export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -212,3 +150,15 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   },
   tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
 });
+
+export const associatedResourceSelect = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  type: true,
+  nsfw: true,
+  user: { select: simpleUserSelect },
+});
+const associatedResource = Prisma.validator<Prisma.ModelArgs>()({
+  select: associatedResourceSelect,
+});
+export type AssociatedResourceModel = Prisma.ModelGetPayload<typeof associatedResource>;

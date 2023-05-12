@@ -19,7 +19,7 @@ import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryC
 
 type Props<Item> = {
   data: { id: number; name: string; items: Item[] }[];
-  render: React.ComponentType<{ data: Item }>;
+  render: React.ComponentType<{ data: Item; height: number; index: number }>;
   itemId?: (data: Item) => string | number;
   isLoading?: boolean;
   fetchNextPage?: () => void;
@@ -151,7 +151,15 @@ function CategoryCarousel<Item>({
   const totalItems = data.items.length + (actions?.length ? 1 : 0);
 
   return (
-    <Box bg="black" mx={-8} p={8} sx={(theme) => ({ borderRadius: theme.radius.md })}>
+    <Box
+      // bg="black"
+      mx={-8}
+      p={8}
+      sx={(theme) => ({
+        borderRadius: theme.radius.md,
+        background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+      })}
+    >
       <Carousel
         classNames={classes}
         key={data.id}
@@ -166,7 +174,7 @@ function CategoryCarousel<Item>({
           const key = itemId ? itemId(item) : index;
           return (
             <Carousel.Slide key={key} id={key.toString()}>
-              {createRenderElement(RenderComponent, index, item)}
+              {createRenderElement(RenderComponent, index, item, 320)}
             </Carousel.Slide>
           );
         })}
@@ -214,13 +222,15 @@ const useStyles = createStyles((theme) => ({
   },
 
   moreActions: {
-    width: '100%',
-    flex: '1',
+    // width: '100%',
+    // flex: '1',
   },
 }));
 
 // supposedly ~5.5x faster than createElement without the memo
 const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap],
-  (RenderComponent, index, data) => <RenderComponent data={data} />
+  [OneKeyMap, {}, WeakMap, OneKeyMap],
+  (RenderComponent, index, data, height) => (
+    <RenderComponent index={index} data={data} height={height} />
+  )
 );
