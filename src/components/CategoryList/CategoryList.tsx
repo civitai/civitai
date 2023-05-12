@@ -222,8 +222,8 @@ const useStyles = createStyles((theme) => ({
   },
 
   moreActions: {
-    // width: '100%',
-    // flex: '1',
+    width: '100%',
+    flex: '1',
   },
 }));
 
