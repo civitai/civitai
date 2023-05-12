@@ -946,6 +946,7 @@ model Tag {
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
+  adminOnly  Boolean     @default(false)
 
   toTags               TagsOnTags[]       @relation("TagsOnTags_fromTag")
   fromTags             TagsOnTags[]       @relation("TagsOnTags_toTag")

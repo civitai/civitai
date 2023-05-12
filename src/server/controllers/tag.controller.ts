@@ -34,7 +34,7 @@ export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTag
   }
 };
 
-export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => {
+export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; ctx: Context }) => {
   try {
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
@@ -43,6 +43,7 @@ export const getAllTagsHandler = async ({ input }: { input?: GetTagsInput }) => 
       ...input,
       take,
       skip,
+      includeAdminTags: !!ctx.user?.isModerator,
     });
 
     return getPagingData(results, take, page);
