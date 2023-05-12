@@ -16,7 +16,7 @@ const featureFlags = createTypedDictionary({
   ambientCard: ['public'],
   gallery: ['mod', 'founder'],
   posts: ['mod', 'founder'],
-  articles: ['mod', 'granted'],
+  articles: ['mod', 'founder', 'granted'],
   articleCreate: ['mod', 'granted'],
   civitaiLink: ['mod'],
   stripe: ['mod'],
@@ -46,17 +46,15 @@ export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {
 
     const flags = featureFlags[key];
     const devRequirement = flags.includes('dev') ? isDev : flags.length > 0;
-    const grantedRequirement = flags.includes('granted')
-      ? !!user?.permissions?.includes(key)
-      : false;
-    const otherRequirement =
+    const grantedAccess = flags.includes('granted') ? !!user?.permissions?.includes(key) : false;
+    const roleAccess =
       flags.filter((x) => x !== 'dev').length > 0
         ? (flags.includes('mod') && user?.isModerator) ||
           flags.includes('public') ||
           (!!user?.tier && flags.includes(user.tier as FeatureAvailability))
         : true;
 
-    acc[key] = devRequirement && otherRequirement && grantedRequirement;
+    acc[key] = devRequirement && (grantedAccess || roleAccess);
 
     return acc;
   }, {} as FeatureFlags);
