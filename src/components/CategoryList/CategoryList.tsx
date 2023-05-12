@@ -1,4 +1,3 @@
-import OneKeyMap from '@essentials/one-key-map';
 import { Carousel } from '@mantine/carousel';
 import {
   Box,
@@ -14,12 +13,13 @@ import {
 import { NextLink } from '@mantine/next';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
-import trieMemoize from 'trie-memoize';
+import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 
 type Props<Item> = {
   data: { id: number; name: string; items: Item[] }[];
-  render: React.ComponentType<{ data: Item; height: number; index: number }>;
+  render: React.ComponentType<MasonryRenderItemProps<Item>>;
   itemId?: (data: Item) => string | number;
   isLoading?: boolean;
   fetchNextPage?: () => void;
@@ -46,6 +46,7 @@ export function CategoryList<Item>({
 }: Props<Item>) {
   const { ref, inView } = useInView();
   const { columnCount, maxSingleColumnWidth } = useMasonryContainerContext();
+  const { classes } = useStyles();
 
   useEffect(() => {
     if (inView) fetchNextPage?.();
@@ -71,12 +72,51 @@ export function CategoryList<Item>({
                 name={category.name}
                 actions={actionableActions?.filter((x) => x.inTitle)}
               />
-              <CategoryCarousel
-                data={category}
-                render={RenderComponent}
-                itemId={itemId}
-                actions={actionableActions}
-              />
+              <Box
+                mx={-8}
+                p={8}
+                sx={(theme) => ({
+                  borderRadius: theme.radius.md,
+                  background:
+                    theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+                })}
+              >
+                <MasonryCarousel
+                  data={category.items}
+                  render={RenderComponent}
+                  itemId={itemId}
+                  extra={
+                    actionableActions ? (
+                      <Carousel.Slide key="view-more">
+                        <Stack h="100%" spacing="md">
+                          {actionableActions.map((action, index) => (
+                            <Button
+                              key={index}
+                              className={classes.moreActions}
+                              component={NextLink}
+                              href={
+                                typeof action.href === 'function'
+                                  ? action.href(category)
+                                  : action.href
+                              }
+                              variant="outline"
+                              fullWidth
+                              radius="md"
+                              size="lg"
+                              rightIcon={action.icon}
+                              shallow={action.shallow}
+                            >
+                              {typeof action.label === 'function'
+                                ? action.label(category)
+                                : action.label}
+                            </Button>
+                          ))}
+                        </Stack>
+                      </Carousel.Slide>
+                    ) : null
+                  }
+                />
+              </Box>
             </Stack>
           </Box>
         );
@@ -131,106 +171,9 @@ function CategoryTitle({
   );
 }
 
-type CategoryCarouselProps<Item> = {
-  data: Props<Item>['data'][0];
-  render: Props<Item>['render'];
-  itemId?: Props<Item>['itemId'];
-  actions?: CategoryAction[];
-};
-function CategoryCarousel<Item>({
-  data,
-  render: RenderComponent,
-  itemId,
-  actions,
-}: CategoryCarouselProps<Item>) {
-  const { classes } = useStyles();
-  const { columnCount } = useMasonryContainerContext();
-  /**
-   * items length + the context menu/buttons item
-   */
-  const totalItems = data.items.length + (actions?.length ? 1 : 0);
-
-  return (
-    <Box
-      // bg="black"
-      mx={-8}
-      p={8}
-      sx={(theme) => ({
-        borderRadius: theme.radius.md,
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-      })}
-    >
-      <Carousel
-        classNames={classes}
-        key={data.id}
-        slideSize={`${100 / columnCount}%`}
-        slideGap="md"
-        align={totalItems <= columnCount ? 'start' : 'end'}
-        withControls={totalItems > columnCount ? true : false}
-        slidesToScroll={columnCount}
-        loop
-      >
-        {data.items.map((item, index) => {
-          const key = itemId ? itemId(item) : index;
-          return (
-            <Carousel.Slide key={key} id={key.toString()}>
-              {createRenderElement(RenderComponent, index, item, 320)}
-            </Carousel.Slide>
-          );
-        })}
-        {actions && (
-          <Carousel.Slide key="view-more">
-            <Stack h="100%" spacing="md">
-              {actions.map((action, index) => (
-                <Button
-                  key={index}
-                  className={classes.moreActions}
-                  component={NextLink}
-                  href={typeof action.href === 'function' ? action.href(data) : action.href}
-                  variant="outline"
-                  fullWidth
-                  radius="md"
-                  size="lg"
-                  rightIcon={action.icon}
-                  shallow={action.shallow}
-                >
-                  {typeof action.label === 'function' ? action.label(data) : action.label}
-                </Button>
-              ))}
-            </Stack>
-          </Carousel.Slide>
-        )}
-      </Carousel>
-    </Box>
-  );
-}
-
 const useStyles = createStyles((theme) => ({
-  container: {
-    minHeight: 200,
-  },
-  control: {
-    svg: {
-      width: 32,
-      height: 32,
-
-      [theme.fn.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-  },
-
   moreActions: {
     width: '100%',
     flex: '1',
   },
 }));
-
-// supposedly ~5.5x faster than createElement without the memo
-const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap, OneKeyMap],
-  (RenderComponent, index, data, height) => (
-    <RenderComponent index={index} data={data} height={height} />
-  )
-);

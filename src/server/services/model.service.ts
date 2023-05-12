@@ -940,7 +940,9 @@ export const getAssociatedModelsCardData = async (
     select: { toModelId: true },
   });
   const ids = associatedModels.map((x) => x.toModelId);
+  if (!ids.length) return [];
   const input = getAllModelsSchema.parse({ ...userPreferences, ids });
+
   const { items } = await getModels({
     input,
     user,
