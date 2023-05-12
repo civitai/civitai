@@ -6,6 +6,7 @@ import {
   Prisma,
   ReportReason,
   ReportStatus,
+  ReviewReaction,
   ReviewReactions,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
@@ -798,9 +799,7 @@ export const getAllImages = async ({
   }
 
   if (userId && !!reactions?.length) {
-    AND.push(
-      Prisma.sql`ir."userId" = ${userId} AND ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`
-    );
+    AND.push(Prisma.sql`ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`);
   }
 
   const includeRank = cursorProp?.startsWith('r.');
@@ -817,10 +816,10 @@ export const getAllImages = async ({
       !userId
         ? Prisma.sql``
         : Prisma.sql`LEFT JOIN (
-      SELECT "imageId", jsonb_agg(reaction) "reactions", "userId"
+      SELECT "imageId", jsonb_agg(reaction) "reactions"
       FROM "ImageReaction"
       WHERE "userId" = ${userId}
-      GROUP BY "imageId", "userId"
+      GROUP BY "imageId"
     ) ir ON ir."imageId" = i.id`
     }
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -1483,7 +1482,11 @@ export const getImagesByCategory = async ({
       .filter((x) => x.tagId === c.id)
       .map((x) => ({
         ...x,
-        reactions: userId ? reactions.map((r) => ({ userId, reaction: r.reaction })) : [],
+        reactions: userId
+          ? reactions
+              .filter((r) => r.imageId === x.id)
+              .map((r) => ({ userId, reaction: r.reaction }))
+          : [],
       }));
     return { ...c, items };
   });
