@@ -1,14 +1,14 @@
 import { ActionIcon, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons';
+import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons';
 import { useRouter } from 'next/router';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { SimpleUser } from '~/server/selectors/user.selector';
+import { ArticleGetAll } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -18,6 +18,8 @@ export function ArticleContextMenu({ article }: Props) {
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === article.user?.id;
+
+  const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
   const handleDeleteArticle = () => {
@@ -37,8 +39,9 @@ export function ArticleContextMenu({ article }: Props) {
                 message: 'Successfully deleted article',
               });
 
-              if (router.pathname === '/articles/[id]/[[...slug]]') await router.push('/articles');
+              if (atDetailsPage) await router.push('/articles');
               await queryUtils.article.getInfinite.invalidate();
+              await queryUtils.article.getByCategory.invalidate();
             },
             onError(error) {
               showErrorNotification({
@@ -49,6 +52,32 @@ export function ArticleContextMenu({ article }: Props) {
           }
         ),
     });
+  };
+
+  const upsertArticleMutation = trpc.article.upsert.useMutation();
+  const handleUnpublishArticle = () => {
+    upsertArticleMutation.mutate(
+      { ...article, publishedAt: null },
+      {
+        async onSuccess(result) {
+          showSuccessNotification({
+            title: 'Article unpublished',
+            message: 'Successfully unpublished article',
+          });
+
+          await queryUtils.article.getById.invalidate({ id: result.id });
+          await queryUtils.article.getInfinite.invalidate();
+          await queryUtils.article.getByCategory.invalidate();
+          await queryUtils.article.getMyDraftArticles.invalidate();
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to unpublish article',
+            error: new Error(error.message),
+          });
+        },
+      }
+    );
   };
 
   return (
@@ -71,10 +100,29 @@ export function ArticleContextMenu({ article }: Props) {
             <Menu.Item
               color="red"
               icon={<IconTrash size={14} stroke={1.5} />}
-              onClick={handleDeleteArticle}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleDeleteArticle();
+              }}
+              disabled={deleteArticleMutation.isLoading}
             >
               Delete
             </Menu.Item>
+            {atDetailsPage && (
+              <Menu.Item
+                color="yellow"
+                icon={<IconBan size={14} stroke={1.5} />}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleUnpublishArticle();
+                }}
+                disabled={upsertArticleMutation.isLoading}
+              >
+                Unpublish
+              </Menu.Item>
+            )}
             <Menu.Item
               component={NextLink}
               href={`/articles/${article.id}/edit`}
@@ -103,4 +151,4 @@ export function ArticleContextMenu({ article }: Props) {
   );
 }
 
-type Props = { article: { id: number; user: SimpleUser } };
+type Props = { article: Omit<ArticleGetAll['items'][number], 'stats'> };

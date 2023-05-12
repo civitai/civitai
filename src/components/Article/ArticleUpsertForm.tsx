@@ -218,12 +218,20 @@ function ActionButtons({
 }: ActionButtonProps) {
   return (
     <Stack spacing={8} {...stackProps}>
-      <Button {...saveButtonProps} type="submit" variant="default" fullWidth>
-        Save Draft
-      </Button>
-      <Button {...publishButtonProps} type="submit" fullWidth>
-        Publish
-      </Button>
+      {article?.publishedAt ? (
+        <Button {...publishButtonProps} type="submit" fullWidth>
+          Save
+        </Button>
+      ) : (
+        <>
+          <Button {...saveButtonProps} type="submit" variant="default" fullWidth>
+            Save Draft
+          </Button>
+          <Button {...publishButtonProps} type="submit" fullWidth>
+            Publish
+          </Button>
+        </>
+      )}
       {article?.publishedAt ? (
         <Text size="xs" color="dimmed">
           Published at {formatDate(article.publishedAt)}

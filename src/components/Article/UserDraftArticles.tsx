@@ -13,13 +13,12 @@ import {
   Text,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons';
+import { IconExternalLink, IconTrash } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
 
 import { NoContent } from '~/components/NoContent/NoContent';
 import { formatDate } from '~/utils/date-helpers';
-import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
