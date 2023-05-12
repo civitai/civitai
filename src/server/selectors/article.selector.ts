@@ -20,4 +20,15 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   reactions: {
     select: getReactionsSelectV2,
   },
+  stats: {
+    select: {
+      viewCountAllTime: true,
+      commentCountAllTime: true,
+      likeCountAllTime: true,
+      dislikeCountAllTime: true,
+      heartCountAllTime: true,
+      laughCountAllTime: true,
+      cryCountAllTime: true,
+    },
+  },
 });

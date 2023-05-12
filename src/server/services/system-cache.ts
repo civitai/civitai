@@ -42,6 +42,14 @@ export async function getSystemTags() {
   return tags;
 }
 
+export async function getSystemPermissions() {
+  const cachedPermissions = await redis.get(`system:permissions`);
+  if (cachedPermissions)
+    return JSON.parse(cachedPermissions) as { article: number[]; articleCreate: number[] };
+
+  return { article: [], articleCreate: [] };
+}
+
 const colorPriority = [
   'red',
   'orange',

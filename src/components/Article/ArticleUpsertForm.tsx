@@ -20,15 +20,16 @@ import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { hiddenLabel, matureLabel } from '~/components/Post/Edit/EditPostControls';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import {
   Form,
   InputCheckbox,
   InputRTE,
   InputSelect,
+  InputSimpleImageUpload,
   InputTags,
   InputText,
   useForm,
-  InputSimpleImageUpload,
 } from '~/libs/form';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
@@ -75,6 +76,8 @@ export function ArticleUpsertForm({ article }: Props) {
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
+  const { isDirty, isSubmitted } = form.formState;
+  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
 
   const [publishing, setPublishing] = useState(false);
 

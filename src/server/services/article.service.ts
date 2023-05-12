@@ -68,12 +68,15 @@ export const getArticles = async ({
         user: { select: userWithCosmeticsSelect },
         tags: { select: { tag: { select: simpleTagSelect } } },
         // TODO.articles: replace with stats
-        metrics: {
-          where: { timeframe: period },
+        stats: {
           select: {
-            viewCount: true,
-            likeCount: true,
-            commentCount: true,
+            [`commentCount${period}`]: true,
+            [`likeCount${period}`]: true,
+            [`dislikeCount${period}`]: true,
+            [`heartCount${period}`]: true,
+            [`laughCount${period}`]: true,
+            [`cryCount${period}`]: true,
+            [`viewCount${period}`]: true,
           },
         },
       },
@@ -86,9 +89,20 @@ export const getArticles = async ({
       nextCursor = nextItem?.id;
     }
 
-    const items = articles.map(({ tags, ...article }) => ({
+    const items = articles.map(({ tags, stats, ...article }) => ({
       ...article,
       tags: tags.map(({ tag }) => tag),
+      stats: stats
+        ? {
+            commentCount: stats[`commentCount${period}`],
+            likeCount: stats[`likeCount${period}`],
+            dislikeCount: stats[`dislikeCount${period}`],
+            heartCount: stats[`heartCount${period}`],
+            laughCount: stats[`laughCount${period}`],
+            cryCount: stats[`cryCount${period}`],
+            viewCount: stats[`viewCount${period}`],
+          }
+        : undefined,
     }));
 
     return { nextCursor, items };

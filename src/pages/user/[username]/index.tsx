@@ -60,6 +60,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
@@ -257,6 +258,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
+  const features = useFeatureFlags();
 
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery({ username });
 
@@ -597,9 +599,11 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                     <Tabs.Tab value="/models" icon={<IconBox size="1rem" />}>
                       Models
                     </Tabs.Tab>
-                    <Tabs.Tab value="/articles" icon={<IconNotebook size="1rem" />}>
-                      Articles
-                    </Tabs.Tab>
+                    {features.articles && (
+                      <Tabs.Tab value="/articles" icon={<IconNotebook size="1rem" />}>
+                        Articles
+                      </Tabs.Tab>
+                    )}
                   </Tabs.List>
                 </Stack>
               </Container>
