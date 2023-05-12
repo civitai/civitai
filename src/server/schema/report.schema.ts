@@ -9,13 +9,14 @@ export enum ReportEntity {
   CommentV2 = 'commentV2',
   Image = 'image',
   ResourceReview = 'resourceReview',
+  Article = 'article',
 }
 
 // #region [report reason detail schemas]
 const baseDetailSchema = z.object({ comment: z.string().optional() });
 
 export const reportNsfwDetailsSchema = baseDetailSchema.extend({
-  tags: z.string().array().min(1, 'Please select at least one reason'),
+  tags: z.string().array().optional(),
 });
 
 export const reportOwnershipDetailsSchema = baseDetailSchema.extend({

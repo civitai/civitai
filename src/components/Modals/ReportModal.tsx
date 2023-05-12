@@ -16,7 +16,7 @@ import { IconArrowLeft } from '@tabler/icons';
 import { useMemo, useState } from 'react';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
-import { ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
+import { ArticleNsfwForm, ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -43,6 +43,12 @@ const reports = [
     availableFor: [ReportEntity.Image],
   },
   {
+    reason: ReportReason.NSFW,
+    label: 'Mature Content',
+    Element: ArticleNsfwForm,
+    availableFor: [ReportEntity.Article],
+  },
+  {
     reason: ReportReason.TOSViolation,
     label: 'TOS Violation',
     Element: TosViolationForm,
@@ -52,6 +58,7 @@ const reports = [
       ReportEntity.CommentV2,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
+      ReportEntity.Article,
     ],
   },
   {
@@ -64,6 +71,7 @@ const reports = [
       ReportEntity.CommentV2,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
+      ReportEntity.Article,
     ],
   },
   {
@@ -126,7 +134,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
       },
       async onSuccess(_, variables) {
         showSuccessNotification({
-          title: 'Model reported',
+          title: 'Resource reported',
           message: 'Your request has been received',
         });
         context.close();
@@ -181,6 +189,20 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               if (modelId) {
                 await queryUtils.model.getAll.invalidate();
               }
+              break;
+            case ReportEntity.Article:
+              queryUtils.article.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) {
+                    if (variables.reason === ReportReason.NSFW) {
+                      old.nsfw = true;
+                    }
+                  }
+                })
+              );
+              await queryUtils.article.getInfinite.invalidate();
+              await queryUtils.article.getByCategory.invalidate();
               break;
             default:
               break;

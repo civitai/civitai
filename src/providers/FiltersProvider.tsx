@@ -7,6 +7,7 @@ import {
   ModelType,
 } from '@prisma/client';
 import {
+  ArticleSort,
   BrowsingMode,
   ImageSort,
   ModelSort,
@@ -72,6 +73,14 @@ const postFilterSchema = z.object({
   view: viewModeSchema.default('categories'),
 });
 
+type ArticleFilterSchema = z.infer<typeof articleFilterSchema>;
+const articleFilterSchema = z.object({
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
+  periodMode: periodModeSchema,
+  sort: z.nativeEnum(ArticleSort).default(ArticleSort.MostReactions),
+  view: viewModeSchema.default('categories'),
+});
+
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -82,13 +91,14 @@ type StorageState = {
   images: ImageFilterSchema;
   modelImages: ImageFilterSchema;
   posts: PostFilterSchema;
+  articles: ArticleFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
-export type ViewAdjustableTypes = 'models' | 'images' | 'posts';
+export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
 
-const periodModeTypes = ['models', 'images', 'posts'] as const;
-export type PeriodModeTypes = (typeof periodModeTypes)[number];
-export const hasPeriodMode = (type: string) => periodModeTypes.includes(type as any);
+const periodModeTypes = ['models', 'images', 'posts', 'articles'] as const;
+export type PeriodModeType = (typeof periodModeTypes)[number];
+export const hasPeriodMode = (type: string) => periodModeTypes.includes(type as PeriodModeType);
 
 type FilterState = CookiesState & StorageState;
 export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>;
@@ -100,6 +110,7 @@ type StoreState = FilterState & {
   setImageFilters: (filters: Partial<ImageFilterSchema>) => void;
   setModelImageFilters: (filters: Partial<ImageFilterSchema>) => void;
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
+  setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
 };
 
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
@@ -114,6 +125,7 @@ const localStorageSchemas: LocalStorageSchema = {
   images: { key: 'image-filters', schema: imageFilterSchema },
   modelImages: { key: 'model-image-filters', schema: modelImageFilterSchema },
   posts: { key: 'post-filters', schema: postFilterSchema },
+  articles: { key: 'article-filters', schema: articleFilterSchema },
 };
 
 export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
@@ -189,6 +201,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'modelImages', data, state })),
       setPostFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'posts', data, state })),
+      setArticleFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'articles', data, state })),
     }))
   );
 
@@ -238,6 +252,7 @@ export function useSetFilters(type: FilterSubTypes) {
           images: state.setImageFilters,
           questions: state.setQuestionFilters,
           modelImages: state.setModelImageFilters,
+          articles: state.setArticleFilters,
         }[type]),
       [type]
     )

@@ -50,6 +50,24 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         };
       }
       break;
+    case 'article':
+      const article = await dbRead.article.findFirst({
+        where: {
+          id: input.entityId,
+        },
+        select: {
+          nsfw: true,
+        },
+      });
+
+      if (article) {
+        return {
+          type: `Article_${action}`,
+          nsfw: article.nsfw ? NsfwLevel.Mature : NsfwLevel.None,
+          ...shared,
+        };
+      }
+      break;
     case 'commentOld':
       return {
         type: `Comment_${action}`,

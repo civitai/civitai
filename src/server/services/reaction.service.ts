@@ -67,6 +67,11 @@ const getReaction = async ({
         where: { userId, reaction, reviewId: entityId },
         select: { id: true },
       });
+    case 'article':
+      return await dbRead.articleReaction.findFirst({
+        where: { userId, reaction, articleId: entityId },
+        select: { id: true },
+      });
     default:
       throw throwBadRequestError();
   }
@@ -106,6 +111,10 @@ const deleteReaction = async ({
       return;
     case 'resourceReview':
       await dbWrite.resourceReviewReaction.deleteMany({ where: { id } });
+      return;
+    case 'article':
+      await dbWrite.articleReaction.deleteMany({ where: { id } });
+      await queueMetricUpdate('Article', entityId);
       return;
     default:
       throw throwBadRequestError();
@@ -151,6 +160,11 @@ const createReaction = async ({
     case 'resourceReview':
       return await dbWrite.resourceReviewReaction.create({
         data: { ...data, reviewId: entityId },
+        select: { reaction: true },
+      });
+    case 'article':
+      return await dbWrite.articleReaction.create({
+        data: { ...data, articleId: entityId },
         select: { reaction: true },
       });
     default:

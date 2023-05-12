@@ -47,6 +47,13 @@ export async function getSystemTags() {
   return tags;
 }
 
+export async function getSystemPermissions(): Promise<Record<string, number[]>> {
+  const cachedPermissions = await redis.get(`system:permissions`);
+  if (cachedPermissions) return JSON.parse(cachedPermissions);
+
+  return {};
+}
+
 const colorPriority = [
   'red',
   'orange',
@@ -59,7 +66,7 @@ const colorPriority = [
   'grey',
 ];
 type TypeCategory = { id: number; name: string; priority: number };
-export async function getCategoryTags(type: 'image' | 'model' | 'post') {
+export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article') {
   let categories: TypeCategory[] | undefined;
   const categoriesCache = await redis.get(`system:categories:${type}`);
   if (categoriesCache) categories = JSON.parse(categoriesCache);

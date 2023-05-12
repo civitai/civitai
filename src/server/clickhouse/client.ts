@@ -14,8 +14,14 @@ export const clickhouse = shouldConnect
     })
   : null;
 
-export type ViewType = 'ProfileView' | 'ImageView' | 'PostView' | 'ModelView' | 'ModelVersionView';
-export type EntityType = 'User' | 'Image' | 'Post' | 'Model' | 'ModelVersion';
+export type ViewType =
+  | 'ProfileView'
+  | 'ImageView'
+  | 'PostView'
+  | 'ModelView'
+  | 'ModelVersionView'
+  | 'ArticleView';
+export type EntityType = 'User' | 'Image' | 'Post' | 'Model' | 'ModelVersion' | 'Article';
 
 export type UserActivityType =
   | 'Registration'

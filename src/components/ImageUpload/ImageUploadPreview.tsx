@@ -111,16 +111,18 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
           </>
         )}
 
-        <Center className={classes.draggable} {...listeners} {...attributes}>
-          <Paper className={classes.draggableIcon} p="xl" radius={100}>
-            <IconArrowsMaximize
-              size={48}
-              stroke={1.5}
-              style={{ transform: 'rotate(45deg)' }}
-              color="white"
-            />
-          </Paper>
-        </Center>
+        {!isDisabled && (
+          <Center className={classes.draggable} {...listeners} {...attributes}>
+            <Paper className={classes.draggableIcon} p="xl" radius={100}>
+              <IconArrowsMaximize
+                size={48}
+                stroke={1.5}
+                style={{ transform: 'rotate(45deg)' }}
+                color="white"
+              />
+            </Paper>
+          </Center>
+        )}
         {children}
       </Paper>
     );

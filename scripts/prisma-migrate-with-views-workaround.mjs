@@ -30,6 +30,7 @@ try {
   const productionFlagIndex = argv.indexOf('-p');
   const runProduction = productionFlagIndex > -1;
   if (runProduction) argv.splice(productionFlagIndex, 1);
+  else argv.push('--create-only');
 
   let { error } = spawnSync(
     `prisma migrate ${runProduction ? 'deploy' : 'dev'}`,

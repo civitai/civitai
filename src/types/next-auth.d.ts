@@ -17,6 +17,7 @@ interface ExtendedUser {
   bannedAt?: Date;
   autoplayGifs?: boolean;
   onboarded?: boolean;
+  permissions?: string[];
   filePreferences?: UserFilePreferences;
 }
 

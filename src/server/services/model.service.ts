@@ -877,7 +877,6 @@ export const getAllModelsWithCategories = async ({
   }
 };
 
-// TODO.justin: update with raw queries for better peformance when updating the tags
 export const setModelsCategory = async ({
   categoryId,
   modelIds,
