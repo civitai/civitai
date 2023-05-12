@@ -74,9 +74,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model) {
-      throw throwNotFoundError(`No model with id ${input.id}`);
-    }
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const features = getFeatureFlags({ user: ctx.user });
     const filteredVersions = model.modelVersions.filter((version) => {
@@ -95,9 +93,14 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       orderBy: { id: 'asc' },
     });
 
+    const suggestedResources = await dbRead.modelAssociations.count({
+      where: { fromModelId: model.id },
+    });
+
     const modelCategories = await getCategoryTags('model');
     return {
       ...model,
+      hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
       tagsOnModels: model.tagsOnModels.map(({ tag }) => ({
         tag: {
