@@ -67,7 +67,6 @@ export const getArticles = async ({
         publishedAt: true,
         user: { select: userWithCosmeticsSelect },
         tags: { select: { tag: { select: simpleTagSelect } } },
-        // TODO.articles: replace with stats
         stats: {
           select: {
             [`commentCount${period}`]: true,

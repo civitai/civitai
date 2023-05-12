@@ -16,7 +16,7 @@ export function ArticleContextMenu({ article }: Props) {
   const queryUtils = trpc.useContext();
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const isModerator = currentUser?.isModerator;
+  const isModerator = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === article.user?.id;
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
@@ -66,7 +66,7 @@ export function ArticleContextMenu({ article }: Props) {
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        {currentUser && isOwner && (
+        {currentUser && (isOwner || isModerator) && (
           <>
             <Menu.Item
               color="red"
