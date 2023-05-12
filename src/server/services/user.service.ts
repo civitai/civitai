@@ -442,9 +442,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   const permissions: string[] = [];
   const systemPermissions = await getSystemPermissions();
-  Object.entries(systemPermissions).forEach(([key, value]) => {
+  for (const [key, value] of Object.entries(systemPermissions)) {
     if (value.includes(user.id)) permissions.push(key);
-  });
+  }
 
   // const cannyToken = await createCannyToken(user); // We don't need this for now
 
