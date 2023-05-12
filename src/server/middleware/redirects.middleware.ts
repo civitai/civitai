@@ -17,7 +17,7 @@ addRedirect({
   handler: async ({ redirect, request, user }) => {
     const [, username] = userNamePathRegexp.exec(request.nextUrl.pathname) ?? [];
     if (username === '@me')
-      if (user) return redirect(request.nextUrl.pathname.replace('/@me', '/' + user.username));
+      if (user) return redirect(request.nextUrl.href.replace('/@me', '/' + user.username));
       else return redirect('/login?returnUrl=' + request.nextUrl.pathname);
   },
 });
