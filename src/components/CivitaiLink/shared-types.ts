@@ -159,12 +159,18 @@ export type ResponseActivitesClear = ResponseBase & {
   activities: Response[];
 };
 
+export type ResponseImageTxt2Img = ResponseBase & {
+  type: 'image:txt2img';
+  images: string[];
+};
+
 export type Response =
   | ResponseResourcesList
   | ResponseResourcesAdd
   | ResponseResourcesRemove
   | ResponseResourcesAddCancel
   | ResponseActivitesList
-  | ResponseActivitesClear;
+  | ResponseActivitesClear
+  | ResponseImageTxt2Img;
 
 export type ActivitiesResponse = ResponseResourcesAdd | ResponseResourcesRemove;
