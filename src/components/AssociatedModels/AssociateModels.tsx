@@ -8,14 +8,26 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Stack, Text, Card, Group, Button, ActionIcon, Center, Loader, Alert } from '@mantine/core';
+import {
+  Stack,
+  Text,
+  Card,
+  Group,
+  Button,
+  ActionIcon,
+  Center,
+  Loader,
+  Alert,
+  Badge,
+  SelectItemProps,
+  Box,
+} from '@mantine/core';
 import { AssociationType } from '@prisma/client';
-import { IconGripVertical, IconSearch, IconTrash } from '@tabler/icons';
+import { IconGripVertical, IconSearch, IconTrash, IconUser } from '@tabler/icons';
 import { isEqual } from 'lodash-es';
-import { useEffect, useState } from 'react';
+import { forwardRef, useState } from 'react';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
-import { IsClient } from '~/components/IsClient/IsClient';
 import { AssociatedResourceModel } from '~/server/selectors/model.selector';
 import { useDebouncer } from '~/utils/debouncer';
 import { trpc } from '~/utils/trpc';
@@ -24,10 +36,12 @@ export function AssociateModels({
   fromId,
   type,
   onSave,
+  limit = 10,
 }: {
   fromId: number;
   type: AssociationType;
   onSave?: () => void;
+  limit?: number;
 }) {
   const queryUtils = trpc.useContext();
   const [changed, setChanged] = useState(false);
@@ -67,8 +81,8 @@ export function AssociateModels({
     });
   };
 
-  const handleItemSubmit = (item: { value: string; id: number }) => {
-    const model = models.find((x) => x.id === item.id);
+  const handleItemSubmit = (item: { value: string; model: AssociatedResourceModel }) => {
+    const model = models.find((x) => x.id === item.model.id);
     if (model) {
       setChanged(true);
       setAssociatedModels((models) => [...models, model]);
@@ -107,59 +121,79 @@ export function AssociateModels({
 
   return (
     <Stack>
-      <ClearableAutoComplete
-        placeholder="Search..."
-        icon={<IconSearch />}
-        data={models.map((model) => ({ value: model.name, id: model.id }))}
-        value={query}
-        onChange={handleSearchChange}
-        onItemSubmit={handleItemSubmit}
-        clearable
-      />
+      {associatedModels.length < limit && (
+        <ClearableAutoComplete
+          // label={`Add up to ${limit} models`}
+          placeholder="Search..."
+          icon={<IconSearch />}
+          data={models
+            .filter((x) => !associatedModels.map((x) => x.id).includes(x.id) && x.id !== fromId)
+            .map((model) => ({ value: model.name, model }))}
+          value={query}
+          onChange={handleSearchChange}
+          onItemSubmit={handleItemSubmit}
+          itemComponent={SearchItem}
+          clearable
+        />
+      )}
 
       {isLoading ? (
         <Center p="xl">
           <Loader />
         </Center>
-      ) : !!associatedModels.length ? (
-        <IsClient>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={associatedModels.map((x) => x.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              <Stack spacing="xs">
-                {associatedModels.map((model) => (
-                  <SortableItem key={model.id} id={model.id}>
-                    <Card withBorder>
-                      <Group position="apart">
-                        <Group align="start">
-                          <IconGripVertical />
-                          <Text size="md" lineClamp={2}>
-                            {model.name}
-                          </Text>
-                        </Group>
-                        <ActionIcon
-                          variant="filled"
-                          color="red"
-                          onClick={() => handleRemove(model.id)}
-                        >
-                          <IconTrash />
-                        </ActionIcon>
-                      </Group>
-                    </Card>
-                  </SortableItem>
-                ))}
-              </Stack>
-            </SortableContext>
-          </DndContext>
-        </IsClient>
       ) : (
-        <Alert>There are no {type.toLowerCase()} models associated with this model</Alert>
+        <Stack spacing={0}>
+          <Text align="right">
+            {associatedModels.length}/{limit}
+          </Text>
+          {!!associatedModels.length ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={associatedModels.map((x) => x.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <Stack spacing="xs">
+                  {associatedModels.map((model) => (
+                    <SortableItem key={model.id} id={model.id}>
+                      <Card withBorder p="xs">
+                        <Group position="apart">
+                          <Group align="center">
+                            <IconGripVertical />
+                            <Stack spacing="xs">
+                              <Text size="md" lineClamp={2}>
+                                {model.name}
+                              </Text>
+                              <Group spacing="xs">
+                                <Badge>{model.type}</Badge>
+                                <Badge leftSection={<IconUser size={12} />}>
+                                  {model.user.username}
+                                </Badge>
+                                {model.nsfw && <Badge color="red">NSFW</Badge>}
+                              </Group>
+                            </Stack>
+                          </Group>
+                          <ActionIcon
+                            variant="filled"
+                            color="red"
+                            onClick={() => handleRemove(model.id)}
+                          >
+                            <IconTrash />
+                          </ActionIcon>
+                        </Group>
+                      </Card>
+                    </SortableItem>
+                  ))}
+                </Stack>
+              </SortableContext>
+            </DndContext>
+          ) : (
+            <Alert>There are no {type.toLowerCase()} models associated with this model</Alert>
+          )}
+        </Stack>
       )}
       {changed && (
         <Group position="right">
@@ -175,67 +209,17 @@ export function AssociateModels({
   );
 }
 
-const demoData = [
-  {
-    id: 48139,
-    name: 'LowRA',
-    type: 'LORA',
-    nsfw: false,
-    user: {
-      id: 4055,
-      username: 'XpucT',
-      deletedAt: null,
-      image:
-        'https://cdn.discordapp.com/avatars/481774648799789056/03814a5155fa29296f2c9c2b6f0adfe0.png',
-    },
-  },
-  {
-    id: 51686,
-    name: 'GlowingRunesAI',
-    type: 'LORA',
-    nsfw: false,
-    user: {
-      id: 91602,
-      username: 'konyconi',
-      deletedAt: null,
-      image:
-        'https://lh3.googleusercontent.com/a/AEdFTp7h2SYiaEktwSXe7YgztLujHzR5moKuVCHgTCsy=s96-c',
-    },
-  },
-  {
-    id: 5415,
-    name: 'Cornflower X Feat. Offset Noise - Stylized Anime Model',
-    type: 'Checkpoint',
-    nsfw: false,
-    user: {
-      id: 129412,
-      username: 'Toooajk',
-      deletedAt: null,
-      image: 'c7e5fd0c-1a2c-4700-328b-a740b980ec00',
-    },
-  },
-  {
-    id: 21726,
-    name: 'POV Spitroast Blowjob + Creampie LoRA',
-    type: 'LORA',
-    nsfw: true,
-    user: {
-      id: 220490,
-      username: 'KinkAI',
-      deletedAt: null,
-      image: '1a4ca30a-6877-42bf-1b59-3e2edf3f1f00',
-    },
-  },
-  {
-    id: 12344,
-    name: 'Blowbang LoRA',
-    type: 'LORA',
-    nsfw: true,
-    user: {
-      id: 16870,
-      username: 'SysDeep',
-      deletedAt: null,
-      image: '2b4bd79e-5927-4ed5-2c3f-51bddf29c800',
-    },
-  },
-] as AssociatedResourceModel[];
+type SearchItemProps = SelectItemProps & { model: AssociatedResourceModel };
+const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
+  ({ value, model, ...props }, ref) => {
+    return (
+      <Box ref={ref} {...props} key={model.id}>
+        <Group noWrap spacing="xs">
+          <Text lineClamp={1}>{model.name}</Text>
+          {model.nsfw && <Badge color="red">NSFW</Badge>}
+        </Group>
+      </Box>
+    );
+  }
+);
+SearchItem.displayName = 'SearchItem';

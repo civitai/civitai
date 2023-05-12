@@ -219,6 +219,7 @@ export const modelRouter = router({
     .query(({ input, ctx }) => findModelsToAssociate(input)),
   getAssociatedModelsCardData: publicProcedure
     .input(getAssociatedModelsSchema)
+    .use(applyUserPreferences)
     .query(({ input, ctx }) => getAssociatedModelsCardData(input, ctx.user)),
   getAssociatedModelsSimple: publicProcedure
     .input(getAssociatedModelsSchema)

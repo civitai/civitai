@@ -360,7 +360,7 @@ model Model {
   resourceReviews   ResourceReview[]
   metricsDaily      ModelMetricDaily[]
   associatedFrom    ModelAssociations[] @relation("ToModelAssociation")
-  associatedTo      ModelAssociations[] @relation("FromModelAssociation")
+  associations      ModelAssociations[] @relation("FromModelAssociation")
 
   @@index([name])
   @@index([status, nsfw])

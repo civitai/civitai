@@ -232,13 +232,19 @@ export function ModelCategoryCard({
       styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
       sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
-      <MasonryCard shadow="sm" p={0} height={height}>
+      <MasonryCard
+        shadow="sm"
+        p={0}
+        // height={height}
+        style={{ paddingTop: '100%', position: 'relative' }}
+      >
         <NextLink
           href={`/models/${id}/${slugit(name)}`}
           className={classes.link}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
           }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         >
           <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
           <ImageGuard

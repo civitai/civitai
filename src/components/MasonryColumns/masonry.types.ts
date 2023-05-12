@@ -7,10 +7,10 @@ export interface MasonryRenderItemProps<Item> {
    * The rendered width of the cell's column.
    */
   width: number;
+  height: number;
   /**
    * The data at `items[index]` of your `items` prop array.
    */
-  height: number;
   data: Item;
 }
 

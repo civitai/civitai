@@ -936,6 +936,7 @@ export const getAssociatedModelsCardData = async (
   const period = MetricTimeframe.AllTime;
   const associatedModels = await dbRead.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
+    orderBy: { index: 'asc' },
     select: { toModelId: true },
   });
   const ids = associatedModels.map((x) => x.toModelId);
@@ -984,7 +985,10 @@ export const getAssociatedModelsCardData = async (
     },
   });
 
-  const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
+  // sort models
+  const models = ids.map((id) => items.find((x) => x.id === id)).filter(isDefined);
+
+  const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
         modelVersionIds,
@@ -995,7 +999,7 @@ export const getAssociatedModelsCardData = async (
       })
     : [];
 
-  return items
+  return models
     .map(({ hashes, modelVersions, rank, ...model }) => {
       const [version] = modelVersions;
       if (!version) return null;
@@ -1055,7 +1059,8 @@ export const setAssociatedModels = async (
     where: { id: fromId },
     select: {
       userId: true,
-      associatedFrom: {
+      associations: {
+        where: { type },
         select: { toModelId: true },
         orderBy: { index: 'asc' },
       },
@@ -1065,14 +1070,16 @@ export const setAssociatedModels = async (
   if (!fromModel) throw throwNotFoundError();
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
-  const existingAssociatedModelIds = fromModel.associatedFrom.map((x) => x.toModelId);
+  const existingAssociatedModelIds = fromModel.associations.map((x) => x.toModelId);
   const associationsToRemove = existingAssociatedModelIds.filter(
     (existingToId) => !associatedIds.includes(existingToId)
   );
 
   return await dbWrite.$transaction([
     // remove associated models not included in payload
-    dbWrite.modelAssociations.deleteMany({ where: { toModelId: { in: associationsToRemove } } }),
+    dbWrite.modelAssociations.deleteMany({
+      where: { fromModelId: fromId, type, toModelId: { in: associationsToRemove } },
+    }),
     // add or update associated models
     ...associatedIds.map((toId, index) => {
       const data = { fromModelId: fromId, toModelId: toId, type };

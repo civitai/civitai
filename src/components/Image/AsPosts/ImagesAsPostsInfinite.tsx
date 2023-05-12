@@ -107,14 +107,10 @@ export default function ImagesAsPostsInfinite({
 
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ filters, modelVersions }}>
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={6}
-        maxSingleColumnWidth={450}
-      >
+      <MasonryProvider columnWidth={310} maxColumnCount={6} maxSingleColumnWidth={450}>
         <MasonryContainer
           fluid
-          pt="md"
+          pt="xl"
           pb={61}
           mb={-61}
           sx={(theme) => ({
