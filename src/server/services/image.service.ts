@@ -1,56 +1,54 @@
 import {
-  isImageResource,
-  IngestImageInput,
-  ingestImageSchema,
-  GetInfiniteImagesInput,
-  GetImageInput,
-  RemoveImageResourceSchema,
-  GetImagesByCategoryInput,
-} from './../schema/image.schema';
-import {
   CosmeticSource,
   CosmeticType,
   ImageGenerationProcess,
-  ModelStatus,
   NsfwLevel,
   Prisma,
   ReportReason,
   ReportStatus,
+  ReviewReaction,
   ReviewReactions,
-  TagType,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
+import {
+  GetImageInput,
+  GetImagesByCategoryInput,
+  GetInfiniteImagesInput,
+  IngestImageInput,
+  ingestImageSchema,
+  isImageResource,
+} from './../schema/image.schema';
 
+import { TRPCError } from '@trpc/server';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server.mjs';
-import { BrowsingMode, ImageScanType, ImageSort } from '~/server/common/enums';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { nsfwLevelOrder } from '~/libs/moderation';
+import { VotableTagModel } from '~/libs/tags';
+import { ImageScanType, ImageSort } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { redis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetGalleryImageInput,
   GetImageConnectionsSchema,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
-import { imageGallerySelect, imageSelect } from '~/server/selectors/image.selector';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { decreaseDate } from '~/utils/date-helpers';
-import { simpleTagSelect, imageTagSelect, ImageTag } from '~/server/selectors/tag.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { getImageV2Select, ImageV2Model } from '~/server/selectors/imagev2.selector';
+import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getAllowedAnonymousTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import { getTypeCategories } from '~/server/services/tag.service';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { VotableTagModel } from '~/libs/tags';
-import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getSystemTags, getTagsNeedingReview } from '~/server/services/system-cache';
-import { redis } from '~/server/redis/client';
-import { hashify, hashifyObject } from '~/utils/string-helpers';
-import { TRPCError } from '@trpc/server';
-import { applyUserPreferences, UserPreferencesInput } from '~/server/middleware.trpc';
-import { nsfwLevelOrder } from '~/libs/moderation';
-import { getTypeCategories } from '~/server/services/tag.service';
+import { decreaseDate } from '~/utils/date-helpers';
 import { deleteObject } from '~/utils/s3-utils';
+import { hashify, hashifyObject } from '~/utils/string-helpers';
 
 export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
   const result = await dbRead.imagesOnModels.findMany({
@@ -801,9 +799,7 @@ export const getAllImages = async ({
   }
 
   if (userId && !!reactions?.length) {
-    AND.push(
-      Prisma.sql`ir."userId" = ${userId} AND ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`
-    );
+    AND.push(Prisma.sql`ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`);
   }
 
   const includeRank = cursorProp?.startsWith('r.');
@@ -820,10 +816,10 @@ export const getAllImages = async ({
       !userId
         ? Prisma.sql``
         : Prisma.sql`LEFT JOIN (
-      SELECT "imageId", jsonb_agg(reaction) "reactions", "userId"
+      SELECT "imageId", jsonb_agg(reaction) "reactions"
       FROM "ImageReaction"
       WHERE "userId" = ${userId}
-      GROUP BY "imageId", "userId"
+      GROUP BY "imageId"
     ) ir ON ir."imageId" = i.id`
     }
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -1306,6 +1302,12 @@ export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: numbe
   AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
 }
 
+export async function applyAnonymousUserRules(excludedImageTags: number[]) {
+  const allowedTags = await getAllowedAnonymousTags();
+  for (const index in excludedImageTags)
+    if (allowedTags.includes(excludedImageTags[index])) excludedImageTags.splice(Number(index), 1);
+}
+
 type GetImageByCategoryRaw = {
   id: number;
   tagId: number;
@@ -1480,7 +1482,11 @@ export const getImagesByCategory = async ({
       .filter((x) => x.tagId === c.id)
       .map((x) => ({
         ...x,
-        reactions: userId ? reactions.map((r) => ({ userId, reaction: r.reaction })) : [],
+        reactions: userId
+          ? reactions
+              .filter((r) => r.imageId === x.id)
+              .map((r) => ({ userId, reaction: r.reaction }))
+          : [],
       }));
     return { ...c, items };
   });

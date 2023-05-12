@@ -167,7 +167,7 @@ export function ImageDetail() {
                   </Paper>
                 </div>
                 <Stack spacing="md" mt="auto">
-                  <Divider label="Resources" labelPosition="center" />
+                  <Divider label="Resources Used" labelPosition="center" />
 
                   <Box px="md">
                     <ImageResources imageId={image.id} />

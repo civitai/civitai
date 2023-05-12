@@ -89,9 +89,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (error instanceof TRPCError) {
       const apiError = error as TRPCError;
       const status = getHTTPStatusCodeFromError(apiError);
-      const parsedError = JSON.parse(apiError.message);
 
-      res.status(status).json(parsedError);
+      res.status(status).json(apiError.message);
     } else {
       res.status(500).json({ message: 'An unexpected error occurred', error });
     }

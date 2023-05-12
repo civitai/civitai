@@ -24,7 +24,7 @@ export function createJob(
     run: fn,
     options: {
       shouldWait: false,
-      lockExpiration: 2 * 60,
+      lockExpiration: 5 * 60,
       ...options,
     },
   } as Job;

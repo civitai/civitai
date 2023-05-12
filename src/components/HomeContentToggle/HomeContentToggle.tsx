@@ -1,7 +1,6 @@
 import { SegmentedControl, SegmentedControlItem, SegmentedControlProps } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const homeOptions = {
   models: '/',
@@ -29,13 +28,12 @@ export function useHomeSelection() {
 export function HomeContentToggle({ size, sx, ...props }: Props) {
   const router = useRouter();
   const { set } = useHomeSelection();
-  const features = useFeatureFlags();
 
   const data: SegmentedControlItem[] = [
     { label: 'Models', value: 'models' },
     { label: 'Images', value: 'images' },
+    { label: 'Posts', value: 'posts' },
   ];
-  if (features.posts) data.push({ label: 'Posts', value: 'posts' });
   if (features.articles) data.push({ label: 'Articles', value: 'articles' });
 
   return (

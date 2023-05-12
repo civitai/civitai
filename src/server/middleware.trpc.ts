@@ -6,6 +6,7 @@ import { env } from '~/env/server.mjs';
 import { redis } from '~/server/redis/client';
 import { hashifyObject } from '~/utils/string-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
+import { applyAnonymousUserRules } from '~/server/services/image.service';
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 const userPreferencesSchema = z.object({
@@ -42,6 +43,8 @@ export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
           ...(_input.excludedTagIds ?? []),
         ];
       }
+
+      if (!ctx.user) await applyAnonymousUserRules(_input.excludedTagIds);
     }
 
     return next({

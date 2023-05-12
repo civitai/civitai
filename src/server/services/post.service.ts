@@ -53,7 +53,7 @@ export const getPostsInfinite = async ({
   const isOwnerRequest = user && user.username === username;
   if (username) {
     const targetUser = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
-    AND.push({ userId: targetUser?.id });
+    AND.push({ userId: targetUser?.id ?? 0 });
   }
   if (modelVersionId) AND.push({ modelVersionId });
   if (!isOwnerRequest) {
