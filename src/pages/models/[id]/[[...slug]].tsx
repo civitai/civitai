@@ -796,94 +796,12 @@ export default function ModelDetailsV2({
               }}
             />
           )}
-          {canLoadBelowTheFold &&
-            (!model.locked ? (
-              <>
-                <Divider />
-                <Stack spacing="md">
-                  <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
-                    <Group spacing="xs">
-                      <Title order={2}>Discussion</Title>
-                      {canDiscuss ? (
-                        <>
-                          <LoginRedirect reason="create-comment">
-                            <Button
-                              leftIcon={<IconMessage size={16} />}
-                              variant="outline"
-                              onClick={() => openRoutedContext('commentEdit', {})}
-                              size="xs"
-                            >
-                              Add Comment
-                            </Button>
-                          </LoginRedirect>
-                        </>
-                      ) : (
-                        !isMuted && (
-                          <JoinPopover message="You must be a Supporter Tier member to join this discussion">
-                            <Button
-                              leftIcon={<IconClock size={16} />}
-                              variant="outline"
-                              size="xs"
-                              color="green"
-                            >
-                              Early Access
-                            </Button>
-                          </JoinPopover>
-                        )
-                      )}
-                    </Group>
-                  </Group>
-                  <ModelDiscussionV2 modelId={model.id} />
-                </Stack>
-                {/* <Stack spacing="md" ref={gallerySectionRef} id="gallery">
-                  <Group spacing="xs" align="flex-end">
-                    <Title order={2}>Gallery</Title>
-                    <LoginRedirect reason="create-review">
-                      <Button
-                        component={NextLink}
-                        className={classes.discussionActionButton}
-                        variant="outline"
-                        size="xs"
-                        leftIcon={<IconPlus size={16} />}
-                        href={`/posts/create?modelId=${model.id}${
-                          selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
-                        }&returnUrl=${router.asPath}`}
-                      >
-                        Add post
-                      </Button>
-                    </LoginRedirect>
-                  </Group>
-                  <Group position="apart" spacing={0}>
-                    <SortFilter type="image" />
-                    <Group spacing={4}>
-                      <PeriodFilter />
-                      <ImageFiltersDropdown />
-                    </Group>
-                  </Group>
-                  <ImageCategories />
-
-                </Stack> */}
-              </>
-            ) : (
-              <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
-                <Center>
-                  <Group spacing="xs">
-                    <ThemeIcon color="gray" size="xl" radius="xl">
-                      <IconMessageCircleOff />
-                    </ThemeIcon>
-                    <Text size="lg" color="dimmed">
-                      Discussion is turned off for this model.
-                    </Text>
-                  </Group>
-                </Center>
-              </Paper>
-            ))}
         </Stack>
         {versionCount > 1 ? (
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
         ) : null}
       </Container>
-      {canLoadBelowTheFold && (
+      {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
         <AssociatedModels
           fromId={model.id}
           type="Suggested"
@@ -891,6 +809,59 @@ export default function ModelDetailsV2({
           ownerId={model.user.id}
         />
       )}
+      {canLoadBelowTheFold &&
+        (!model.locked ? (
+          <Container size="xl" my="xl">
+            <Stack spacing="md">
+              <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
+                <Group spacing="xs">
+                  <Title order={2}>Discussion</Title>
+                  {canDiscuss ? (
+                    <>
+                      <LoginRedirect reason="create-comment">
+                        <Button
+                          leftIcon={<IconMessage size={16} />}
+                          variant="outline"
+                          onClick={() => openRoutedContext('commentEdit', {})}
+                          size="xs"
+                        >
+                          Add Comment
+                        </Button>
+                      </LoginRedirect>
+                    </>
+                  ) : (
+                    !isMuted && (
+                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                        <Button
+                          leftIcon={<IconClock size={16} />}
+                          variant="outline"
+                          size="xs"
+                          color="green"
+                        >
+                          Early Access
+                        </Button>
+                      </JoinPopover>
+                    )
+                  )}
+                </Group>
+              </Group>
+              <ModelDiscussionV2 modelId={model.id} />
+            </Stack>
+          </Container>
+        ) : (
+          <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+            <Center>
+              <Group spacing="xs">
+                <ThemeIcon color="gray" size="xl" radius="xl">
+                  <IconMessageCircleOff />
+                </ThemeIcon>
+                <Text size="lg" color="dimmed">
+                  Discussion is turned off for this model.
+                </Text>
+              </Group>
+            </Center>
+          </Paper>
+        ))}
       {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite

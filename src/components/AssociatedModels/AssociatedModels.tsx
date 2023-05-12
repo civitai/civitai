@@ -2,7 +2,6 @@ import { AssociationType } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import {
-  Divider,
   LoadingOverlay,
   Stack,
   Title,
@@ -31,14 +30,12 @@ export function AssociatedModels({
   ownerId: number;
 }) {
   const currentUser = useCurrentUser();
+  const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
   const { data = [], isLoading } = trpc.model.getAssociatedModelsCardData.useQuery({
     fromId,
     type,
   });
-
-  const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
-  if (!isLoading && !data.length && !isOwnerOrModerator) return null;
 
   const handleManageClick = () => {
     openContext('associateModels', { fromId, type });
@@ -46,12 +43,17 @@ export function AssociatedModels({
 
   return (
     <MasonryProvider columnWidth={310} maxColumnCount={4} maxSingleColumnWidth={450}>
-      <Container size="xl" my="xl">
-        <Divider />
-      </Container>
-      <MasonryContainer size="xl" my="xl">
-        {({ columnWidth }) => (
-          <Stack>
+      <MasonryContainer
+        fluid
+        my="xl"
+        pt="xl"
+        pb="xl"
+        sx={(theme) => ({
+          background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+        })}
+      >
+        {({ columnWidth, columnCount }) => (
+          <Stack pb={columnCount > 1 ? 20 : undefined}>
             <Group>
               <Title order={2}>{label}</Title>
               {isOwnerOrModerator && (
