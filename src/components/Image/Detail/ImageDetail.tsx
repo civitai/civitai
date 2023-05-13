@@ -119,7 +119,7 @@ export function ImageDetail() {
                 <Stack p="sm" spacing={8}>
                   {image.postTitle ? (
                     <Group spacing="xs" noWrap>
-                      <Text size="sm" weight={500}>
+                      <Text size="sm" weight={500} sx={{ whiteSpace: 'nowrap' }}>
                         Post
                       </Text>
                       <RoutedContextLink

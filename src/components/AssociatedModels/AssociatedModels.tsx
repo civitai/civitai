@@ -11,12 +11,15 @@ import {
   Center,
   Text,
   Box,
+  Paper,
+  ThemeIcon,
 } from '@mantine/core';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { ModelCategoryCard } from '~/components/Model/Categories/ModelCategoryCard';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { IconRocketOff } from '@tabler/icons';
 
 export function AssociatedModels({
   fromId,
@@ -41,6 +44,8 @@ export function AssociatedModels({
     openContext('associateModels', { fromId, type });
   };
 
+  if (!isOwnerOrModerator && !data.length) return null;
+
   return (
     <MasonryProvider columnWidth={310} maxColumnCount={4} maxSingleColumnWidth={450}>
       <MasonryContainer
@@ -53,7 +58,7 @@ export function AssociatedModels({
         })}
       >
         {({ columnWidth, columnCount }) => (
-          <Stack pb={columnCount > 1 ? 20 : undefined}>
+          <Stack pb={columnCount > 1 && data.length ? 20 : undefined}>
             <Group>
               <Title order={2}>{label}</Title>
               {isOwnerOrModerator && (
@@ -74,17 +79,14 @@ export function AssociatedModels({
                 itemId={(x) => x.id}
               />
             ) : (
-              <Box
-                sx={(theme) => ({
-                  background:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-                  height: 310,
-                })}
-              >
-                <Center style={{ height: '100%' }}>
-                  <Text>There are no suggested resources to display</Text>
-                </Center>
-              </Box>
+              <Group spacing="xs" mt="xs">
+                <ThemeIcon color="gray" size="xl" radius="xl">
+                  <IconRocketOff />
+                </ThemeIcon>
+                <Text size="lg" color="dimmed">
+                  {`You aren't suggesting any other resources yet...`}
+                </Text>
+              </Group>
             )}
           </Stack>
         )}
