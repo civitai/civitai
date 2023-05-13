@@ -164,7 +164,9 @@ export default function ModelDetailsV2({
     });
 
   const rawVersionId = router.query.modelVersionId;
-  const modelVersionId = Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId;
+  const modelVersionId = Number(
+    (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
+  );
 
   const isModerator = currentUser?.isModerator ?? false;
   const isCreator = model?.user.id === currentUser?.id;
@@ -173,7 +175,7 @@ export default function ModelDetailsV2({
     ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
     : model?.modelVersions ?? [];
   const latestVersion =
-    publishedVersions.find((version) => version.id === Number(modelVersionId)) ??
+    publishedVersions.find((version) => version.id === modelVersionId) ??
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
@@ -364,13 +366,15 @@ export default function ModelDetailsV2({
 
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
-    const rawVersionId = router.query.modelVersionId;
-    const versionId = Number(rawVersionId);
-    if (rawVersionId && isNumber(versionId)) {
-      const version = model?.modelVersions.find((v) => v.id === versionId);
-      if (version) setSelectedVersion(version);
+    const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
+    const hasSelected = publishedVersions.some((v) => v.id === selectedVersion?.id);
+    if (!hasSelected) setSelectedVersion(publishedVersions[0] ?? null);
+    if (selectedVersion && queryVersion !== selectedVersion) {
+      router.replace(`/models/${id}?modelVersionId=${selectedVersion.id}`, undefined, {
+        shallow: true,
+      });
     }
-  }, [model?.modelVersions, router.query.modelVersionId]);
+  }, [publishedVersions, selectedVersion, modelVersionId]);
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
@@ -774,10 +778,12 @@ export default function ModelDetailsV2({
               versions={model.modelVersions}
               selected={selectedVersion?.id}
               onVersionClick={(version) => {
-                if (version.id !== selectedVersion?.id)
-                  router.replace(`/models/${model.id}?modelVersionId=${version.id}`, undefined, {
-                    shallow: true,
-                  });
+                if (version.id !== selectedVersion?.id) {
+                  setSelectedVersion(version);
+                  // router.replace(`/models/${model.id}?modelVersionId=${version.id}`, undefined, {
+                  //   shallow: true,
+                  // });
+                }
               }}
               onDeleteClick={handleDeleteVersion}
               showExtraIcons={isOwner || isModerator}
