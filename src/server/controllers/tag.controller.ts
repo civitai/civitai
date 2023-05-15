@@ -25,6 +25,7 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTagByNameInput }) => {
   try {
@@ -38,12 +39,13 @@ export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; 
   try {
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
+    const { articleAdminTags } = getFeatureFlags({ user: ctx?.user });
 
     const results = await getTags({
       ...input,
       take,
       skip,
-      includeAdminTags: !!ctx.user?.isModerator,
+      includeAdminTags: articleAdminTags,
     });
 
     return getPagingData(results, take, page);

@@ -18,6 +18,7 @@ const featureFlags = createTypedDictionary({
   posts: ['mod', 'founder'],
   articles: ['mod', 'founder', 'granted'],
   articleCreate: ['mod', 'granted'],
+  articleAdminTags: ['mod', 'granted'],
   civitaiLink: ['mod'],
   stripe: ['mod'],
 });
