@@ -1,5 +1,6 @@
 // @ts-check
 import { withPlausibleProxy } from 'next-plausible';
+import { withAxiom } from 'next-axiom';
 
 /**
  * Don't be scared of the generics here.
@@ -13,7 +14,7 @@ function defineNextConfig(config) {
   return config;
 }
 
-export default defineNextConfig({
+export default defineNextConfig(withAxiom({
   reactStrictMode: true,
   // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
   i18n: {
@@ -109,4 +110,4 @@ export default defineNextConfig({
     ];
   },
   output: 'standalone',
-});
+}));

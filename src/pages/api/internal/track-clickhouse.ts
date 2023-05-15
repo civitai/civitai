@@ -2,15 +2,13 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { clickhouse } from '~/server/clickhouse/client';
 import { z } from 'zod';
+import { AxiomAPIRequest, withAxiom } from 'next-axiom';
 
 const trackSchema = z.object({
   table: z.string(),
 });
 
-export default WebhookEndpoint(async function trackClickhouse(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const { table } = trackSchema.parse(req.query);
   if (!table) {
     return res.status(400).json({
