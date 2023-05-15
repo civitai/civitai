@@ -566,7 +566,15 @@ export const getDownloadCommandHandler = async ({
       select: {
         id: true,
         model: {
-          select: { id: true, name: true, type: true, status: true, userId: true, mode: true },
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            status: true,
+            userId: true,
+            mode: true,
+            nsfw: true,
+          },
         },
         images: {
           select: {
@@ -626,6 +634,12 @@ export const getDownloadCommandHandler = async ({
           modelVersionId: modelVersion.id,
         },
       },
+    });
+    ctx.track.modelVersionEvent({
+      type: 'Download',
+      modelId: modelVersion.model.id,
+      modelVersionId: modelVersion.id,
+      nsfw: modelVersion.model.nsfw,
     });
 
     const fileName = getDownloadFilename({ model, modelVersion, file });

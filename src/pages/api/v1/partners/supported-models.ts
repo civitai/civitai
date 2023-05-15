@@ -3,6 +3,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { PartnerEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
+import { Tracker } from '~/server/clickhouse/client';
 
 const runStrategySchema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -33,6 +34,12 @@ export default PartnerEndpoint(
       JOIN "ModelVersion" mv ON mv.id = t."modelVersionId"
       ON CONFLICT DO NOTHING;
     `;
+
+    const track = new Tracker(req, res);
+    track.partnerEvent({
+      type: 'Update',
+      partnerId: partner.id,
+    });
 
     res.status(200).json({
       success: true,
