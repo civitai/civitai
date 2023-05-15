@@ -378,18 +378,15 @@ export default function ModelDetailsV2({
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
-    Router.beforePopState(({ as, url }) => {
+    router.beforePopState(({ as, url }) => {
       if (as === '/' || as.startsWith('/?') || as.startsWith('/user/') || as.startsWith('/tag/')) {
         const [route, queryString] = as.split('?');
         const [, otherQueryString] = url.split('?');
         const queryParams = QS.parse(queryString);
         const otherParams = QS.parse(otherQueryString);
-        Router.replace(
+        router.replace(
           { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
-          as,
-          {
-            shallow: true,
-          }
+          as
         );
 
         return false;
@@ -398,7 +395,7 @@ export default function ModelDetailsV2({
       return true;
     });
 
-    return () => Router.beforePopState(() => true);
+    return () => router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
