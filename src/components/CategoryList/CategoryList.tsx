@@ -45,7 +45,7 @@ export function CategoryList<Item>({
   actions,
 }: Props<Item>) {
   const { ref, inView } = useInView();
-  const { columnCount, maxSingleColumnWidth } = useMasonryContainerContext();
+  const { columnCount, maxSingleColumnWidth, columnWidth } = useMasonryContainerContext();
   const { classes } = useStyles();
 
   useEffect(() => {
@@ -85,6 +85,7 @@ export function CategoryList<Item>({
                   data={category.items}
                   render={RenderComponent}
                   itemId={itemId}
+                  height={columnWidth}
                   extra={
                     actionableActions ? (
                       <Carousel.Slide key="view-more">
