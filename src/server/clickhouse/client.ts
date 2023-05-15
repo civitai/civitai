@@ -100,17 +100,19 @@ export class Tracker {
 
     if (this.session) await this.session;
 
-    // do not await as we do not want to fail on tracker issues
-    clickhouse.insert({
-      table: table,
-      values: [
-        {
-          ...this.actor,
-          ...custom,
-        },
-      ],
-      format: 'JSONEachRow',
-    });
+    const data = {
+      ...this.actor,
+      ...custom,
+    };
+
+    // Perform the clickhouse insert in the background
+    await fetch(
+      `http://localhost:3000/api/internal/track-clickhouse?token=${env.WEBHOOK_TOKEN}&table=${table}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
   }
 
   public view(values: { type: ViewType; entityType: EntityType; entityId: number }) {
