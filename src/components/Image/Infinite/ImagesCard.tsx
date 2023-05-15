@@ -1,18 +1,18 @@
 import { ActionIcon, AspectRatio, createStyles } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
+
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { IconInfoCircle } from '@tabler/icons';
-import { useRouter } from 'next/router';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes } = useStyles();

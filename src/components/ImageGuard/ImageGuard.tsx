@@ -1,45 +1,46 @@
 import {
-  Button,
-  Group,
-  Popover,
-  Stack,
-  ThemeIcon,
-  Text,
+  ActionIcon,
   Badge,
   Box,
-  Sx,
-  ActionIcon,
-  Menu,
+  Button,
+  Group,
   HoverCard,
+  Menu,
+  Popover,
+  Stack,
+  Sx,
+  Text,
+  ThemeIcon,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { NsfwLevel } from '@prisma/client';
 import {
+  IconAlertTriangle,
+  IconCheck,
   IconDotsVertical,
   IconEye,
   IconEyeOff,
   IconFlag,
   IconLock,
-  IconPlus,
   IconPencil,
-  IconAlertTriangle,
-  IconCheck,
+  IconPlus,
   IconX,
 } from '@tabler/icons';
-import React, { cloneElement, createContext, useContext, useState, useCallback } from 'react';
+import Router, { useRouter } from 'next/router';
+import React, { cloneElement, createContext, useCallback, useContext, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { nsfwLevelUI } from '~/libs/moderation';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { useImageStore } from '~/store/images.store';
-import { isDefined } from '~/utils/type-guards';
-import Router, { useRouter } from 'next/router';
-import { trpc } from '~/utils/trpc';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { isNsfwImage } from '~/server/common/model-helpers';
-import { nsfwLevelUI } from '~/libs/moderation';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { useImageStore } from '~/store/images.store';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -296,14 +297,16 @@ ImageGuard.Report = function ReportImage({
   }
 
   const menuItems: React.ReactElement[] = [];
-  if (!isOwner && !!currentUser)
+  if (!isOwner)
     menuItems.push(
-      <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick} key="report">
-        Report image
-      </Menu.Item>
+      <LoginRedirect reason="report-content" key="report">
+        <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
+          Report image
+        </Menu.Item>
+      </LoginRedirect>
     );
 
-  if ((isOwner || isModerator) && image.postId)
+  if (currentUser && (isOwner || isModerator) && image.postId)
     menuItems.push(
       <Menu.Item
         icon={<IconPencil size={14} stroke={1.5} />}
