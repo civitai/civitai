@@ -359,6 +359,8 @@ model Model {
   threads           Thread[]
   resourceReviews   ResourceReview[]
   metricsDaily      ModelMetricDaily[]
+  associatedFrom    ModelAssociations[] @relation("ToModelAssociation")
+  associations      ModelAssociations[] @relation("FromModelAssociation")
 
   @@index([name])
   @@index([status, nsfw])
@@ -546,6 +548,24 @@ model ModelMetricDaily {
 
   @@id([modelId, modelVersionId, type, date])
   @@index(modelVersionId)
+}
+
+enum AssociationType {
+  Suggested
+}
+
+model ModelAssociations {
+  fromModelId    Int
+  fromModel      Model           @relation("FromModelAssociation", fields: [fromModelId], references: [id])
+  toModelId      Int
+  toModel        Model           @relation("ToModelAssociation", fields: [toModelId], references: [id])
+  associatedById Int?
+  createdAt      DateTime        @default(now())
+  type           AssociationType
+  index          Int?
+
+  @@id([fromModelId, toModelId, type])
+  @@index([toModelId], type: Hash)
 }
 
 enum UserActivityType {

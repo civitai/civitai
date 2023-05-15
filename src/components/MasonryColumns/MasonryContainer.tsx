@@ -6,7 +6,9 @@ import {
   useMasonryContext,
 } from '~/components/MasonryColumns/MasonryProvider';
 
-type MasonryContainerProps = ContainerProps;
+type MasonryContainerProps = Omit<ContainerProps, 'children'> & {
+  children: React.ReactNode | ((state: MasonryContainerState) => React.ReactNode);
+};
 type MasonryContainerState = MasonryContextState & {
   columnCount: number;
   combinedWidth: number;
@@ -39,6 +41,13 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
     maxColumnCount,
   });
 
+  const state = {
+    containerWidth,
+    columnCount,
+    combinedWidth,
+    ...masonryProviderState,
+  };
+
   return (
     <Container {...containerProps}>
       <div ref={containerRef} className={classes.container}>
@@ -46,10 +55,8 @@ export function MasonryContainer({ children, ...containerProps }: MasonryContain
           style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
           className={classes.queries}
         >
-          <MasonryContainerContext.Provider
-            value={{ containerWidth, columnCount, combinedWidth, ...masonryProviderState }}
-          >
-            {children}
+          <MasonryContainerContext.Provider value={state}>
+            {typeof children === 'function' ? children(state) : children}
           </MasonryContainerContext.Provider>
         </div>
       </div>

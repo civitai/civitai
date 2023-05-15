@@ -65,7 +65,8 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
   });
 
 type ImageV2NavigationProps = { previewUrl?: string };
-export type ImageV2Model = Prisma.ImageGetPayload<typeof imageV2Model> & ImageV2NavigationProps;
+export type ImageV2Model = Prisma.ImageGetPayload<typeof imageV2Model> &
+  ImageV2NavigationProps & { postTitle?: string };
 const imageV2Model = Prisma.validator<Prisma.ImageArgs>()({ select: getImageV2Select({}) });
 
 export const imageV2DetailSelect = Prisma.validator<Prisma.ImageSelect>()({

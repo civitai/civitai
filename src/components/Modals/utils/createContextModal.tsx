@@ -26,6 +26,7 @@ export function createContextModal<T extends Record<string, unknown>>({
       modal: name,
       ...modalProps,
       onClose: () => {
+        history.scrollRestoration = 'manual';
         if (location.href.includes('#')) history.back();
         modalProps.onClose?.();
       },

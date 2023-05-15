@@ -7,6 +7,7 @@ import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
+import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -15,6 +16,7 @@ const QuestionsInfoModal = dynamic(() => import('~/components/Questions/Question
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
+const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
 const ResourceReviewEdit = dynamic(
   () => import('~/components/ResourceReview/EditResourceReviewModal')
@@ -48,6 +50,10 @@ const registry = {
   resourceReviewEdit: {
     Component: ResourceReviewEdit,
     fn: openResourceReviewEditModal,
+  },
+  associateModels: {
+    Component: AssociateModelsModal,
+    fn: openAssociateModelsModal,
   },
 };
 

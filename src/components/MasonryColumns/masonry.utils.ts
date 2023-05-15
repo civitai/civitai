@@ -4,7 +4,7 @@ import {
 } from '~/components/MasonryColumns/masonry.types';
 import { useWindowEvent } from '@mantine/hooks';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { createDebouncer } from '~/utils/debouncer';
+import { createDebouncer, useDebouncer } from '~/utils/debouncer';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
@@ -92,14 +92,15 @@ const getMasonryColumns = <TData>(
   return columnItems;
 };
 
-const windowResizeDebouncer = createDebouncer(300);
 export const useContainerWidth = (elementRef: React.MutableRefObject<HTMLElement | null>) => {
   const { current: container } = elementRef;
   const [windowWidth, setWindowWidth] = useState(0);
   const [width, setWidth] = useState(0);
 
+  const debouncer = useDebouncer(300);
+
   useWindowEvent('resize', () =>
-    windowResizeDebouncer(() => {
+    debouncer(() => {
       setWindowWidth(window.innerWidth);
     })
   );

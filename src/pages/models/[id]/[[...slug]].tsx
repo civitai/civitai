@@ -96,6 +96,7 @@ import { parseBrowsingMode } from '~/server/createContext';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -163,7 +164,9 @@ export default function ModelDetailsV2({
     });
 
   const rawVersionId = router.query.modelVersionId;
-  const modelVersionId = Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId;
+  const modelVersionId = Number(
+    (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
+  );
 
   const isModerator = currentUser?.isModerator ?? false;
   const isCreator = model?.user.id === currentUser?.id;
@@ -172,7 +175,7 @@ export default function ModelDetailsV2({
     ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
     : model?.modelVersions ?? [];
   const latestVersion =
-    publishedVersions.find((version) => version.id === Number(modelVersionId)) ??
+    publishedVersions.find((version) => version.id === modelVersionId) ??
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
@@ -363,13 +366,15 @@ export default function ModelDetailsV2({
 
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
-    const rawVersionId = router.query.modelVersionId;
-    const versionId = Number(rawVersionId);
-    if (rawVersionId && isNumber(versionId)) {
-      const version = model?.modelVersions.find((v) => v.id === versionId);
-      if (version) setSelectedVersion(version);
+    const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
+    const hasSelected = publishedVersions.some((v) => v.id === selectedVersion?.id);
+    if (!hasSelected) setSelectedVersion(publishedVersions[0] ?? null);
+    if (selectedVersion && queryVersion !== selectedVersion) {
+      router.replace(`/models/${id}?modelVersionId=${selectedVersion.id}`, undefined, {
+        shallow: true,
+      });
     }
-  }, [model?.modelVersions, router.query.modelVersionId]);
+  }, [publishedVersions, selectedVersion, modelVersionId]);
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
@@ -436,6 +441,7 @@ export default function ModelDetailsV2({
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
 
   return (
     <>
@@ -772,10 +778,12 @@ export default function ModelDetailsV2({
               versions={model.modelVersions}
               selected={selectedVersion?.id}
               onVersionClick={(version) => {
-                if (version.id !== selectedVersion?.id)
-                  router.replace(`/models/${model.id}?modelVersionId=${version.id}`, undefined, {
-                    shallow: true,
-                  });
+                if (version.id !== selectedVersion?.id) {
+                  setSelectedVersion(version);
+                  // router.replace(`/models/${model.id}?modelVersionId=${version.id}`, undefined, {
+                  //   shallow: true,
+                  // });
+                }
               }}
               onDeleteClick={handleDeleteVersion}
               showExtraIcons={isOwner || isModerator}
@@ -794,95 +802,73 @@ export default function ModelDetailsV2({
               }}
             />
           )}
-          {isClient &&
-            !loadingModel &&
-            !loadingImages &&
-            (!model.locked ? (
-              <>
-                <Stack spacing="md">
-                  <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
-                    <Group spacing="xs">
-                      <Title order={2}>Discussion</Title>
-                      {canDiscuss ? (
-                        <>
-                          <LoginRedirect reason="create-comment">
-                            <Button
-                              leftIcon={<IconMessage size={16} />}
-                              variant="outline"
-                              onClick={() => openRoutedContext('commentEdit', {})}
-                              size="xs"
-                            >
-                              Add Comment
-                            </Button>
-                          </LoginRedirect>
-                        </>
-                      ) : (
-                        !isMuted && (
-                          <JoinPopover message="You must be a Supporter Tier member to join this discussion">
-                            <Button
-                              leftIcon={<IconClock size={16} />}
-                              variant="outline"
-                              size="xs"
-                              color="green"
-                            >
-                              Early Access
-                            </Button>
-                          </JoinPopover>
-                        )
-                      )}
-                    </Group>
-                  </Group>
-                  <ModelDiscussionV2 modelId={model.id} />
-                </Stack>
-                {/* <Stack spacing="md" ref={gallerySectionRef} id="gallery">
-                  <Group spacing="xs" align="flex-end">
-                    <Title order={2}>Gallery</Title>
-                    <LoginRedirect reason="create-review">
-                      <Button
-                        component={NextLink}
-                        className={classes.discussionActionButton}
-                        variant="outline"
-                        size="xs"
-                        leftIcon={<IconPlus size={16} />}
-                        href={`/posts/create?modelId=${model.id}${
-                          selectedVersion ? `&modelVersionId=${selectedVersion.id}` : ''
-                        }&returnUrl=${router.asPath}`}
-                      >
-                        Add post
-                      </Button>
-                    </LoginRedirect>
-                  </Group>
-                  <Group position="apart" spacing={0}>
-                    <SortFilter type="image" />
-                    <Group spacing={4}>
-                      <PeriodFilter />
-                      <ImageFiltersDropdown />
-                    </Group>
-                  </Group>
-                  <ImageCategories />
-
-                </Stack> */}
-              </>
-            ) : (
-              <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
-                <Center>
-                  <Group spacing="xs">
-                    <ThemeIcon color="gray" size="xl" radius="xl">
-                      <IconMessageCircleOff />
-                    </ThemeIcon>
-                    <Text size="lg" color="dimmed">
-                      Discussion is turned off for this model.
-                    </Text>
-                  </Group>
-                </Center>
-              </Paper>
-            ))}
         </Stack>
         {versionCount > 1 ? (
           <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
         ) : null}
       </Container>
-      {isClient && !loadingImages && !model.locked && model.mode !== ModelModifier.TakenDown && (
+      {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
+        <AssociatedModels
+          fromId={model.id}
+          type="Suggested"
+          label="Suggested Resources"
+          ownerId={model.user.id}
+        />
+      )}
+      {canLoadBelowTheFold &&
+        (!model.locked ? (
+          <Container size="xl" my="xl">
+            <Stack spacing="md">
+              <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
+                <Group spacing="xs">
+                  <Title order={2}>Discussion</Title>
+                  {canDiscuss ? (
+                    <>
+                      <LoginRedirect reason="create-comment">
+                        <Button
+                          leftIcon={<IconMessage size={16} />}
+                          variant="outline"
+                          onClick={() => openRoutedContext('commentEdit', {})}
+                          size="xs"
+                        >
+                          Add Comment
+                        </Button>
+                      </LoginRedirect>
+                    </>
+                  ) : (
+                    !isMuted && (
+                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                        <Button
+                          leftIcon={<IconClock size={16} />}
+                          variant="outline"
+                          size="xs"
+                          color="green"
+                        >
+                          Early Access
+                        </Button>
+                      </JoinPopover>
+                    )
+                  )}
+                </Group>
+              </Group>
+              <ModelDiscussionV2 modelId={model.id} />
+            </Stack>
+          </Container>
+        ) : (
+          <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+            <Center>
+              <Group spacing="xs">
+                <ThemeIcon color="gray" size="xl" radius="xl">
+                  <IconMessageCircleOff />
+                </ThemeIcon>
+                <Text size="lg" color="dimmed">
+                  Discussion is turned off for this model.
+                </Text>
+              </Group>
+            </Center>
+          </Paper>
+        ))}
+      {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box ref={gallerySectionRef} id="gallery" mt="md">
           <ImagesAsPostsInfinite
             modelId={model.id}

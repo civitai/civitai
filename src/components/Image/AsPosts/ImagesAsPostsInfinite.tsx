@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Button,
   Center,
+  Divider,
   Group,
   Loader,
   LoadingOverlay,
@@ -106,12 +107,16 @@ export default function ImagesAsPostsInfinite({
 
   return (
     <ImagesAsPostsInfiniteContext.Provider value={{ filters, modelVersions }}>
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={6}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer fluid>
+      <MasonryProvider columnWidth={310} maxColumnCount={6} maxSingleColumnWidth={450}>
+        <MasonryContainer
+          fluid
+          pt="xl"
+          pb={61}
+          mb={-61}
+          sx={(theme) => ({
+            background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+          })}
+        >
           <Stack spacing="md">
             <Group spacing="xs" align="flex-end">
               <Title order={2}>Gallery</Title>

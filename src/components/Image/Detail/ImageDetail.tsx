@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Box,
+  Button,
   Card,
   CloseButton,
   createStyles,
@@ -10,6 +11,7 @@ import {
   Paper,
   ScrollArea,
   Stack,
+  Text,
 } from '@mantine/core';
 import {
   IconFlag,
@@ -37,6 +39,7 @@ import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 
 export function ImageDetail() {
   const { classes, cx } = useStyles();
@@ -111,6 +114,38 @@ export function ImageDetail() {
                 </Group>
               </Stack>
             </Card.Section>
+            {image.postId && (
+              <Card.Section withBorder>
+                <Stack p="sm" spacing={8}>
+                  {image.postTitle ? (
+                    <Group spacing="xs" noWrap>
+                      <Text size="sm" weight={500} sx={{ whiteSpace: 'nowrap' }}>
+                        Post
+                      </Text>
+                      <RoutedContextLink
+                        modal="postDetailModal"
+                        postId={image.postId}
+                        key="view-post"
+                      >
+                        <Text size="sm" variant="link" td="underline" lineClamp={1}>
+                          {image.postTitle ?? 'Untitled'}
+                        </Text>
+                      </RoutedContextLink>
+                    </Group>
+                  ) : (
+                    <RoutedContextLink
+                      modal="postDetailModal"
+                      postId={image.postId}
+                      key="view-post"
+                    >
+                      <Button size="xs" variant="outline" fullWidth>
+                        View Post
+                      </Button>
+                    </RoutedContextLink>
+                  )}
+                </Stack>
+              </Card.Section>
+            )}
             <Card.Section
               component={ScrollArea}
               style={{ flex: 1, position: 'relative' }}
@@ -135,7 +170,7 @@ export function ImageDetail() {
                   canAdd
                   canAddModerated={isMod}
                   collapsible
-                  px="md"
+                  px="sm"
                 />
                 <div>
                   <Divider

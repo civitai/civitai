@@ -1,3 +1,9 @@
+import {
+  findModelsToAssociate,
+  getAssociatedModelsCardData,
+  getAssociatedModelsSimple,
+  setAssociatedModels,
+} from './../services/model.service';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
@@ -43,6 +49,9 @@ import {
   unpublishModelSchema,
   getModelsWithCategoriesSchema,
   setModelsCategorySchema,
+  getAssociatedModelsSchema,
+  setAssociatedModelsSchema,
+  findModelsToAssociateSchema,
 } from '~/server/schema/model.schema';
 import {
   guardedProcedure,
@@ -70,20 +79,17 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const { id } = input as { id: number };
 
   const userId = ctx.user.id;
-  let ownerId = userId;
-  if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbRead.model.findUnique({ where: { id } }))?.userId ?? 0;
-    if (!isModerator) {
-      if (ownerId !== userId) throw throwAuthorizationError();
-    }
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && !!id) {
+    const ownerId = (await dbRead.model.findUnique({ where: { id }, select: { userId: true } }))
+      ?.userId;
+    if (ownerId !== userId) throw throwAuthorizationError();
   }
 
   return next({
     ctx: {
       // infers the `user` as non-nullable
       user: ctx.user,
-      ownerId,
     },
   });
 });
@@ -110,9 +116,9 @@ const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
 });
 
 const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  if (ctx.browsingMode !== BrowsingMode.All) {
-    const _input = input as GetAllModelsOutput;
-    _input.browsingMode = ctx.browsingMode;
+  const _input = input as GetAllModelsOutput;
+  _input.browsingMode ??= ctx.browsingMode;
+  if (_input.browsingMode !== BrowsingMode.All) {
     const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
     _input.excludedImageTagIds = [
       ...hidden.tags.moderatedTags,
@@ -208,4 +214,17 @@ export const modelRouter = router({
   setCategory: protectedProcedure
     .input(setModelsCategorySchema)
     .mutation(({ input, ctx }) => setModelsCategory({ ...input, userId: ctx.user?.id })),
+  findModelsToAssociate: publicProcedure
+    .input(findModelsToAssociateSchema)
+    .query(({ input, ctx }) => findModelsToAssociate(input)),
+  getAssociatedModelsCardData: publicProcedure
+    .input(getAssociatedModelsSchema)
+    .use(applyUserPreferences)
+    .query(({ input, ctx }) => getAssociatedModelsCardData(input, ctx.user)),
+  getAssociatedModelsSimple: publicProcedure
+    .input(getAssociatedModelsSchema)
+    .query(({ input, ctx }) => getAssociatedModelsSimple(input)),
+  setAssociatedModels: protectedProcedure
+    .input(setAssociatedModelsSchema)
+    .mutation(({ input, ctx }) => setAssociatedModels(input, ctx.user)),
 });
