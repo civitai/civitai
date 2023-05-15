@@ -373,7 +373,7 @@ export const publishModelHandler = async ({
       throw throwAuthorizationError('You are not authorized to publish this model');
 
     const republishing = model.status !== ModelStatus.Draft;
-    const { needsReview, unpublishedReason, unpublishedAt, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
       (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 

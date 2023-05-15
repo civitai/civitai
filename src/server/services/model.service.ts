@@ -584,6 +584,7 @@ export const publishModelById = async ({
 export const unpublishModelById = async ({
   id,
   reason,
+  customMessage,
   meta,
   user,
 }: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
@@ -599,6 +600,7 @@ export const unpublishModelById = async ({
             ...(reason
               ? {
                   unpublishedReason: reason,
+                  customMessage,
                 }
               : {}),
             unpublishedAt: new Date().toISOString(),

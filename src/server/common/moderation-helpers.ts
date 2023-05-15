@@ -69,6 +69,10 @@ export const unpublishReasons = {
     notificationMessage:
       'Spam or advertisements posing as a resource are not allowed under our TOS.',
   },
+  other: {
+    optionLabel: 'Other',
+    notificationMessage: '',
+  },
 } as const;
 
 export type UnpublishReason = keyof typeof unpublishReasons;
