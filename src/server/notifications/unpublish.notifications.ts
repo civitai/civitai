@@ -7,11 +7,14 @@ export const unpublishNotifications = createNotificationProcessor({
     displayName: 'Model version unpublished',
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your ${details.modelName}: ${
-        details.modelVersionName
-      } model version has been unpublished ${
-        unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
-      }`,
+      message:
+        details.reason !== 'other'
+          ? `Your ${details.modelVersionName} model has been unpublished: ${
+              unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
+            }`
+          : `Your ${details.modelVersionName} model has been unpublished: ${
+              details.customMessage ?? ''
+            }`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
         details.modelVersionId
       }`,
@@ -25,7 +28,8 @@ export const unpublishNotifications = createNotificationProcessor({
             'modelName', m.name,
             'modelVersionId', mv.id,
             'modelVersionName', mv.name,
-            'reason', mv.meta->>'unpublishedReason'
+            'reason', mv.meta->>'unpublishedReason',
+            'customMessage', mv.meta->>'customMessage'
           ) "details"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
@@ -45,9 +49,12 @@ export const unpublishNotifications = createNotificationProcessor({
     displayName: 'Model unpublished',
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your ${details.modelName} model has been unpublished: ${
-        unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
-      }`,
+      message:
+        details.reason !== 'other'
+          ? `Your ${details.modelName} model has been unpublished: ${
+              unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
+            }`
+          : `Your ${details.modelName} model has been unpublished: ${details.customMessage ?? ''}`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -57,7 +64,8 @@ export const unpublishNotifications = createNotificationProcessor({
           jsonb_build_object(
             'modelId', m.id,
             'modelName', m.name,
-            'reason', m.meta->>'unpublishedReason'
+            'reason', m.meta->>'unpublishedReason',
+            'customMessage', m.meta->>'customMessage'
           ) "details"
         FROM "Model" m
         WHERE jsonb_typeof(m.meta->'unpublishedReason') = 'string'

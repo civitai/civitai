@@ -1,4 +1,4 @@
-import { Button, Group, Radio, Stack } from '@mantine/core';
+import { Button, Group, Radio, Stack, Textarea } from '@mantine/core';
 import React, { useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
@@ -17,27 +17,31 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
   Element: ({ context, props: { modelId } }) => {
     const queryUtils = trpc.useContext();
     const [reason, setReason] = useState<UnpublishReason | undefined>();
+    const [customMessage, setCustomMessage] = useState<string>('');
+    const [error, setError] = useState<string>('');
 
-    const unpublishMutation = trpc.model.unpublish.useMutation();
-
+    const unpublishMutation = trpc.model.unpublish.useMutation({
+      onSuccess: async () => {
+        await queryUtils.model.getById.invalidate({ id: modelId });
+        await queryUtils.model.getAll.invalidate();
+        context.close();
+      },
+      onError: (error) => {
+        showErrorNotification({
+          title: 'Failed to unpublish',
+          error: new Error(error.message),
+          reason: 'An unexpected error occurred. Please try again later.',
+        });
+      },
+    });
     const handleUnpublish = () => {
-      unpublishMutation.mutate(
-        { id: modelId, reason },
-        {
-          onSuccess: async () => {
-            await queryUtils.model.getById.invalidate({ id: modelId });
-            await queryUtils.model.getAll.invalidate();
-            context.close();
-          },
-          onError: (error) => {
-            showErrorNotification({
-              title: 'Failed to unpublish',
-              error: new Error(error.message),
-              reason: 'An unexpected error occurred. Please try again later.',
-            });
-          },
-        }
-      );
+      setError('');
+      if (reason === 'other') {
+        if (!customMessage) return setError('Required');
+        return unpublishMutation.mutate({ id: modelId, reason, customMessage });
+      }
+
+      return unpublishMutation.mutate({ id: modelId, reason });
     };
 
     return (
@@ -52,11 +56,25 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
           ))}
         </Radio.Group>
         {reason && (
-          <Group position="right">
-            <Button onClick={handleUnpublish} loading={unpublishMutation.isLoading}>
-              Unpublish
-            </Button>
-          </Group>
+          <>
+            {reason === 'other' && (
+              <Textarea
+                name="customMessage"
+                label="Reason"
+                placeholder="Why is this being unpublished?"
+                rows={2}
+                value={customMessage}
+                onChange={(event) => setCustomMessage(event.currentTarget.value)}
+                error={error}
+                withAsterisk
+              />
+            )}
+            <Group position="right">
+              <Button onClick={handleUnpublish} loading={unpublishMutation.isLoading}>
+                Unpublish
+              </Button>
+            </Group>
+          </>
         )}
       </Stack>
     );

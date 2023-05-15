@@ -13,7 +13,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
     for (const batch of notificationBatches) {
       const promises = batch.map(async ({ prepareQuery, key }) => {
         const [lastSent, setLastSent] = await getJobDate('last-sent-notification-' + key, lastRun);
-        const query = await prepareQuery?.({ lastSent: lastSent.toISOString() });
+        const query = prepareQuery?.({ lastSent: lastSent.toISOString() });
         if (query) {
           const now = new Date(); // Use time before query is executed to avoid gaps
           await dbWrite.$executeRawUnsafe(query);

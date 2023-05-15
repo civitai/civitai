@@ -19,7 +19,7 @@ import { IconExternalLink } from '@tabler/icons';
 import Link from 'next/link';
 import { useState } from 'react';
 
-import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelGetAllPagedSimple } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -127,10 +127,9 @@ export default function ModeratorModels() {
                           <Text weight={500} size="sm" span>
                             Reason initially unpublished:
                           </Text>{' '}
-                          {
-                            unpublishReasons[model.meta.unpublishedReason as UnpublishReason]
-                              .optionLabel
-                          }
+                          {`${unpublishReasons[model.meta.unpublishedReason].optionLabel}${
+                            model.meta.customMessage ? ` - ${model.meta.customMessage}` : ''
+                          }`}
                         </Text>
                       )}
                     </Stack>

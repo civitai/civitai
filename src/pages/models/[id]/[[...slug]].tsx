@@ -442,6 +442,11 @@ export default function ModelDetailsV2({
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
+  const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
+  const unpublishedMessage =
+    unpublishedReason !== 'other'
+      ? unpublishReasons[unpublishedReason]?.notificationMessage
+      : `Removal reason: ${model.meta?.customMessage}.` ?? '';
 
   return (
     <>
@@ -704,11 +709,9 @@ export default function ModelDetailsV2({
                       guidelines
                     </Text>{' '}
                     and is not visible to the community.{' '}
-                    {model.meta?.unpublishedReason && unpublishReasons[model.meta.unpublishedReason]
-                      ? unpublishReasons[model.meta.unpublishedReason].notificationMessage
-                      : null}{' '}
-                    If you adjust your model to comply with our guidelines, you can request a review
-                    from one of our moderators. If you believe this was done in error, you can{' '}
+                    {unpublishedReason && unpublishedMessage ? unpublishedMessage : null} If you
+                    adjust your model to comply with our guidelines, you can request a review from
+                    one of our moderators. If you believe this was done in error, you can{' '}
                     <Text component="a" variant="link" href="/appeal" target="_blank">
                       submit an appeal
                     </Text>
