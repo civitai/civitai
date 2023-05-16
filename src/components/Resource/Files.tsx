@@ -41,6 +41,7 @@ import {
   FilesProvider,
   useFilesContext,
 } from '~/components/Resource/FilesProvider';
+import { removeDuplicates } from '~/utils/array-helpers';
 
 export function Files({ model, version }: Props) {
   return (
@@ -71,9 +72,26 @@ function FilesComponent({ model }: Props) {
 
   return (
     <Stack>
-      <Dropzone accept={{ 'mime/type': fileExtensions }} onDrop={onDrop} maxFiles={maxFiles}>
+      <Dropzone
+        accept={{ 'mime/type': fileExtensions }}
+        onDrop={onDrop}
+        maxFiles={maxFiles}
+        onReject={(files) => {
+          const errors = removeDuplicates(
+            files.flatMap((file) => file.errors),
+            'code'
+          )
+            .map((error) => error.message)
+            .join('\n');
+
+          showErrorNotification({ error: new Error(errors) });
+        }}
+        sx={(theme) => ({
+          '&[data-reject]': { background: theme.colors.dark[5], borderColor: theme.colors.dark[4] },
+        })}
+      >
         <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
-          <Dropzone.Accept>
+          {/* <Dropzone.Accept>
             <IconUpload
               size={50}
               stroke={1.5}
@@ -89,8 +107,9 @@ function FilesComponent({ model }: Props) {
           </Dropzone.Reject>
           <Dropzone.Idle>
             <IconFileUpload size={50} stroke={1.5} />
-          </Dropzone.Idle>
+          </Dropzone.Idle> */}
 
+          <IconFileUpload size={50} stroke={1.5} />
           <Stack spacing={8}>
             <Text size="xl" inline>
               Drop your files here or click to select
