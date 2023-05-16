@@ -12,15 +12,17 @@ import {
   TooltipProps,
   createStyles,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark } from '@tabler/icons';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Subscription } from 'react-hook-form/dist/utils/createSubject';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { hiddenLabel, matureLabel } from '~/components/Post/Edit/EditPostControls';
-import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
@@ -35,6 +37,7 @@ import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
+import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
@@ -76,9 +79,20 @@ export function ArticleUpsertForm({ article }: Props) {
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
-  const { isDirty, isSubmitted } = form.formState;
-  useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
-
+  const clearStorage = useFormStorage({
+    schema,
+    form,
+    timeout: 1000,
+    key: `article${article?.id ? `_${article?.id}` : 'new'}`,
+    watch: ({ content, cover, categoryId, nsfw, tags, title }) => ({
+      content,
+      cover,
+      categoryId,
+      nsfw,
+      tags,
+      title,
+    }),
+  });
   const [publishing, setPublishing] = useState(false);
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -104,6 +118,7 @@ export function ArticleUpsertForm({ article }: Props) {
           await queryUtils.article.getById.invalidate({ id: result.id });
           await queryUtils.article.getInfinite.invalidate();
           await queryUtils.article.getByCategory.invalidate();
+          clearStorage();
         },
         onError(error) {
           showErrorNotification({
