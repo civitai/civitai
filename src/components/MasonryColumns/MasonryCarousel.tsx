@@ -47,6 +47,7 @@ export function MasonryCarousel<TData>({
       align={totalItems <= columnCount ? 'start' : 'end'}
       withControls={totalItems > columnCount ? true : false}
       slidesToScroll={columnCount}
+      // height={columnCount === 1 ? maxSingleColumnWidth : '100%'}
       loop
       sx={{
         width: columnCount === 1 ? maxSingleColumnWidth : '100%',

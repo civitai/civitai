@@ -15,16 +15,21 @@ import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { NoContent } from '~/components/NoContent/NoContent';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props<Item> = {
   data: { id: number; name: string; items: Item[] }[];
   render: React.ComponentType<MasonryRenderItemProps<Item>>;
   itemId?: (data: Item) => string | number;
   isLoading?: boolean;
+  isRefetching?: boolean;
   fetchNextPage?: () => void;
   hasNextPage?: boolean;
   actions?: CategoryAction[] | ((items: Item[]) => CategoryAction[]);
+  empty?: (data: { id: number; name: string }) => React.ReactNode;
 };
 
 type CategoryAction = {
@@ -33,6 +38,7 @@ type CategoryAction = {
   icon?: React.ReactNode;
   inTitle?: boolean;
   shallow?: boolean;
+  visible?: boolean;
 };
 
 export function CategoryList<Item>({
@@ -41,18 +47,26 @@ export function CategoryList<Item>({
   itemId,
   hasNextPage,
   isLoading,
+  isRefetching,
   fetchNextPage,
   actions,
+  empty,
 }: Props<Item>) {
   const { ref, inView } = useInView();
   const { columnCount, maxSingleColumnWidth, columnWidth } = useMasonryContainerContext();
   const { classes } = useStyles();
 
+  const isMobile = useIsMobile();
+
   useEffect(() => {
     if (inView) fetchNextPage?.();
   }, [fetchNextPage, inView]);
 
-  return (
+  return isLoading ? (
+    <Center p="xl">
+      <Loader size="xl" />
+    </Center>
+  ) : (
     <Stack
       sx={{
         position: 'relative',
@@ -61,9 +75,11 @@ export function CategoryList<Item>({
         margin: '0 auto',
       }}
     >
-      <LoadingOverlay visible={isLoading ?? false} zIndex={9} />
+      {isRefetching && <LoadingOverlay visible zIndex={9} />}
       {data.map((category) => {
-        const actionableActions = typeof actions === 'function' ? actions(category.items) : actions;
+        const actionableActions = (
+          typeof actions === 'function' ? actions(category.items) : actions
+        )?.filter((x) => x.visible ?? true);
         return (
           <Box key={category.id}>
             <Stack spacing={6}>
@@ -81,48 +97,57 @@ export function CategoryList<Item>({
                     theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
                 })}
               >
-                <MasonryCarousel
-                  data={category.items}
-                  render={RenderComponent}
-                  itemId={itemId}
-                  height={columnWidth}
-                  extra={
-                    actionableActions ? (
-                      <Carousel.Slide key="view-more">
-                        <Stack h="100%" spacing="md">
-                          {actionableActions.map((action, index) => (
-                            <Button
-                              key={index}
-                              className={classes.moreActions}
-                              component={NextLink}
-                              href={
-                                typeof action.href === 'function'
-                                  ? action.href(category)
-                                  : action.href
-                              }
-                              variant="outline"
-                              fullWidth
-                              radius="md"
-                              size="lg"
-                              rightIcon={action.icon}
-                              shallow={action.shallow}
-                            >
-                              {typeof action.label === 'function'
-                                ? action.label(category)
-                                : action.label}
-                            </Button>
-                          ))}
-                        </Stack>
-                      </Carousel.Slide>
-                    ) : null
-                  }
-                />
+                {!isMobile ? (
+                  <UniformGrid
+                    data={category.items}
+                    render={RenderComponent}
+                    itemId={itemId}
+                    empty={empty?.({ id: category.id, name: category.name })}
+                  />
+                ) : (
+                  <MasonryCarousel
+                    data={category.items}
+                    render={RenderComponent}
+                    itemId={itemId}
+                    height={columnWidth}
+                    extra={
+                      actionableActions ? (
+                        <Carousel.Slide key="view-more">
+                          <Stack h={columnWidth} spacing="md" p="xl">
+                            {actionableActions.map((action, index) => (
+                              <Button
+                                key={index}
+                                className={classes.moreActions}
+                                component={NextLink}
+                                href={
+                                  typeof action.href === 'function'
+                                    ? action.href(category)
+                                    : action.href
+                                }
+                                variant="outline"
+                                fullWidth
+                                radius="md"
+                                size="lg"
+                                rightIcon={action.icon}
+                                shallow={action.shallow}
+                              >
+                                {typeof action.label === 'function'
+                                  ? action.label(category)
+                                  : action.label}
+                              </Button>
+                            ))}
+                          </Stack>
+                        </Carousel.Slide>
+                      ) : null
+                    }
+                  />
+                )}
               </Box>
             </Stack>
           </Box>
         );
       })}
-      {hasNextPage && !isLoading && (
+      {hasNextPage && !isRefetching && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">
           {inView && <Loader />}
         </Center>
