@@ -13,8 +13,8 @@ import {
   getArticles,
   getArticlesByCategory,
   getDraftArticlesByUserId,
-  upsertArticle,
 } from '~/server/services/article.service';
+import { upsertArticleHandler } from '~/server/controllers/article.controller';
 
 export const articleRouter = router({
   getInfinite: publicProcedure
@@ -36,7 +36,7 @@ export const articleRouter = router({
   upsert: guardedProcedure
     .input(upsertArticleInput)
     .use(isFlagProtected('articleCreate'))
-    .mutation(({ input, ctx }) => upsertArticle({ ...input, userId: ctx.user.id })),
+    .mutation(upsertArticleHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('articleCreate'))

@@ -1,9 +1,8 @@
-import { useMemo } from 'react';
-import { PostCategoryCard } from './PostCategoryCard';
-import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
-import { removeEmpty } from '~/utils/object-helpers';
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
+import { removeEmpty } from '~/utils/object-helpers';
+import { PostCategoryCard } from './PostCategoryCard';
 
 type PostCategoriesState = {
   username?: string;
@@ -31,16 +30,16 @@ export function PostCategoriesInfinite({
       isLoading={isLoading}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      actions={[
+      actions={(category) => [
         {
           label: 'View more',
-          href: (category) => `/posts?tags=${category.id}&view=feed`,
+          href: `/posts?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
         },
         {
           label: 'Make post',
-          href: (category) => `/posts/create?tag=${category.id}`,
+          href: `/posts/create?tag=${category.id}`,
           icon: <IconPlus />,
           inTitle: true,
         },

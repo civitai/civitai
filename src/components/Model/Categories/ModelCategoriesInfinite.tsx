@@ -3,7 +3,6 @@ import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
 import { useModelFilters, useQueryModelCategories } from '~/components/Model/model.utils';
 import { removeEmpty } from '~/utils/object-helpers';
-
 import { ModelCategoryCard } from './ModelCategoryCard';
 
 type ModelCategoriesState = {
@@ -33,17 +32,17 @@ export function ModelCategoriesInfinite({
       isLoading={isLoading || isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      actions={(items) => [
+      actions={(category) => [
         {
           label: 'View more',
-          href: (category) => `/?tag=${encodeURIComponent(category.name)}&view=feed`,
+          href: `/?tag=${encodeURIComponent(category.name)}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
           shallow: true,
         },
         {
           label: 'Upload a model',
-          href: (category) => `/models/create?category=${category.id}`,
+          href: `/models/create?category=${category.id}`,
           icon: <IconPlus />,
           inTitle: true,
         },
