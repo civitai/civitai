@@ -1,5 +1,6 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
+import { withAxiom } from 'next-axiom';
 import { isDev } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
@@ -17,32 +18,34 @@ export const config = {
 };
 
 // export API handler
-export default createNextApiHandler({
-  router: appRouter,
-  createContext,
-  responseMeta: ({ ctx, type }) => {
-    // only public GET requests are cacheable
-    const cacheable = !ctx?.user && type === 'query';
-    if (cacheable) {
-      return {
-        headers: {
-          'Cache-Control': `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`,
-        },
-      };
-    }
+export default withAxiom(
+  createNextApiHandler({
+    router: appRouter,
+    createContext,
+    responseMeta: ({ ctx, type }) => {
+      // only public GET requests are cacheable
+      const cacheable = !ctx?.user && type === 'query';
+      if (cacheable) {
+        return {
+          headers: {
+            'Cache-Control': `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`,
+          },
+        };
+      }
 
-    return {};
-  },
-  // onError: isDev
-  //   ? ({ path, error }) => {
-  //       console.error(`❌ tRPC failed on ${path}: ${error}`);
-  //     }
-  //   : undefined,
-  onError: ({ error, type, path, input, ctx, req }) => {
-    if (isDev) {
-      console.error(`❌ tRPC failed on ${path}`);
-      console.error(error);
-    }
-    handleTRPCError(error);
-  },
-});
+      return {};
+    },
+    // onError: isDev
+    //   ? ({ path, error }) => {
+    //       console.error(`❌ tRPC failed on ${path}: ${error}`);
+    //     }
+    //   : undefined,
+    onError: ({ error, type, path, input, ctx, req }) => {
+      if (isDev) {
+        console.error(`❌ tRPC failed on ${path}`);
+        console.error(error);
+      }
+      handleTRPCError(error);
+    },
+  })
+);

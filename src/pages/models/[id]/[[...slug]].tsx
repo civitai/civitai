@@ -378,18 +378,15 @@ export default function ModelDetailsV2({
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
-    Router.beforePopState(({ as, url }) => {
+    router.beforePopState(({ as, url }) => {
       if (as === '/' || as.startsWith('/?') || as.startsWith('/user/') || as.startsWith('/tag/')) {
         const [route, queryString] = as.split('?');
         const [, otherQueryString] = url.split('?');
         const queryParams = QS.parse(queryString);
         const otherParams = QS.parse(otherQueryString);
-        Router.replace(
+        router.replace(
           { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
-          as,
-          {
-            shallow: true,
-          }
+          as
         );
 
         return false;
@@ -398,7 +395,7 @@ export default function ModelDetailsV2({
       return true;
     });
 
-    return () => Router.beforePopState(() => true);
+    return () => router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
@@ -442,6 +439,11 @@ export default function ModelDetailsV2({
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
+  const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
+  const unpublishedMessage =
+    unpublishedReason !== 'other'
+      ? unpublishReasons[unpublishedReason]?.notificationMessage
+      : `Removal reason: ${model.meta?.customMessage}.` ?? '';
 
   return (
     <>
@@ -704,11 +706,9 @@ export default function ModelDetailsV2({
                       guidelines
                     </Text>{' '}
                     and is not visible to the community.{' '}
-                    {model.meta?.unpublishedReason && unpublishReasons[model.meta.unpublishedReason]
-                      ? unpublishReasons[model.meta.unpublishedReason].notificationMessage
-                      : null}{' '}
-                    If you adjust your model to comply with our guidelines, you can request a review
-                    from one of our moderators. If you believe this was done in error, you can{' '}
+                    {unpublishedReason && unpublishedMessage ? unpublishedMessage : null} If you
+                    adjust your model to comply with our guidelines, you can request a review from
+                    one of our moderators. If you believe this was done in error, you can{' '}
                     <Text component="a" variant="link" href="/appeal" target="_blank">
                       submit an appeal
                     </Text>

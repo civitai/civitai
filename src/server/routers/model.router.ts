@@ -216,14 +216,14 @@ export const modelRouter = router({
     .mutation(({ input, ctx }) => setModelsCategory({ ...input, userId: ctx.user?.id })),
   findModelsToAssociate: publicProcedure
     .input(findModelsToAssociateSchema)
-    .query(({ input, ctx }) => findModelsToAssociate(input)),
+    .query(({ input }) => findModelsToAssociate(input)),
   getAssociatedModelsCardData: publicProcedure
     .input(getAssociatedModelsSchema)
     .use(applyUserPreferences)
     .query(({ input, ctx }) => getAssociatedModelsCardData(input, ctx.user)),
   getAssociatedModelsSimple: publicProcedure
     .input(getAssociatedModelsSchema)
-    .query(({ input, ctx }) => getAssociatedModelsSimple(input)),
+    .query(({ input }) => getAssociatedModelsSimple(input)),
   setAssociatedModels: protectedProcedure
     .input(setAssociatedModelsSchema)
     .mutation(({ input, ctx }) => setAssociatedModels(input, ctx.user)),

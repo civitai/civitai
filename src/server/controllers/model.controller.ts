@@ -373,7 +373,7 @@ export const publishModelHandler = async ({
       throw throwAuthorizationError('You are not authorized to publish this model');
 
     const republishing = model.status !== ModelStatus.Draft;
-    const { needsReview, unpublishedReason, unpublishedAt, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
       (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
@@ -566,7 +566,15 @@ export const getDownloadCommandHandler = async ({
       select: {
         id: true,
         model: {
-          select: { id: true, name: true, type: true, status: true, userId: true, mode: true },
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            status: true,
+            userId: true,
+            mode: true,
+            nsfw: true,
+          },
         },
         images: {
           select: {
@@ -626,6 +634,12 @@ export const getDownloadCommandHandler = async ({
           modelVersionId: modelVersion.id,
         },
       },
+    });
+    ctx.track.modelVersionEvent({
+      type: 'Download',
+      modelId: modelVersion.model.id,
+      modelVersionId: modelVersion.id,
+      nsfw: modelVersion.model.nsfw,
     });
 
     const fileName = getDownloadFilename({ model, modelVersion, file });

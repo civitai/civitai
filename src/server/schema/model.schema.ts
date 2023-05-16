@@ -156,6 +156,7 @@ const UnpublishReasons = Object.keys(unpublishReasons);
 export const unpublishModelSchema = z.object({
   id: z.number(),
   reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as string)).optional(),
+  customMessage: z.string().optional(),
 });
 
 export type ToggleModelLockInput = z.infer<typeof toggleModelLockSchema>;
@@ -166,6 +167,7 @@ export const toggleModelLockSchema = z.object({
 
 export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;
+  customMessage: string;
   needsReview: boolean;
   unpublishedAt: string;
   archivedAt: string;

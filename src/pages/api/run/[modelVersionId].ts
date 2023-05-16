@@ -3,6 +3,7 @@ import { UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { z } from 'zod';
+import { Tracker } from '~/server/clickhouse/client';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -25,7 +26,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
     where: { id: modelVersionId },
     select: {
       id: true,
-      model: { select: { id: true, name: true, type: true } },
+      model: { select: { id: true, name: true, type: true, nsfw: true } },
       name: true,
       trainedWords: true,
       runStrategies: {
@@ -70,6 +71,15 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
           partnerName: runStrategy.partner.name,
         },
       },
+    });
+
+    const track = new Tracker(req, res);
+    track.partnerEvent({
+      type: 'Run',
+      partnerId: runStrategy.partner.id,
+      modelId: modelVersion.model.id,
+      modelVersionId: modelVersion.id,
+      nsfw: modelVersion.model.nsfw,
     });
   } catch (error) {
     return res.status(500).json({ error: 'Invalid database operation', cause: error });
