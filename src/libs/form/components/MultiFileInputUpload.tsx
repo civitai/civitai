@@ -3,7 +3,6 @@ import {
   Group,
   Input,
   InputWrapperProps,
-  Paper,
   Progress,
   Stack,
   Text,
@@ -35,6 +34,12 @@ export function MultiFileInputUpload({ value, onChange, dropzoneProps, ...props 
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     setErrors([]);
+
+    if (dropzoneProps?.maxFiles && files.length + droppedFiles.length > dropzoneProps.maxFiles) {
+      setErrors(['Max files exceeded']);
+      return;
+    }
+
     const uploadedFiles = await Promise.all(
       droppedFiles.map((file) => uploadToS3(file, 'default'))
     );
@@ -45,9 +50,7 @@ export function MultiFileInputUpload({ value, onChange, dropzoneProps, ...props 
         name: upload.name ?? '',
         sizeKB: upload.size ? bytesToKB(upload.size) : 0,
       }));
-    console.log({ uploadedFiles, successUploads });
     filesHandlers.append(...successUploads);
-    onChange?.(files);
   };
 
   const handleRemove = (index: number) => {
@@ -55,10 +58,9 @@ export function MultiFileInputUpload({ value, onChange, dropzoneProps, ...props 
     onChange?.(files.slice(0, index).concat(files.slice(index + 1)));
   };
 
-  // useDidUpdate(() => {
-  //   if (image) onChange?.(image.url);
-  //   // don't disable the eslint-disable
-  // }, [image]); //eslint-disable-line
+  useDidUpdate(() => {
+    if (files && files.length) onChange?.(files);
+  }, [files]);
 
   const uploadingItems = trackedFiles.filter((file) => file.status === 'uploading');
   const hasErrors = errors.length > 0;

@@ -31,4 +31,7 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
       cryCountAllTime: true,
     },
   },
+  attachments: {
+    select: { id: true, name: true, url: true, sizeKB: true },
+  },
 });
