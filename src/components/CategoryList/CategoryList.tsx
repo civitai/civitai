@@ -110,34 +110,37 @@ export function CategoryList<Item>({
                     render={RenderComponent}
                     itemId={itemId}
                     height={columnWidth}
+                    empty={empty?.({ id: category.id, name: category.name })}
                     extra={
                       actionableActions ? (
-                        <Carousel.Slide key="view-more">
-                          <Stack h={columnWidth} spacing="md" p="xl">
-                            {actionableActions.map((action, index) => (
-                              <Button
-                                key={index}
-                                className={classes.moreActions}
-                                component={NextLink}
-                                href={
-                                  typeof action.href === 'function'
-                                    ? action.href(category)
-                                    : action.href
-                                }
-                                variant="outline"
-                                fullWidth
-                                radius="md"
-                                size="lg"
-                                rightIcon={action.icon}
-                                shallow={action.shallow}
-                              >
-                                {typeof action.label === 'function'
-                                  ? action.label(category)
-                                  : action.label}
-                              </Button>
-                            ))}
-                          </Stack>
-                        </Carousel.Slide>
+                        <Stack
+                          spacing="md"
+                          p="xl"
+                          sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                        >
+                          {actionableActions.map((action, index) => (
+                            <Button
+                              key={index}
+                              className={classes.moreActions}
+                              component={NextLink}
+                              href={
+                                typeof action.href === 'function'
+                                  ? action.href(category)
+                                  : action.href
+                              }
+                              variant="outline"
+                              fullWidth
+                              radius="md"
+                              size="lg"
+                              rightIcon={action.icon}
+                              shallow={action.shallow}
+                            >
+                              {typeof action.label === 'function'
+                                ? action.label(category)
+                                : action.label}
+                            </Button>
+                          ))}
+                        </Stack>
                       ) : null
                     }
                   />

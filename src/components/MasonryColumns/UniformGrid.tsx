@@ -35,7 +35,9 @@ export function UniformGrid<TData>({
         const key = itemId?.(item) ?? index;
         return (
           <div key={key} id={key.toString()}>
-            {createRenderElement(RenderComponent, index, item, columnWidth)}
+            <div className={classes.gridItem}>
+              {createRenderElement(RenderComponent, index, item, columnWidth)}
+            </div>
           </div>
         );
       })}
@@ -74,9 +76,13 @@ const useStyles = createStyles(
       '& > div': {
         width: columnCount === 1 ? '100%' : columnWidth,
         maxWidth: maxSingleColumnWidth,
-        height: columnCount === 1 ? '100%' : columnWidth,
-        maxHeight: maxSingleColumnWidth,
+        // height: columnCount === 1 ? '100%' : columnWidth,
+        // maxHeight: maxSingleColumnWidth,
       },
+    },
+    gridItem: {
+      position: 'relative',
+      paddingTop: '100%',
     },
   })
 );
