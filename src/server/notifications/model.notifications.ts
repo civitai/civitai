@@ -1,4 +1,3 @@
-import { clickhouse } from '~/server/clickhouse/client';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 
@@ -12,7 +11,7 @@ export const modelNotifications = createNotificationProcessor({
       message: `Congrats! Your ${details.modelName} model has received ${details.downloadCount} downloads`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: async ({ lastSent }) => {
+    prepareQuery: async ({ lastSent, clickhouse }) => {
       const affected = (await clickhouse
         ?.query({
           query: `

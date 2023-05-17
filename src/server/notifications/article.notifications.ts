@@ -1,4 +1,3 @@
-import { clickhouse } from '~/server/clickhouse/client';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 const articleViewMilestones = [100, 500, 1000, 10000, 50000, 100000, 500000, 1000000] as const;
@@ -11,7 +10,7 @@ export const articleNotifications = createNotificationProcessor({
       message: `Congrats! Your article, "${details.articleTitle}" has received ${details.viewCount} views`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: async ({ lastSent }) => {
+    prepareQuery: async ({ lastSent, clickhouse }) => {
       const affected = (await clickhouse
         ?.query({
           query: `
