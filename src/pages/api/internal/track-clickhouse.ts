@@ -31,6 +31,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
   if (table) res.status(202).end();
 
+  // If time is given, format for ClickHouse
+  if (data['time']) data['time'] = data['time'].split('.')[0].replace('T', ' ');
+
   await clickhouse?.insert({
     table: table,
     values: [data],

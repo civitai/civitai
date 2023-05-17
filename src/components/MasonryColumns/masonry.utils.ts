@@ -4,7 +4,7 @@ import {
 } from '~/components/MasonryColumns/masonry.types';
 import { useWindowEvent } from '@mantine/hooks';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { createDebouncer, useDebouncer } from '~/utils/debouncer';
+import { useDebouncer } from '~/utils/debouncer';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>

@@ -1,5 +1,6 @@
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 import { useImageFilters, useQueryImageCategories } from '~/components/Image/image.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ImageCategoryCard } from './ImageCategoryCard';
@@ -20,7 +21,8 @@ export function ImageCategoriesInfinite({
   const globalFilters = useImageFilters('images');
   const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
-  const { categories, isLoading, fetchNextPage, hasNextPage } = useQueryImageCategories(filters);
+  const { categories, isLoading, isRefetching, fetchNextPage, hasNextPage } =
+    useQueryImageCategories(filters);
   if (!categories) return null;
 
   return (
@@ -28,14 +30,17 @@ export function ImageCategoriesInfinite({
       data={categories}
       render={ImageCategoryCard}
       isLoading={isLoading}
+      isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
+      empty={({ id }) => <CategoryListEmpty type="image" categoryId={id} />}
       actions={(category) => [
         {
           label: 'View more',
           href: `/images?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
+          visible: !!items.length,
         },
         {
           label: 'Make post',

@@ -22,6 +22,7 @@ type Props<TData> = {
   height?: number;
   itemId?: (data: TData) => string | number;
   id?: string | number;
+  empty?: React.ReactNode;
 };
 
 export function MasonryCarousel<TData>({
@@ -31,14 +32,15 @@ export function MasonryCarousel<TData>({
   height,
   itemId,
   id,
+  empty,
 }: Props<TData>) {
   const { classes } = useStyles();
-  const { columnCount, maxSingleColumnWidth } = useMasonryContainerContext();
+  const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContainerContext();
 
   const totalItems = data.length + (extra ? 1 : 0);
   // const key = id ?? (itemId ? data.map(itemId).join('_') : undefined);
 
-  return (
+  return data.length ? (
     <Carousel
       key={id}
       classNames={classes}
@@ -47,6 +49,7 @@ export function MasonryCarousel<TData>({
       align={totalItems <= columnCount ? 'start' : 'end'}
       withControls={totalItems > columnCount ? true : false}
       slidesToScroll={columnCount}
+      // height={columnCount === 1 ? maxSingleColumnWidth : '100%'}
       loop
       sx={{
         width: columnCount === 1 ? maxSingleColumnWidth : '100%',
@@ -59,12 +62,20 @@ export function MasonryCarousel<TData>({
         const key = itemId ? itemId(item) : index;
         return (
           <Carousel.Slide key={key} id={key.toString()}>
-            {createRenderElement(RenderComponent, index, item, height)}
+            <div style={{ position: 'relative', paddingTop: '100%' }}>
+              {createRenderElement(RenderComponent, index, item, height)}
+            </div>
           </Carousel.Slide>
         );
       })}
-      {extra}
+      {extra && (
+        <Carousel.Slide>
+          <div style={{ position: 'relative', paddingTop: '100%' }}>{extra}</div>
+        </Carousel.Slide>
+      )}
     </Carousel>
+  ) : (
+    <div style={{ height: columnWidth }}>{empty}</div>
   );
 }
 

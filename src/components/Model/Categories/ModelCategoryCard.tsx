@@ -25,7 +25,7 @@ import {
 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
@@ -59,6 +59,7 @@ export function ModelCategoryCard({
 }) {
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
+  const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
 
   const [loading, setLoading] = useState(false);
@@ -221,22 +222,23 @@ export function ModelCategoryCard({
     ]);
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
+  useEffect(() => {
+    if (!modelId || modelId !== data.id) return;
+    const elem = document.getElementById(`${modelId}`);
+    if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  }, [modelId, data.id]);
+
   return (
-    <Indicator
-      disabled={!isNew && !isUpdated}
-      withBorder
-      size={24}
-      radius="sm"
-      label={isUpdated ? 'Updated' : 'New'}
-      color="red"
-      styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-      sx={{ opacity: isHidden ? 0.1 : undefined }}
-    >
-      <MasonryCard
-        shadow="sm"
-        p={0}
-        // height={height}
-        style={{ paddingTop: '100%', position: 'relative' }}
+    <MasonryCard shadow="sm" p={0} className={classes.card}>
+      <Indicator
+        disabled={!isNew && !isUpdated}
+        withBorder
+        size={24}
+        radius="sm"
+        label={isUpdated ? 'Updated' : 'New'}
+        color="red"
+        styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
+        sx={{ opacity: isHidden ? 0.1 : undefined }}
       >
         <NextLink
           href={`/models/${id}/${slugit(name)}`}
@@ -244,7 +246,7 @@ export function ModelCategoryCard({
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
           }}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          // style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         >
           <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
           <ImageGuard
@@ -253,7 +255,7 @@ export function ModelCategoryCard({
             render={(image) => (
               <ImageGuard.Content>
                 {({ safe }) => (
-                  <div className={classes.card}>
+                  <>
                     {contextMenuItems.length > 0 && (
                       <Menu position="left-start" withArrow offset={-5}>
                         <Menu.Target>
@@ -305,7 +307,7 @@ export function ModelCategoryCard({
                         />
                       )}
                     </AspectRatio>
-                  </div>
+                  </>
                 )}
               </ImageGuard.Content>
             )}
@@ -398,18 +400,19 @@ export function ModelCategoryCard({
             </Stack>
           </Stack>
         </NextLink>
-      </MasonryCard>
-    </Indicator>
+      </Indicator>
+    </MasonryCard>
   );
 }
 
 const useStyles = createStyles((theme) => {
   return {
     card: {
-      position: 'relative',
-      [theme.fn.smallerThan('sm')]: {
-        width: '100%',
-      },
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
     },
 
     blur: {

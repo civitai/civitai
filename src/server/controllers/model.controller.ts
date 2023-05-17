@@ -625,6 +625,7 @@ export const getDownloadCommandHandler = async ({
         modelVersion.model.userId === userId);
     if (!canDownload) throw throwNotFoundError();
 
+    const now = new Date();
     await dbWrite.userActivity.create({
       data: {
         userId,
@@ -633,6 +634,7 @@ export const getDownloadCommandHandler = async ({
           modelId: modelVersion.model.id,
           modelVersionId: modelVersion.id,
         },
+        createdAt: now,
       },
     });
     ctx.track.modelVersionEvent({
@@ -640,6 +642,7 @@ export const getDownloadCommandHandler = async ({
       modelId: modelVersion.model.id,
       modelVersionId: modelVersion.id,
       nsfw: modelVersion.model.nsfw,
+      time: now,
     });
 
     const fileName = getDownloadFilename({ model, modelVersion, file });

@@ -481,7 +481,7 @@ export const getTypeCategories = async ({
   let categories = await getCategoryTags(type);
   if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
   let start = 0;
-  if (cursor) start = categories.findIndex((c) => c.id === cursor) + 1;
+  if (cursor) start = categories.findIndex((c) => c.id === cursor);
   if (limit) categories = categories.slice(start, start + limit);
 
   return categories;

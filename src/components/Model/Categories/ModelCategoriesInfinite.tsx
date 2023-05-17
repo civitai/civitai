@@ -4,6 +4,9 @@ import { CategoryList } from '~/components/CategoryList/CategoryList';
 import { useModelFilters, useQueryModelCategories } from '~/components/Model/model.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ModelCategoryCard } from './ModelCategoryCard';
+import { Center, Text, Stack } from '@mantine/core';
+import { NextLink } from '@mantine/next';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type ModelCategoriesState = {
   username?: string;
@@ -29,9 +32,12 @@ export function ModelCategoriesInfinite({
     <CategoryList
       data={categories}
       render={ModelCategoryCard}
-      isLoading={isLoading || isRefetching}
+      isLoading={isLoading}
+      isRefetching={isRefetching}
+      itemId={(x) => x.id}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
+      empty={({ id }) => <CategoryListEmpty type="model" categoryId={id} />}
       actions={(category) => [
         {
           label: 'View more',
@@ -39,6 +45,7 @@ export function ModelCategoriesInfinite({
           icon: <IconArrowRight />,
           inTitle: true,
           shallow: true,
+          visible: !!items.length,
         },
         {
           label: 'Upload a model',

@@ -5,6 +5,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useArticleFilters, useQueryArticleCategories } from '../article.utils';
 import { ArticleCard } from '../Infinite/ArticleCard';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type ArticleCategoriesState = {
   articleId?: number;
@@ -29,9 +30,11 @@ export function ArticleCategoriesInfinite({
     <CategoryList
       data={categories}
       render={ArticleCard}
-      isLoading={isLoading || isRefetching}
+      isLoading={isLoading}
+      isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
+      empty={({ id }) => <CategoryListEmpty type="article" categoryId={id} />}
       actions={(category) =>
         !category.adminOnly || adminTags
           ? [

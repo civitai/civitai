@@ -1,5 +1,6 @@
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { PostCategoryCard } from './PostCategoryCard';
@@ -20,7 +21,8 @@ export function PostCategoriesInfinite({
   const globalFilters = usePostFilters();
   const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
-  const { categories, isLoading, fetchNextPage, hasNextPage } = useQueryPostCategories(filters);
+  const { categories, isLoading, isRefetching, fetchNextPage, hasNextPage } =
+    useQueryPostCategories(filters);
   if (!categories) return null;
 
   return (
@@ -28,14 +30,17 @@ export function PostCategoriesInfinite({
       data={categories}
       render={PostCategoryCard}
       isLoading={isLoading}
+      isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
+      empty={({ id }) => <CategoryListEmpty type="post" categoryId={id} />}
       actions={(category) => [
         {
           label: 'View more',
           href: `/posts?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
+          visible: !!items.length,
         },
         {
           label: 'Make post',
