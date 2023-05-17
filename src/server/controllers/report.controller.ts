@@ -60,6 +60,7 @@ export async function setReportStatusHandler({ input }: { input: SetReportStatus
       id,
       data: {
         status,
+        statusSetAt: new Date(),
         previouslyReviewedCount:
           status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
       },
