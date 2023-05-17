@@ -311,7 +311,6 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
     where: {
       url: url,
       id: { not: id },
-      connections: { modelId: { not: null } },
     },
   });
 
