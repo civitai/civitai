@@ -2,7 +2,7 @@ export type NotificationProcessor = {
   displayName: string;
   priority?: number;
   toggleable?: boolean;
-  prepareQuery?: (input: NotificationProcessorRunInput) => string;
+  prepareQuery?: (input: NotificationProcessorRunInput) => Promise<string> | string;
   prepareMessage: (notification: BareNotification) => NotificationMessage | undefined;
 };
 

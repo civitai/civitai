@@ -1,3 +1,4 @@
+import { articleNotifications } from '~/server/notifications/article.notifications';
 import { BareNotification, NotificationProcessor } from '~/server/notifications/base.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
@@ -17,6 +18,7 @@ const notificationProcessors = {
   ...systemNotifications,
   ...userJourneyNotifications,
   ...unpublishNotifications,
+  ...articleNotifications,
 };
 
 // Sort notifications by priority and group them by priority
