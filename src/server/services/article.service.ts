@@ -181,6 +181,7 @@ export const upsertArticle = async ({
   id,
   userId,
   tags,
+  attachments,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
@@ -202,6 +203,14 @@ export const upsertArticle = async ({
                     },
                   };
                 }),
+              }
+            : undefined,
+          attachments: attachments
+            ? {
+                connectOrCreate: attachments.map((attachment) => ({
+                  where: { id: attachment.id },
+                  create: attachment,
+                })),
               }
             : undefined,
         },
@@ -236,6 +245,7 @@ export const upsertArticle = async ({
               }),
             }
           : undefined,
+        attachments: attachments ? { set: attachments } : undefined,
       },
     });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
