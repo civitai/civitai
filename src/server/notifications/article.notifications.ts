@@ -90,7 +90,7 @@ export const articleNotifications = createNotificationProcessor({
           article_id,
           "favoriteCount" favorite_count
         FROM "ArticleMetric" am
-        JOIN affected am ON am.article_id = am."articleId"
+        JOIN affected af ON af.article_id = am."articleId"
         WHERE
           timeframe = 'AllTime'
           AND "favoriteCount" > ${articleLikeMilestones[0]}
