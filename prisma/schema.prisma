@@ -125,6 +125,7 @@ model User {
   resourceReviewReactions ResourceReviewReaction[]
   articleReactions        ArticleReaction[]
   articles                Article[]
+  articleEngagements      ArticleEngagement[]
 }
 
 model CustomerSubscription {
@@ -1561,13 +1562,31 @@ model Article {
   userId       Int
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  thread    Thread?
-  reactions ArticleReaction[]
-  tags      TagsOnArticle[]
-  reports   ArticleReport[]
-  metrics   ArticleMetric[]
-  rank      ArticleRank?
-  stats     ArticleStat?
+  thread      Thread?
+  reactions   ArticleReaction[]
+  tags        TagsOnArticle[]
+  reports     ArticleReport[]
+  metrics     ArticleMetric[]
+  rank        ArticleRank?
+  stats       ArticleStat?
+  engagements ArticleEngagement[]
+}
+
+enum ArticleEngagementType {
+  Favorite
+  Hide
+}
+
+model ArticleEngagement {
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  articleId Int
+  article   Article             @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  type      ModelEngagementType
+  createdAt DateTime            @default(now())
+
+  @@id([userId, articleId])
+  @@index([articleId], type: Hash)
 }
 
 model ArticleMetric {
