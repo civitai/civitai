@@ -8,10 +8,10 @@ import {
 import { getRandom } from '~/utils/array-helpers';
 import { forwardRef, useMemo } from 'react';
 
-type MasonryCardProps = CardProps & { height?: number };
+type MasonryCardProps = CardProps & { height?: number; uniform?: boolean };
 // TODO - when children not in view, replace child react nodes with static html
 const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
-  ({ height, children, style, ...props }, ref) => {
+  ({ height, children, style, uniform, ...props }, ref) => {
     const theme = useMantineTheme();
 
     const background = useMemo(() => {
