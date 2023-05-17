@@ -1,8 +1,10 @@
+import { ClickHouseClient } from '@clickhouse/client';
+
 export type NotificationProcessor = {
   displayName: string;
   priority?: number;
   toggleable?: boolean;
-  prepareQuery?: (input: NotificationProcessorRunInput) => string;
+  prepareQuery?: (input: NotificationProcessorRunInput) => Promise<string> | string;
   prepareMessage: (notification: BareNotification) => NotificationMessage | undefined;
 };
 
@@ -17,6 +19,7 @@ type NotificationMessage = {
 };
 export type NotificationProcessorRunInput = {
   lastSent: string;
+  clickhouse: ClickHouseClient;
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {

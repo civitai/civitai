@@ -11,54 +11,63 @@ export const modelNotifications = createNotificationProcessor({
       message: `Congrats! Your ${details.modelName} model has received ${details.downloadCount} downloads`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: ({ lastSent }) => `
-      WITH milestones AS (
-        SELECT * FROM (VALUES ${modelDownloadMilestones.map((x) => `(${x})`).join(', ')}) m(value)
-      ), affected_models AS (
-        SELECT DISTINCT
-          cast(ua.details->'modelId' as int) model_id
-        FROM "UserActivity" ua
-        JOIN "Model" m ON cast(ua.details->'modelId' as int) = m.id
-        WHERE ua."createdAt" > '${lastSent}'
-        AND ua.activity = 'ModelDownload'
-        AND m."userId" > 0
-      ), model_value AS (
+    prepareQuery: async ({ lastSent, clickhouse }) => {
+      const affected = (await clickhouse
+        ?.query({
+          query: `
+            SELECT DISTINCT modelId
+            FROM modelVersionEvents
+            WHERE time > parseDateTimeBestEffortOrNull('${lastSent}')
+            AND type = 'Download'
+        `,
+          format: 'JSONEachRow',
+        })
+        .then((x) => x.json())) as [{ modelId: number }];
+
+      const affectedJson = JSON.stringify(affected.map((x) => x.modelId));
+      return `
+        WITH milestones AS (
+          SELECT * FROM (VALUES ${modelDownloadMilestones.map((x) => `(${x})`).join(', ')}) m(value)
+        ), model_value AS (
+          SELECT
+            "modelId" model_id,
+            "downloadCount" download_count
+          FROM "ModelMetric"
+          WHERE
+            "modelId" = ANY (SELECT json_array_elements('${affectedJson}'::json)::text::integer)
+            AND "downloadCount" > ${modelDownloadMilestones[0]}
+            AND timeframe = 'AllTime'
+        ), prior_milestones AS (
+          SELECT DISTINCT
+            model_id,
+            cast(details->'downloadCount' as int) download_count
+          FROM "Notification"
+          JOIN model_value ON model_id = cast(details->'modelId' as int)
+          WHERE type = 'model-download-milestone'
+        ), model_milestone AS (
+          SELECT
+            m."userId" "ownerId",
+            JSON_BUILD_OBJECT(
+              'modelName', m.name,
+              'modelId', m.id,
+              'downloadCount', ms.value
+            ) "details"
+          FROM model_value mval
+          JOIN "Model" m on m.id = mval.model_id
+          JOIN milestones ms ON ms.value <= mval.download_count
+          LEFT JOIN prior_milestones pm ON pm.download_count >= ms.value AND pm.model_id = mval.model_id
+          WHERE pm.model_id IS NULL
+        )
+        INSERT INTO "Notification"("id", "userId", "type", "details")
         SELECT
-          "modelId" model_id,
-          "downloadCountAllTime" download_count
-        FROM "ModelRank" mr
-        JOIN affected_models am ON am.model_id = mr."modelId"
-        WHERE "downloadCountAllTime" > ${modelDownloadMilestones[0]}
-      ), prior_milestones AS (
-        SELECT DISTINCT
-          model_id,
-          cast(details->'downloadCount' as int) download_count
-        FROM "Notification"
-        JOIN affected_models ON model_id = cast(details->'modelId' as int)
-        WHERE type = 'model-download-milestone'
-      ), model_milestone AS (
-        SELECT
-          m."userId" "ownerId",
-          JSON_BUILD_OBJECT(
-            'modelName', m.name,
-            'modelId', m.id,
-            'downloadCount', ms.value
-          ) "details"
-        FROM model_value mval
-        JOIN "Model" m on m.id = mval.model_id
-        JOIN milestones ms ON ms.value <= mval.download_count
-        LEFT JOIN prior_milestones pm ON pm.download_count >= ms.value AND pm.model_id = mval.model_id
-        WHERE pm.model_id IS NULL
-      )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
-      SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
-        "ownerId"    "userId",
-        'model-download-milestone' "type",
-        details
-      FROM model_milestone
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone');
-    `,
+          REPLACE(gen_random_uuid()::text, '-', ''),
+          "ownerId"    "userId",
+          'model-download-milestone' "type",
+          details
+        FROM model_milestone
+        WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone');
+      `;
+    },
   },
   'model-like-milestone': {
     displayName: 'Model like milestones',

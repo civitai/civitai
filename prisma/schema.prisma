@@ -125,6 +125,7 @@ model User {
   resourceReviewReactions ResourceReviewReaction[]
   articleReactions        ArticleReaction[]
   articles                Article[]
+  articleEngagements      ArticleEngagement[]
 }
 
 model CustomerSubscription {
@@ -628,8 +629,9 @@ model Report {
   internalNotes           String?
   previouslyReviewedCount Int          @default(0)
   alsoReportedBy          Int[]        @default([]) // UserIds
+  status                  ReportStatus
+  statusSetAt             DateTime?
 
-  status         ReportStatus
   model          ModelReport?
   review         ReviewReport?
   comment        CommentReport?
@@ -1583,6 +1585,24 @@ model Article {
   rank        ArticleRank?
   stats       ArticleStat?
   attachments File[]
+  engagements ArticleEngagement[]
+}
+
+enum ArticleEngagementType {
+  Favorite
+  Hide
+}
+
+model ArticleEngagement {
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  articleId Int
+  article   Article             @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  type      ModelEngagementType
+  createdAt DateTime            @default(now())
+
+  @@id([userId, articleId])
+  @@index([articleId], type: Hash)
 }
 
 model ArticleMetric {
