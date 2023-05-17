@@ -1595,11 +1595,11 @@ enum ArticleEngagementType {
 
 model ArticleEngagement {
   userId    Int
-  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   articleId Int
-  article   Article             @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  type      ModelEngagementType
-  createdAt DateTime            @default(now())
+  article   Article               @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  type      ArticleEngagementType
+  createdAt DateTime              @default(now())
 
   @@id([userId, articleId])
   @@index([articleId], type: Hash)
