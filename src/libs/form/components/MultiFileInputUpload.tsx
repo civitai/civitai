@@ -23,9 +23,16 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: BaseFileSchema[];
   onChange?: (value: BaseFileSchema[]) => void;
   dropzoneProps?: Omit<DropzoneProps, 'onDrop' | 'children'>;
+  renderItem?: (file: BaseFileSchema) => React.ReactNode;
 };
 
-export function MultiFileInputUpload({ value, onChange, dropzoneProps, ...props }: Props) {
+export function MultiFileInputUpload({
+  value,
+  onChange,
+  dropzoneProps,
+  renderItem,
+  ...props
+}: Props) {
   const theme = useMantineTheme();
   const { uploadToS3, files: trackedFiles } = useS3Upload();
 
@@ -46,7 +53,7 @@ export function MultiFileInputUpload({ value, onChange, dropzoneProps, ...props 
     const successUploads = uploadedFiles
       .filter(({ url }) => !!url)
       .map((upload) => ({
-        url: upload.url,
+        url: upload.url as string,
         name: upload.name ?? '',
         sizeKB: upload.size ? bytesToKB(upload.size) : 0,
       }));
@@ -132,10 +139,14 @@ export function MultiFileInputUpload({ value, onChange, dropzoneProps, ...props 
       </Input.Wrapper>
       <Stack spacing={8}>
         {files.map((file, index) => (
-          <Group key={file.id ?? index} spacing={8} position="apart" noWrap>
-            <Text size="sm" weight={500} lineClamp={1}>
-              {file.name}
-            </Text>
+          <Group key={file.id ?? file.url} spacing={8} position="apart" noWrap>
+            {renderItem ? (
+              renderItem(file)
+            ) : (
+              <Text size="sm" weight={500} lineClamp={1}>
+                {file.name}
+              </Text>
+            )}
             <Tooltip label="Remove">
               <ActionIcon
                 size="sm"
@@ -170,23 +181,21 @@ function UploadItem({ progress, speed, timeRemaining, abort, name }: UploadItemP
           </ActionIcon>
         </Tooltip>
       </Group>
-      {progress < 100 && (
-        <Stack spacing={2}>
-          <Progress
-            sx={{ width: '100%' }}
-            size="xl"
-            value={progress}
-            label={`${Math.floor(progress)}%`}
-            color={progress < 100 ? 'blue' : 'green'}
-            striped
-            animate
-          />
-          <Group position="apart">
-            <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
-            <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
-          </Group>
-        </Stack>
-      )}
+      <Stack spacing={2}>
+        <Progress
+          sx={{ width: '100%' }}
+          size="xl"
+          value={progress}
+          label={`${Math.floor(progress)}%`}
+          color={progress < 100 ? 'blue' : 'green'}
+          striped
+          animate
+        />
+        <Group position="apart">
+          <Text size="xs" color="dimmed">{`${formatBytes(speed)}/s`}</Text>
+          <Text size="xs" color="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
+        </Group>
+      </Stack>
     </Stack>
   );
 }
