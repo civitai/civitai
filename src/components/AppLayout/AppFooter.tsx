@@ -129,8 +129,8 @@ export function AppFooter() {
             Status
           </Button>
         </Group>
-        <Group ml="auto" spacing={0} sx={{ flexWrap: 'nowrap' }}>
-          <Button component="a" href="/canny/bugs" {...buttonProps} target="_blank">
+        <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
+          <Button component="a" href="/canny/bugs" {...buttonProps} target="_blank" pl={4} pr="xs">
             🪲 Bugs
           </Button>
           <Button
@@ -139,6 +139,8 @@ export function AppFooter() {
             variant="light"
             color="yellow"
             target="_blank"
+            pl={4}
+            pr="xs"
           >
             💡 Ideas
           </Button>
