@@ -4,6 +4,7 @@ import requestIp from 'request-ip';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { ReviewReactions, ReportReason, ReportStatus, NsfwLevel } from '@prisma/client';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { getInternalUrl } from '~/server/utils/url-helpers';
 
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 export const clickhouse = shouldConnect
@@ -107,12 +108,14 @@ export class Tracker {
 
     // Perform the clickhouse insert in the background
     await fetch(
-      `http://localhost:3000/api/internal/track-clickhouse?token=${env.WEBHOOK_TOKEN}&table=${table}`,
+      `${getInternalUrl()}/api/internal/track-clickhouse?token=${env.WEBHOOK_TOKEN}&table=${table}`,
       {
         method: 'POST',
         body: JSON.stringify(data),
       }
-    );
+    ).catch(() => {
+      // ignore
+    });
   }
 
   public view(values: { type: ViewType; entityType: EntityType; entityId: number }) {
@@ -128,6 +131,7 @@ export class Tracker {
     modelId: number;
     modelVersionId: number;
     nsfw: boolean;
+    time?: Date;
   }) {
     return this.track('modelVersionEvents', values);
   }

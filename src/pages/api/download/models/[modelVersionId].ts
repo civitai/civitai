@@ -158,10 +158,12 @@ export default RateLimitedEndpoint(
 
     // Track download
     try {
+      const now = new Date();
       await dbWrite.userActivity.create({
         data: {
           userId,
           activity: UserActivityType.ModelDownload,
+          createdAt: now,
           details: {
             modelId: modelVersion.model.id,
             modelVersionId: modelVersion.id,
@@ -183,6 +185,7 @@ export default RateLimitedEndpoint(
         modelId: modelVersion.model.id,
         modelVersionId: modelVersion.id,
         nsfw: modelVersion.model.nsfw,
+        time: now,
       });
 
       if (userId)
