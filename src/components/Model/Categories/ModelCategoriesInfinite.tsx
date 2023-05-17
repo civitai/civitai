@@ -1,13 +1,10 @@
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 import { useModelFilters, useQueryModelCategories } from '~/components/Model/model.utils';
 import { removeEmpty } from '~/utils/object-helpers';
-
 import { ModelCategoryCard } from './ModelCategoryCard';
-import { Center, Text, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type ModelCategoriesState = {
   username?: string;
@@ -39,18 +36,18 @@ export function ModelCategoriesInfinite({
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
       empty={({ id }) => <CategoryListEmpty type="model" categoryId={id} />}
-      actions={(items) => [
+      actions={(category) => [
         {
           label: 'View more',
-          href: (category) => `/?tag=${encodeURIComponent(category.name)}&view=feed`,
+          href: `/?tag=${encodeURIComponent(category.name)}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
           shallow: true,
-          visible: !!items.length,
+          visible: !!category.items.length,
         },
         {
           label: 'Upload a model',
-          href: (category) => `/models/create?category=${category.id}`,
+          href: `/models/create?category=${category.id}`,
           icon: <IconPlus />,
           inTitle: true,
         },

@@ -1,11 +1,9 @@
-import { removeEmpty } from '~/utils/object-helpers';
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
-import { ImageCategoryCard } from './ImageCategoryCard';
-import { useImageFilters, useQueryImageCategories } from '~/components/Image/image.utils';
-import { Center, Text, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
+import { useImageFilters, useQueryImageCategories } from '~/components/Image/image.utils';
+import { removeEmpty } from '~/utils/object-helpers';
+import { ImageCategoryCard } from './ImageCategoryCard';
 
 type ImageCategoriesState = {
   username?: string;
@@ -36,17 +34,17 @@ export function ImageCategoriesInfinite({
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
       empty={({ id }) => <CategoryListEmpty type="image" categoryId={id} />}
-      actions={(items) => [
+      actions={(category) => [
         {
           label: 'View more',
-          href: (category) => `/images?tags=${category.id}&view=feed`,
+          href: `/images?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
-          visible: !!items.length,
+          visible: !!category.items.length,
         },
         {
           label: 'Make post',
-          href: (category) => `/posts/create?tag=${category.id}`,
+          href: `/posts/create?tag=${category.id}`,
           icon: <IconPlus />,
           inTitle: true,
         },
