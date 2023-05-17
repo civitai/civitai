@@ -35,8 +35,9 @@ export async function getJobDate(key: string, defaultValue?: Date) {
   const stored = await dbWrite.keyValue.findUnique({ where: { key } });
   const date = stored ? new Date(stored.value as number) : defaultValue;
 
+  const newDate = new Date();
   const set = async (date?: Date) => {
-    date ??= new Date();
+    date ??= newDate;
     await dbWrite.keyValue.upsert({
       where: { key },
       create: { key, value: date.getTime() },

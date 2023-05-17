@@ -24,6 +24,7 @@ import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-wi
 import { isProd } from '~/env/other';
 import { updateMetricsModelJob } from '~/server/jobs/update-metrics-models';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
+import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -43,6 +44,7 @@ const jobs: Job[] = [
   resetToDraftWithoutRequirements,
   applyContestTags,
   ...applyDiscordRoles,
+  applyNsfwBaseline,
 ];
 
 const log = createLogger('jobs', 'green');
