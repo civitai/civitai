@@ -615,8 +615,9 @@ model Report {
   internalNotes           String?
   previouslyReviewedCount Int          @default(0)
   alsoReportedBy          Int[]        @default([]) // UserIds
+  status                  ReportStatus
+  statusSetAt             DateTime?
 
-  status         ReportStatus
   model          ModelReport?
   review         ReviewReport?
   comment        CommentReport?

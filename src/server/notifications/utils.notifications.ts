@@ -4,6 +4,7 @@ import { commentNotifications } from '~/server/notifications/comment.notificatio
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { reactionNotifications } from '~/server/notifications/reaction.notifications';
+import { reportNotifications } from '~/server/notifications/report.notifications';
 import { reviewNotifications } from '~/server/notifications/review.notifications';
 import { systemNotifications } from '~/server/notifications/system.notifications';
 import { unpublishNotifications } from '~/server/notifications/unpublish.notifications';
@@ -19,6 +20,7 @@ const notificationProcessors = {
   ...userJourneyNotifications,
   ...unpublishNotifications,
   ...articleNotifications,
+  ...reportNotifications,
 };
 
 // Sort notifications by priority and group them by priority
