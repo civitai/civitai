@@ -94,4 +94,3 @@ DROP INDEX IF EXISTS "ModelVersionRank_PK";
 CREATE UNIQUE INDEX "ModelVersionRank_PK" ON "ModelVersionRank" ("modelVersionId");
 
 
-

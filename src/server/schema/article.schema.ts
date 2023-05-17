@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, BrowsingMode } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
@@ -32,6 +33,7 @@ export const upsertArticleInput = z.object({
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),
+  attachments: z.array(baseFileSchema).optional(),
   // TODO.articles: check what's going to be stored on metadata
   // metadata: z.object({}).nullish(),
 });

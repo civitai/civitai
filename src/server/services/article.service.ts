@@ -18,6 +18,7 @@ import { getTypeCategories } from '~/server/services/tag.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getCategoryTags } from '~/server/services/system-cache';
+import { isDefined } from '~/utils/type-guards';
 
 export const getArticles = async ({
   limit,
@@ -181,6 +182,7 @@ export const upsertArticle = async ({
   id,
   userId,
   tags,
+  attachments,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
@@ -202,6 +204,14 @@ export const upsertArticle = async ({
                     },
                   };
                 }),
+              }
+            : undefined,
+          attachments: attachments
+            ? {
+                connectOrCreate: attachments.map((attachment) => ({
+                  where: { id: attachment.id },
+                  create: attachment,
+                })),
               }
             : undefined,
         },
@@ -234,6 +244,22 @@ export const upsertArticle = async ({
                   },
                 };
               }),
+            }
+          : undefined,
+        attachments: attachments
+          ? {
+              deleteMany: { id: { notIn: attachments.map((x) => x.id).filter(isDefined) } },
+              connectOrCreate: attachments
+                .filter((x) => !!x.id)
+                .map((attachment) => ({
+                  where: { id: attachment.id },
+                  create: attachment,
+                })),
+              create: attachments
+                .filter((x) => !x.id)
+                .map((attachment) => ({
+                  ...attachment,
+                })),
             }
           : undefined,
       },

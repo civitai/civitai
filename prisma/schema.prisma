@@ -504,6 +504,19 @@ model ModelFile {
   @@index([modelVersionId], type: Hash)
 }
 
+model File {
+  id        Int      @id @default(autoincrement())
+  name      String
+  url       String
+  sizeKB    Float
+  createdAt DateTime @default(now())
+  articleId Int?
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  metadata  Json?
+
+  @@index([articleId], type: Hash)
+}
+
 enum MetricTimeframe {
   Day
   Week
@@ -1571,6 +1584,7 @@ model Article {
   metrics     ArticleMetric[]
   rank        ArticleRank?
   stats       ArticleStat?
+  attachments File[]
   engagements ArticleEngagement[]
 }
 
