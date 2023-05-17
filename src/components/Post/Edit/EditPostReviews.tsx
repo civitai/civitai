@@ -1,4 +1,4 @@
-import { Center, Stack, Alert, Text } from '@mantine/core';
+import { Center, Stack, Alert, Text, Divider } from '@mantine/core';
 import { IconLock } from '@tabler/icons';
 
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
@@ -34,6 +34,25 @@ export function EditPostReviews() {
   const { data = [], refetch } = trpc.post.getResources.useQuery({ id }, { enabled: false });
   const isMuted = currentUser?.muted ?? false;
 
+  const reviews = useMemo(() => {
+    const previous = [];
+    const pending = [];
+    if (data) {
+      for (const review of data) {
+        if (review.reviewCreatedAt) {
+          previous.push(review);
+        } else {
+          pending.push(review);
+        }
+      }
+    }
+
+    return {
+      previous,
+      pending,
+    };
+  }, [data]);
+
   useEffect(() => {
     const shouldRefetch = imageResources.length !== data.length && !isMuted;
     if (shouldRefetch) refetch();
@@ -50,7 +69,7 @@ export function EditPostReviews() {
         </Alert>
       ) : (
         <>
-          {!!data?.length && (
+          {!!reviews.pending.length && (
             <DismissibleAlert
               id="leave-review-alert"
               color="blue"
@@ -59,7 +78,7 @@ export function EditPostReviews() {
             />
           )}
           <Stack>
-            {data?.map((resource, index) => (
+            {reviews.pending.map((resource, index) => (
               <EditResourceReview
                 key={resource.modelVersionId ?? resource.name ?? index}
                 id={resource.reviewId}
@@ -73,6 +92,25 @@ export function EditPostReviews() {
                 name={resource.name}
               />
             ))}
+            {reviews.previous.length > 0 && (
+              <>
+                <Divider label="Previously reviewed" />
+                {reviews.previous.map((resource, index) => (
+                  <EditResourceReview
+                    key={resource.modelVersionId ?? resource.name ?? index}
+                    id={resource.reviewId}
+                    rating={resource.reviewRating}
+                    details={resource.reviewDetails}
+                    createdAt={resource.reviewCreatedAt}
+                    modelId={resource.modelId}
+                    modelName={resource.modelName}
+                    modelVersionId={resource.modelVersionId}
+                    modelVersionName={resource.modelVersionName}
+                    name={resource.name}
+                  />
+                ))}
+              </>
+            )}
           </Stack>
 
           {missingResources && (
