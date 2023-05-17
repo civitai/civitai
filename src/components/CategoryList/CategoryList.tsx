@@ -1,4 +1,3 @@
-import { Carousel } from '@mantine/carousel';
 import {
   Box,
   Button,
@@ -18,7 +17,6 @@ import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { NoContent } from '~/components/NoContent/NoContent';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props<Item> = {
@@ -29,7 +27,7 @@ type Props<Item> = {
   isRefetching?: boolean;
   fetchNextPage?: () => void;
   hasNextPage?: boolean;
-  actions?: (category: TypeCategory) => CategoryAction[];
+  actions?: (category: TypeCategory & { items: Item[] }) => CategoryAction[];
   empty?: (data: { id: number; name: string }) => React.ReactNode;
 };
 

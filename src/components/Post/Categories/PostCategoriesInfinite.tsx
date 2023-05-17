@@ -40,7 +40,7 @@ export function PostCategoriesInfinite({
           href: `/posts?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
-          visible: !!items.length,
+          visible: !!category.items.length,
         },
         {
           label: 'Make post',

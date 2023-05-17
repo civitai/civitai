@@ -1,12 +1,10 @@
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 import { useModelFilters, useQueryModelCategories } from '~/components/Model/model.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { ModelCategoryCard } from './ModelCategoryCard';
-import { Center, Text, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type ModelCategoriesState = {
   username?: string;
@@ -45,7 +43,7 @@ export function ModelCategoriesInfinite({
           icon: <IconArrowRight />,
           inTitle: true,
           shallow: true,
-          visible: !!items.length,
+          visible: !!category.items.length,
         },
         {
           label: 'Upload a model',

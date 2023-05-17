@@ -44,6 +44,7 @@ export function ArticleCategoriesInfinite({
                 icon: <IconArrowRight />,
                 inTitle: true,
                 shallow: true,
+                visible: !!category.items.length,
               },
               {
                 label: 'Create an article',
@@ -59,6 +60,7 @@ export function ArticleCategoriesInfinite({
                 icon: <IconArrowRight />,
                 inTitle: true,
                 shallow: true,
+                visible: !!category.items.length,
               },
             ]
       }
