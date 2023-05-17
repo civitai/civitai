@@ -163,7 +163,9 @@ export default function ArticleDetailsPage({
             />
             <CreatorCard user={article.user} />
           </Group>
-          <Title order={2}>Comments</Title>
+          <Title order={2} id="comments">
+            Comments
+          </Title>
           {article.user && (
             <ArticleDetailComments articleId={article.id} userId={article.user.id} />
           )}

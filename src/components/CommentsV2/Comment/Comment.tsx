@@ -1,5 +1,15 @@
-import { GroupProps, Group, ActionIcon, Menu, Stack, Text, Button, Box } from '@mantine/core';
-import { useState } from 'react';
+import {
+  GroupProps,
+  Group,
+  ActionIcon,
+  Menu,
+  Stack,
+  Text,
+  Button,
+  Box,
+  createStyles,
+} from '@mantine/core';
+import { useEffect, useState } from 'react';
 import { useCommentsContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
@@ -17,6 +27,7 @@ import { CommentReactions } from './CommentReactions';
 import { DeleteComment } from './DeleteComment';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
+import { useRouter } from 'next/router';
 
 type Store = {
   id?: number;
@@ -42,15 +53,30 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
 export function CommentContent({ comment, ...groupProps }: CommentProps) {
   const { entityId, entityType } = useCommentsContext();
   const { canDelete, canEdit, canReply, badge, canReport } = useCommentV2Context();
+  const { query } = useRouter();
+  const { classes } = useStyles();
 
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
+  const highlighted = query.highlight && query.highlight === comment.id.toString();
+
+  useEffect(() => {
+    const elem = document.getElementById(`comment-${comment.id}`);
+    if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  }, [highlighted]);
 
   return (
-    <Group align="flex-start" noWrap {...groupProps} spacing="sm">
+    <Group
+      id={`comment-${comment.id}`}
+      align="flex-start"
+      noWrap
+      {...groupProps}
+      spacing="sm"
+      className={highlighted ? classes.highlightedComment : undefined}
+    >
       <UserAvatar user={comment.user} size="md" linkToProfile />
       <Stack spacing={0} style={{ flex: 1 }}>
         <Group position="apart">
@@ -158,3 +184,12 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
     </Group>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  highlightedComment: {
+    background: theme.fn.rgba(theme.colors.blue[5], 0.2),
+    margin: `-${theme.spacing.xs}px`,
+    padding: `${theme.spacing.xs}px`,
+    borderRadius: theme.radius.sm,
+  },
+}));
