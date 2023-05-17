@@ -1,12 +1,10 @@
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 import { useModelFilters, useQueryModelCategories } from '~/components/Model/model.utils';
 import { removeEmpty } from '~/utils/object-helpers';
-
 import { ModelCategoryCard } from './ModelCategoryCard';
-import { Center, Text, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 
 type ModelCategoriesState = {
   username?: string;
@@ -37,33 +35,19 @@ export function ModelCategoriesInfinite({
       itemId={(x) => x.id}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      empty={({ id }) => (
-        <Center style={{ height: '100%' }}>
-          <Stack align="center">
-            <Text size={32} align="center">
-              No models found
-            </Text>
-            <Text align="center">
-              Try adjusting your filters or{' '}
-              <Text component={NextLink} href={`/models/create?category=${id}`} variant="link">
-                make a model
-              </Text>
-            </Text>
-          </Stack>
-        </Center>
-      )}
-      actions={(items) => [
+      empty={({ id }) => <CategoryListEmpty type="model" categoryId={id} />}
+      actions={(category) => [
         {
           label: 'View more',
-          href: (category) => `/?tag=${encodeURIComponent(category.name)}&view=feed`,
+          href: `/?tag=${encodeURIComponent(category.name)}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
           shallow: true,
-          visible: !!items.length,
+          visible: !!category.items.length,
         },
         {
           label: 'Upload a model',
-          href: (category) => `/models/create?category=${category.id}`,
+          href: `/models/create?category=${category.id}`,
           icon: <IconPlus />,
           inTitle: true,
         },

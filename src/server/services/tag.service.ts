@@ -54,9 +54,11 @@ export const getTags = async ({
   categories,
   sort,
   withModels = false,
+  includeAdminTags = false,
 }: Omit<GetTagsInput, 'limit' | 'page'> & {
   take?: number;
   skip?: number;
+  includeAdminTags?: boolean;
 }) => {
   const AND = [Prisma.sql`t."unlisted" = ${unlisted}`];
 
@@ -89,6 +91,9 @@ export const getTags = async ({
       WHERE tot."toTagId" = t."id"
       AND tot."fromTagId" IN (${Prisma.join(categoryTags)})
     )`);
+  }
+  if (!includeAdminTags) {
+    AND.push(Prisma.sql`t."adminOnly" = false`);
   }
 
   let orderBy = `t."name" ASC`;
@@ -476,7 +481,7 @@ export const getTypeCategories = async ({
   let categories = await getCategoryTags(type);
   if (excludeIds) categories = categories.filter((c) => !excludeIds.includes(c.id));
   let start = 0;
-  if (cursor) start = categories.findIndex((c) => c.id === cursor) + 1;
+  if (cursor) start = categories.findIndex((c) => c.id === cursor);
   if (limit) categories = categories.slice(start, start + limit);
 
   return categories;

@@ -5,6 +5,14 @@ import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
+
 const runStrategySchema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
   runUrl: z.string().url(),

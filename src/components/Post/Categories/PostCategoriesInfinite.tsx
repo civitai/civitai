@@ -1,10 +1,9 @@
-import { PostCategoryCard } from './PostCategoryCard';
-import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
-import { removeEmpty } from '~/utils/object-helpers';
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
-import { Center, Text, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
+import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
+import { removeEmpty } from '~/utils/object-helpers';
+import { PostCategoryCard } from './PostCategoryCard';
 
 type PostCategoriesState = {
   username?: string;
@@ -34,32 +33,18 @@ export function PostCategoriesInfinite({
       isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      empty={({ id }) => (
-        <Center style={{ height: '100%' }}>
-          <Stack align="center">
-            <Text size={32} align="center">
-              No posts found
-            </Text>
-            <Text align="center">
-              Try adjusting your filters or{' '}
-              <Text component={NextLink} href={`/posts/create?tag=${id}`} variant="link">
-                make a post
-              </Text>
-            </Text>
-          </Stack>
-        </Center>
-      )}
-      actions={(items) => [
+      empty={({ id }) => <CategoryListEmpty type="post" categoryId={id} />}
+      actions={(category) => [
         {
           label: 'View more',
-          href: (category) => `/posts?tags=${category.id}&view=feed`,
+          href: `/posts?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
-          visible: !!items.length,
+          visible: !!category.items.length,
         },
         {
           label: 'Make post',
-          href: (category) => `/posts/create?tag=${category.id}`,
+          href: `/posts/create?tag=${category.id}`,
           icon: <IconPlus />,
           inTitle: true,
         },

@@ -1,12 +1,11 @@
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
-
 import { useArticleFilters, useQueryArticleCategories } from '../article.utils';
 import { ArticleCard } from '../Infinite/ArticleCard';
-import { Center, Text, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type ArticleCategoriesState = {
   articleId?: number;
@@ -19,6 +18,7 @@ export function ArticleCategoriesInfinite({
   filters?: ArticleCategoriesState;
   limit?: number;
 }) {
+  const { adminTags } = useFeatureFlags();
   const globalFilters = useArticleFilters();
   const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
@@ -34,37 +34,36 @@ export function ArticleCategoriesInfinite({
       isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      empty={({ id }) => (
-        <Center style={{ height: '100%' }}>
-          <Stack align="center">
-            <Text size={32} align="center">
-              No articles found
-            </Text>
-            <Text align="center">
-              Try adjusting your filters or{' '}
-              <Text component={NextLink} href={`/articles/create?category=${id}`} variant="link">
-                make an article
-              </Text>
-            </Text>
-          </Stack>
-        </Center>
-      )}
-      actions={(items) => [
-        {
-          label: 'View more',
-          href: (category) => `/articles?tags=${category.id}&view=feed`,
-          icon: <IconArrowRight />,
-          inTitle: true,
-          shallow: true,
-          visible: !!items.length,
-        },
-        {
-          label: 'Create an article',
-          href: (category) => `/articles/create?category=${category.id}`,
-          icon: <IconPlus />,
-          inTitle: true,
-        },
-      ]}
+      empty={({ id }) => <CategoryListEmpty type="article" categoryId={id} />}
+      actions={(category) =>
+        !category.adminOnly || adminTags
+          ? [
+              {
+                label: 'View more',
+                href: `/articles?tags=${category.id}&view=feed`,
+                icon: <IconArrowRight />,
+                inTitle: true,
+                shallow: true,
+                visible: !!category.items.length,
+              },
+              {
+                label: 'Create an article',
+                href: `/articles/create?category=${category.id}`,
+                icon: <IconPlus />,
+                inTitle: true,
+              },
+            ]
+          : [
+              {
+                label: 'View more',
+                href: `/articles?tags=${category.id}&view=feed`,
+                icon: <IconArrowRight />,
+                inTitle: true,
+                shallow: true,
+                visible: !!category.items.length,
+              },
+            ]
+      }
     />
   );
 }

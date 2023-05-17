@@ -75,7 +75,7 @@ const postFilterSchema = z.object({
 
 type ArticleFilterSchema = z.infer<typeof articleFilterSchema>;
 const articleFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(ArticleSort.MostReactions),
   view: viewModeSchema.default('categories'),

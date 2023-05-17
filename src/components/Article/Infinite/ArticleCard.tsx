@@ -1,4 +1,4 @@
-import { Badge, Box, Card, Group, Stack, Text } from '@mantine/core';
+import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
 import { IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons';
 import Link from 'next/link';
 
@@ -20,12 +20,20 @@ export function ArticleCard({ data, height = 450 }: Props) {
     likeCount: 0,
   };
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
+  const { classes } = useStyles();
 
   return (
     <Link href={`/articles/${id}/${slugit(title)}`} passHref>
-      <Card component="a" p="sm" shadow="sm" withBorder>
-        <Card.Section py="xs" inheritPadding>
-          <Group position="apart">
+      <Card
+        component="a"
+        p={0}
+        shadow="sm"
+        withBorder
+        sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+      >
+        <Stack spacing={0} sx={{ height: '100%' }}>
+          {/* <Card.Section py="xs" inheritPadding> */}
+          <Group position="apart" px="sm" py="xs">
             <UserAvatar
               user={user}
               size="sm"
@@ -34,29 +42,29 @@ export function ArticleCard({ data, height = 450 }: Props) {
             />
             <ArticleContextMenu article={data} />
           </Group>
-        </Card.Section>
-        <Card.Section style={{ position: 'relative' }}>
-          {category && (
-            <Badge
-              size="sm"
-              variant="gradient"
-              gradient={{ from: 'cyan', to: 'blue' }}
-              sx={(theme) => ({
-                position: 'absolute',
-                top: theme.spacing.xs,
-                right: theme.spacing.xs,
-                zIndex: 1,
-              })}
-            >
-              {category.name}
-            </Badge>
-          )}
-          <Box sx={{ height: height / 2, '& > img': { height: '100%', objectFit: 'cover' } }}>
-            <EdgeImage src={cover} width={450} />
-          </Box>
-        </Card.Section>
-        <Card.Section py="xs" inheritPadding>
-          <Stack spacing={4}>
+          {/* </Card.Section> */}
+          <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+            {category && (
+              <Badge
+                size="sm"
+                variant="gradient"
+                gradient={{ from: 'cyan', to: 'blue' }}
+                sx={(theme) => ({
+                  position: 'absolute',
+                  top: theme.spacing.xs,
+                  right: theme.spacing.xs,
+                  zIndex: 1,
+                })}
+              >
+                {category.name}
+              </Badge>
+            )}
+            {/* <Box sx={{ height: height / 2, '& > img': { height: '100%', objectFit: 'cover' } }}>
+            </Box> */}
+            <EdgeImage className={classes.image} src={cover} width={450} />
+          </div>
+          {/* <Card.Section py="xs" inheritPadding> */}
+          <Stack spacing={4} px="sm" py="xs">
             <Text lineClamp={2}>{title}</Text>
             <Group position="apart">
               <Group spacing={4}>
@@ -72,7 +80,8 @@ export function ArticleCard({ data, height = 450 }: Props) {
               </IconBadge>
             </Group>
           </Stack>
-        </Card.Section>
+          {/* </Card.Section> */}
+        </Stack>
       </Card>
     </Link>
   );
@@ -82,3 +91,15 @@ type Props = {
   data: ArticleGetAll['items'][number];
   height?: number;
 };
+
+const useStyles = createStyles((theme) => ({
+  header: {},
+  image: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+  },
+}));

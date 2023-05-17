@@ -90,11 +90,11 @@ export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel
 
 const useStyles = createStyles((theme) => ({
   container: {
-    position: 'relative',
-    // width: constants.cardSizes.image,
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-    },
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
 
   viewMore: {
