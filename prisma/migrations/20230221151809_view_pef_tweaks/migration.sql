@@ -35,9 +35,6 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS public."TagRank"
 DROP INDEX IF EXISTS "TagRank_PK";
 CREATE UNIQUE INDEX "TagRank_PK" ON "TagRank" ("tagId");
 
-ALTER TABLE public."TagRank"
-    OWNER TO modelshare;
-
 DO $$
 BEGIN
     IF EXISTS(SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = 'ModelVersionRank') THEN
@@ -95,9 +92,6 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS public."ModelVersionRank"
 
 DROP INDEX IF EXISTS "ModelVersionRank_PK";
 CREATE UNIQUE INDEX "ModelVersionRank_PK" ON "ModelVersionRank" ("modelVersionId");
-
-ALTER TABLE public."ModelVersionRank"
-    OWNER TO modelshare;
 
 
 

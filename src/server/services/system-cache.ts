@@ -65,7 +65,7 @@ const colorPriority = [
   'brown',
   'grey',
 ];
-type TypeCategory = { id: number; name: string; priority: number };
+
 export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article') {
   let categories: TypeCategory[] | undefined;
   const categoriesCache = await redis.get(`system:categories:${type}`);
@@ -77,12 +77,13 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
     if (!categoryTag) throw new Error(`${type} category tag not found`);
     const categoriesRaw = await dbWrite.tag.findMany({
       where: { fromTags: { some: { fromTagId: categoryTag.id } } },
-      select: { id: true, name: true, color: true },
+      select: { id: true, name: true, color: true, adminOnly: true },
     });
     categories = categoriesRaw
       .map((c) => ({
         id: c.id,
         name: c.name,
+        adminOnly: c.adminOnly,
         priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
       }))
       .sort((a, b) => a.priority - b.priority);
