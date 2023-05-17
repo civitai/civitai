@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
 import { PostCategoryCard } from './PostCategoryCard';
 import { usePostFilters, useQueryPostCategories } from '~/components/Post/post.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
+import { Center, Text, Stack } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 
 type PostCategoriesState = {
   username?: string;
@@ -21,7 +22,8 @@ export function PostCategoriesInfinite({
   const globalFilters = usePostFilters();
   const filters = removeEmpty({ ...globalFilters, ...filterOverrides, limit, tags: undefined });
 
-  const { categories, isLoading, fetchNextPage, hasNextPage } = useQueryPostCategories(filters);
+  const { categories, isLoading, isRefetching, fetchNextPage, hasNextPage } =
+    useQueryPostCategories(filters);
   if (!categories) return null;
 
   return (
@@ -29,14 +31,31 @@ export function PostCategoriesInfinite({
       data={categories}
       render={PostCategoryCard}
       isLoading={isLoading}
+      isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      actions={[
+      empty={({ id }) => (
+        <Center style={{ height: '100%' }}>
+          <Stack align="center">
+            <Text size={32} align="center">
+              No posts found
+            </Text>
+            <Text align="center">
+              Try adjusting your filters or{' '}
+              <Text component={NextLink} href={`/posts/create?tag=${id}`} variant="link">
+                make a post
+              </Text>
+            </Text>
+          </Stack>
+        </Center>
+      )}
+      actions={(items) => [
         {
           label: 'View more',
           href: (category) => `/posts?tags=${category.id}&view=feed`,
           icon: <IconArrowRight />,
           inTitle: true,
+          visible: !!items.length,
         },
         {
           label: 'Make post',

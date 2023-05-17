@@ -5,6 +5,8 @@ import { useModelFilters, useQueryModelCategories } from '~/components/Model/mod
 import { removeEmpty } from '~/utils/object-helpers';
 
 import { ModelCategoryCard } from './ModelCategoryCard';
+import { Center, Text, Stack } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 
 type ModelCategoriesState = {
   username?: string;
@@ -30,9 +32,26 @@ export function ModelCategoriesInfinite({
     <CategoryList
       data={categories}
       render={ModelCategoryCard}
-      isLoading={isLoading || isRefetching}
+      isLoading={isLoading}
+      isRefetching={isRefetching}
+      itemId={(x) => x.id}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
+      empty={({ id }) => (
+        <Center style={{ height: '100%' }}>
+          <Stack align="center">
+            <Text size={32} align="center">
+              No models found
+            </Text>
+            <Text align="center">
+              Try adjusting your filters or{' '}
+              <Text component={NextLink} href={`/models/create?category=${id}`} variant="link">
+                make a model
+              </Text>
+            </Text>
+          </Stack>
+        </Center>
+      )}
       actions={(items) => [
         {
           label: 'View more',
@@ -40,6 +59,7 @@ export function ModelCategoriesInfinite({
           icon: <IconArrowRight />,
           inTitle: true,
           shallow: true,
+          visible: !!items.length,
         },
         {
           label: 'Upload a model',

@@ -25,7 +25,7 @@ import {
 } from '@tabler/icons';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
@@ -59,6 +59,7 @@ export function ModelCategoryCard({
 }) {
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
+  const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
 
   const [loading, setLoading] = useState(false);
@@ -220,6 +221,12 @@ export function ModelCategoryCard({
       reportImageOption,
     ]);
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
+
+  useEffect(() => {
+    if (!modelId || modelId !== data.id) return;
+    const elem = document.getElementById(`${modelId}`);
+    if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+  }, [modelId, data.id]);
 
   return (
     <Indicator
