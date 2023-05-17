@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Button,
   ButtonProps,
   Grid,
@@ -218,6 +219,15 @@ export function ArticleUpsertForm({ article }: Props) {
                   'text/x-python-script': ['.py'],
                 },
               }}
+              renderItem={(file) =>
+                article && file.id ? (
+                  <Anchor href={`/api/download/attachments/${file.id}`} lineClamp={1} download>
+                    {file.name}
+                  </Anchor>
+                ) : (
+                  file.name
+                )
+              }
             />
             <ActionButtons
               article={article}

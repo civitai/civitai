@@ -38,7 +38,7 @@ type UseS3UploadOptions = {
 };
 
 type UploadResult = {
-  url: string;
+  url: string | null;
   bucket: string;
   key: string;
   name?: string;
