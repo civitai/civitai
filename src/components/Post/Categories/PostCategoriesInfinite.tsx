@@ -5,6 +5,7 @@ import { IconArrowRight, IconPlus } from '@tabler/icons';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
 import { Center, Text, Stack } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type PostCategoriesState = {
   username?: string;
@@ -34,21 +35,7 @@ export function PostCategoriesInfinite({
       isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      empty={({ id }) => (
-        <Center style={{ height: '100%' }}>
-          <Stack align="center">
-            <Text size={32} align="center">
-              No posts found
-            </Text>
-            <Text align="center">
-              Try adjusting your filters or{' '}
-              <Text component={NextLink} href={`/posts/create?tag=${id}`} variant="link">
-                make a post
-              </Text>
-            </Text>
-          </Stack>
-        </Center>
-      )}
+      empty={({ id }) => <CategoryListEmpty type="post" categoryId={id} />}
       actions={(items) => [
         {
           label: 'View more',

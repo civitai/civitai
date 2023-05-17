@@ -5,8 +5,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 
 import { useArticleFilters, useQueryArticleCategories } from '../article.utils';
 import { ArticleCard } from '../Infinite/ArticleCard';
-import { Center, Text, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type ArticleCategoriesState = {
   articleId?: number;
@@ -34,21 +33,7 @@ export function ArticleCategoriesInfinite({
       isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      empty={({ id }) => (
-        <Center style={{ height: '100%' }}>
-          <Stack align="center">
-            <Text size={32} align="center">
-              No articles found
-            </Text>
-            <Text align="center">
-              Try adjusting your filters or{' '}
-              <Text component={NextLink} href={`/articles/create?category=${id}`} variant="link">
-                make an article
-              </Text>
-            </Text>
-          </Stack>
-        </Center>
-      )}
+      empty={({ id }) => <CategoryListEmpty type="article" categoryId={id} />}
       actions={(items) => [
         {
           label: 'View more',

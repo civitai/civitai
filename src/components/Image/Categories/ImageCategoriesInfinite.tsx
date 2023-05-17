@@ -5,6 +5,7 @@ import { ImageCategoryCard } from './ImageCategoryCard';
 import { useImageFilters, useQueryImageCategories } from '~/components/Image/image.utils';
 import { Center, Text, Stack } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 
 type ImageCategoriesState = {
   username?: string;
@@ -34,21 +35,7 @@ export function ImageCategoriesInfinite({
       isRefetching={isRefetching}
       fetchNextPage={fetchNextPage}
       hasNextPage={hasNextPage}
-      empty={({ id }) => (
-        <Center style={{ height: '100%' }}>
-          <Stack align="center">
-            <Text size={32} align="center">
-              No images found
-            </Text>
-            <Text align="center">
-              Try adjusting your filters or{' '}
-              <Text component={NextLink} href={`/posts/create?tag=${id}`} variant="link">
-                make a post
-              </Text>
-            </Text>
-          </Stack>
-        </Center>
-      )}
+      empty={({ id }) => <CategoryListEmpty type="image" categoryId={id} />}
       actions={(items) => [
         {
           label: 'View more',
