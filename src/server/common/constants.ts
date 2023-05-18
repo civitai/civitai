@@ -1,3 +1,4 @@
+import { IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { ImageSort, PostSort, QuestionSort, BrowsingMode, ArticleSort } from './enums';
 import { MetricTimeframe, ModelStatus, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
@@ -87,6 +88,10 @@ export const constants = {
     [ReviewReactions.Heart]: '❤️',
     [ReviewReactions.Laugh]: '😂',
     [ReviewReactions.Cry]: '😢',
+  },
+  richTextEditor: {
+    maxFileSize: 1024 * 1024 * 5, // 5MB
+    accept: IMAGE_MIME_TYPE,
   },
 } as const;
 

@@ -1,18 +1,16 @@
 import {
-  Button,
   createStyles,
   CSSObject,
   Group,
   Input,
   InputWrapperProps,
   MantineSize,
-  Stack,
   Text,
 } from '@mantine/core';
-import { closeModal, openModal } from '@mantine/modals';
-import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
+import { openModal } from '@mantine/modals';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import { Link, RichTextEditorProps, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle } from '@tabler/icons';
-import Image from '@tiptap/extension-image';
 import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
@@ -20,8 +18,10 @@ import Youtube from '@tiptap/extension-youtube';
 import { BubbleMenu, Editor, Extension, Extensions, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
-import { validateThirdPartyUrl } from '~/utils/string-helpers';
 
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
+import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -103,6 +103,8 @@ const LinkWithValidation = Link.extend({
   },
 });
 
+const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
+
 export function RichTextEditor({
   id,
   label,
@@ -134,6 +136,8 @@ export function RichTextEditor({
 
   const linkExtension = withLinkValidation ? LinkWithValidation : Link;
 
+  const { uploadToCF } = useCFImageUpload();
+
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
     StarterKit.configure({
@@ -164,7 +168,21 @@ export function RichTextEditor({
     ...(addLink ? [linkExtension] : []),
     ...(addMedia
       ? [
-          Image,
+          CustomImage.configure({
+            uploadImage: uploadToCF,
+            onUploadStart: () => {
+              showNotification({
+                id: UPLOAD_NOTIFICATION_ID,
+                loading: true,
+                disallowClose: true,
+                autoClose: false,
+                message: 'Uploading images...',
+              });
+            },
+            onUploadEnd: () => {
+              hideNotification(UPLOAD_NOTIFICATION_ID);
+            },
+          }),
           Youtube.configure({
             // Casting width as any to be able to use `100%`
             // since the tiptap extension API doesn't allow

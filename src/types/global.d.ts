@@ -79,4 +79,6 @@ declare global {
   };
 
   type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };
+
+  type UploadResult = { url: string; id: string };
 }
