@@ -11,8 +11,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { ArticleEngagementType } from '@prisma/client';
-import { IconHeart } from '@tabler/icons';
-import { model } from '@tensorflow/tfjs';
+import { IconHeart, IconBookmark } from '@tabler/icons';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
@@ -21,7 +20,7 @@ import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
-import { ToggleEngagement } from '~/components/Article/ToggleEngagement';
+import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import { Collection } from '~/components/Collection/Collection';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -103,7 +102,7 @@ export default function ArticleDetailsPage({
                   {article.title}
                 </Title>
                 <LoginRedirect reason="favorite-model">
-                  <ToggleEngagement articleId={article.id}>
+                  <ToggleArticleEngagement articleId={article.id}>
                     {({ toggle, isToggled }) => {
                       const isFavorite = isToggled?.Favorite;
                       return (
@@ -127,7 +126,7 @@ export default function ArticleDetailsPage({
                         </IconBadge>
                       );
                     }}
-                  </ToggleEngagement>
+                  </ToggleArticleEngagement>
                 </LoginRedirect>
               </Group>
               {article.user && <ArticleContextMenu article={article} />}
