@@ -64,6 +64,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
   const highlighted = query.highlight && query.highlight === comment.id.toString();
 
   useEffect(() => {
+    if (!highlighted) return;
     const elem = document.getElementById(`comment-${comment.id}`);
     if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
   }, [highlighted]);

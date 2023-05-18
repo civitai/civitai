@@ -1,5 +1,11 @@
+import { ToggleUserArticleEngagementsInput } from './../schema/user.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { ModelEngagementType, Prisma, TagEngagementType } from '@prisma/client';
+import {
+  ArticleEngagementType,
+  ModelEngagementType,
+  Prisma,
+  TagEngagementType,
+} from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -7,6 +13,7 @@ import {
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
+  GetUserArticleEngagementsInput,
   GetUserCosmeticsSchema,
   ToggleBlockedTagSchema,
 } from '~/server/schema/user.schema';
@@ -20,7 +27,6 @@ import {
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
-import { redis } from '~/server/redis/client';
 import { getSystemPermissions } from '~/server/services/system-cache';
 // import { createCannyToken } from '~/server/canny/canny';
 
@@ -494,3 +500,59 @@ export const getUserCosmetics = ({
     },
   });
 };
+
+// #region [article engagement]
+export const getUserArticleEngagements = async ({ userId }: { userId: number }) => {
+  const engagements = await dbRead.articleEngagement.findMany({
+    where: { userId },
+    select: { articleId: true, type: true },
+  });
+  return engagements.reduce<Partial<Record<ArticleEngagementType, number[]>>>(
+    (acc, { articleId, type }) => ({ ...acc, [type]: [...(acc[type] ?? []), articleId] }),
+    {}
+  );
+};
+
+export const toggleUserArticleEngagement = async ({
+  type,
+  articleId,
+  userId,
+}: ToggleUserArticleEngagementsInput & { userId: number }) => {
+  const articleEngagements = await dbRead.articleEngagement.findMany({
+    where: { userId, articleId },
+    select: { type: true },
+  });
+
+  const exists = !!articleEngagements.find((x) => x.type === type);
+  const toDelete: ArticleEngagementType[] = [];
+
+  // if the engagement exists, we only need to remove the existing engagmement
+  if (exists) toDelete.push(type);
+  // if the engagement doesn't exist, we need to remove mutually exclusive items
+  else if (articleEngagements.length) {
+    if (
+      type === ArticleEngagementType.Favorite &&
+      !!articleEngagements.find((x) => x.type === ArticleEngagementType.Hide)
+    )
+      toDelete.push(ArticleEngagementType.Hide);
+    else if (
+      type === ArticleEngagementType.Hide &&
+      !!articleEngagements.find((x) => x.type === ArticleEngagementType.Favorite)
+    )
+      toDelete.push(ArticleEngagementType.Favorite);
+  }
+
+  // we may need to delete items regardless of whether the current engagement exists
+  if (toDelete.length) {
+    await dbWrite.articleEngagement.deleteMany({
+      where: { userId, articleId, type: { in: toDelete } },
+    });
+  }
+
+  if (!exists) {
+    await dbWrite.articleEngagement.create({ data: { userId, articleId, type } });
+  }
+
+  return !exists;
+};
+// #endregion

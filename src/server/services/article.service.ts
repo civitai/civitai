@@ -1,4 +1,4 @@
-import { Prisma, TagTarget } from '@prisma/client';
+import { ArticleEngagementType, Prisma, TagTarget } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -32,6 +32,8 @@ export const getArticles = async ({
   excludedUserIds,
   excludedTagIds,
   userIds,
+  favorites,
+  hidden,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
@@ -44,6 +46,18 @@ export const getArticles = async ({
     if (!!excludedIds?.length) AND.push({ id: { notIn: excludedIds } });
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
     if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+
+    if (sessionUser) {
+      if (favorites) {
+        AND.push({
+          engagements: { some: { userId: sessionUser?.id, type: ArticleEngagementType.Favorite } },
+        });
+      } else if (hidden) {
+        AND.push({
+          engagements: { some: { userId: sessionUser?.id, type: ArticleEngagementType.Hide } },
+        });
+      }
+    }
 
     const where: Prisma.ArticleFindManyArgs['where'] = {
       publishedAt: isMod ? undefined : { not: null },

@@ -20,6 +20,8 @@ export const getInfiniteArticlesSchema = getAllQuerySchema.extend({
   excludedTagIds: z.array(z.number()).optional(),
   userIds: z.array(z.number()).optional(),
   excludedIds: z.array(z.number()).optional(),
+  favorites: z.boolean().optional(),
+  hidden: z.boolean().optional(),
 });
 
 export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;

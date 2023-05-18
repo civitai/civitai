@@ -16,24 +16,24 @@ import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { PeriodMode } from '~/server/schema/base.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
+// import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModelCategoriesInfinite } from '~/components/Model/Categories/ModelCategoriesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 
-export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  useSession: true,
-  resolver: async ({ ssg, session }) => {
-    if (ssg && session) {
-      // Prefetch user's favorite models
-      await ssg.user.getEngagedModels.prefetch(undefined);
-      // Prefetch user's engaged models versions
-      await ssg.user.getEngagedModelVersions.prefetch(undefined);
-      // Prefetch users' blocked tags
-      await ssg.user.getTags.prefetch({ type: 'Hide' });
-    }
-  },
-});
+// export const getServerSideProps = createServerSideProps({
+//   useSSG: true,
+//   useSession: true,
+//   resolver: async ({ ssg, session }) => {
+//     if (ssg && session) {
+//       // Prefetch user's favorite models
+//       await ssg.user.getEngagedModels.prefetch(undefined);
+//       // Prefetch user's engaged models versions
+//       await ssg.user.getEngagedModelVersions.prefetch(undefined);
+//       // Prefetch users' blocked tags
+//       await ssg.user.getTags.prefetch({ type: 'Hide' });
+//     }
+//   },
+// });
 
 function Home() {
   const currentUser = useCurrentUser();

@@ -19,6 +19,7 @@ import {
   acceptTOS,
   completeOnboarding,
   isUsernamePermitted,
+  toggleUserArticleEngagement,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -33,6 +34,7 @@ import {
   BatchBlockTagsSchema,
   ToggleModelEngagementInput,
   GetUserCosmeticsSchema,
+  ToggleUserArticleEngagementsInput,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -748,5 +750,21 @@ export const getUserCosmeticsHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const toggleArticleEngagementHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleUserArticleEngagementsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const on = await toggleUserArticleEngagement({ ...input, userId: ctx.user.id });
+    if (on) await ctx.track.articleEngagement(input);
+    return on;
+  } catch (error) {
+    throw throwDbError(error);
   }
 };

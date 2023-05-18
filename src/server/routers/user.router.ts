@@ -20,6 +20,7 @@ import {
   getUsernameAvailableHandler,
   acceptTOSHandler,
   completeOnboardingHandler,
+  toggleArticleEngagementHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -42,8 +43,9 @@ import {
   getUserTagsSchema,
   batchBlockTagsSchema,
   getUserCosmeticsSchema,
+  toggleUserArticleEngagementSchema,
 } from '~/server/schema/user.schema';
-import { removeAllContent } from '~/server/services/user.service';
+import { getUserArticleEngagements, removeAllContent } from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
@@ -87,4 +89,10 @@ export const userRouter = router({
   removeAllContent: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input }) => removeAllContent(input)),
+  getArticleEngagement: protectedProcedure.query(({ ctx }) =>
+    getUserArticleEngagements({ userId: ctx.user.id })
+  ),
+  toggleArticleEngagement: protectedProcedure
+    .input(toggleUserArticleEngagementSchema)
+    .mutation(toggleArticleEngagementHandler),
 });
