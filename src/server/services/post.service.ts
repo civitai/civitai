@@ -118,6 +118,7 @@ export const getPostsInfinite = async ({
         excludedUserIds,
         excludedIds: excludedImageIds,
         userId: user?.id,
+        isOwnerRequest,
       })
     : [];
 

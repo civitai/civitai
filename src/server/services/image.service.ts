@@ -1140,27 +1140,31 @@ export const getImagesForPosts = async ({
   excludedIds,
   excludedUserIds,
   userId,
+  isOwnerRequest,
 }: {
   postIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
   userId?: number;
+  isOwnerRequest?: boolean;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere = [`i."postId" IN (${postIds.join(',')})`];
-  if (!!excludedTagIds?.length) {
-    imageWhere.push(`i."scannedAt" IS NOT NULL`);
-    const excludedTags = excludedTagIds.join(',');
-    imageWhere.push(
-      `NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${excludedTags}) )`
-    );
-  }
-  if (!!excludedIds?.length) {
-    imageWhere.push(`i."id" NOT IN (${excludedIds.join(',')})`);
-  }
-  if (!!excludedUserIds?.length) {
-    imageWhere.push(`i."userId" NOT IN (${excludedUserIds.join(',')})`);
+  if (!isOwnerRequest) {
+    if (!!excludedTagIds?.length) {
+      imageWhere.push(`i."scannedAt" IS NOT NULL`);
+      const excludedTags = excludedTagIds.join(',');
+      imageWhere.push(
+        `NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${excludedTags}) )`
+      );
+    }
+    if (!!excludedIds?.length) {
+      imageWhere.push(`i."id" NOT IN (${excludedIds.join(',')})`);
+    }
+    if (!!excludedUserIds?.length) {
+      imageWhere.push(`i."userId" NOT IN (${excludedUserIds.join(',')})`);
+    }
   }
   const images = await dbRead.$queryRawUnsafe<
     {

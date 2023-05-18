@@ -34,18 +34,24 @@ export const getArticles = async ({
   userIds,
   favorites,
   hidden,
+  username,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
+    const isOwnerRequest = sessionUser && sessionUser.username === username;
 
     const AND: Prisma.Enumerable<Prisma.ArticleWhereInput> = [];
     if (query) AND.push({ title: { contains: query } });
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
-    if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
-    if (!!excludedIds?.length) AND.push({ id: { notIn: excludedIds } });
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
-    if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    if (username) AND.push({ user: { username } });
+
+    if (!isOwnerRequest) {
+      if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
+      if (!!excludedIds?.length) AND.push({ id: { notIn: excludedIds } });
+      if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    }
 
     if (sessionUser) {
       if (favorites) {

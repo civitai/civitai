@@ -22,6 +22,7 @@ export const getInfiniteArticlesSchema = getAllQuerySchema.extend({
   excludedIds: z.array(z.number()).optional(),
   favorites: z.boolean().optional(),
   hidden: z.boolean().optional(),
+  username: z.string().optional(),
 });
 
 export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
