@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-export function ToggleEngagement({
+export function ToggleArticleEngagement({
   articleId,
   children,
 }: {

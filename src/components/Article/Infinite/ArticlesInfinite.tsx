@@ -6,7 +6,6 @@ import { useInView } from 'react-intersection-observer';
 import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
 import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
