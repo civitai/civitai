@@ -474,6 +474,10 @@ export const getModelsWithVersionsHandler = async ({
       modelVersionIds,
       imagesPerVersion: 10,
       include: ['meta'],
+      excludedTagIds: input.excludedImageTagIds,
+      excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
+      excludedUserIds: input.excludedUserIds,
+      currentUserId: ctx.user?.id,
     });
 
     const results = {
