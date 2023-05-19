@@ -26,12 +26,12 @@ import {
 } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons';
-import { LeaderboardItem } from '~/components/Leaderboard/LeaderboardItem';
 import { useDisclosure } from '@mantine/hooks';
 import { Countdown } from '~/components/Countdown/Countdown';
-import dayjs, { utc } from 'dayjs';
+import dayjs from 'dayjs';
 import { CreatorList } from '~/components/Leaderboard/CreatorList';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { Meta } from '~/components/Meta/Meta';
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
