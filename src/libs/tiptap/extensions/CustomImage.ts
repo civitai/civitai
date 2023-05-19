@@ -13,6 +13,7 @@ type CustomImageOptions = ImageOptions & {
 };
 
 export const CustomImage = ImageExtension.extend<CustomImageOptions>({
+  draggable: true,
   addOptions() {
     return {
       ...this.parent?.(),

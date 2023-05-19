@@ -25,6 +25,8 @@ import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
+import { Instagram } from '~/libs/tiptap/extensions/Instagram';
+import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -52,6 +54,17 @@ const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
 const useStyles = createStyles((theme) => ({
   mention: {
     color: theme.colors.blue[4],
+  },
+  instagramEmbed: {
+    aspectRatio: '9/16',
+    maxHeight: 1060,
+    maxWidth: '50%',
+    overflow: 'hidden',
+    pointerEvents: 'none',
+
+    [theme.fn.smallerThan('sm')]: {
+      maxWidth: '100%',
+    },
   },
 }));
 
@@ -202,6 +215,12 @@ export function RichTextEditor({
               ];
             },
           }),
+          Instagram.configure({
+            HTMLAttributes: {
+              class: classes.instagramEmbed,
+            },
+            height: 'auto',
+          }),
         ]
       : []),
     ...(addMentions
@@ -332,6 +351,7 @@ export function RichTextEditor({
               <RTE.ControlsGroup>
                 <InsertImageControl />
                 <InsertYoutubeVideoControl />
+                <InsertInstagramEmbedControl />
               </RTE.ControlsGroup>
             )}
           </RTE.Toolbar>
