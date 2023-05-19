@@ -11,6 +11,7 @@ import { commentv2Router } from './commentv2.router';
 import { contentRouter } from './content.router';
 import { downloadRouter } from './download.router';
 import { imageRouter } from './image.router';
+import { leaderboardRouter } from './leaderboard.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
 import { modelRouter } from './model.router';
@@ -58,6 +59,7 @@ export const appRouter = router({
   track: trackRouter,
   user: userRouter,
   userLink: userLinkRouter,
+  leaderboard: leaderboardRouter,
 });
 
 // export type definition of API

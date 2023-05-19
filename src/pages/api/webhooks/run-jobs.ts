@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { z } from 'zod';
 
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
-import { deliverCosmetics } from '~/server/jobs/deliver-cosmetics';
+import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { selectFeaturedImages } from '~/server/jobs/select-featured-images';
@@ -25,6 +25,8 @@ import { isProd } from '~/env/other';
 import { updateMetricsModelJob } from '~/server/jobs/update-metrics-models';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
+import { prepareLeaderboard, updateUserLeaderboardRank } from '~/server/jobs/prepare-leaderboard';
+import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -34,7 +36,8 @@ const jobs: Job[] = [
   sendNotificationsJob,
   sendWebhooksJob,
   addOnDemandRunStrategiesJob,
-  deliverCosmetics,
+  deliverPurchasedCosmetics,
+  deliverLeaderboardCosmetics,
   selectFeaturedImages,
   removeDisconnectedImages,
   pushDiscordMetadata,
@@ -45,6 +48,8 @@ const jobs: Job[] = [
   applyContestTags,
   ...applyDiscordRoles,
   applyNsfwBaseline,
+  prepareLeaderboard,
+  updateUserLeaderboardRank,
 ];
 
 const log = createLogger('jobs', 'green');
