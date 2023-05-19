@@ -32,18 +32,25 @@ const leaderboardQuerySchema = z.object({
   date: stringDate(),
 });
 
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg, ctx }) => {
+    const { id, date } = leaderboardQuerySchema.parse(ctx.query);
+    await ssg?.leaderboard.getLeaderboards.prefetch();
+  },
+});
+
 export default function Leaderboard() {
   const { query, replace } = useRouter();
   const { id, date } = leaderboardQuerySchema.parse(query);
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
 
-  const { data: leaderboards = [], isLoading: loadingLeaderboards } =
-    trpc.leaderboard.getLeaderboards.useQuery(undefined, {
-      onSuccess: (data) => {
-        if (selectedLeaderboard?.id !== id) setSelectedLeaderboard(data.find((x) => x.id === id));
-      },
-    });
+  const { data: leaderboards = [] } = trpc.leaderboard.getLeaderboards.useQuery(undefined, {
+    onSuccess: (data) => {
+      if (selectedLeaderboard?.id !== id) setSelectedLeaderboard(data.find((x) => x.id === id));
+    },
+  });
   const { data: leaderboardResults = [], isLoading: loadingLeaderboardResults } =
     trpc.leaderboard.getLeaderboard.useQuery({ id, date });
   const { data: leaderboardPositionsRaw = [], isLoading: loadingLeaderboardPositions } =

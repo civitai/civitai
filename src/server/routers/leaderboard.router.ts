@@ -14,9 +14,9 @@ import { publicProcedure, router } from '~/server/trpc';
 const expireAt = () => dayjs().add(1, 'day').startOf('day').toDate();
 
 export const leaderboardRouter = router({
-  getLeaderboards: publicProcedure
-    .use(edgeCacheIt({ expireAt }))
-    .query(({ ctx }) => getLeaderboards({ isModerator: ctx?.user?.isModerator ?? false })),
+  getLeaderboards: publicProcedure.query(({ ctx }) =>
+    getLeaderboards({ isModerator: ctx?.user?.isModerator ?? false })
+  ),
   getLeaderboardPositions: publicProcedure
     .input(getLeaderboardPositionsSchema)
     .query(({ input, ctx }) =>
