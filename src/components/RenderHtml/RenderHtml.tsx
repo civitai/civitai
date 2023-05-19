@@ -7,7 +7,7 @@ import React from 'react';
 
 import { sanitizeHtml } from '~/utils/html-helpers';
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme) => ({
   htmlRenderer: {
     '& p:last-of-type': {
       marginBottom: 0,
@@ -26,6 +26,30 @@ const useStyles = createStyles(() => ({
     code: {
       // whiteSpace: 'pre-line',
       whiteSpace: 'break-spaces',
+    },
+    'div[data-type="instagram"]': {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      height: 769,
+
+      '& > iframe': {
+        width: '50%',
+        overflow: 'hidden',
+        flexGrow: 1,
+      },
+
+      [theme.fn.smallerThan('md')]: {
+        height: 649,
+      },
+
+      [theme.fn.smallerThan('sm')]: {
+        height: 681,
+
+        '& > iframe': {
+          width: '100%',
+        },
+      },
     },
   },
 }));
