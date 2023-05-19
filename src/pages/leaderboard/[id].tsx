@@ -27,6 +27,11 @@ import { Meta } from '~/components/Meta/Meta';
 import { IconInfoCircle } from '@tabler/icons';
 import { LeaderboardItem } from '~/components/Leaderboard/LeaderboardItem';
 
+const leaderboardQuerySchema = z.object({
+  id: z.string().default('overall'),
+  date: stringDate(),
+});
+
 export default function Leaderboard() {
   const { query, replace } = useRouter();
   const { id, date } = leaderboardQuerySchema.parse(query);
