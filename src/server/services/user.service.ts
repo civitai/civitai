@@ -69,7 +69,7 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
           followerCountAllTime: true,
         },
       },
-      rank: { select: { leaderboardRank: true } },
+      rank: { select: { leaderboardRank: true, leaderboardId: true, leaderboardTitle: true } },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {

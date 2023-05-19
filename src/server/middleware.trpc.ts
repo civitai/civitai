@@ -107,3 +107,24 @@ export function cacheIt<TInput extends object>({
     return result;
   });
 }
+
+type EdgeCacheItProps = {
+  ttl?: number;
+  expireAt?: () => Date;
+};
+export function edgeCacheIt({ ttl, expireAt }: EdgeCacheItProps = {}) {
+  ttl ??= 60 * 3;
+
+  return middleware(async ({ next, ctx }) => {
+    let reqTTL = ttl as number;
+    if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
+
+    const result = await next();
+
+    ctx.res?.setHeader(
+      'Cache-Control',
+      `public, max-age=${Math.min(60, reqTTL)}, s-maxage=${reqTTL}, stale-while-revalidate=30`
+    );
+    return result;
+  });
+}

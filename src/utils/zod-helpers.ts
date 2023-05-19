@@ -27,6 +27,14 @@ export function commaDelimitedStringArray() {
   }, z.array(z.string()));
 }
 
+export function stringDate() {
+  return z.preprocess((value) => {
+    if (!value) return;
+    if (typeof value === 'string') return new Date(value);
+    if (typeof value === 'number') return new Date(value);
+  }, z.date().optional());
+}
+
 /** Converts the string `true` to a boolean of true and everything else to false */
 export function booleanString() {
   return z.preprocess(

@@ -1,20 +1,14 @@
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 
-export const deliverCosmetics = createJob('deliver-cosmetics', '*/1 * * * *', async () => {
-  // Get the last time this ran from the KeyValue store
-  // --------------------------------------
-  const key = 'last-cosmetic-delivery';
-  const lastDelivered = new Date(
-    ((
-      await dbWrite.keyValue.findUnique({
-        where: { key },
-      })
-    )?.value as number) ?? 0
-  ).toISOString();
+export const deliverPurchasedCosmetics = createJob(
+  'deliver-purchased-cosmetics',
+  '*/1 * * * *',
+  async () => {
+    const [lastDelivered, setLastDelivered] = await getJobDate('last-cosmetic-delivery');
 
-  const deliverPurchasedCosmetics = async () =>
-    dbWrite.$executeRawUnsafe(`
+    const deliverPurchasedCosmetics = async () =>
+      dbWrite.$executeRaw`
       -- Deliver purchased cosmetics
       with recent_purchases AS (
         SELECT
@@ -23,7 +17,7 @@ export const deliverCosmetics = createJob('deliver-cosmetics', '*/1 * * * *', as
           p."createdAt"
         FROM "Purchase" p
         JOIN "User" u ON u."customerId" = p."customerId"
-        WHERE p."createdAt" >= '${lastDelivered}'
+        WHERE p."createdAt" >= ${lastDelivered}
       )
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt")
       SELECT DISTINCT
@@ -36,16 +30,16 @@ export const deliverCosmetics = createJob('deliver-cosmetics', '*/1 * * * *', as
         AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
         AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
       WHERE NOT EXISTS (SELECT 1 FROM "UserCosmetic" uc WHERE uc."cosmeticId" = c.id AND uc."userId" = p."userId");
-    `);
+    `;
 
-  const revokeMembershipLimitedCosmetics = async () =>
-    dbWrite.$executeRawUnsafe(`
+    const revokeMembershipLimitedCosmetics = async () =>
+      dbWrite.$executeRaw`
         -- Revoke member limited cosmetics
         WITH to_revoke AS (
           SELECT
           "userId"
           FROM "CustomerSubscription" cs
-          WHERE "cancelAt" <= '${lastDelivered}'
+          WHERE "cancelAt" <= ${lastDelivered}
         )
         DELETE FROM "UserCosmetic" uc
         WHERE EXISTS (
@@ -56,19 +50,15 @@ export const deliverCosmetics = createJob('deliver-cosmetics', '*/1 * * * *', as
           AND c."permanentUnlock" = false
           AND c.source = 'Membership'
         );
-      `);
+      `;
 
-  // Deliver cosmetics
-  // --------------------------------------------
-  await deliverPurchasedCosmetics();
-  await revokeMembershipLimitedCosmetics();
+    // Deliver cosmetics
+    // --------------------------------------------
+    await deliverPurchasedCosmetics();
+    await revokeMembershipLimitedCosmetics();
 
-  // Update the last time this ran in the KeyValue store
-  // --------------------------------------------
-  const value = new Date().getTime();
-  await dbWrite.keyValue.upsert({
-    where: { key },
-    update: { value },
-    create: { key, value },
-  });
-});
+    // Update the last time this ran in the KeyValue store
+    // --------------------------------------------
+    await setLastDelivered();
+  }
+);

@@ -106,6 +106,11 @@ export default defineNextConfig(withAxiom({
         source: '/canny/bugs',
         destination: 'https://civitai.canny.io/bugs',
         permanent: true,
+      },
+      {
+        source: '/leaderboard',
+        destination: '/leaderboard/overall',
+        permanent: true,
       }
     ];
   },

@@ -126,6 +126,7 @@ model User {
   articleReactions        ArticleReaction[]
   articles                Article[]
   articleEngagements      ArticleEngagement[]
+  leaderboardResults      LeaderboardResult[]
 }
 
 model CustomerSubscription {
@@ -631,6 +632,7 @@ model Report {
   alsoReportedBy          Int[]        @default([]) // UserIds
   status                  ReportStatus
   statusSetAt             DateTime?
+  statusSetBy             Int?
 
   model          ModelReport?
   review         ReviewReport?
@@ -1537,19 +1539,21 @@ enum CosmeticSource {
 }
 
 model Cosmetic {
-  id              Int            @id @default(autoincrement())
-  name            String
-  description     String?
-  type            CosmeticType
-  source          CosmeticSource
-  permanentUnlock Boolean
-  data            Json
-  createdAt       DateTime?      @default(now())
-  updatedAt       DateTime?      @updatedAt
-  availableStart  DateTime?
-  availableEnd    DateTime?
-  productId       String?
-  UserCosmetic    UserCosmetic[]
+  id                  Int            @id @default(autoincrement())
+  name                String
+  description         String?
+  type                CosmeticType
+  source              CosmeticSource
+  permanentUnlock     Boolean
+  data                Json
+  createdAt           DateTime?      @default(now())
+  updatedAt           DateTime?      @updatedAt
+  availableStart      DateTime?
+  availableEnd        DateTime?
+  productId           String?
+  leaderboardId       String?
+  leaderboardPosition Int?
+  UserCosmetic        UserCosmetic[]
 }
 
 model UserCosmetic {
@@ -1620,6 +1624,35 @@ model ArticleMetric {
   hideCount     Int             @default(0)
 
   @@id([articleId, timeframe])
+}
+
+model Leaderboard {
+  id                 String  @id
+  index              Int
+  title              String
+  description        String
+  scoringDescription String
+  query              String
+  active             Boolean
+  public             Boolean
+
+  results LeaderboardResult[]
+}
+
+model LeaderboardResult {
+  leaderboardId String
+  leaderboard   Leaderboard @relation(fields: [leaderboardId], references: [id], onDelete: Cascade)
+  date          DateTime    @db.Date
+  position      Int
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score         Int         @default(0)
+  metrics       Json        @default("{}")
+  createdAt     DateTime    @default(now())
+
+  @@id([leaderboardId, date, position])
+  @@unique([leaderboardId, date, userId])
+  @@index([userId], type: Hash)
 }
 
 /// @view
@@ -1994,44 +2027,46 @@ model UserStat {
 
 /// @view
 model UserRank {
-  user                         User @relation(fields: [userId], references: [id], onDelete: NoAction)
-  userId                       Int  @id
-  downloadCountDayRank         Int  @default(0)
-  downloadCountWeekRank        Int  @default(0)
-  downloadCountMonthRank       Int  @default(0)
-  downloadCountYearRank        Int  @default(0)
-  downloadCountAllTimeRank     Int  @default(0)
-  ratingCountDayRank           Int  @default(0)
-  ratingCountWeekRank          Int  @default(0)
-  ratingCountMonthRank         Int  @default(0)
-  ratingCountYearRank          Int  @default(0)
-  ratingCountAllTimeRank       Int  @default(0)
-  followerCountDayRank         Int  @default(0)
-  followerCountWeekRank        Int  @default(0)
-  followerCountMonthRank       Int  @default(0)
-  followerCountYearRank        Int  @default(0)
-  followerCountAllTimeRank     Int  @default(0)
-  ratingDayRank                Int  @default(0)
-  ratingWeekRank               Int  @default(0)
-  ratingMonthRank              Int  @default(0)
-  ratingYearRank               Int  @default(0)
-  ratingAllTimeRank            Int  @default(0)
-  favoriteCountDayRank         Int  @default(0)
-  favoriteCountWeekRank        Int  @default(0)
-  favoriteCountMonthRank       Int  @default(0)
-  favoriteCountYearRank        Int  @default(0)
-  favoriteCountAllTimeRank     Int  @default(0)
-  answerCountDayRank           Int  @default(0)
-  answerCountWeekRank          Int  @default(0)
-  answerCountMonthRank         Int  @default(0)
-  answerCountYearRank          Int  @default(0)
-  answerCountAllTimeRank       Int  @default(0)
-  answerAcceptCountDayRank     Int  @default(0)
-  answerAcceptCountWeekRank    Int  @default(0)
-  answerAcceptCountMonthRank   Int  @default(0)
-  answerAcceptCountYearRank    Int  @default(0)
-  answerAcceptCountAllTimeRank Int  @default(0)
-  leaderboardRank              Int  @default(0)
+  user                         User    @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                       Int     @id
+  downloadCountDayRank         Int     @default(0)
+  downloadCountWeekRank        Int     @default(0)
+  downloadCountMonthRank       Int     @default(0)
+  downloadCountYearRank        Int     @default(0)
+  downloadCountAllTimeRank     Int     @default(0)
+  ratingCountDayRank           Int     @default(0)
+  ratingCountWeekRank          Int     @default(0)
+  ratingCountMonthRank         Int     @default(0)
+  ratingCountYearRank          Int     @default(0)
+  ratingCountAllTimeRank       Int     @default(0)
+  followerCountDayRank         Int     @default(0)
+  followerCountWeekRank        Int     @default(0)
+  followerCountMonthRank       Int     @default(0)
+  followerCountYearRank        Int     @default(0)
+  followerCountAllTimeRank     Int     @default(0)
+  ratingDayRank                Int     @default(0)
+  ratingWeekRank               Int     @default(0)
+  ratingMonthRank              Int     @default(0)
+  ratingYearRank               Int     @default(0)
+  ratingAllTimeRank            Int     @default(0)
+  favoriteCountDayRank         Int     @default(0)
+  favoriteCountWeekRank        Int     @default(0)
+  favoriteCountMonthRank       Int     @default(0)
+  favoriteCountYearRank        Int     @default(0)
+  favoriteCountAllTimeRank     Int     @default(0)
+  answerCountDayRank           Int     @default(0)
+  answerCountWeekRank          Int     @default(0)
+  answerCountMonthRank         Int     @default(0)
+  answerCountYearRank          Int     @default(0)
+  answerCountAllTimeRank       Int     @default(0)
+  answerAcceptCountDayRank     Int     @default(0)
+  answerAcceptCountWeekRank    Int     @default(0)
+  answerAcceptCountMonthRank   Int     @default(0)
+  answerAcceptCountYearRank    Int     @default(0)
+  answerAcceptCountAllTimeRank Int     @default(0)
+  leaderboardRank              Int?
+  leaderboardId                String?
+  leaderboardTitle             String?
 }
 
 /// @view
