@@ -73,6 +73,10 @@ const metricTypes: Record<
   heart: () => ({
     icon: <IconHeart {...iconProps} />,
   }),
+  hearts: () => ({
+    tooltip: 'Hearts given',
+    icon: <IconHeart {...iconProps} />,
+  }),
   downloadCount: () => ({
     icon: <IconDownload {...iconProps} />,
     tooltip: 'Downloads',

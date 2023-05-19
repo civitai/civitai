@@ -268,7 +268,7 @@ export function AppHeader() {
         ),
       },
       {
-        href: '/leaderboard',
+        href: '/leaderboard/overall',
         label: (
           <Group align="center" spacing="xs">
             <IconCrown stroke={1.5} />
