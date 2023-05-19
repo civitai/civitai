@@ -26,6 +26,8 @@ import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { IconInfoCircle } from '@tabler/icons';
 import { LeaderboardItem } from '~/components/Leaderboard/LeaderboardItem';
+import { CreatorList2 } from '~/components/Leaderboard/CreatorList2';
+import { IsClient } from '~/components/IsClient/IsClient';
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
@@ -139,11 +141,9 @@ export default function Leaderboard() {
                   <Loader size="xl" />
                 </Center>
               ) : leaderboardResults.length > 0 ? (
-                <Stack>
-                  {leaderboardResults?.slice(0, 100).map((item, index) => (
-                    <LeaderboardItem key={index} {...item} />
-                  ))}
-                </Stack>
+                <IsClient>
+                  <CreatorList2 data={leaderboardResults} />
+                </IsClient>
               ) : null}
             </Stack>
           </Grid.Col>
