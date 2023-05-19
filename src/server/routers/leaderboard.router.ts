@@ -1,3 +1,4 @@
+import { cacheIt } from '~/server/middleware.trpc';
 import {
   getLeaderboardPositionsSchema,
   getLeaderboardSchema,
@@ -24,6 +25,7 @@ export const leaderboardRouter = router({
     ),
   getLeaderboard: publicProcedure
     .input(getLeaderboardSchema)
+    // .use(cacheIt())
     .query(({ input, ctx }) =>
       getLeaderboard({ ...input, isModerator: ctx?.user?.isModerator ?? false })
     ),

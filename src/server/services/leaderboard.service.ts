@@ -17,11 +17,13 @@ export async function getLeaderboards(input: IsMod) {
     },
     select: {
       id: true,
-      index: true,
       title: true,
       description: true,
       scoringDescription: true,
       public: isModerator ? true : undefined,
+    },
+    orderBy: {
+      index: 'asc',
     },
   });
 
@@ -51,6 +53,7 @@ export async function getLeaderboardPositions(input: GetLeaderboardPositionsInpu
   return positions;
 }
 
+const metricOrder = ['ratingCount', 'heart', 'downloadCount', 'viewCount', 'shots', 'hit', 'miss'];
 export async function getLeaderboard(input: GetLeaderboardInput & IsMod) {
   let date = input.date ?? new Date();
   date = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -75,5 +78,23 @@ export async function getLeaderboard(input: GetLeaderboardInput & IsMod) {
     },
   });
 
-  return leaderboardResults;
+  return leaderboardResults.map(({ metrics, ...results }) => {
+    metrics = Object.entries(metrics as Record<string, number>)
+      .map(([type, value]) => ({
+        type,
+        value,
+      }))
+      .sort((a, b) => {
+        const aIndex = metricOrder.indexOf(a.type);
+        const bIndex = metricOrder.indexOf(b.type);
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      });
+
+    return {
+      ...results,
+      metrics,
+    };
+  });
 }

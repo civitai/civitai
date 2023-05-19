@@ -68,3 +68,6 @@ export type ArticleGetAll = ArticleRouter['getInfinite'];
 export type ArticleGetById = ArticleRouter['getById'];
 export type ArticleGetByCategoryModel = ArticleRouter['getByCategory']['items'][number];
 export type ArticleGetByCategoryArticleModel = ArticleGetByCategoryModel['items'][number];
+
+type LeaderboardRouter = RouterOutput['leaderboard'];
+export type LeaderboardGetModel = LeaderboardRouter['getLeaderboard'][number];
