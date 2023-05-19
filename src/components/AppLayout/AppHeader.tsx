@@ -20,6 +20,7 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconBookmark,
   IconCircleDashed,
   IconCrown,
   IconHeart,
@@ -211,6 +212,16 @@ export function AppHeader() {
           <Group align="center" spacing="xs">
             <IconHeart stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Liked models
+          </Group>
+        ),
+      },
+      {
+        href: '/articles?favorites=true&view=feed',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBookmark stroke={1.5} />
+            Bookmarked Articles
           </Group>
         ),
       },

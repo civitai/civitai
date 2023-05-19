@@ -97,10 +97,10 @@ export default function ArticleDetailsPage({
         <Stack spacing="xl">
           <Stack spacing={0}>
             <Group position="apart" noWrap>
-              <Group align="center" className={classes.titleWrapper}>
-                <Title weight="bold" className={classes.title}>
-                  {article.title}
-                </Title>
+              <Title weight="bold" className={classes.title}>
+                {article.title}
+              </Title>
+              <Group align="center" className={classes.titleWrapper} noWrap>
                 <LoginRedirect reason="favorite-model">
                   <ToggleArticleEngagement articleId={article.id}>
                     {({ toggle, isToggled }) => {
@@ -108,13 +108,13 @@ export default function ArticleDetailsPage({
                       return (
                         <IconBadge
                           radius="sm"
-                          color={isFavorite ? 'red' : 'gray'}
+                          color="gray"
                           size="lg"
                           icon={
-                            <IconHeart
-                              size={18}
-                              color={isFavorite ? theme.colors.red[6] : undefined}
-                              style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                            <IconBookmark
+                              // size={18}
+                              color={isFavorite ? theme.colors.gray[2] : undefined}
+                              style={{ fill: isFavorite ? theme.colors.gray[2] : undefined }}
                             />
                           }
                           sx={{ cursor: 'pointer' }}
@@ -128,8 +128,8 @@ export default function ArticleDetailsPage({
                     }}
                   </ToggleArticleEngagement>
                 </LoginRedirect>
+                {article.user && <ArticleContextMenu article={article} />}
               </Group>
-              {article.user && <ArticleContextMenu article={article} />}
             </Group>
             <Group spacing={8}>
               <UserAvatar user={article.user} withUsername linkToProfile />
