@@ -63,6 +63,7 @@ export async function getLeaderboard(input: GetLeaderboardInput & IsMod) {
       date,
       leaderboardId: input.id,
       leaderboard: input.isModerator ? { public: true } : undefined,
+      position: { lte: 1000 },
     },
     select: {
       userId: true,
