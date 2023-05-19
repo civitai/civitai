@@ -27,20 +27,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { IconInfoCircle } from '@tabler/icons';
 import { LeaderboardItem } from '~/components/Leaderboard/LeaderboardItem';
 
-const leaderboardQuerySchema = z.object({
-  id: z.string().default('overall'),
-  date: stringDate(),
-});
-
-export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
-    const { id, date } = leaderboardQuerySchema.parse(ctx.query);
-    await ssg?.leaderboard.getLeaderboards.prefetch();
-    await ssg?.leaderboard.getLeaderboard.prefetch({ id, date });
-  },
-});
-
 export default function Leaderboard() {
   const { query, replace } = useRouter();
   const { id, date } = leaderboardQuerySchema.parse(query);
@@ -156,9 +142,9 @@ export default function Leaderboard() {
 }
 
 const UserPosition = ({ position, loading }: { position?: number; loading?: boolean }) => {
-  const { username } = useCurrentUser();
+  const currentUser = useCurrentUser();
 
-  if (!username) return null;
+  if (!currentUser) return null;
   if (loading)
     return (
       <Badge color="gray">
