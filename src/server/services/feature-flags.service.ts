@@ -1,4 +1,4 @@
-import { camelCase } from 'lodash';
+import { camelCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
 

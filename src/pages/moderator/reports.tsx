@@ -26,7 +26,7 @@ import {
 import { ReportReason, ReportStatus } from '@prisma/client';
 import { IconExternalLink } from '@tabler/icons';
 import produce from 'immer';
-import upperFirst from 'lodash/upperFirst';
+import { upperFirst } from 'lodash-es';
 import Link from 'next/link';
 import { GetServerSideProps } from 'next/types';
 import { useRouter } from 'next/router';

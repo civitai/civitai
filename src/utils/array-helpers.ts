@@ -1,4 +1,4 @@
-import { uniqBy } from 'lodash';
+import { uniqBy } from 'lodash-es';
 
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 

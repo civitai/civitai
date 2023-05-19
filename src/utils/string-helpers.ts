@@ -1,4 +1,4 @@
-import truncate from 'lodash/truncate';
+import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';

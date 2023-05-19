@@ -6,16 +6,17 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { useArticleFilters, useQueryArticleCategories } from '../article.utils';
 import { ArticleCard } from '../Infinite/ArticleCard';
 import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
+import { GetArticlesByCategorySchema } from '~/server/schema/article.schema';
 
-type ArticleCategoriesState = {
-  articleId?: number;
-};
+// type ArticleCategoriesState = {
+//   articleId?: number;
+// };
 
 export function ArticleCategoriesInfinite({
   filters: filterOverrides = {},
   limit = 6,
 }: {
-  filters?: ArticleCategoriesState;
+  filters?: Partial<GetArticlesByCategorySchema>;
   limit?: number;
 }) {
   const { adminTags } = useFeatureFlags();

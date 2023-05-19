@@ -14,7 +14,7 @@ import { dbRead } from '~/server/db/client';
 import { slugit } from '~/utils/string-helpers';
 import React from 'react';
 import { QuestionDetails } from '~/components/Questions/QuestionDetails';
-import truncate from 'lodash/truncate';
+import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps<{

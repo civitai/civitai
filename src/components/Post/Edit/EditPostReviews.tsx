@@ -7,8 +7,7 @@ import { trpc } from '~/utils/trpc';
 import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
 import { useEffect, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
-import uniqWith from 'lodash/uniqWith';
-import isEqual from 'lodash/isEqual';
+import { isEqual, uniqWith } from 'lodash-es';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 

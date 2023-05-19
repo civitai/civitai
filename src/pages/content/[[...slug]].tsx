@@ -7,7 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import { getFilesWithExtension } from '~/utils/fs-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
-import truncate from 'lodash/truncate';
+import { truncate } from 'lodash-es';
 
 const contentRoot = 'src/static-content';
 export const getStaticPaths: GetStaticPaths = async () => {

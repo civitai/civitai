@@ -1,5 +1,5 @@
 import exifr from 'exifr';
-import { unescape } from 'lodash';
+import { unescape } from 'lodash-es';
 import { ImageAnalysisInput, ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import blocked from './blocklist.json';
 import blockedNSFW from './blocklist-nsfw.json';

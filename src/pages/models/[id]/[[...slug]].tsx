@@ -43,7 +43,7 @@ import {
   IconCircleMinus,
   IconReload,
 } from '@tabler/icons';
-import truncate from 'lodash/truncate';
+import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';

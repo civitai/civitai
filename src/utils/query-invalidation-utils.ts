@@ -1,4 +1,4 @@
-import { debounce } from 'lodash';
+import { debounce } from 'lodash-es';
 import { trpc } from '~/utils/trpc';
 
 type ToggleableContent = 'tag' | 'user';
