@@ -28,6 +28,7 @@ import {
   IconTarget,
   IconTargetArrow,
   IconTargetOff,
+  IconTrophy,
 } from '@tabler/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -37,7 +38,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { LeaderboardGetModel } from '~/types/router';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 type MetricDisplayOptions = {
@@ -137,11 +138,26 @@ const metricTypes: Record<
   }),
 };
 
-export function LeaderboardMetrics({ metrics }: { metrics: { type: string; value: number }[] }) {
-  const { classes, theme, cx } = useStyles();
+export function LeaderboardMetrics({
+  metrics,
+  score,
+}: {
+  metrics: { type: string; value: number }[];
+  score: number;
+}) {
+  const { theme } = useStyles();
 
   return (
-    <Group spacing="xs">
+    <Group spacing={4}>
+      <IconBadge
+        size="lg"
+        color="gray"
+        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        icon={<IconTrophy {...iconProps} />}
+        tooltip="Score"
+      >
+        {numberWithCommas(score)}
+      </IconBadge>
       {metrics.map(({ type, value }) => {
         const typeProcessor = metricTypes[type];
         if (!typeProcessor) return null;

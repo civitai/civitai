@@ -30,10 +30,6 @@ export function CreatorCard({
     theme.colors.orange[5], // Bronze
   ][position - 1];
 
-  if (Number(queryPosition) === position) {
-    console.log({ position, user, metrics });
-  }
-
   return (
     <InView rootMargin="100%">
       {({ inView, ref }) => (
@@ -77,18 +73,11 @@ export function CreatorCard({
                       </Text>
                     </Group>
                   </Grid.Col>
-                  <Grid.Col span={8}>
+                  <Grid.Col span={10}>
                     <Stack spacing={8}>
                       <UserAvatar user={user} textSize="lg" size="md" withUsername />
-                      <LeaderboardMetrics metrics={metrics as any} />
+                      <LeaderboardMetrics score={score} metrics={metrics} />
                     </Stack>
-                  </Grid.Col>
-                  <Grid.Col span={2}>
-                    <Group align="center" position="center" sx={{ position: 'relative' }}>
-                      <Text size="lg" weight="bold">
-                        {score}
-                      </Text>
-                    </Group>
                   </Grid.Col>
                 </Grid>
               </Paper>
@@ -105,6 +94,7 @@ const useStyles = createStyles((theme) => ({
     minHeight: 98,
   },
   creatorCard: {
+    // height: 98,
     '&.active': {
       borderColor: theme.colors.blue[8],
       boxShadow: `0 0 10px ${theme.colors.blue[8]}`,
