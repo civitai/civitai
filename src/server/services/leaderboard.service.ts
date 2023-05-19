@@ -78,8 +78,8 @@ export async function getLeaderboard(input: GetLeaderboardInput & IsMod) {
     },
   });
 
-  return leaderboardResults.map(({ metrics, ...results }) => {
-    metrics = Object.entries(metrics as Record<string, number>)
+  return leaderboardResults.map(({ metrics: metricsRaw, ...results }) => {
+    const metrics = Object.entries(metricsRaw as Record<string, number>)
       .map(([type, value]) => ({
         type,
         value,

@@ -489,7 +489,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           </Group>
                         </Group>
                         <Group spacing="xs">
-                          <RankBadge rank={user.rank?.leaderboardRank} size="lg" />
+                          <RankBadge rank={user.rank} size="lg" />
                           {stats && (
                             <>
                               <IconBadge

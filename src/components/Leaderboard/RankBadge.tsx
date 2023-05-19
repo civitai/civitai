@@ -3,24 +3,28 @@ import { IconCrown } from '@tabler/icons';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export const RankBadge = ({ rank, size, textSize = 'sm', iconSize = 18, ...props }: Props) => {
-  if (!rank || rank > 100) return null;
+  if (!rank || !rank.leaderboardRank || rank.leaderboardRank > 100) return null;
 
   return (
     <IconBadge
       size={size}
-      tooltip="User Rank"
+      tooltip={`${rank.leaderboardTitle} Rank`}
       color="yellow"
-      href={`/leaderboard?position=${rank}`}
+      href={`/leaderboard/${rank.leaderboardId}?position=${rank.leaderboardRank}`}
       icon={<IconCrown size={iconSize} />}
       {...props}
     >
-      <Text size={textSize}>{rank}</Text>
+      <Text size={textSize}>{rank.leaderboardRank}</Text>
     </IconBadge>
   );
 };
 
 type Props = {
-  rank: number | undefined;
+  rank: {
+    leaderboardRank: number | null;
+    leaderboardId: string | null;
+    leaderboardTitle: string | null;
+  } | null;
   textSize?: MantineSize;
   iconSize?: number;
 } & Omit<BadgeProps, 'leftSection'>;

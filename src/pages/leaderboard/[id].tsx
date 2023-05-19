@@ -39,7 +39,6 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, ctx }) => {
     const { id, date } = leaderboardQuerySchema.parse(ctx.query);
     await ssg?.leaderboard.getLeaderboards.prefetch();
-    await ssg?.leaderboard.getLeaderboard.prefetch({ id, date });
   },
 });
 
@@ -49,12 +48,11 @@ export default function Leaderboard() {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
 
-  const { data: leaderboards = [], isLoading: loadingLeaderboards } =
-    trpc.leaderboard.getLeaderboards.useQuery(undefined, {
-      onSuccess: (data) => {
-        if (selectedLeaderboard?.id !== id) setSelectedLeaderboard(data.find((x) => x.id === id));
-      },
-    });
+  const { data: leaderboards = [] } = trpc.leaderboard.getLeaderboards.useQuery(undefined, {
+    onSuccess: (data) => {
+      if (selectedLeaderboard?.id !== id) setSelectedLeaderboard(data.find((x) => x.id === id));
+    },
+  });
   const { data: leaderboardResults = [], isLoading: loadingLeaderboardResults } =
     trpc.leaderboard.getLeaderboard.useQuery({ id, date });
   const { data: leaderboardPositionsRaw = [], isLoading: loadingLeaderboardPositions } =
@@ -156,9 +154,9 @@ export default function Leaderboard() {
 }
 
 const UserPosition = ({ position, loading }: { position?: number; loading?: boolean }) => {
-  const { username } = useCurrentUser();
+  const currentUser = useCurrentUser();
 
-  if (!username) return null;
+  if (!currentUser) return null;
   if (loading)
     return (
       <Badge color="gray">

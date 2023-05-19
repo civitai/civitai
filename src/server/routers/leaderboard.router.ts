@@ -1,4 +1,5 @@
-import { cacheIt } from '~/server/middleware.trpc';
+import dayjs from 'dayjs';
+import { edgeCacheIt } from '~/server/middleware.trpc';
 import {
   getLeaderboardPositionsSchema,
   getLeaderboardSchema,
@@ -9,6 +10,8 @@ import {
   getLeaderboardPositions,
 } from '~/server/services/leaderboard.service';
 import { publicProcedure, router } from '~/server/trpc';
+
+const expireAt = () => dayjs().add(1, 'day').startOf('day').toDate();
 
 export const leaderboardRouter = router({
   getLeaderboards: publicProcedure.query(({ ctx }) =>
@@ -25,7 +28,7 @@ export const leaderboardRouter = router({
     ),
   getLeaderboard: publicProcedure
     .input(getLeaderboardSchema)
-    // .use(cacheIt())
+    .use(edgeCacheIt({ expireAt }))
     .query(({ input, ctx }) =>
       getLeaderboard({ ...input, isModerator: ctx?.user?.isModerator ?? false })
     ),
