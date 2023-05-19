@@ -19,14 +19,12 @@ import {
   Center,
   Box,
   NavLink,
-  Skeleton,
   Badge,
 } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { IconInfoCircle } from '@tabler/icons';
-import { LeaderboardItem } from '~/components/Leaderboard/LeaderboardItem';
-import { CreatorList2 } from '~/components/Leaderboard/CreatorList2';
+import { CreatorList } from '~/components/Leaderboard/CreatorList';
 import { IsClient } from '~/components/IsClient/IsClient';
 
 const leaderboardQuerySchema = z.object({
@@ -141,9 +139,7 @@ export default function Leaderboard() {
                   <Loader size="xl" />
                 </Center>
               ) : leaderboardResults.length > 0 ? (
-                <IsClient>
-                  <CreatorList2 data={leaderboardResults} />
-                </IsClient>
+                <CreatorList data={leaderboardResults} />
               ) : null}
             </Stack>
           </Grid.Col>
