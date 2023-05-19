@@ -12,7 +12,7 @@ import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { LeaderboardGetModel } from '~/types/router';
 
 export function CreatorCard({
-  data: { position, user, metrics },
+  data: { position, user, metrics, score },
   index,
 }: {
   data: LeaderboardGetModel;
@@ -77,11 +77,18 @@ export function CreatorCard({
                       </Text>
                     </Group>
                   </Grid.Col>
-                  <Grid.Col span={10}>
+                  <Grid.Col span={8}>
                     <Stack spacing={8}>
                       <UserAvatar user={user} textSize="lg" size="md" withUsername />
                       <LeaderboardMetrics metrics={metrics as any} />
                     </Stack>
+                  </Grid.Col>
+                  <Grid.Col span={2}>
+                    <Group align="center" position="center" sx={{ position: 'relative' }}>
+                      <Text size="lg" weight="bold">
+                        {score}
+                      </Text>
+                    </Group>
                   </Grid.Col>
                 </Grid>
               </Paper>
