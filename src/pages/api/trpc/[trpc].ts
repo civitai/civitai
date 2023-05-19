@@ -24,7 +24,7 @@ export default withAxiom(
     createContext,
     responseMeta: ({ ctx, type }) => {
       // only public GET requests are cacheable
-      const cacheable = !ctx?.user && type === 'query';
+      const cacheable = !ctx?.user && type === 'query' && !ctx?.res?.hasHeader('Cache-Control');
       if (cacheable) {
         return {
           headers: {
