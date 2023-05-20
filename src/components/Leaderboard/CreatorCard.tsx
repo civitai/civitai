@@ -11,6 +11,25 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { LeaderboardGetModel } from '~/types/router';
 
+const linkQuery: Record<string, string> = {
+  overall: '/models',
+  overall_nsfw: '/models',
+  writers: '/articles',
+  'images-overall': '/images',
+  'images-nsfw': '/images',
+  'images-new': '/images',
+  'images-funny': '/images',
+  'images-rater': '/posts',
+  'base model': '/models?tag=base+model',
+  style: '/models?tag=style',
+  clothing: '/models?tag=clothing',
+  character: '/models?tag=character',
+  celebrity: '/models?tag=celebrity',
+  buildings: '/models?tag=buildings',
+  backgrounds: '/models?tag=backgrounds',
+  car: '/models?tag=car',
+};
+
 export function CreatorCard({
   data: { position, user, metrics, score },
   index,
@@ -21,7 +40,7 @@ export function CreatorCard({
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
 
-  const { position: queryPosition } = router.query;
+  const { position: queryPosition, id: leaderboardId } = router.query;
 
   const isTop3 = position <= 3;
   const iconColor = [
@@ -30,12 +49,15 @@ export function CreatorCard({
     theme.colors.orange[5], // Bronze
   ][position - 1];
 
+  let link = `/user/${user.username}`;
+  if (leaderboardId && typeof leaderboardId === 'string') link += linkQuery[leaderboardId] ?? '';
+
   return (
     <InView rootMargin="100%">
       {({ inView, ref }) => (
         <div ref={ref} className={classes.wrapper}>
           {inView && (
-            <NextLink href={`/user/${user.username}`}>
+            <NextLink href={link}>
               <Paper
                 className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
                 p="sm"
