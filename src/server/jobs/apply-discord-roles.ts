@@ -77,7 +77,7 @@ const applyDiscordActivityRoles = createJob(
 
 const applyDiscordLeadboardRoles = createJob(
   'apply-discord-leaderboard-roles',
-  '3 */1 * * *',
+  '5 0 * * *',
   async () => {
     const discordRoles = await discord.getAllRoles();
 
