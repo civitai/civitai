@@ -26,7 +26,7 @@ const linkQuery: Record<string, string> = {
   character: '/models?tag=character',
   celebrity: '/models?tag=celebrity',
   buildings: '/models?tag=buildings',
-  backgrounds: '/models?tag=backgrounds',
+  backgrounds: '/models?tag=background',
   car: '/models?tag=car',
 };
 
