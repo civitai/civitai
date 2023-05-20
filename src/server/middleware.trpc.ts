@@ -125,6 +125,7 @@ export function edgeCacheIt({ ttl, expireAt }: EdgeCacheItProps = {}) {
       'Cache-Control',
       `public, max-age=${Math.min(60, reqTTL)}, s-maxage=${reqTTL}, stale-while-revalidate=30`
     );
+    ctx.res?.removeHeader('Set-Cookie');
     return result;
   });
 }

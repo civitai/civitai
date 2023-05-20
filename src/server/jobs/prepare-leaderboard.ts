@@ -1,6 +1,9 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import dayjs from 'dayjs';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('leaderboard', 'blue');
 
 export const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async () => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
@@ -22,6 +25,7 @@ export const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *',
   const lastRanYesterday = lastRun && dayjs(lastRun).isSame(now.subtract(1, 'day'), 'day');
   const addDays = lastRanYesterday ? 1 : 0;
   for (const { id, query } of leaderboards) {
+    log(`Started leaderboard ${id}`);
     await dbWrite.$transaction([
       dbWrite.$executeRawUnsafe(`
         DELETE FROM "LeaderboardResult"
@@ -41,6 +45,7 @@ export const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *',
         ORDER BY position
       `),
     ]);
+    log(`Finished leaderboard ${id}`);
   }
 
   await setLastRun();
