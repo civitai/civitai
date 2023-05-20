@@ -811,7 +811,6 @@ export const getAllImages = async ({
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
-  console.time('getAllImages');
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
     SELECT
       i.id,
@@ -855,7 +854,6 @@ export const getAllImages = async ({
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
-  console.timeEnd('getAllImages');
 
   let nextCursor: bigint | undefined;
   if (rawImages.length > limit) {
