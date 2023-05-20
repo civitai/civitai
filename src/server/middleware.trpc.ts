@@ -7,6 +7,7 @@ import { redis } from '~/server/redis/client';
 import { hashifyObject } from '~/utils/string-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { applyAnonymousUserRules } from '~/server/services/image.service';
+import { isProd } from '~/env/other';
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 const userPreferencesSchema = z.object({
@@ -120,12 +121,14 @@ export function edgeCacheIt({ ttl, expireAt }: EdgeCacheItProps = {}) {
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
+    if (isProd) {
+      ctx.res?.setHeader(
+        'Cache-Control',
+        `public, max-age=${Math.min(60, reqTTL)}, s-maxage=${reqTTL}, stale-while-revalidate=30`
+      );
+      ctx.res?.removeHeader('Set-Cookie');
+    }
 
-    ctx.res?.setHeader(
-      'Cache-Control',
-      `public, max-age=${Math.min(60, reqTTL)}, s-maxage=${reqTTL}, stale-while-revalidate=30`
-    );
-    ctx.res?.removeHeader('Set-Cookie');
     return result;
   });
 }
