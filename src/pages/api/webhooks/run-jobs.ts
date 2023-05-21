@@ -75,13 +75,17 @@ export default WebhookEndpoint(async (req, res) => {
 
     const processJob = async () => {
       const jobStart = Date.now();
+      const axiom = req.log.with({ scope: 'job', name });
       try {
         log(`${name} starting`);
+        axiom.info(`starting`);
         lock(name, options.lockExpiration);
         await run();
         log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
+        axiom.info('success', { duration: Date.now() - jobStart });
       } catch (e) {
         log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
+        axiom.error(`failed`, { duration: Date.now() - jobStart, error: e });
       } finally {
         unlock(name);
       }

@@ -21,9 +21,7 @@ export const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *',
   });
 
   // Get latest results for date
-  const now = dayjs();
-  const lastRanYesterday = lastRun && dayjs(lastRun).isSame(now.subtract(1, 'day'), 'day');
-  const addDays = lastRanYesterday ? 1 : 0;
+  const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
   for (const { id, query } of leaderboards) {
     log(`Started leaderboard ${id}`);
     await dbWrite.$transaction([
