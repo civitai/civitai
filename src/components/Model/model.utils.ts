@@ -46,7 +46,7 @@ export const useModelQueryParams = () => {
           },
           undefined,
           {
-            shallow: true,
+            shallow: !pathnameOverride || pathname === pathnameOverride,
           }
         );
       },
