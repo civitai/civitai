@@ -794,7 +794,7 @@ export const getAllImages = async ({
   }
 
   if (userId && !!reactions?.length) {
-    AND.push(Prisma.sql`ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`);
+    AND.push(Prisma.sql`r.reactions ?| ARRAY[${Prisma.join(reactions)}]`);
   }
 
   const includeRank = cursorProp?.startsWith('r.');
@@ -808,10 +808,17 @@ export const getAllImages = async ({
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    LEFT JOIN reactions r ON r."imageId" = i.id
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+    WITH reactions AS (
+      SELECT "imageId", jsonb_agg(reaction) AS reactions
+      FROM "ImageReaction"${Prisma.raw(userId ? ` WHERE "userId" = ${userId}` : '')}
+      GROUP BY "imageId"
+    )
+
     SELECT
       i.id,
       i.name,
@@ -842,12 +849,7 @@ export const getAllImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
-      (
-        SELECT jsonb_agg(reaction)
-        FROM "ImageReaction"
-        WHERE "imageId" = i.id
-        AND "userId" = ${userId}
-      ) reactions,
+      r.reactions,
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
