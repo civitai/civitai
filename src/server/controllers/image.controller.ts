@@ -423,6 +423,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       return {
         postId: image.postId as number,
+        postTitle: image.postTitle,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
         createdAt,

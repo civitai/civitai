@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext, FilterKeys } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
+import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -19,6 +20,7 @@ export const imagesQueryParamSchema = z
     prioritizedUserIds: numericStringArray(),
     limit: numericString(),
     period: z.nativeEnum(MetricTimeframe),
+    periodMode: periodModeSchema,
     sort: z.nativeEnum(ImageSort),
     tags: numericStringArray(),
     view: z.enum(['categories', 'feed']),
