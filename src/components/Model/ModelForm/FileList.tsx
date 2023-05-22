@@ -35,6 +35,8 @@ const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   Poses: ['Archive'],
   Wildcards: ['Archive'],
   Other: ['Archive'],
+  Upscaler: ['Model'],
+  VAE: ['Model'],
 };
 
 export function FileList({ parentIndex, form }: Props) {

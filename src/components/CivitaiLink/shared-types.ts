@@ -46,6 +46,7 @@ export type ResourceType =
   | 'Hypernetwork'
   | 'AestheticGradient'
   | 'VAE'
+  | 'Upscaler'
   | 'Controlnet'
   | 'Poses'
   | 'Other'
