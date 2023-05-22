@@ -866,9 +866,9 @@ export const declineReviewHandler = async ({
       },
     });
     await trackModActivity(ctx.user.id, {
-      entityType: 'Model',
+      entityType: 'model',
       entityId: model.id,
-      activity: 'ReviewModel',
+      activity: 'review',
     });
 
     return updatedModel;
