@@ -6,12 +6,9 @@ import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { GetCommentsReturnType } from '~/server/controllers/commentv2.controller';
 import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
-
-type CommentsResult = GetCommentsReturnType;
-type CommentModel = CommentsResult[0];
+import { CommentV2Model } from '~/server/selectors/commentv2.selector';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -27,11 +24,11 @@ type Props = CommentConnectorInput & {
 };
 
 type ChildProps = {
-  data?: CommentsResult;
+  data?: CommentV2Model[];
   isLoading: boolean;
   isLocked: boolean;
   isMuted: boolean;
-  created: CommentsResult;
+  created: CommentV2Model[];
   badges?: CommentV2BadgeProps[];
   limit?: number;
   remaining?: number;
@@ -153,9 +150,9 @@ export function CommentsProvider({
 
 type StoreProps = {
   /** dictionary of [entityType_entityId]: [...comments] */
-  comments: Record<string, CommentModel[]>;
-  addComment: (entityType: string, entityId: number, comment: CommentModel) => void;
-  editComment: (entityType: string, entityId: number, comment: CommentModel) => void;
+  comments: Record<string, CommentV2Model[]>;
+  addComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
+  editComment: (entityType: string, entityId: number, comment: CommentV2Model) => void;
   deleteComment: (entityType: string, entityId: number, commentId: number) => void;
 };
 

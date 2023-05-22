@@ -53,27 +53,6 @@ export const getInfiniteCommentsV2Handler = async ({
   }
 };
 
-export type GetCommentsReturnType = AsyncReturnType<typeof getCommentsV2Handler>;
-export const getCommentsV2Handler = async ({
-  ctx,
-  input,
-}: {
-  ctx: Context;
-  input: GetCommentsV2Input;
-}) => {
-  try {
-    const excludedUserIds = await getHiddenUsersForUser({ userId: ctx.user?.id });
-    const comments = await getComments({
-      ...input,
-      excludedUserIds,
-      select: commentV2Select,
-    });
-    return comments;
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
     return await getComment({ ...input });
