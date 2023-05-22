@@ -1,5 +1,5 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
-import { CommentsProvider, LoadNextPage, CreateComment, Comment } from '~/components/CommentsV2';
+import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV2';
 
 type ImageDetailCommentsProps = {
   imageId: number;
@@ -11,11 +11,11 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
     <CommentsProvider
       entityType="image"
       entityId={imageId}
-      limit={3}
       badges={[{ userId, label: 'op', color: 'violet' }]}
+      limit={3}
     >
-      {({ data, created, isInitialLoading, isFetching }) =>
-        isInitialLoading ? (
+      {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
+        isLoading ? (
           <Center>
             <Loader variant="bars" />
           </Center>
@@ -25,24 +25,19 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
             {data?.map((comment) => (
               <Comment key={comment.id} comment={comment} />
             ))}
-            <LoadNextPage>
-              {({ remaining, onClick }) => (
-                <Divider
-                  label={
-                    <Group spacing="xs" align="center">
-                      {isFetching && <Loader size="xs" />}
-                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onClick}>
-                        {remaining > 0
-                          ? `Show ${remaining} more ${remaining > 1 ? 'comments' : 'comment'}`
-                          : 'Show more'}
-                      </Text>
-                    </Group>
-                  }
-                  labelPosition="center"
-                  variant="dashed"
-                />
-              )}
-            </LoadNextPage>
+            {!!remaining && !showMore && (
+              <Divider
+                label={
+                  <Group spacing="xs" align="center">
+                    <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                      Show {remaining} More
+                    </Text>
+                  </Group>
+                }
+                labelPosition="center"
+                variant="dashed"
+              />
+            )}
             {created.map((comment) => (
               <Comment key={comment.id} comment={comment} />
             ))}

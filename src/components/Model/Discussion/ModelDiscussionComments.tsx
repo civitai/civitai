@@ -1,7 +1,6 @@
 import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
 import {
   CommentsProvider,
-  LoadNextPage,
   CreateComment,
   Comment,
   CommentV2BadgeProps,
@@ -18,8 +17,8 @@ export function ModelDiscussionComments({
   if (userId) badges.push({ userId, label: 'op', color: 'violet' });
   return (
     <CommentsProvider entityType="comment" entityId={commentId} limit={5} badges={badges}>
-      {({ data, created, isInitialLoading, isFetching }) =>
-        isInitialLoading ? (
+      {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
+        isLoading ? (
           <Center>
             <Loader variant="bars" />
           </Center>
@@ -29,22 +28,19 @@ export function ModelDiscussionComments({
             {data?.map((comment) => (
               <Comment key={comment.id} comment={comment} />
             ))}
-            <LoadNextPage>
-              {({ remaining, onClick }) => (
-                <Divider
-                  label={
-                    <Group spacing="xs" align="center">
-                      {isFetching && <Loader size="xs" />}
-                      <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onClick}>
-                        Show More
-                      </Text>
-                    </Group>
-                  }
-                  labelPosition="center"
-                  variant="dashed"
-                />
-              )}
-            </LoadNextPage>
+            {!!remaining && !showMore && (
+              <Divider
+                label={
+                  <Group spacing="xs" align="center">
+                    <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                      Show {remaining} More
+                    </Text>
+                  </Group>
+                }
+                labelPosition="center"
+                variant="dashed"
+              />
+            )}
             {created.map((comment) => (
               <Comment key={comment.id} comment={comment} />
             ))}

@@ -498,7 +498,6 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
   const { mutate, isLoading } = trpc.report.setStatus.useMutation({
     onSuccess(_, request) {
       const queryKey = getQueryKey(trpc.report.getAll);
-      console.log({ queryKey });
       queryClient.setQueriesData(
         { queryKey, exact: false },
         produce((old: any) => {

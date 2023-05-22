@@ -5,6 +5,7 @@ import React from 'react';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import produce from 'immer';
 
 export function DeleteComment({
   children,
@@ -31,10 +32,14 @@ export function DeleteComment({
       });
       if (created.some((x) => x.id === request.id)) {
         useNewCommentStore.getState().deleteComment(entityType, entityId, id);
-        // setCreated((state) => state.filter((x) => x.id !== request.id));
       } else {
-        //TODO.comments - possiby add optimistic updates
-        await queryUtils.commentv2.getInfinite.invalidate({ entityId, entityType });
+        await queryUtils.commentv2.getThreadDetails.setData(
+          { entityType, entityId },
+          produce((old) => {
+            if (!old) return;
+            old.comments = old.comments.filter((x) => x.id !== request.id);
+          })
+        );
       }
       queryUtils.commentv2.getCount.setData({ entityId, entityType }, (old = 1) => old - 1);
       closeAllModals();

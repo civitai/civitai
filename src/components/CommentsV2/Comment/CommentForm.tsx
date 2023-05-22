@@ -1,6 +1,6 @@
 import { Stack, Group, Button, Alert, Center, createStyles } from '@mantine/core';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useRef, useState, useMemo } from 'react';
 import { UpsertCommentV2Input, upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -32,12 +32,10 @@ export const CommentForm = ({
   replyTo?: SimpleUser;
 }) => {
   const { classes } = useStyles();
-  const { entityId, entityType, isMuted, data, limit } = useCommentsContext();
+  const { entityId, entityType, isMuted, data } = useCommentsContext();
   const editorRef = useRef<EditorCommandsRef | null>(null);
-  // const replySetRef = useRef(false);
   const [focused, setFocused] = useState(autoFocus);
   const defaultValues = { ...comment, entityId, entityType };
-  // TODO - figure out why `&nbsp;` is preventing me from immediately adding another mentions when using the input
   if (replyTo)
     defaultValues.content = `<span data-type="mention" data-id="mention:${replyTo.id}" data-label="${replyTo.username}" contenteditable="false">@${replyTo.username}</span>&nbsp;`;
   const form = useForm({
@@ -59,53 +57,28 @@ export const CommentForm = ({
     [data]
   );
 
-  // useEffect(() => {
-  //   if (editorRef.current && replyTo && !replySetRef.current) {
-  //     replySetRef.current = true;
-  //     setTimeout(() => {
-
-  //       // editorRef.current?.insertContentAtCursor(
-  //       //   `<span data-type="mention" data-id="mention:${replyTo.id}" data-label="${replyTo.username}" contenteditable="false">@${replyTo.username}</span>&nbsp;`
-  //       // );
-  //     }, 0);
-  //   }
-  // }, []); //eslint-disable-line
-
   const queryUtils = trpc.useContext();
   const { mutate, isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
       // if it has an id, just set the data with state
       if (request.id) {
-        queryUtils.commentv2.getInfinite.setInfiniteData(
-          { entityId, entityType, limit },
-          produce((data) => {
-            if (!data) {
-              data = {
-                pages: [],
-                pageParams: [],
-              };
+        queryUtils.commentv2.getThreadDetails.setData(
+          { entityType, entityId },
+          produce((old) => {
+            if (!old) return;
+            const item = old.comments.find((x) => x.id === request.id);
+            if (!item) {
+              store.editComment(entityType, entityId, response);
             } else {
-              let pageIndex = -1;
-              let commentIndex = -1;
-              data.pages.map((page, pIndex) =>
-                page.comments.map((comment, cIndex) => {
-                  if (comment.id === request.id) {
-                    pageIndex = pIndex;
-                    commentIndex = cIndex;
-                  }
-                })
-              );
-              if (pageIndex > -1 && commentIndex > -1)
-                data.pages[pageIndex].comments[commentIndex].content = request.content;
-              else store.editComment(entityType, entityId, response);
+              item.content = request.content;
             }
           })
         );
       } else {
+        queryUtils.commentv2.getCount.setData({ entityType, entityId }, (old = 0) => old + 1);
         store.addComment(entityType, entityId, response);
       }
       // update comment count
-      queryUtils.commentv2.getCount.setData({ entityType, entityId }, (old = 0) => old + 1);
       handleCancel();
     },
     onError(error) {
@@ -152,7 +125,6 @@ export const CommentForm = ({
           classNames={{
             content: classes.content,
           }}
-          // withLinkValidation
         />
         {focused && (
           <Group position="right">

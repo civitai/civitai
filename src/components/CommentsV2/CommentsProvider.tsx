@@ -1,19 +1,17 @@
 import { MantineColor } from '@mantine/core';
-import {
-  FetchNextPageOptions,
-  FetchPreviousPageOptions,
-  InfiniteQueryObserverResult,
-} from '@tanstack/react-query';
-import { createContext, useCallback, useContext, useMemo } from 'react';
+
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { GetCommentsReturnType } from '~/server/controllers/commentv2.controller';
+import { useRouter } from 'next/router';
+import { parseNumericString } from '~/utils/query-string-helpers';
 
-type CommentsResult = InfiniteCommentResults['comments'];
-type CommentModel = InfiniteCommentResults['comments'][0];
+type CommentsResult = GetCommentsReturnType;
+type CommentModel = CommentsResult[0];
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -22,48 +20,27 @@ export type CommentV2BadgeProps = {
 };
 
 type Props = CommentConnectorInput & {
-  initialData?: CommentsResult;
-  initialLimit?: number;
   initialCount?: number;
   limit?: number;
   badges?: CommentV2BadgeProps[];
-  children: ({
-    data,
-    isInitialLoading,
-    isFetching,
-    count,
-    isLocked,
-    isMuted,
-    hasNextPage,
-    hasPreviousPage,
-    created,
-    badges,
-  }: ChildProps) => React.ReactNode;
+  children: (args: ChildProps) => React.ReactNode;
 };
 
 type ChildProps = {
   data?: CommentsResult;
-  isInitialLoading?: boolean;
-  isFetching?: boolean;
-  count: number;
-  hasNextPage?: boolean;
-  hasPreviousPage?: boolean;
+  isLoading: boolean;
   isLocked: boolean;
   isMuted: boolean;
   created: CommentsResult;
   badges?: CommentV2BadgeProps[];
   limit?: number;
+  remaining?: number;
+  showMore: boolean;
+  toggleShowMore: () => void;
+  highlighted?: number;
 };
 
-type CommentsContext = CommentConnectorInput &
-  ChildProps & {
-    fetchNextPage: (
-      options?: FetchNextPageOptions | undefined
-    ) => Promise<InfiniteQueryObserverResult<InfiniteCommentResults>>;
-    fetchPreviousPage: (
-      options?: FetchPreviousPageOptions | undefined
-    ) => Promise<InfiniteQueryObserverResult<InfiniteCommentResults>>;
-  };
+type CommentsContext = CommentConnectorInput & ChildProps;
 
 const CommentsCtx = createContext<CommentsContext>({} as any);
 export const useCommentsContext = () => {
@@ -76,94 +53,88 @@ export function CommentsProvider({
   entityType,
   entityId,
   children,
-  initialData,
-  initialLimit,
   initialCount,
-  limit,
+  limit: initialLimit = 5,
   badges,
 }: Props) {
+  const router = useRouter();
+
   const currentUser = useCurrentUser();
   const storeKey = getKey(entityType, entityId);
   const created = useNewCommentStore(
     useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
   );
-  const { items, nextCursor } = useMemo(() => {
-    const data = [...(initialData ?? [])];
-    return {
-      nextCursor: initialLimit && data.length > initialLimit ? data.splice(-1)[0]?.id : undefined,
-      items: data,
-    };
-  }, [initialData, initialLimit]);
 
-  const {
-    data,
-    isInitialLoading,
-    isFetching,
-    fetchNextPage,
-    hasNextPage,
-    fetchPreviousPage,
-    hasPreviousPage,
-  } = trpc.commentv2.getInfinite.useInfiniteQuery(
-    { entityId, entityType, limit },
+  const [showMore, setShowMore] = useState(false);
+  const toggleShowMore = () => setShowMore((b) => !b);
+
+  const { data: thread, isInitialLoading: isLoading } = trpc.commentv2.getThreadDetails.useQuery(
+    { entityId, entityType },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-      initialData: !!initialData
-        ? {
-            pages: [{ nextCursor, comments: items }],
-            pageParams: [null],
-          }
-        : undefined,
+      enabled: initialCount === undefined || initialCount > 0,
+      onSuccess: (data) => {
+        setLimit(getLimit(data?.comments));
+      },
     }
   );
+  const initialComments = useMemo(() => thread?.comments ?? [], [thread?.comments]);
 
-  const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
-    { entityId, entityType },
-    { initialData: initialCount }
-  );
+  const highlighted = parseNumericString(router.query.highlight);
+  const getLimit = (data: { id: number }[] = []) => {
+    if (highlighted !== undefined) {
+      const limit = data.findIndex((x) => x.id === highlighted) + 1;
+      return limit < initialLimit ? initialLimit : limit;
+    }
 
-  const { data: thread } = trpc.commentv2.getThreadDetails.useQuery({ entityId, entityType });
+    return initialLimit;
+  };
+  const [limit, setLimit] = useState(getLimit(initialComments));
 
-  const comments = useMemo(() => data?.pages.flatMap((x) => x.comments), [data]);
+  const comments = useMemo(() => {
+    const data = initialComments;
+    return !showMore ? data.slice(0, limit) : data;
+  }, [initialComments, showMore, limit]);
+
   const createdComments = useMemo(
     () => created.filter((x) => !comments?.some((comment) => comment.id === x.id)),
     [created, comments]
   );
-  const isLocked = useMemo(() => thread?.locked ?? false, [thread]);
+
+  const isLocked = thread?.locked ?? false;
   const isMuted = currentUser?.muted ?? false;
+  let remaining = initialComments.length - limit;
+  remaining = remaining > 0 ? remaining : 0;
 
   return (
     <CommentsCtx.Provider
       value={{
         data: comments,
-        isInitialLoading,
-        isFetching,
+        isLoading,
         entityId,
         entityType,
-        count,
         isLocked,
         isMuted,
-        hasNextPage,
-        fetchNextPage,
-        hasPreviousPage,
-        fetchPreviousPage,
         created,
         badges,
         limit,
+        remaining,
+        showMore,
+        toggleShowMore,
+        highlighted,
       }}
     >
       {children({
         data: comments,
-        isInitialLoading,
-        isFetching,
-        count,
+        isLoading,
         isLocked,
         isMuted,
-        hasNextPage,
-        hasPreviousPage,
         created: createdComments,
         badges,
         limit,
+        remaining,
+        showMore,
+        toggleShowMore,
+        highlighted,
       })}
     </CommentsCtx.Provider>
   );

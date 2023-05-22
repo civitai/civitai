@@ -10,7 +10,6 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { AnswerVoteInput, GetAnswersInput, UpsertAnswerInput } from './../schema/answer.schema';
-import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
 export type GetAnswersProps = AsyncReturnType<typeof getAnswersHandler>;
 export const getAnswersHandler = async ({
@@ -53,11 +52,11 @@ export const getAnswersHandler = async ({
         },
         thread: {
           select: {
-            comments: {
-              orderBy: { createdAt: 'asc' },
-              take: 5,
-              select: commentV2Select,
-            },
+            // comments: {
+            //   orderBy: { createdAt: 'asc' },
+            //   take: 5,
+            //   select: commentV2Select,
+            // },
             _count: {
               select: {
                 comments: true,

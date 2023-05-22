@@ -1,4 +1,5 @@
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import produce from 'immer';
 import { trpc } from '~/utils/trpc';
 
 type ToggleLockCommentsProps = CommentConnectorInput & {
@@ -26,9 +27,24 @@ export function ToggleLockComments({
     entityType,
   });
   const { mutate, isLoading } = trpc.commentv2.toggleLockThread.useMutation({
-    onSuccess: async () => {
-      await queryUtils.commentv2.getThreadDetails.invalidate({ entityType, entityId });
-      onSuccess?.();
+    onMutate: async () => {
+      queryUtils.commentv2.getThreadDetails.setData(
+        { entityId, entityType },
+        produce((old) => {
+          if (!old) return;
+          old.locked = !old.locked;
+        })
+      );
+    },
+    onSuccess,
+    onError: () => {
+      queryUtils.commentv2.getThreadDetails.setData(
+        { entityType, entityId },
+        produce((old) => {
+          if (!old) return;
+          old.locked = !old.locked;
+        })
+      );
     },
   });
 

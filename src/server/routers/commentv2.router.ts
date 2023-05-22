@@ -7,6 +7,7 @@ import {
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
+  getCommentsV2Handler,
 } from './../controllers/commentv2.controller';
 import {
   commentConnectorSchema,
@@ -54,6 +55,7 @@ const isModerator = middleware(async ({ ctx, next }) => {
 
 export const commentv2Router = router({
   getInfinite: publicProcedure.input(getCommentsV2Schema).query(getInfiniteCommentsV2Handler),
+  getAll: publicProcedure.input(getCommentsV2Schema).query(getCommentsV2Handler),
   getCount: publicProcedure.input(commentConnectorSchema).query(getCommentCountV2Handler),
   getSingle: publicProcedure.input(getByIdSchema).query(getCommentHandler),
   upsert: guardedProcedure

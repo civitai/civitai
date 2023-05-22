@@ -34,7 +34,7 @@ export function AnswerDetail({
 
   const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
     { entityId: answer.id, entityType: 'answer' },
-    { initialData: answer.thread?._count.comments }
+    { initialData: answer.thread?._count.comments ?? 0 }
   );
 
   if (editing)
@@ -121,8 +121,7 @@ export function AnswerDetail({
             <QuestionAnswerComments
               entityId={answer.id}
               entityType="answer"
-              initialData={answer.thread?.comments}
-              initialCount={answer.thread?._count.comments}
+              initialCount={answer.thread?._count.comments ?? 0}
               userId={answer.user.id}
             />
           </Card.Section>

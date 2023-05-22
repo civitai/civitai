@@ -102,11 +102,11 @@ export const getQuestionDetailHandler = async ({
         },
         thread: {
           select: {
-            comments: {
-              orderBy: { createdAt: 'asc' },
-              take: 5,
-              select: commentV2Select,
-            },
+            // comments: {
+            //   orderBy: { createdAt: 'asc' },
+            //   take: 5,
+            //   select: commentV2Select,
+            // },
             _count: {
               select: {
                 comments: true,

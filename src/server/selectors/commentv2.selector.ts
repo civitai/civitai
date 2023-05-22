@@ -1,7 +1,6 @@
-import { SessionUser } from 'next-auth';
 import { Prisma } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
-import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 /*
   TODO.comments - connections? (ie. imageId, reviewId, versionId, modelId)

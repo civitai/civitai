@@ -8,7 +8,6 @@ import {
   Divider,
   Menu,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
@@ -36,14 +35,12 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
 
   const { data: count = 0 } = trpc.commentv2.getCount.useQuery(
     { entityId: question.id, entityType: 'question' },
-    { initialData: question.thread?._count.comments }
+    { initialData: question.thread?._count.comments ?? 0 }
   );
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
   const isMuted = user?.muted ?? false;
-
-  const { classes } = useStyles();
 
   return (
     <Card p="sm" withBorder>
@@ -125,8 +122,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
             <QuestionAnswerComments
               entityId={question.id}
               entityType="question"
-              initialData={question.thread?.comments}
-              initialCount={question.thread?._count.comments}
+              initialCount={question.thread?._count.comments ?? 0}
               userId={question.user.id}
             />
           </Card.Section>
@@ -135,16 +131,3 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
     </Card>
   );
 }
-
-const useStyles = createStyles((theme) => {
-  const borderColor = theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3];
-  return {
-    list: {
-      borderTop: `1px solid ${borderColor}`,
-    },
-    listItem: {
-      padding: theme.spacing.sm,
-      borderBottom: `1px solid ${borderColor}`,
-    },
-  };
-});

@@ -27,7 +27,6 @@ import { CommentReactions } from './CommentReactions';
 import { DeleteComment } from './DeleteComment';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
-import { useRouter } from 'next/router';
 
 type Store = {
   id?: number;
@@ -51,23 +50,23 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
 }
 
 export function CommentContent({ comment, ...groupProps }: CommentProps) {
-  const { entityId, entityType } = useCommentsContext();
+  const { entityId, entityType, highlighted } = useCommentsContext();
   const { canDelete, canEdit, canReply, badge, canReport } = useCommentV2Context();
-  const { query } = useRouter();
-  const { classes } = useStyles();
+
+  const { classes, cx } = useStyles();
 
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
-  const highlighted = query.highlight && query.highlight === comment.id.toString();
 
+  const isHighlighted = highlighted === comment.id;
   useEffect(() => {
-    if (!highlighted) return;
+    if (!isHighlighted) return;
     const elem = document.getElementById(`comment-${comment.id}`);
     if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-  }, [highlighted]);
+  }, [isHighlighted, comment.id]);
 
   return (
     <Group
@@ -76,7 +75,9 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
       noWrap
       {...groupProps}
       spacing="sm"
-      className={highlighted ? classes.highlightedComment : undefined}
+      className={cx(groupProps.className, {
+        [classes.highlightedComment]: isHighlighted,
+      })}
     >
       <UserAvatar user={comment.user} size="md" linkToProfile />
       <Stack spacing={0} style={{ flex: 1 }}>
