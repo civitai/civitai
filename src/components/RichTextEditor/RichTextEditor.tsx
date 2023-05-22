@@ -27,6 +27,8 @@ import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
+import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
+import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -60,11 +62,17 @@ const useStyles = createStyles((theme) => ({
     maxHeight: 1060,
     maxWidth: '50%',
     overflow: 'hidden',
-    pointerEvents: 'none',
 
     [theme.fn.smallerThan('sm')]: {
       maxWidth: '100%',
     },
+  },
+  strawPollEmbed: {
+    aspectRatio: '4/3',
+    maxHeight: 480,
+    // Ignoring because we want to use !important, if not then it complaints about it
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    pointerEvents: 'auto !important' as any,
   },
 }));
 
@@ -146,6 +154,7 @@ export function RichTextEditor({
   const addLink = includeControls.includes('link');
   const addMedia = includeControls.includes('media');
   const addMentions = includeControls.includes('mentions');
+  const addPolls = includeControls.includes('polls');
 
   const linkExtension = withLinkValidation ? LinkWithValidation : Link;
 
@@ -216,9 +225,7 @@ export function RichTextEditor({
             },
           }),
           Instagram.configure({
-            HTMLAttributes: {
-              class: classes.instagramEmbed,
-            },
+            HTMLAttributes: { class: classes.instagramEmbed },
             height: 'auto',
           }),
         ]
@@ -233,6 +240,14 @@ export function RichTextEditor({
             renderLabel({ options, node }) {
               return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
             },
+          }),
+        ]
+      : []),
+    ...(addPolls
+      ? [
+          StrawPoll.configure({
+            HTMLAttributes: { class: classes.strawPollEmbed },
+            height: 'auto',
           }),
         ]
       : []),
@@ -311,6 +326,10 @@ export function RichTextEditor({
               color: error ? theme.colors.red[8] : undefined,
             },
           },
+
+          '& iframe': {
+            pointerEvents: 'none',
+          },
         })}
       >
         {!hideToolbar && (
@@ -330,6 +349,7 @@ export function RichTextEditor({
                 <RTE.Underline />
                 <RTE.Strikethrough />
                 <RTE.ClearFormatting />
+                <RTE.CodeBlock />
               </RTE.ControlsGroup>
             )}
 
@@ -352,6 +372,11 @@ export function RichTextEditor({
                 <InsertImageControl />
                 <InsertYoutubeVideoControl />
                 <InsertInstagramEmbedControl />
+              </RTE.ControlsGroup>
+            )}
+            {addPolls && (
+              <RTE.ControlsGroup>
+                <InsertStrawPollControl />
               </RTE.ControlsGroup>
             )}
           </RTE.Toolbar>
@@ -383,7 +408,7 @@ export type EditorCommandsRef = {
   focus: () => void;
 };
 
-type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions';
+type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions' | 'polls';
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

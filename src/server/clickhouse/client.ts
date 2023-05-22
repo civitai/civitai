@@ -113,13 +113,13 @@ export class Tracker {
     };
 
     // Perform the clickhouse insert in the background
-    await fetch(
-      `${getInternalUrl()}/api/internal/track-clickhouse?token=${env.WEBHOOK_TOKEN}&table=${table}`,
-      {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }
-    ).catch(() => {
+    await fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    }).catch(() => {
       // ignore
     });
   }
