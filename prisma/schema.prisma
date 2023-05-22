@@ -251,6 +251,8 @@ enum ModelType {
   LORA
   LoCon
   Controlnet
+  Upscaler
+  VAE
   Poses
   Wildcards
   Other

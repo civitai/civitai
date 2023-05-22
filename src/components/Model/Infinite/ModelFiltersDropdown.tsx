@@ -78,6 +78,8 @@ export function ModelFiltersDropdown() {
               <Chip.Group
                 spacing={4}
                 value={filters.status ?? []}
+                // TODO: fix type issues
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 onChange={(status: ModelStatus[]) => setFilters({ status: status as any })}
                 multiple
               >

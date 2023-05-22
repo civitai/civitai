@@ -466,6 +466,16 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     acceptedModelFiles: ['Model', 'Config'],
     maxFiles: 3,
   },
+  Upscaler: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
+    acceptedModelFiles: ['Model'],
+    maxFiles: 1,
+  },
+  VAE: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
+    acceptedModelFiles: ['Model'],
+    maxFiles: 1,
+  },
   Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
