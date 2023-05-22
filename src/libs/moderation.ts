@@ -30,6 +30,7 @@ export const modelModerationCategories: ModerationCategory[] = [
       { label: 'Emaciated Figures', value: 'emaciated bodies' },
       { label: 'Deceased Bodies', value: 'corpses' },
       { label: 'Hanging', value: 'hanging' },
+      { label: 'Disturbing', value: 'disturbing' },
     ],
   },
   {
@@ -87,6 +88,7 @@ export const moderationCategories: ModerationCategory[] = [
       { label: 'Deceased Bodies', value: 'corpses' },
       { label: 'Hanging', value: 'hanging', hidden: true },
       { label: 'Explosions', value: 'explosions and blasts' },
+      { label: 'Disturbing', value: 'disturbing' },
     ],
   },
   {
