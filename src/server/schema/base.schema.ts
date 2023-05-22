@@ -4,10 +4,13 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 export const getByIdSchema = z.object({ id: z.number() });
 export type GetByIdInput = z.infer<typeof getByIdSchema>;
 
+const limit = z.preprocess(parseNumericString, z.number().min(1).max(200).default(20));
+const page = z.preprocess(parseNumericString, z.number().min(0).default(1));
+
 export type PaginationInput = z.infer<typeof paginationSchema>;
 export const paginationSchema = z.object({
-  limit: z.preprocess(parseNumericString, z.number().min(1).max(200).default(20)),
-  page: z.preprocess(parseNumericString, z.number().min(0).default(1)),
+  limit,
+  page,
 });
 
 export const getAllQuerySchema = paginationSchema.extend({
@@ -26,3 +29,9 @@ export type PeriodMode = z.infer<typeof periodModeSchema>;
 // export const isEntity = <T extends BaseInterface>(
 //   entity: T
 // ): entity is OmitId<T> & { id: number } => !!entity.id;
+
+export type InfiniteQueryInput = z.infer<typeof infiniteQuerySchema>;
+export const infiniteQuerySchema = z.object({
+  limit,
+  cursor: z.number().optional(),
+});

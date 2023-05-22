@@ -41,7 +41,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         username: user.username,
         image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
       },
-      tags: tagsOnModels.map((tag) => tag.tag),
+      tags: tagsOnModels.map((tag) => tag.tag.name),
       modelVersions: modelVersions
         .map(({ images, files, ...version }) => {
           const castedFiles = files as Array<

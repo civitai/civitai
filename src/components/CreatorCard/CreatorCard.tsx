@@ -60,7 +60,7 @@ export function CreatorCard({ user }: Props) {
               linkToProfile
             />
             <Group spacing="xs">
-              <RankBadge size="md" rank={creator.rank?.leaderboardRank} />
+              <RankBadge size="md" rank={creator.rank} />
               <FollowUserButton userId={creator.id} size="xs" compact />
             </Group>
           </Group>

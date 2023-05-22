@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { ImportStatus, Prisma } from '@prisma/client';
 import { hfAuthorImporter } from '~/server/importers/huggingFaceAuthor';
 import { ImportDependency, ImportRunInput } from '~/server/importers/importer';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 
 const importers = [hfModelImporter, hfAuthorImporter];
 

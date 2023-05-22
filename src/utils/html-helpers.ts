@@ -46,7 +46,7 @@ export function sanitizeHtml(
         'playlist',
         'start',
       ],
-      div: ['data-youtube-video'],
+      div: ['data-youtube-video', 'data-type'],
       span: ['class', 'data-type', 'data-id', 'data-label'],
     },
     exclusiveFilter: stripEmpty
@@ -57,7 +57,7 @@ export function sanitizeHtml(
           );
         }
       : undefined,
-    allowedIframeHostnames: ['www.youtube.com'],
+    allowedIframeHostnames: ['www.youtube.com', 'www.instagram.com', 'www.strawpoll.com'],
     transformTags: {
       a: sanitize.simpleTransform('a', { rel: 'ugc' }),
     },

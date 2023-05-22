@@ -18,6 +18,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from './';
 import { useState } from 'react';
 import { UserDraftModels } from '~/components/User/UserDraftModels';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 
 export default function UserModelsPage() {
   const currentUser = useCurrentUser();
@@ -84,14 +85,17 @@ export default function UserModelsPage() {
               )}
             </Group>
             {viewingPublished ? (
-              <ModelsInfinite
-                filters={{
-                  ...queryFilters,
-                  sort,
-                  period,
-                  periodMode: selfView ? 'stats' : undefined,
-                }}
-              />
+              <>
+                <CategoryTags />
+                <ModelsInfinite
+                  filters={{
+                    ...queryFilters,
+                    sort,
+                    period,
+                    periodMode: selfView ? 'stats' : undefined,
+                  }}
+                />
+              </>
             ) : (
               <UserDraftModels />
             )}

@@ -73,9 +73,9 @@ export const updateMetricsModelJob = createJob(
           const batchJson = JSON.stringify(batch);
 
           await dbWrite.$executeRaw`
-            INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+            INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
             SELECT
-                mvm.modelVersionId, mvm.timeframe, mvm.downloads, 0, 0, 0, 0
+                mvm.modelVersionId, mvm.timeframe, mvm.downloads
             FROM
             (
                 SELECT
@@ -124,11 +124,10 @@ export const updateMetricsModelJob = createJob(
         );
 
         await dbWrite.$executeRaw`
-          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
           SELECT
               rr."modelVersionId",
               tf.timeframe,
-              0,
               COALESCE(SUM(
                   CASE
                       WHEN tf.timeframe = 'AllTime' THEN 1
@@ -146,9 +145,7 @@ export const updateMetricsModelJob = createJob(
                       WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', rating, NULL)
                       WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', rating, NULL)
                   END
-              ), 0),
-              0,
-              0
+              ), 0)
           FROM (
               SELECT
                   r."userId",
@@ -166,8 +163,7 @@ export const updateMetricsModelJob = createJob(
             SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
           ) tf
           GROUP BY rr."modelVersionId", tf.timeframe
-          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-              SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
         `;
       }
 
@@ -191,13 +187,10 @@ export const updateMetricsModelJob = createJob(
         const affectedModelsJson = JSON.stringify(effectedModels.map((x) => x.modelId));
 
         await dbWrite.$executeRaw`
-          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")
           SELECT
               mv."id",
               tf.timeframe,
-              0,
-              0,
-              0,
               COALESCE(SUM(
                   CASE
                       WHEN tf.timeframe = 'AllTime' THEN 1
@@ -206,8 +199,7 @@ export const updateMetricsModelJob = createJob(
                       WHEN tf.timeframe = 'Week' THEN IIF(f."createdAt" >= NOW() - interval '1 week', 1, 0)
                       WHEN tf.timeframe = 'Day' THEN IIF(f."createdAt" >= NOW() - interval '1 day', 1, 0)
                   END
-              ), 0),
-              0
+              ), 0)
           FROM (
               SELECT
                   f."modelId",
@@ -221,8 +213,7 @@ export const updateMetricsModelJob = createJob(
             SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
           ) tf
           GROUP BY mv.id, tf.timeframe
-          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-              SET "favoriteCount" = EXCLUDED."favoriteCount";
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "favoriteCount" = EXCLUDED."favoriteCount";
         `;
       }
 
@@ -246,14 +237,10 @@ export const updateMetricsModelJob = createJob(
         const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
 
         await dbWrite.$executeRaw`
-          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount", "ratingCount", rating, "favoriteCount", "commentCount")
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "commentCount")
           SELECT
               mv."id",
               tf.timeframe,
-              0,
-              0,
-              0,
-              0,
               COALESCE(SUM(
                   CASE
                       WHEN tf.timeframe = 'AllTime' THEN 1
@@ -276,8 +263,7 @@ export const updateMetricsModelJob = createJob(
             SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
           ) tf
           GROUP BY mv.id, tf.timeframe
-          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-              SET "commentCount" = EXCLUDED."commentCount";
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "commentCount" = EXCLUDED."commentCount";
         `;
       }
 

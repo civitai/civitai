@@ -7,8 +7,11 @@ import {
   Stack,
   Text,
   Title,
+  createStyles,
   useMantineTheme,
 } from '@mantine/core';
+import { ArticleEngagementType } from '@prisma/client';
+import { IconHeart, IconBookmark } from '@tabler/icons';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
@@ -17,9 +20,12 @@ import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
+import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import { Collection } from '~/components/Collection/Collection';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -31,6 +37,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -61,6 +68,7 @@ export default function ArticleDetailsPage({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const { classes } = useStyles();
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
 
@@ -89,8 +97,39 @@ export default function ArticleDetailsPage({
         <Stack spacing="xl">
           <Stack spacing={0}>
             <Group position="apart" noWrap>
-              <Title weight="bold">{article.title}</Title>
-              {article.user && <ArticleContextMenu article={article} />}
+              <Title weight="bold" className={classes.title}>
+                {article.title}
+              </Title>
+              <Group align="center" className={classes.titleWrapper} noWrap>
+                <LoginRedirect reason="favorite-model">
+                  <ToggleArticleEngagement articleId={article.id}>
+                    {({ toggle, isToggled }) => {
+                      const isFavorite = isToggled?.Favorite;
+                      return (
+                        <IconBadge
+                          radius="sm"
+                          color="gray"
+                          size="lg"
+                          icon={
+                            <IconBookmark
+                              // size={18}
+                              color={isFavorite ? theme.colors.gray[2] : undefined}
+                              style={{ fill: isFavorite ? theme.colors.gray[2] : undefined }}
+                            />
+                          }
+                          sx={{ cursor: 'pointer' }}
+                          onClick={() => toggle(ArticleEngagementType.Favorite)}
+                        >
+                          <Text className={classes.badgeText}>
+                            {abbreviateNumber(article.stats?.favoriteCountAllTime ?? 0)}
+                          </Text>
+                        </IconBadge>
+                      );
+                    }}
+                  </ToggleArticleEngagement>
+                </LoginRedirect>
+                {article.user && <ArticleContextMenu article={article} />}
+              </Group>
             </Group>
             <Group spacing={8}>
               <UserAvatar user={article.user} withUsername linkToProfile />
@@ -163,7 +202,9 @@ export default function ArticleDetailsPage({
             />
             <CreatorCard user={article.user} />
           </Group>
-          <Title order={2}>Comments</Title>
+          <Title order={2} id="comments">
+            Comments
+          </Title>
           {article.user && (
             <ArticleDetailComments articleId={article.id} userId={article.user.id} />
           )}
@@ -172,3 +213,29 @@ export default function ArticleDetailsPage({
     </>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  titleWrapper: {
+    gap: theme.spacing.xs,
+
+    [theme.fn.smallerThan('md')]: {
+      gap: theme.spacing.xs * 0.4,
+    },
+  },
+
+  title: {
+    wordBreak: 'break-word',
+    [theme.fn.smallerThan('md')]: {
+      fontSize: theme.fontSizes.xs * 2.4, // 24px
+      width: '100%',
+      paddingBottom: 0,
+    },
+  },
+
+  badgeText: {
+    fontSize: theme.fontSizes.md,
+    [theme.fn.smallerThan('md')]: {
+      fontSize: theme.fontSizes.sm,
+    },
+  },
+}));

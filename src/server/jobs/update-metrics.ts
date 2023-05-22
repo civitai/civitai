@@ -1176,7 +1176,7 @@ export const updateMetricsJob = createJob(
         }
       ];
 
-      // We batch the affected model versions up when sending it to the db
+      // We batch the affected articles up when sending it to the db
       const batchSize = 500;
       const batches = chunk(viewedArticles, batchSize);
       for (const batch of batches) {
@@ -1231,6 +1231,13 @@ export const updateMetricsJob = createJob(
         UNION
 
         SELECT
+          "articleId"
+        FROM "ArticleEngagement"
+        WHERE "createdAt" > '${lastUpdate}'
+
+        UNION
+
+        SELECT
           "id"
         FROM "MetricUpdateQueue"
         WHERE type = 'Article'
@@ -1247,7 +1254,7 @@ export const updateMetricsJob = createJob(
 
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected
-      INSERT INTO "ArticleMetric" ("articleId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount")
+      INSERT INTO "ArticleMetric" ("articleId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "favoriteCount", "hideCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -1292,7 +1299,21 @@ export const updateMetricsJob = createJob(
           WHEN tf.timeframe = 'Month' THEN month_comment_count
           WHEN tf.timeframe = 'Week' THEN week_comment_count
           WHEN tf.timeframe = 'Day' THEN day_comment_count
-        END AS comment_count
+        END AS comment_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN favorite_count
+          WHEN tf.timeframe = 'Year' THEN year_favorite_count
+          WHEN tf.timeframe = 'Month' THEN month_favorite_count
+          WHEN tf.timeframe = 'Week' THEN week_favorite_count
+          WHEN tf.timeframe = 'Day' THEN day_favorite_count
+        END AS favorite_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN hide_count
+          WHEN tf.timeframe = 'Year' THEN year_hide_count
+          WHEN tf.timeframe = 'Month' THEN month_hide_count
+          WHEN tf.timeframe = 'Week' THEN week_hide_count
+          WHEN tf.timeframe = 'Day' THEN day_hide_count
+        END AS hide_count
       FROM
       (
         SELECT
@@ -1326,7 +1347,17 @@ export const updateMetricsJob = createJob(
           COALESCE(c.year_comment_count, 0) AS year_comment_count,
           COALESCE(c.month_comment_count, 0) AS month_comment_count,
           COALESCE(c.week_comment_count, 0) AS week_comment_count,
-          COALESCE(c.day_comment_count, 0) AS day_comment_count
+          COALESCE(c.day_comment_count, 0) AS day_comment_count,
+          COALESCE(ae.favorite_count, 0) AS favorite_count,
+          COALESCE(ae.year_favorite_count, 0) AS year_favorite_count,
+          COALESCE(ae.month_favorite_count, 0) AS month_favorite_count,
+          COALESCE(ae.week_favorite_count, 0) AS week_favorite_count,
+          COALESCE(ae.day_favorite_count, 0) AS day_favorite_count,
+          COALESCE(ae.hide_count, 0) AS hide_count,
+          COALESCE(ae.year_hide_count, 0) AS year_hide_count,
+          COALESCE(ae.month_hide_count, 0) AS month_hide_count,
+          COALESCE(ae.week_hide_count, 0) AS week_hide_count,
+          COALESCE(ae.day_hide_count, 0) AS day_hide_count
         FROM affected q
         LEFT JOIN (
           SELECT
@@ -1341,6 +1372,22 @@ export const updateMetricsJob = createJob(
           WHERE ic."articleId" IS NOT NULL
           GROUP BY ic."articleId"
         ) c ON q.id = c.id
+        LEFT JOIN (
+          SELECT
+            "articleId" AS id,
+            SUM(IIF(type = 'Favorite', 1, 0)) AS favorite_count,
+            SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_favorite_count,
+            SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_favorite_count,
+            SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_favorite_count,
+            SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_favorite_count,
+            SUM(IIF(type = 'Hide', 1, 0)) AS hide_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_hide_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_hide_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_hide_count,
+            SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_hide_count
+          FROM "ArticleEngagement"
+          GROUP BY "articleId"
+        ) ae ON q.id = ae.id
         LEFT JOIN (
           SELECT
             ir."articleId" AS id,
@@ -1377,7 +1424,7 @@ export const updateMetricsJob = createJob(
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("articleId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
+        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "favoriteCount" = EXCLUDED."favoriteCount", "hideCount" = EXCLUDED."hideCount";
     `);
 
       await dbWrite.$executeRawUnsafe(`DELETE FROM "MetricUpdateQueue" WHERE type = 'Article'`);

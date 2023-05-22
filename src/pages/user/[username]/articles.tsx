@@ -97,7 +97,6 @@ export default function UserArticlesPage() {
                   ...queryFilters,
                   sort,
                   period,
-                  userIds: user ? [user.id] : undefined,
                 }}
               />
             ) : (

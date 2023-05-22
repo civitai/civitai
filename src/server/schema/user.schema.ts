@@ -1,4 +1,4 @@
-import { TagEngagementType } from '@prisma/client';
+import { TagEngagementType, ArticleEngagementType } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
@@ -91,4 +91,14 @@ export const deleteUserSchema = z.object({
 export type GetUserCosmeticsSchema = z.infer<typeof getUserCosmeticsSchema>;
 export const getUserCosmeticsSchema = z.object({
   equipped: z.boolean(),
+});
+
+export type GetUserArticleEngagementsInput = z.infer<typeof getUserArticleEngagementsSchema>;
+export const getUserArticleEngagementsSchema = z.object({
+  type: z.nativeEnum(ArticleEngagementType),
+});
+
+export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticleEngagementSchema>;
+export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema.extend({
+  articleId: z.number(),
 });

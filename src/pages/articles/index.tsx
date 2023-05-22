@@ -1,4 +1,5 @@
-import { Group, Stack } from '@mantine/core';
+import { Group, Stack, Title } from '@mantine/core';
+import { useRouter } from 'next/router';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -55,6 +56,7 @@ export default function ArticlesPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer fluid>
+          {filters.favorites && <Title>Your Bookmarked Articles</Title>}
           <Stack spacing="xs">
             <Announcements
               sx={(theme) => ({
@@ -76,7 +78,7 @@ export default function ArticlesPage() {
               </Group>
             </Group>
             {view === 'categories' ? (
-              <ArticleCategoriesInfinite />
+              <ArticleCategoriesInfinite filters={filters} />
             ) : (
               <>
                 <ArticleCategories />

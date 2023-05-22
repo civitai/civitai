@@ -6,7 +6,8 @@ import { useInView } from 'react-intersection-observer';
 import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
 import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
+import { NoContent } from '~/components/NoContent/NoContent';
 import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -38,15 +39,11 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
       ) : !!articles.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryColumns
+          <UniformGrid
             data={articles}
-            imageDimensions={(data) => {
-              return { width: 450, height: 450 };
-            }}
-            adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
-            maxItemHeight={600}
             render={ArticleCard}
-            itemId={(data) => data.id}
+            itemId={(x) => x.id}
+            empty={<NoContent />}
           />
           {hasNextPage && !isLoading && !isRefetching && (
             <Center ref={ref} sx={{ height: 36 }} mt="md">

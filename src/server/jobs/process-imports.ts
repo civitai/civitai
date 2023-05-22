@@ -2,7 +2,7 @@ import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { ImportStatus } from '@prisma/client';
 import dayjs from 'dayjs';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 import { processImport } from '~/server/importers/importRouter';
 
 export const processImportsJob = createJob('process-imports', '1 */1 * * *', async () => {

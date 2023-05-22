@@ -77,4 +77,8 @@ declare global {
     size?: ModelFileSize;
     fp?: ModelFileFp;
   };
+
+  type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };
+
+  type UploadResult = { url: string; id: string };
 }

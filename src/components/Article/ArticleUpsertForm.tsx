@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Button,
   ButtonProps,
   Grid,
@@ -26,6 +27,7 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
+  InputMultiFileUpload,
   InputRTE,
   InputSelect,
   InputSimpleImageUpload,
@@ -149,7 +151,7 @@ export function ArticleUpsertForm({ article }: Props) {
               name="content"
               label="Content"
               editorSize="xl"
-              includeControls={['heading', 'formatting', 'list', 'link', 'media']}
+              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'polls']}
               withAsterisk
             />
           </Stack>
@@ -199,6 +201,32 @@ export function ArticleUpsertForm({ article }: Props) {
               target={[TagTarget.Article]}
               filter={(tag) =>
                 data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
+              }
+            />
+            <InputMultiFileUpload
+              name="attachments"
+              label="Attachments"
+              dropzoneProps={{
+                maxSize: 30 * 1024 ** 2, // 30MB
+                maxFiles: 10,
+                accept: {
+                  'application/pdf': ['.pdf'],
+                  'application/zip': ['.zip'],
+                  'application/json': ['.json'],
+                  'application/x-yaml': ['.yaml', '.yml'],
+                  'text/plain': ['.txt'],
+                  'text/markdown': ['.md'],
+                  'text/x-python-script': ['.py'],
+                },
+              }}
+              renderItem={(file) =>
+                article && file.id ? (
+                  <Anchor href={`/api/download/attachments/${file.id}`} lineClamp={1} download>
+                    {file.name}
+                  </Anchor>
+                ) : (
+                  file.name
+                )
               }
             />
             <ActionButtons

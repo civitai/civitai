@@ -312,4 +312,39 @@ export const commentNotifications = createNotificationProcessor({
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
     `,
   },
+  'new-article-comment': {
+    displayName: 'New comments on your articles',
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your article: "${details.articleTitle}"`,
+      url: `/articles/${details.articleId}?highlight=${details.commentId}#comments`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_article_comment AS (
+        SELECT DISTINCT
+          a."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'articleId', a.id,
+            'articleTitle', a.title,
+            'commentId', c.id,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."articleId" IS NOT NULL
+        JOIN "Article" a ON a.id = t."articleId"
+        WHERE a."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != a."userId"
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "ownerId"    "userId",
+        'new-article-comment' "type",
+        details
+      FROM new_article_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-comment');
+    `,
+  },
 });

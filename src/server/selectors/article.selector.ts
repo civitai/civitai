@@ -29,6 +29,10 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
       heartCountAllTime: true,
       laughCountAllTime: true,
       cryCountAllTime: true,
+      favoriteCountAllTime: true,
     },
+  },
+  attachments: {
+    select: { id: true, name: true, url: true, sizeKB: true },
   },
 });

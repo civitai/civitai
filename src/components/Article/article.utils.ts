@@ -11,7 +11,7 @@ import {
 } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { numericStringArray } from '~/utils/zod-helpers';
+import { booleanString, numericStringArray } from '~/utils/zod-helpers';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -25,6 +25,9 @@ const articleQueryParamSchema = z
     period: z.nativeEnum(MetricTimeframe),
     sort: z.nativeEnum(ArticleSort),
     section: z.enum(['published', 'draft']),
+    favorites: booleanString(),
+    hidden: booleanString(),
+    username: z.string(),
   })
   .partial();
 export type ArticleQueryParams = z.output<typeof articleQueryParamSchema>;

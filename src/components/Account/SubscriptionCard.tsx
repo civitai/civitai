@@ -1,6 +1,6 @@
 import { Button, Card, Stack, Center, Loader, Title, Text, Group, Code } from '@mantine/core';
 import { IconRotateClockwise, IconSettings } from '@tabler/icons';
-import { upperFirst } from 'lodash';
+import { upperFirst } from 'lodash-es';
 import {
   DescriptionTable,
   Props as DescriptionTableProps,

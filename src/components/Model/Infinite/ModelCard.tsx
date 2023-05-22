@@ -33,7 +33,6 @@ import { InView } from 'react-intersection-observer';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { Freeze } from '~/components/Freeze/Freeze';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -184,6 +183,7 @@ export function AmbientModelCard({ data, height }: Props) {
     staleTime: Infinity,
   });
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
+  // TODO - hide models by user by updating query cache
   const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
     enabled: !!currentUser,
     cacheTime: Infinity,

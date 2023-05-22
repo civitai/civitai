@@ -26,6 +26,7 @@ import { BrowsingMode, PostSort } from '~/server/common/enums';
 import {
   applyModRulesSql,
   applyUserPreferencesSql,
+  deleteImageById,
   getImagesForPosts,
 } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -117,6 +118,7 @@ export const getPostsInfinite = async ({
         excludedUserIds,
         excludedIds: excludedImageIds,
         userId: user?.id,
+        isOwnerRequest,
       })
     : [];
 
@@ -218,6 +220,10 @@ export const updatePost = ({ id, ...data }: PostUpdateInput) => {
 };
 
 export const deletePost = async ({ id }: GetByIdInput) => {
+  const images = await dbWrite.image.findMany({ where: { postId: id } });
+  if (images.length) {
+    for (const image of images) await deleteImageById({ id: image.id });
+  }
   await dbWrite.post.delete({ where: { id } });
 };
 

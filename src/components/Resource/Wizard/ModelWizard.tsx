@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconAlertTriangle, IconX } from '@tabler/icons';
-import isEqual from 'lodash/isEqual';
+import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 

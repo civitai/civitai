@@ -2,7 +2,13 @@ import { createClient } from '@clickhouse/client';
 import { env } from '~/env/server.mjs';
 import requestIp from 'request-ip';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { ReviewReactions, ReportReason, ReportStatus, NsfwLevel } from '@prisma/client';
+import {
+  ReviewReactions,
+  ReportReason,
+  ReportStatus,
+  NsfwLevel,
+  ArticleEngagementType,
+} from '@prisma/client';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 import { getInternalUrl } from '~/server/utils/url-helpers';
 
@@ -196,6 +202,10 @@ export class Tracker {
 
   public modelEngagement(values: { type: ModelEngagementType; modelId: number }) {
     return this.track('modelEngagements', values);
+  }
+
+  public articleEngagement(values: { type: ArticleEngagementType; articleId: number }) {
+    return this.track('articleEngagements', values);
   }
 
   public tagEngagement(values: { type: TagEngagementType; tagId: number }) {

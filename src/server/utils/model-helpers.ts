@@ -1,5 +1,5 @@
 import { ModelType } from '@prisma/client';
-import { startCase } from 'lodash';
+import { startCase } from 'lodash-es';
 import { ModelFileType } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
 

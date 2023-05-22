@@ -9,7 +9,6 @@ import {
   CommentConnectorInput,
 } from './../schema/commentv2.schema';
 import { CommentV2Sort } from '~/server/common/enums';
-import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 
 export const upsertComment = async ({
   userId,

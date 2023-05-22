@@ -238,7 +238,12 @@ export const getGalleryImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
-      ${Prisma.raw(!user?.id ? 'null' : 'ir.reactions')} "reactions",
+      (
+        SELECT jsonb_agg(reaction)
+        FROM "ImageReaction"
+        WHERE "imageId" = i.id
+        AND "userId" = ${userId}
+      ) reactions,
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Image" i
     ${Prisma.raw(
@@ -252,16 +257,6 @@ export const getGalleryImages = async ({
     LEFT JOIN "Review" rev ON rev.id = ior."reviewId"
     JOIN "Model" m ON m.id = COALESCE(mv."modelId", rev."modelId") AND m.status = 'Published' AND m."tosViolation" = false
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
-    ${
-      !user
-        ? Prisma.sql``
-        : Prisma.sql`LEFT JOIN (
-        SELECT "imageId", jsonb_agg(reaction) "reactions"
-        FROM "ImageReaction"
-        WHERE "userId" = ${user.id}
-        GROUP BY "imageId"
-      ) ir ON ir."imageId" = i.id`
-    }
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit}
@@ -316,7 +311,6 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
     where: {
       url: url,
       id: { not: id },
-      connections: { modelId: { not: null } },
     },
   });
 
@@ -800,11 +794,12 @@ export const getAllImages = async ({
   }
 
   if (userId && !!reactions?.length) {
-    AND.push(Prisma.sql`ir.reactions ?| ARRAY[${Prisma.join(reactions)}]`);
+    AND.push(Prisma.sql`r.reactions ?| ARRAY[${Prisma.join(reactions)}]`);
   }
 
   const includeRank = cursorProp?.startsWith('r.');
 
+  // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
@@ -813,20 +808,17 @@ export const getAllImages = async ({
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
-    ${
-      !userId
-        ? Prisma.sql``
-        : Prisma.sql`LEFT JOIN (
-      SELECT "imageId", jsonb_agg(reaction) "reactions"
-      FROM "ImageReaction"
-      WHERE "userId" = ${userId}
-      GROUP BY "imageId"
-    ) ir ON ir."imageId" = i.id`
-    }
+    LEFT JOIN reactions r ON r."imageId" = i.id
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+    WITH reactions AS (
+      SELECT "imageId", jsonb_agg(reaction) AS reactions
+      FROM "ImageReaction"${Prisma.raw(userId ? ` WHERE "userId" = ${userId}` : '')}
+      GROUP BY "imageId"
+    )
+
     SELECT
       i.id,
       i.name,
@@ -857,7 +849,7 @@ export const getAllImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
-      ${Prisma.raw(!userId ? 'null' : 'ir.reactions')} "reactions",
+      r.reactions,
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)} ${Prisma.raw(includeRank && optionalRank ? 'NULLS LAST' : '')}
@@ -1148,27 +1140,31 @@ export const getImagesForPosts = async ({
   excludedIds,
   excludedUserIds,
   userId,
+  isOwnerRequest,
 }: {
   postIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
   userId?: number;
+  isOwnerRequest?: boolean;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere = [`i."postId" IN (${postIds.join(',')})`];
-  if (!!excludedTagIds?.length) {
-    imageWhere.push(`i."scannedAt" IS NOT NULL`);
-    const excludedTags = excludedTagIds.join(',');
-    imageWhere.push(
-      `NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${excludedTags}) )`
-    );
-  }
-  if (!!excludedIds?.length) {
-    imageWhere.push(`i."id" NOT IN (${excludedIds.join(',')})`);
-  }
-  if (!!excludedUserIds?.length) {
-    imageWhere.push(`i."userId" NOT IN (${excludedUserIds.join(',')})`);
+  if (!isOwnerRequest) {
+    if (!!excludedTagIds?.length) {
+      imageWhere.push(`i."scannedAt" IS NOT NULL`);
+      const excludedTags = excludedTagIds.join(',');
+      imageWhere.push(
+        `NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${excludedTags}) )`
+      );
+    }
+    if (!!excludedIds?.length) {
+      imageWhere.push(`i."id" NOT IN (${excludedIds.join(',')})`);
+    }
+    if (!!excludedUserIds?.length) {
+      imageWhere.push(`i."userId" NOT IN (${excludedUserIds.join(',')})`);
+    }
   }
   const images = await dbRead.$queryRawUnsafe<
     {
@@ -1217,22 +1213,15 @@ export const getImagesForPosts = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
-      ${!userId ? 'null' : 'ir.reactions'} "reactions"
+      (
+        SELECT jsonb_agg(reaction)
+        FROM "ImageReaction"
+        WHERE "imageId" = i.id
+        AND "userId" = ${userId}
+      ) reactions
     FROM targets t
     JOIN "Image" i ON i."postId" = t."postId" AND i.index = t.index
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
-    ${
-      !userId
-        ? ''
-        : `
-    LEFT JOIN (
-      SELECT "imageId", jsonb_agg(reaction) "reactions"
-      FROM "ImageReaction"
-      WHERE "userId" = ${userId}
-      GROUP BY "imageId"
-    ) ir ON ir."imageId" = i.id
-    `
-    }
   `);
 
   return images.map(({ reactions, ...i }) => ({

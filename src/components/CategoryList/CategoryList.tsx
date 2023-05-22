@@ -1,40 +1,39 @@
-import { Carousel } from '@mantine/carousel';
 import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   Loader,
   LoadingOverlay,
   Stack,
   Text,
+  createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
+
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { NoContent } from '~/components/NoContent/NoContent';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props<Item> = {
-  data: { id: number; name: string; items: Item[] }[];
+  data: Array<TypeCategory & { items: Item[] }>;
   render: React.ComponentType<MasonryRenderItemProps<Item>>;
   itemId?: (data: Item) => string | number;
   isLoading?: boolean;
   isRefetching?: boolean;
   fetchNextPage?: () => void;
   hasNextPage?: boolean;
-  actions?: CategoryAction[] | ((items: Item[]) => CategoryAction[]);
+  actions?: (category: TypeCategory & { items: Item[] }) => CategoryAction[];
   empty?: (data: { id: number; name: string }) => React.ReactNode;
 };
 
 type CategoryAction = {
-  label: string | ((category: { id: number; name: string }) => string);
-  href: string | ((category: { id: number; name: string }) => string);
+  label: string;
+  href: string;
   icon?: React.ReactNode;
   inTitle?: boolean;
   shallow?: boolean;
@@ -77,9 +76,8 @@ export function CategoryList<Item>({
     >
       {isRefetching && <LoadingOverlay visible zIndex={9} />}
       {data.map((category) => {
-        const actionableActions = (
-          typeof actions === 'function' ? actions(category.items) : actions
-        )?.filter((x) => x.visible ?? true);
+        const actionableActions = actions?.(category)?.filter((x) => x.visible ?? true);
+
         return (
           <Box key={category.id}>
             <Stack spacing={6}>
@@ -123,11 +121,7 @@ export function CategoryList<Item>({
                               key={index}
                               className={classes.moreActions}
                               component={NextLink}
-                              href={
-                                typeof action.href === 'function'
-                                  ? action.href(category)
-                                  : action.href
-                              }
+                              href={action.href}
                               variant="outline"
                               fullWidth
                               radius="md"
@@ -135,9 +129,7 @@ export function CategoryList<Item>({
                               rightIcon={action.icon}
                               shallow={action.shallow}
                             >
-                              {typeof action.label === 'function'
-                                ? action.label(category)
-                                : action.label}
+                              {action.label}
                             </Button>
                           ))}
                         </Stack>
@@ -160,7 +152,6 @@ export function CategoryList<Item>({
 }
 
 function CategoryTitle({
-  id,
   name,
   actions,
 }: {
@@ -187,20 +178,20 @@ function CategoryTitle({
         <Button
           key={index}
           component={NextLink}
-          href={typeof action.href === 'function' ? action.href({ id, name }) : action.href}
+          href={action.href}
           variant="outline"
           size="xs"
           shallow={action.shallow}
           compact
         >
-          {typeof action.label === 'function' ? action.label({ id, name }) : action.label}
+          {action.label}
         </Button>
       ))}
     </Group>
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   moreActions: {
     width: '100%',
     flex: '1',

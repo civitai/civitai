@@ -1,4 +1,4 @@
-import { camelCase } from 'lodash';
+import { camelCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
 
@@ -18,6 +18,7 @@ const featureFlags = createTypedDictionary({
   posts: ['mod', 'founder'],
   articles: ['mod', 'founder', 'granted'],
   articleCreate: ['mod', 'granted'],
+  adminTags: ['mod', 'granted'],
   civitaiLink: ['mod'],
   stripe: ['mod'],
 });

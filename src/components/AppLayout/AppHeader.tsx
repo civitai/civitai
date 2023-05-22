@@ -20,6 +20,7 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconBookmark,
   IconCircleDashed,
   IconCrown,
   IconHeart,
@@ -215,6 +216,16 @@ export function AppHeader() {
         ),
       },
       {
+        href: '/articles?favorites=true&view=feed',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBookmark stroke={1.5} />
+            Bookmarked Articles
+          </Group>
+        ),
+      },
+      {
         href: '/?hidden=true',
         visible: !!currentUser,
         label: (
@@ -268,7 +279,7 @@ export function AppHeader() {
         ),
       },
       {
-        href: '/leaderboard',
+        href: '/leaderboard/overall',
         label: (
           <Group align="center" spacing="xs">
             <IconCrown stroke={1.5} />

@@ -1,4 +1,4 @@
-import { Prisma, TagTarget } from '@prisma/client';
+import { ArticleEngagementType, Prisma, TagTarget } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -18,6 +18,7 @@ import { getTypeCategories } from '~/server/services/tag.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getCategoryTags } from '~/server/services/system-cache';
+import { isDefined } from '~/utils/type-guards';
 
 export const getArticles = async ({
   limit,
@@ -31,18 +32,38 @@ export const getArticles = async ({
   excludedUserIds,
   excludedTagIds,
   userIds,
+  favorites,
+  hidden,
+  username,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
+    const isOwnerRequest = sessionUser && sessionUser.username === username;
 
     const AND: Prisma.Enumerable<Prisma.ArticleWhereInput> = [];
     if (query) AND.push({ title: { contains: query } });
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
-    if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
-    if (!!excludedIds?.length) AND.push({ id: { notIn: excludedIds } });
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
-    if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    if (username) AND.push({ user: { username } });
+
+    if (!isOwnerRequest) {
+      if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });
+      if (!!excludedIds?.length) AND.push({ id: { notIn: excludedIds } });
+      if (!!excludedTagIds?.length) AND.push({ tags: { none: { tagId: { in: excludedTagIds } } } });
+    }
+
+    if (sessionUser) {
+      if (favorites) {
+        AND.push({
+          engagements: { some: { userId: sessionUser?.id, type: ArticleEngagementType.Favorite } },
+        });
+      } else if (hidden) {
+        AND.push({
+          engagements: { some: { userId: sessionUser?.id, type: ArticleEngagementType.Hide } },
+        });
+      }
+    }
 
     const where: Prisma.ArticleFindManyArgs['where'] = {
       publishedAt: isMod ? undefined : { not: null },
@@ -181,6 +202,7 @@ export const upsertArticle = async ({
   id,
   userId,
   tags,
+  attachments,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
@@ -202,6 +224,14 @@ export const upsertArticle = async ({
                     },
                   };
                 }),
+              }
+            : undefined,
+          attachments: attachments
+            ? {
+                connectOrCreate: attachments.map((attachment) => ({
+                  where: { id: attachment.id },
+                  create: attachment,
+                })),
               }
             : undefined,
         },
@@ -234,6 +264,22 @@ export const upsertArticle = async ({
                   },
                 };
               }),
+            }
+          : undefined,
+        attachments: attachments
+          ? {
+              deleteMany: { id: { notIn: attachments.map((x) => x.id).filter(isDefined) } },
+              connectOrCreate: attachments
+                .filter((x) => !!x.id)
+                .map((attachment) => ({
+                  where: { id: attachment.id },
+                  create: attachment,
+                })),
+              create: attachments
+                .filter((x) => !x.id)
+                .map((attachment) => ({
+                  ...attachment,
+                })),
             }
           : undefined,
       },

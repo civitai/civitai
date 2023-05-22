@@ -5,6 +5,7 @@ const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
     model: `/models/${threadParentId}?modal=commentThread&threadId=${details.threadId}&highlight=${details.commentId}`,
     image: `/images/${threadParentId}?highlight=${details.commentId}`,
     post: `/posts/${threadParentId}?highlight=${details.commentId}#comments`,
+    article: `/articles/${threadParentId}?highlight=${details.commentId}#comments`,
     // review: '/models/'
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
@@ -52,6 +53,7 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN t."questionId" IS NOT NULL THEN 'question'
               WHEN t."answerId" IS NOT NULL THEN 'answer'
               WHEN t."reviewId" IS NOT NULL THEN 'review'
+              WHEN t."articleId" IS NOT NULL THEN 'article'
               ELSE 'comment'
             END,
             'username', u.username

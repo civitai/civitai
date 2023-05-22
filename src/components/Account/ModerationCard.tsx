@@ -11,7 +11,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { IconRating18Plus } from '@tabler/icons';
-import { debounce } from 'lodash';
+import { debounce } from 'lodash-es';
 import React from 'react';
 import { useState, useMemo } from 'react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';

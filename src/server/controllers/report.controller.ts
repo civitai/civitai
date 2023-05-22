@@ -47,7 +47,13 @@ export async function createReportHandler({
   }
 }
 
-export async function setReportStatusHandler({ input }: { input: SetReportStatusInput }) {
+export async function setReportStatusHandler({
+  input,
+  ctx,
+}: {
+  input: SetReportStatusInput;
+  ctx: DeepNonNullable<Context>;
+}) {
   try {
     const { id, status } = input;
     const report = await getReportById({
@@ -60,6 +66,8 @@ export async function setReportStatusHandler({ input }: { input: SetReportStatus
       id,
       data: {
         status,
+        statusSetAt: new Date(),
+        statusSetBy: ctx.user.id,
         previouslyReviewedCount:
           status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
       },

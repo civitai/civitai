@@ -1,14 +1,12 @@
-import React, { ComponentType, useEffect, useState } from 'react';
+import React, { ComponentType, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Router, { NextRouter, useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { create } from 'zustand';
 import { NextLink } from '@mantine/next';
-import Link from 'next/link';
 import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
-import { Anchor } from '@mantine/core';
 import { Freeze } from '~/components/Freeze/Freeze';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));

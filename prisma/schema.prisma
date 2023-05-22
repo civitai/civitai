@@ -125,6 +125,8 @@ model User {
   resourceReviewReactions ResourceReviewReaction[]
   articleReactions        ArticleReaction[]
   articles                Article[]
+  articleEngagements      ArticleEngagement[]
+  leaderboardResults      LeaderboardResult[]
 }
 
 model CustomerSubscription {
@@ -503,6 +505,19 @@ model ModelFile {
   @@index([modelVersionId], type: Hash)
 }
 
+model File {
+  id        Int      @id @default(autoincrement())
+  name      String
+  url       String
+  sizeKB    Float
+  createdAt DateTime @default(now())
+  articleId Int?
+  article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  metadata  Json?
+
+  @@index([articleId], type: Hash)
+}
+
 enum MetricTimeframe {
   Day
   Week
@@ -615,8 +630,10 @@ model Report {
   internalNotes           String?
   previouslyReviewedCount Int          @default(0)
   alsoReportedBy          Int[]        @default([]) // UserIds
+  status                  ReportStatus
+  statusSetAt             DateTime?
+  statusSetBy             Int?
 
-  status         ReportStatus
   model          ModelReport?
   review         ReviewReport?
   comment        CommentReport?
@@ -966,6 +983,7 @@ model Tag {
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
+  adminOnly  Boolean     @default(false)
 
   toTags               TagsOnTags[]       @relation("TagsOnTags_fromTag")
   fromTags             TagsOnTags[]       @relation("TagsOnTags_toTag")
@@ -1521,19 +1539,21 @@ enum CosmeticSource {
 }
 
 model Cosmetic {
-  id              Int            @id @default(autoincrement())
-  name            String
-  description     String?
-  type            CosmeticType
-  source          CosmeticSource
-  permanentUnlock Boolean
-  data            Json
-  createdAt       DateTime?      @default(now())
-  updatedAt       DateTime?      @updatedAt
-  availableStart  DateTime?
-  availableEnd    DateTime?
-  productId       String?
-  UserCosmetic    UserCosmetic[]
+  id                  Int            @id @default(autoincrement())
+  name                String
+  description         String?
+  type                CosmeticType
+  source              CosmeticSource
+  permanentUnlock     Boolean
+  data                Json
+  createdAt           DateTime?      @default(now())
+  updatedAt           DateTime?      @updatedAt
+  availableStart      DateTime?
+  availableEnd        DateTime?
+  productId           String?
+  leaderboardId       String?
+  leaderboardPosition Int?
+  UserCosmetic        UserCosmetic[]
 }
 
 model UserCosmetic {
@@ -1561,28 +1581,78 @@ model Article {
   userId       Int
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  thread    Thread?
-  reactions ArticleReaction[]
-  tags      TagsOnArticle[]
-  reports   ArticleReport[]
-  metrics   ArticleMetric[]
-  rank      ArticleRank?
-  stats     ArticleStat?
+  thread      Thread?
+  reactions   ArticleReaction[]
+  tags        TagsOnArticle[]
+  reports     ArticleReport[]
+  metrics     ArticleMetric[]
+  rank        ArticleRank?
+  stats       ArticleStat?
+  attachments File[]
+  engagements ArticleEngagement[]
+}
+
+enum ArticleEngagementType {
+  Favorite
+  Hide
+}
+
+model ArticleEngagement {
+  userId    Int
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  articleId Int
+  article   Article               @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  type      ArticleEngagementType
+  createdAt DateTime              @default(now())
+
+  @@id([userId, articleId])
+  @@index([articleId], type: Hash)
 }
 
 model ArticleMetric {
-  article      Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  articleId    Int
-  timeframe    MetricTimeframe
-  likeCount    Int             @default(0)
-  dislikeCount Int             @default(0)
-  laughCount   Int             @default(0)
-  cryCount     Int             @default(0)
-  heartCount   Int             @default(0)
-  commentCount Int             @default(0)
-  viewCount    Int             @default(0)
+  article       Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  articleId     Int
+  timeframe     MetricTimeframe
+  likeCount     Int             @default(0)
+  dislikeCount  Int             @default(0)
+  laughCount    Int             @default(0)
+  cryCount      Int             @default(0)
+  heartCount    Int             @default(0)
+  commentCount  Int             @default(0)
+  viewCount     Int             @default(0)
+  favoriteCount Int             @default(0)
+  hideCount     Int             @default(0)
 
   @@id([articleId, timeframe])
+}
+
+model Leaderboard {
+  id                 String  @id
+  index              Int
+  title              String
+  description        String
+  scoringDescription String
+  query              String
+  active             Boolean
+  public             Boolean
+
+  results LeaderboardResult[]
+}
+
+model LeaderboardResult {
+  leaderboardId String
+  leaderboard   Leaderboard @relation(fields: [leaderboardId], references: [id], onDelete: Cascade)
+  date          DateTime    @db.Date
+  position      Int
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score         Int         @default(0)
+  metrics       Json        @default("{}")
+  createdAt     DateTime    @default(now())
+
+  @@id([leaderboardId, date, position])
+  @@unique([leaderboardId, date, userId])
+  @@index([userId], type: Hash)
 }
 
 /// @view
@@ -1826,6 +1896,16 @@ model ArticleStat {
   viewCountMonth       Int     @default(0)
   viewCountYear        Int     @default(0)
   viewCountAllTime     Int     @default(0)
+  favoriteCountDay     Int     @default(0)
+  favoriteCountWeek    Int     @default(0)
+  favoriteCountMonth   Int     @default(0)
+  favoriteCountYear    Int     @default(0)
+  favoriteCountAllTime Int     @default(0)
+  hideCountDay         Int     @default(0)
+  hideCountWeek        Int     @default(0)
+  hideCountMonth       Int     @default(0)
+  hideCountYear        Int     @default(0)
+  hideCountAllTime     Int     @default(0)
 }
 
 /// @view
@@ -1872,6 +1952,16 @@ model ArticleRank {
   viewCountMonthRank       Int     @default(0)
   viewCountYearRank        Int     @default(0)
   viewCountAllTimeRank     Int     @default(0)
+  favoriteCountDayRank     Int     @default(0)
+  favoriteCountWeekRank    Int     @default(0)
+  favoriteCountMonthRank   Int     @default(0)
+  favoriteCountYearRank    Int     @default(0)
+  favoriteCountAllTimeRank Int     @default(0)
+  hideCountDayRank         Int     @default(0)
+  hideCountWeekRank        Int     @default(0)
+  hideCountMonthRank       Int     @default(0)
+  hideCountYearRank        Int     @default(0)
+  hideCountAllTimeRank     Int     @default(0)
 }
 
 /// @view
@@ -1937,44 +2027,46 @@ model UserStat {
 
 /// @view
 model UserRank {
-  user                         User @relation(fields: [userId], references: [id], onDelete: NoAction)
-  userId                       Int  @id
-  downloadCountDayRank         Int  @default(0)
-  downloadCountWeekRank        Int  @default(0)
-  downloadCountMonthRank       Int  @default(0)
-  downloadCountYearRank        Int  @default(0)
-  downloadCountAllTimeRank     Int  @default(0)
-  ratingCountDayRank           Int  @default(0)
-  ratingCountWeekRank          Int  @default(0)
-  ratingCountMonthRank         Int  @default(0)
-  ratingCountYearRank          Int  @default(0)
-  ratingCountAllTimeRank       Int  @default(0)
-  followerCountDayRank         Int  @default(0)
-  followerCountWeekRank        Int  @default(0)
-  followerCountMonthRank       Int  @default(0)
-  followerCountYearRank        Int  @default(0)
-  followerCountAllTimeRank     Int  @default(0)
-  ratingDayRank                Int  @default(0)
-  ratingWeekRank               Int  @default(0)
-  ratingMonthRank              Int  @default(0)
-  ratingYearRank               Int  @default(0)
-  ratingAllTimeRank            Int  @default(0)
-  favoriteCountDayRank         Int  @default(0)
-  favoriteCountWeekRank        Int  @default(0)
-  favoriteCountMonthRank       Int  @default(0)
-  favoriteCountYearRank        Int  @default(0)
-  favoriteCountAllTimeRank     Int  @default(0)
-  answerCountDayRank           Int  @default(0)
-  answerCountWeekRank          Int  @default(0)
-  answerCountMonthRank         Int  @default(0)
-  answerCountYearRank          Int  @default(0)
-  answerCountAllTimeRank       Int  @default(0)
-  answerAcceptCountDayRank     Int  @default(0)
-  answerAcceptCountWeekRank    Int  @default(0)
-  answerAcceptCountMonthRank   Int  @default(0)
-  answerAcceptCountYearRank    Int  @default(0)
-  answerAcceptCountAllTimeRank Int  @default(0)
-  leaderboardRank              Int  @default(0)
+  user                         User    @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                       Int     @id
+  downloadCountDayRank         Int     @default(0)
+  downloadCountWeekRank        Int     @default(0)
+  downloadCountMonthRank       Int     @default(0)
+  downloadCountYearRank        Int     @default(0)
+  downloadCountAllTimeRank     Int     @default(0)
+  ratingCountDayRank           Int     @default(0)
+  ratingCountWeekRank          Int     @default(0)
+  ratingCountMonthRank         Int     @default(0)
+  ratingCountYearRank          Int     @default(0)
+  ratingCountAllTimeRank       Int     @default(0)
+  followerCountDayRank         Int     @default(0)
+  followerCountWeekRank        Int     @default(0)
+  followerCountMonthRank       Int     @default(0)
+  followerCountYearRank        Int     @default(0)
+  followerCountAllTimeRank     Int     @default(0)
+  ratingDayRank                Int     @default(0)
+  ratingWeekRank               Int     @default(0)
+  ratingMonthRank              Int     @default(0)
+  ratingYearRank               Int     @default(0)
+  ratingAllTimeRank            Int     @default(0)
+  favoriteCountDayRank         Int     @default(0)
+  favoriteCountWeekRank        Int     @default(0)
+  favoriteCountMonthRank       Int     @default(0)
+  favoriteCountYearRank        Int     @default(0)
+  favoriteCountAllTimeRank     Int     @default(0)
+  answerCountDayRank           Int     @default(0)
+  answerCountWeekRank          Int     @default(0)
+  answerCountMonthRank         Int     @default(0)
+  answerCountYearRank          Int     @default(0)
+  answerCountAllTimeRank       Int     @default(0)
+  answerAcceptCountDayRank     Int     @default(0)
+  answerAcceptCountWeekRank    Int     @default(0)
+  answerAcceptCountMonthRank   Int     @default(0)
+  answerAcceptCountYearRank    Int     @default(0)
+  answerAcceptCountAllTimeRank Int     @default(0)
+  leaderboardRank              Int?
+  leaderboardId                String?
+  leaderboardTitle             String?
 }
 
 /// @view

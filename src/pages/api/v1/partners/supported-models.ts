@@ -4,6 +4,7 @@ import { PartnerEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
+import { chunk } from 'lodash-es';
 
 export const config = {
   api: {
@@ -27,21 +28,25 @@ export default PartnerEndpoint(
     // Clear previous entries
     await dbWrite.runStrategy.deleteMany({ where: { partnerId: partner.id } });
 
-    // Set new entries
-    await dbWrite.$executeRaw`
-      INSERT INTO "RunStrategy" ("modelVersionId", "url", "partnerId")
-      SELECT "modelVersionId", "url", "partnerId"
-      FROM (
-        VALUES ${Prisma.join(
-          results.data.map(
-            ({ modelVersionId, runUrl }) =>
-              Prisma.sql`(${modelVersionId}, ${runUrl}, ${partner.id})`
-          )
-        )}
-      ) t ("modelVersionId", "url", "partnerId")
-      JOIN "ModelVersion" mv ON mv.id = t."modelVersionId"
-      ON CONFLICT DO NOTHING;
-    `;
+    // Split into batches of 1000
+    const batches = chunk(results.data, 1000);
+    for (const batch of batches) {
+      // Set new entries
+      await dbWrite.$executeRaw`
+        INSERT INTO "RunStrategy" ("modelVersionId", "url", "partnerId")
+        SELECT "modelVersionId", "url", "partnerId"
+        FROM (
+          VALUES ${Prisma.join(
+            batch.map(
+              ({ modelVersionId, runUrl }) =>
+                Prisma.sql`(${modelVersionId}, ${runUrl}, ${partner.id})`
+            )
+          )}
+        ) t ("modelVersionId", "url", "partnerId")
+        JOIN "ModelVersion" mv ON mv.id = t."modelVersionId"
+        ON CONFLICT DO NOTHING;
+      `;
+    }
 
     const track = new Tracker(req, res);
     track.partnerEvent({

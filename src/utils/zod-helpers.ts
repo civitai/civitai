@@ -1,4 +1,4 @@
-import { z, ZodNumber } from 'zod';
+import { z, ZodNumber, ZodArray } from 'zod';
 import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 import { sanitizeHtml, santizeHtmlOptions } from '~/utils/html-helpers';
 
@@ -8,16 +8,31 @@ export function numericString<I extends ZodNumber>(schema?: I) {
 }
 
 /** Converts an array of strings to an array of numbers */
-export function numericStringArray() {
-  return z.preprocess((value) => parseNumericStringArray(value), z.number().array());
+export function numericStringArray<I extends ZodArray<ZodNumber>>(schema?: I) {
+  return z.preprocess((value) => parseNumericStringArray(value), schema ?? z.number().array());
+}
+
+export function stringArray<I extends ZodArray<ZodNumber>>(schema?: I) {
+  return z.preprocess(
+    (value) => (!Array.isArray(value) ? [value] : value),
+    schema ?? z.string().array()
+  );
 }
 
 /** Converts a comma delimited string to an array of strings */
-export function stringArray() {
+export function commaDelimitedStringArray() {
   return z.preprocess((value) => {
     const str = String(value);
     return str.split(',');
   }, z.array(z.string()));
+}
+
+export function stringDate() {
+  return z.preprocess((value) => {
+    if (!value) return;
+    if (typeof value === 'string') return new Date(value);
+    if (typeof value === 'number') return new Date(value);
+  }, z.date().optional());
 }
 
 /** Converts the string `true` to a boolean of true and everything else to false */

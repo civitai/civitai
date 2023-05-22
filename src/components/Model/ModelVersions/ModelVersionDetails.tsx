@@ -20,7 +20,7 @@ import { ModelModifier, ModelStatus } from '@prisma/client';
 import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
-import { startCase } from 'lodash';
+import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';

@@ -34,6 +34,7 @@ export const createContext = async ({
     browsingMode,
     acceptableOrigin,
     track,
+    res,
   };
 };
 
@@ -42,6 +43,7 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
   acceptableOrigin: true,
   browsingMode: BrowsingMode.All,
   track: new Tracker(req, res),
+  res,
 });
 
 export type Context = AsyncReturnType<typeof createContext>;
