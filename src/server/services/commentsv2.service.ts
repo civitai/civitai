@@ -100,7 +100,10 @@ export const getCommentsThreadDetails = async ({ entityId, entityType }: Comment
     select: {
       id: true,
       locked: true,
-      comments: { select: commentV2Select },
+      comments: {
+        orderBy: { createdAt: 'asc' },
+        select: commentV2Select,
+      },
     },
   });
 };
