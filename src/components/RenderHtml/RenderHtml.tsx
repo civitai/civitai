@@ -51,6 +51,16 @@ const useStyles = createStyles((theme) => ({
         },
       },
     },
+    'div[data-type="strawPoll"]': {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      height: 480,
+
+      '& > iframe': {
+        flexGrow: 1,
+      },
+    },
   },
 }));
 

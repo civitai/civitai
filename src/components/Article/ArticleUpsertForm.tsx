@@ -151,7 +151,7 @@ export function ArticleUpsertForm({ article }: Props) {
               name="content"
               label="Content"
               editorSize="xl"
-              includeControls={['heading', 'formatting', 'list', 'link', 'media']}
+              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'polls']}
               withAsterisk
             />
           </Stack>

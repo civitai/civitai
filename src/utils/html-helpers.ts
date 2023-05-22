@@ -57,7 +57,7 @@ export function sanitizeHtml(
           );
         }
       : undefined,
-    allowedIframeHostnames: ['www.youtube.com', 'www.instagram.com'],
+    allowedIframeHostnames: ['www.youtube.com', 'www.instagram.com', 'www.strawpoll.com'],
     transformTags: {
       a: sanitize.simpleTransform('a', { rel: 'ugc' }),
     },
