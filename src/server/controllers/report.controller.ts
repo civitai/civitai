@@ -9,6 +9,7 @@ import {
   UpdateReportSchema,
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { trackModActivity } from '~/server/services/moderator.service';
 import {
   createReport,
   getReportById,
@@ -71,6 +72,12 @@ export async function setReportStatusHandler({
         previouslyReviewedCount:
           status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
       },
+    });
+
+    await trackModActivity(ctx.user.id, {
+      entityType: 'report',
+      entityId: id,
+      activity: 'review',
     });
 
     // await ctx.track.report({

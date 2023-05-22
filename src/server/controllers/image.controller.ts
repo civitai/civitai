@@ -41,6 +41,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ImageSort } from '~/server/common/enums';
+import { trackModActivity } from '~/server/services/moderator.service';
 
 export const getModelVersionImagesHandler = ({
   input: { modelVersionId },
@@ -179,9 +180,20 @@ export const getGalleryImagesHandler = async ({
   }
 };
 
-export const moderateImageHandler = async ({ input }: { input: ImageModerationSchema }) => {
+export const moderateImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ImageModerationSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     await moderateImages(input);
+    await trackModActivity(ctx.user.id, {
+      entityType: 'image',
+      entityId: input.ids,
+      activity: 'review',
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

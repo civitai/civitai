@@ -65,6 +65,7 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { ModelSort } from '~/server/common/enums';
 import { getCategoryTags } from '~/server/services/system-cache';
+import { trackModActivity } from '~/server/services/moderator.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -863,6 +864,11 @@ export const declineReviewHandler = async ({
         decliendAt: new Date().toISOString(),
         needsReview: false,
       },
+    });
+    await trackModActivity(ctx.user.id, {
+      entityType: 'Model',
+      entityId: model.id,
+      activity: 'ReviewModel',
     });
 
     return updatedModel;

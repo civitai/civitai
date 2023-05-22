@@ -26,6 +26,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 
 export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTagByNameInput }) => {
   try {
@@ -173,9 +174,20 @@ export const disableTagsHandler = async ({ input }: { input: AdjustTagsSchema })
   }
 };
 
-export const moderateTagsHandler = async ({ input }: { input: ModerateTagsSchema }) => {
+export const moderateTagsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModerateTagsSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     await moderateTags(input);
+    await trackModActivity(ctx.user.id, {
+      entityType: input.entityType,
+      entityId: input.entityIds,
+      activity: 'moderateTag',
+    });
   } catch (error) {
     throw throwDbError(error);
   }

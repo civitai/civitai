@@ -607,6 +607,18 @@ model UserActivity {
   @@index([activity])
 }
 
+model ModActivity {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  activity   String
+  entityType String?
+  entityId   Int?
+  createdAt  DateTime @default(now())
+
+  @@unique([activity, entityType, entityId])
+  @@index([createdAt])
+}
+
 enum ReportReason {
   TOSViolation
   NSFW
