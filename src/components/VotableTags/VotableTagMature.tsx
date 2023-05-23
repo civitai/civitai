@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { TagTarget, TagType } from '@prisma/client';
-import { IconPlus, IconRating18Plus } from '@tabler/icons';
+import { IconPlus, IconRating18Plus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { useState } from 'react';
 import { moderationCategories } from '~/libs/moderation';

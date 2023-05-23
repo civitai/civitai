@@ -25,7 +25,7 @@ import {
   IconClock,
   IconCopy,
   IconPlayerPlay,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';

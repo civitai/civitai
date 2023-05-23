@@ -6,7 +6,7 @@ import {
   IconHeart,
   IconDownload,
   IconChecks,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';

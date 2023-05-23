@@ -1,6 +1,6 @@
 import { Group, useMantineTheme, createStyles, Text } from '@mantine/core';
 import { Dropzone, DropzoneProps, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { IconUpload, IconX, IconPhoto } from '@tabler/icons';
+import { IconUpload, IconX, IconPhoto } from '@tabler/icons-react';
 
 export function ImageDropzone({
   disabled: initialDisabled,

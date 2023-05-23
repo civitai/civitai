@@ -14,7 +14,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { ArticleEngagementType } from '@prisma/client';
-import { IconHeart, IconBookmark, IconFile } from '@tabler/icons';
+import { IconHeart, IconBookmark, IconFile } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';

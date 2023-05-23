@@ -15,7 +15,7 @@ import {
   AspectRatio,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { IconMinus, IconInfoCircle } from '@tabler/icons';
+import { IconMinus, IconInfoCircle } from '@tabler/icons-react';
 import { useState, useRef } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';

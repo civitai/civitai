@@ -11,7 +11,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconListCheck, IconSettings } from '@tabler/icons';
+import { IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Meta } from '~/components/Meta/Meta';

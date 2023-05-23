@@ -18,7 +18,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 import { CSS } from '@dnd-kit/utilities';
-import { IconArrowsMaximize, IconCheck } from '@tabler/icons';
+import { IconArrowsMaximize, IconCheck } from '@tabler/icons-react';
 import { PostEditImage } from '~/server/controllers/post.controller';
 
 export function ReorderImages() {

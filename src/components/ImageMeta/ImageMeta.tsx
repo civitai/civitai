@@ -11,7 +11,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { IconCheck, IconCopy } from '@tabler/icons';
+import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { encodeMetadata } from '~/utils/image-metadata';
 import { ImageGenerationProcess } from '@prisma/client';

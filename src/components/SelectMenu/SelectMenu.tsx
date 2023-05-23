@@ -1,5 +1,5 @@
 import { Group, Menu, Text, createStyles, useMantineTheme, MenuProps } from '@mantine/core';
-import { IconChevronDown } from '@tabler/icons';
+import { IconChevronDown } from '@tabler/icons-react';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;

@@ -1,6 +1,6 @@
 import { ActionIcon, Anchor, Group, InputWrapperProps, Stack } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconTrash } from '@tabler/icons';
+import { IconTrash } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useFieldArray, UseFormReturn } from 'react-hook-form';
 

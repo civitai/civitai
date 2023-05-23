@@ -9,7 +9,7 @@ import {
   IconShoppingCartOff,
   IconUserCheck,
   IconX,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import React from 'react';
 
 export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...props }: Props) => {

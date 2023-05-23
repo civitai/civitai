@@ -17,7 +17,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { TagTarget } from '@prisma/client';
-import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons';
+import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';

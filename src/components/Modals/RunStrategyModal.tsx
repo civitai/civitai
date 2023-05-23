@@ -18,7 +18,13 @@ import {
   Loader,
   ScrollArea,
 } from '@mantine/core';
-import { IconInfoCircle, IconRefresh, IconPhoto, IconArrowBigRight, IconBan } from '@tabler/icons';
+import {
+  IconInfoCircle,
+  IconRefresh,
+  IconPhoto,
+  IconArrowBigRight,
+  IconBan,
+} from '@tabler/icons-react';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 

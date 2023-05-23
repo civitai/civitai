@@ -1,6 +1,6 @@
 import { Badge, BadgeProps, Stack, Text } from '@mantine/core';
 
-import { IconEyeOff } from '@tabler/icons';
+import { IconEyeOff } from '@tabler/icons-react';
 import React from 'react';
 import { useSfwContext } from '~/components/Media/sfwContext';
 import { SfwPlaceholder } from '~/components/Media/SfwPlaceholder';

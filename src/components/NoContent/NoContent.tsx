@@ -1,5 +1,5 @@
 import { Stack, StackProps, Text, ThemeIcon } from '@mantine/core';
-import { IconCloudOff } from '@tabler/icons';
+import { IconCloudOff } from '@tabler/icons-react';
 
 export function NoContent({
   message,

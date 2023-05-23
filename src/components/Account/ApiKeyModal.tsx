@@ -11,7 +11,7 @@ import {
   ActionIcon,
 } from '@mantine/core';
 import { KeyScope } from '@prisma/client';
-import { IconClipboard } from '@tabler/icons';
+import { IconClipboard } from '@tabler/icons-react';
 import { TypeOf } from 'zod';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';

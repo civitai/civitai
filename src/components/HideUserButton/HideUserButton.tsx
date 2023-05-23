@@ -1,5 +1,5 @@
 import { Button, ButtonProps, Menu } from '@mantine/core';
-import { IconUser, IconUserOff } from '@tabler/icons';
+import { IconUser, IconUserOff } from '@tabler/icons-react';
 import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 

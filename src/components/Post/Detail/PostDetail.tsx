@@ -9,7 +9,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconDotsVertical } from '@tabler/icons';
+import { IconDotsVertical, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -29,6 +29,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { daysFromNow } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
 
 export function PostDetail({ postId }: { postId: number }) {
   const router = useRouter();
@@ -53,14 +54,14 @@ export function PostDetail({ postId }: { postId: number }) {
       <TrackView entityId={post.id} entityType="Post" type="PostView" />
       <Container size="sm">
         <Stack>
-          <Group position="apart" noWrap align="flex-start">
-            <Stack spacing="xs">
-              {post.title && (
-                <Title sx={{ lineHeight: 1 }} order={2}>
-                  {post.title}
-                </Title>
-              )}
-              {!!post.tags.length && (
+          <Stack spacing="xs">
+            {post.title && (
+              <Title sx={{ lineHeight: 1 }} order={2}>
+                {post.title}
+              </Title>
+            )}
+            <Group position="apart" noWrap>
+              {!!post.tags.length ? (
                 <Group spacing={4}>
                   {post.tags.map((tag) => (
                     <Badge key={tag.id} color="gray" variant="filled">
@@ -68,49 +69,58 @@ export function PostDetail({ postId }: { postId: number }) {
                     </Badge>
                   ))}
                 </Group>
+              ) : (
+                <div />
               )}
-              <UserAvatar
-                user={post.user}
-                size="md"
-                subTextSize="sm"
-                textSize="md"
-                subText={
-                  <>
-                    {relatedResource && (
-                      <>
-                        Posted to{' '}
-                        <Link
-                          href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
-                          passHref
-                        >
-                          <Anchor>
-                            {relatedResource.modelName} - {relatedResource.modelVersionName}
-                          </Anchor>
-                        </Link>{' '}
-                      </>
-                    )}
-                    {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
-                  </>
-                }
-                withUsername
-                linkToProfile
-                subTextForce
-              />
-            </Stack>
-            <Group spacing="xs">
-              <PostControls postId={post.id} userId={post.user.id}>
-                <ActionIcon variant="outline">
-                  <IconDotsVertical size={16} />
-                </ActionIcon>
-              </PostControls>
-              {router.query.modal && (
-                <NavigateBack url="/posts">
-                  {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
-                </NavigateBack>
-              )}
+              <Group spacing="xs" noWrap>
+                <ShareButton
+                  url={`/posts/${post.id}`}
+                  title={post.title ?? `Post by ${post.user.username}`}
+                >
+                  <ActionIcon color="gray" variant="filled">
+                    <IconShare3 size={16} />
+                  </ActionIcon>
+                </ShareButton>
+                <PostControls postId={post.id} userId={post.user.id}>
+                  <ActionIcon variant="outline">
+                    <IconDotsVertical size={16} />
+                  </ActionIcon>
+                </PostControls>
+                {router.query.modal && (
+                  <NavigateBack url="/posts">
+                    {({ onClick }) => <CloseButton onClick={onClick} size="lg" />}
+                  </NavigateBack>
+                )}
+              </Group>
             </Group>
-          </Group>
-
+            <UserAvatar
+              user={post.user}
+              size="md"
+              subTextSize="sm"
+              textSize="md"
+              subText={
+                <>
+                  {relatedResource && (
+                    <>
+                      Posted to{' '}
+                      <Link
+                        href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
+                        passHref
+                      >
+                        <Anchor>
+                          {relatedResource.modelName} - {relatedResource.modelVersionName}
+                        </Anchor>
+                      </Link>{' '}
+                    </>
+                  )}
+                  {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
+                </>
+              }
+              withUsername
+              linkToProfile
+              subTextForce
+            />
+          </Stack>
           <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
           <Stack spacing="xl" id="comments">
             {post.detail && <RenderHtml html={post.detail} withMentions />}

@@ -1,5 +1,5 @@
 import { Stack, Title, Text, Center, createStyles } from '@mantine/core';
-import { IconCirclePlus, IconClock } from '@tabler/icons';
+import { IconCirclePlus, IconClock } from '@tabler/icons-react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 

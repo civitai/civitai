@@ -29,14 +29,14 @@ import {
   IconMoonStars,
   IconPalette,
   IconPlus,
-  IconQuestionCircle,
+  IconInfoSquareRounded,
   IconSettings,
   IconSun,
   IconUpload,
   IconUser,
   IconUserCircle,
   IconUsers,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -240,7 +240,7 @@ export function AppHeader() {
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconQuestionCircle stroke={1.5} />
+            <IconInfoSquareRounded stroke={1.5} />
             Questions{' '}
             <Badge color="yellow" size="xs">
               Beta

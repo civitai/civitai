@@ -1,7 +1,7 @@
 import { ActionIcon, Center, Group, GroupProps, Loader, MantineProvider } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { TagType } from '@prisma/client';
-import { IconChevronDown, IconChevronUp } from '@tabler/icons';
+import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import produce from 'immer';
 import { useMemo } from 'react';
 import { useVotableTagStore, VotableTag } from '~/components/VotableTags/VotableTag';

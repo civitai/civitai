@@ -10,7 +10,7 @@ import {
   Box,
   Text,
 } from '@mantine/core';
-import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons';
+import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';

@@ -13,7 +13,7 @@ import {
   Loader,
 } from '@mantine/core';
 import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
-import { IconPlus, IconStar, IconX } from '@tabler/icons';
+import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
 import { useEffect, useState, useMemo } from 'react';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { showErrorNotification } from '~/utils/notifications';

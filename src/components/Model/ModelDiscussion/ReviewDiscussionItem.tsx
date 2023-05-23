@@ -13,7 +13,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { ReviewReactions } from '@prisma/client';
-import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons';
+import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 

@@ -1,6 +1,6 @@
 import { Card, Stack, Group, Rating, Badge, Center, Text, Button, ScrollArea } from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { IconPhoto, IconMessageCircle2 } from '@tabler/icons';
+import { IconPhoto, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewInfiniteModel } from '~/types/router';

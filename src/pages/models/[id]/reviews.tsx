@@ -20,7 +20,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { IconLock, IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons';
+import { IconLock, IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons-react';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';

@@ -8,7 +8,7 @@ import {
   Text,
   useMantineTheme,
 } from '@mantine/core';
-import { IconDownload, IconHeart, IconUpload, IconUsers, IconStar } from '@tabler/icons';
+import { IconDownload, IconHeart, IconUpload, IconUsers, IconStar } from '@tabler/icons-react';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';

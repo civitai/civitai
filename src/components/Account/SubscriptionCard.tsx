@@ -1,5 +1,5 @@
 import { Button, Card, Stack, Center, Loader, Title, Text, Group, Code } from '@mantine/core';
-import { IconRotateClockwise, IconSettings } from '@tabler/icons';
+import { IconRotateClockwise, IconSettings } from '@tabler/icons-react';
 import { upperFirst } from 'lodash-es';
 import {
   DescriptionTable,

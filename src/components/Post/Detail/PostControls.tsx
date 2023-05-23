@@ -1,5 +1,5 @@
 import { ActionIcon, Menu, useMantineTheme } from '@mantine/core';
-import { IconDotsVertical, IconTrash, IconEdit } from '@tabler/icons';
+import { IconDotsVertical, IconTrash, IconEdit } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';

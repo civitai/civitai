@@ -3,7 +3,7 @@ import {
   RichTextEditorControlProps,
   useRichTextEditorContext,
 } from '@mantine/tiptap';
-import { IconPhoto } from '@tabler/icons';
+import { IconPhoto } from '@tabler/icons-react';
 import { useRef } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';

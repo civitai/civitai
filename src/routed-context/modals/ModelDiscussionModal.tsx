@@ -10,7 +10,7 @@ import {
   LoadingOverlay,
   Title,
 } from '@mantine/core';
-import { IconExclamationCircle } from '@tabler/icons';
+import { IconExclamationCircle } from '@tabler/icons-react';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 

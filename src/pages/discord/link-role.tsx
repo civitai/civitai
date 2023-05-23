@@ -11,7 +11,7 @@ import {
   Button,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons';
+import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';

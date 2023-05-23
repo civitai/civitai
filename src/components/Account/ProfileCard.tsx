@@ -18,7 +18,7 @@ import {
   Box,
   Popover,
 } from '@mantine/core';
-import { IconInfoCircle, IconRosette } from '@tabler/icons';
+import { IconInfoCircle, IconRosette } from '@tabler/icons-react';
 import { useEffect } from 'react';
 import { z } from 'zod';
 

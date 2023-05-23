@@ -1,5 +1,5 @@
 import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
-import { IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons';
+import { IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import Link from 'next/link';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';

@@ -38,7 +38,7 @@ import {
   IconTrash,
   IconUpload,
   IconUsers,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 

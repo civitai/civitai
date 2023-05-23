@@ -1,5 +1,5 @@
 import { ActionIcon, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
-import { IconFilterOff } from '@tabler/icons';
+import { IconFilterOff } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 

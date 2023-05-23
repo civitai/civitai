@@ -25,7 +25,7 @@ import {
   IconPencil,
   IconPlus,
   IconX,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import Router, { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useCallback, useContext, useState } from 'react';
 import { create } from 'zustand';

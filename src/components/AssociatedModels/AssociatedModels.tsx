@@ -19,7 +19,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { ModelCategoryCard } from '~/components/Model/Categories/ModelCategoryCard';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { IconRocketOff } from '@tabler/icons';
+import { IconRocketOff } from '@tabler/icons-react';
 
 export function AssociatedModels({
   fromId,

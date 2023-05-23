@@ -1,6 +1,6 @@
 import { Button, Group, Stack, useMantineTheme } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconArrowLeft, IconChevronLeft } from '@tabler/icons';
+import { IconArrowLeft, IconChevronLeft } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { PeriodFilter, SortFilter } from '~/components/Filters';

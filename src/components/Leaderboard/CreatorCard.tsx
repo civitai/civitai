@@ -1,6 +1,6 @@
 import { Anchor, createStyles, Grid, Group, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons';
+import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';

@@ -10,7 +10,7 @@ import {
   Chip,
   Badge,
 } from '@mantine/core';
-import { IconRating18Plus } from '@tabler/icons';
+import { IconRating18Plus } from '@tabler/icons-react';
 import { debounce } from 'lodash-es';
 import React from 'react';
 import { useState, useMemo } from 'react';

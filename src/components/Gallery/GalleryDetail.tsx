@@ -24,7 +24,7 @@ import {
   IconTrash,
   IconBan,
   IconLock,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import Router, { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 

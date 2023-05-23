@@ -1,6 +1,6 @@
 import { ActionIcon, Menu } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconBadge } from '@tabler/icons';
+import { IconBadge } from '@tabler/icons-react';
 import { useMemo } from 'react';
 
 export function ModerationNav() {

@@ -1,5 +1,5 @@
 import { ActionIcon, Button, Group, Popover, Stack, Title } from '@mantine/core';
-import { IconExclamationMark } from '@tabler/icons';
+import { IconExclamationMark } from '@tabler/icons-react';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';

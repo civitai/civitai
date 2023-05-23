@@ -1,5 +1,5 @@
 import { ActionIcon, Box, Button, createStyles, Group, ScrollArea } from '@mantine/core';
-import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
+import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
 
 import { useModelQueryParams } from '~/components/Model/model.utils';

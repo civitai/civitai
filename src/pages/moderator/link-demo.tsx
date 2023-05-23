@@ -15,7 +15,7 @@ import {
   Tooltip,
   Loader,
 } from '@mantine/core';
-import { IconCheck, IconCopy, IconPlayerPlay, IconVideo } from '@tabler/icons';
+import { IconCheck, IconCopy, IconPlayerPlay, IconVideo } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink, useCivitaiLinkStore } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';

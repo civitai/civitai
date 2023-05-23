@@ -7,7 +7,7 @@ import { ImageSort } from '~/server/common/enums';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { useInView } from 'react-intersection-observer';
-import { IconCloudOff } from '@tabler/icons';
+import { IconCloudOff } from '@tabler/icons-react';
 import { MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { IsClient } from '~/components/IsClient/IsClient';

@@ -1,6 +1,6 @@
 import { Badge, Center, BadgeProps, ButtonProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
-import { IconCheck, IconX } from '@tabler/icons';
+import { IconCheck, IconX } from '@tabler/icons-react';
 import { createContext, useContext, useState } from 'react';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { trpc } from '~/utils/trpc';

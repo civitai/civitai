@@ -1,5 +1,5 @@
 import { Center, Stack, Text, ThemeIcon, Image } from '@mantine/core';
-import { IconHourglass } from '@tabler/icons';
+import { IconHourglass } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 
 export const MaintenanceMode = () => {

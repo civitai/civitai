@@ -1,5 +1,5 @@
 import { useMantineTheme, Badge, Center } from '@mantine/core';
-import { IconHeart } from '@tabler/icons';
+import { IconHeart } from '@tabler/icons-react';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';

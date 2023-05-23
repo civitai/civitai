@@ -1,5 +1,5 @@
 import { Alert, Group, Stack, ThemeIcon, Text } from '@mantine/core';
-import { IconMail } from '@tabler/icons';
+import { IconMail } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useState } from 'react';
 import { z } from 'zod';

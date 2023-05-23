@@ -29,7 +29,7 @@ import {
   IconTargetArrow,
   IconTargetOff,
   IconTrophy,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';

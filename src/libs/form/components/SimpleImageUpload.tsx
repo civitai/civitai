@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
-import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons';
+import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';

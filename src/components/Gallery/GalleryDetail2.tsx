@@ -23,7 +23,7 @@ import {
   IconExternalLink,
   IconPlus,
   IconAlertTriangle,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { GalleryCarousel2 } from './GalleryCarousel2';

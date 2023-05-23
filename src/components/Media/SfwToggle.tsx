@@ -1,7 +1,7 @@
 import { Popover, Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { IconLock } from '@tabler/icons';
+import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

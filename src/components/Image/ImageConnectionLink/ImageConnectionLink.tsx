@@ -1,5 +1,5 @@
 import { Anchor, Group, Text } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons';
+import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
 
 export function ImageConnectionLink({

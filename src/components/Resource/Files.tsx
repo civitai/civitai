@@ -23,7 +23,7 @@ import {
   IconRefresh,
   IconTrash,
   IconX,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
 import { useRef, useState } from 'react';

@@ -1,6 +1,6 @@
 import { createStyles, UnstyledButton, Center } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { IconChevronLeft, IconChevronRight } from '@tabler/icons';
+import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useGalleryDetailContext } from './GalleryDetailProvider';

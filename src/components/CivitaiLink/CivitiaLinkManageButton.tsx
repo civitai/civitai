@@ -1,6 +1,6 @@
 import { Box, DefaultMantineColor, Loader, Text, RingProgress } from '@mantine/core';
 import { useHover } from '@mantine/hooks';
-import { IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons';
+import { IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons-react';
 import {
   CivitaiLinkResourceManager,
   CivitaiLinkResourceManagerProps,

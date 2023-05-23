@@ -37,7 +37,7 @@ import {
   IconTagOff,
   IconTrash,
   IconX,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { GetServerSideProps } from 'next';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';

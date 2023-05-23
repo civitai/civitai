@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Button, Card, Center, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
-import { IconGripVertical } from '@tabler/icons';
+import { IconGripVertical } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useState } from 'react';
 

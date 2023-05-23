@@ -1,5 +1,5 @@
 import { Center, Stack, Alert, Text, Divider } from '@mantine/core';
-import { IconLock } from '@tabler/icons';
+import { IconLock } from '@tabler/icons-react';
 
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditImage } from '~/server/controllers/post.controller';

@@ -20,7 +20,7 @@ import {
   IconChevronRight,
   IconFilter,
   IconFilterOff,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { deleteCookie } from 'cookies-next';
 import { useRouter } from 'next/router';
 import { useRef, useState, useEffect } from 'react';

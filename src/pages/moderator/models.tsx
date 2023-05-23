@@ -15,7 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
-import { IconExternalLink } from '@tabler/icons';
+import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 
