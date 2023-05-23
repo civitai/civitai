@@ -40,7 +40,7 @@ function Home() {
   const storedView = useFiltersContext((state) => state.models.view);
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
   const { username, favorites, hidden, query } = queryFilters;
-  const periodMode = query ? ('stats' as PeriodMode) : undefined;
+  const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
   const canToggleView = !username && !favorites && !hidden;
   const view = canToggleView ? queryView ?? storedView : 'feed';
