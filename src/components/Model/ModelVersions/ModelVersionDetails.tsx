@@ -1,5 +1,6 @@
 import {
   Accordion,
+  ActionIcon,
   Anchor,
   Badge,
   Box,
@@ -17,7 +18,13 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelModifier, ModelStatus } from '@prisma/client';
-import { IconDownload, IconHeart, IconLicense, IconMessageCircle2 } from '@tabler/icons';
+import {
+  IconDownload,
+  IconHeart,
+  IconLicense,
+  IconMessageCircle2,
+  IconShare3,
+} from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash-es';
@@ -59,6 +66,7 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
 
 export function ModelVersionDetails({
   model,
@@ -303,101 +311,118 @@ export function ModelVersionDetails({
               Publish this version
             </Button>
           ) : (
-            <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-              {version.canDownload ? (
-                displayCivitaiLink ? (
-                  <Stack sx={{ flex: 1 }} spacing={4}>
-                    <CivitiaLinkManageButton
-                      modelId={model.id}
-                      modelVersionId={version.id}
-                      modelName={model.name}
-                      modelType={model.type}
-                      hashes={version.hashes}
-                      noTooltip
-                    >
-                      {({ color, onClick, ref, icon, label }) => (
-                        <Button
-                          ref={ref}
-                          color={color}
-                          onClick={onClick}
-                          leftIcon={icon}
-                          disabled={!primaryFile}
-                        >
-                          {label}
-                        </Button>
-                      )}
-                    </CivitiaLinkManageButton>
-                    {primaryFileDetails}
-                  </Stack>
+            <Stack spacing={4}>
+              <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+                {version.canDownload ? (
+                  displayCivitaiLink ? (
+                    <Stack sx={{ flex: 1 }} spacing={4}>
+                      <CivitiaLinkManageButton
+                        modelId={model.id}
+                        modelVersionId={version.id}
+                        modelName={model.name}
+                        modelType={model.type}
+                        hashes={version.hashes}
+                        noTooltip
+                      >
+                        {({ color, onClick, ref, icon, label }) => (
+                          <Button
+                            ref={ref}
+                            color={color}
+                            onClick={onClick}
+                            leftIcon={icon}
+                            disabled={!primaryFile}
+                          >
+                            {label}
+                          </Button>
+                        )}
+                      </CivitiaLinkManageButton>
+                      {/* {primaryFileDetails} */}
+                    </Stack>
+                  ) : (
+                    <Stack sx={{ flex: 1 }} spacing={4}>
+                      <Button
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: version.id,
+                          primary: true,
+                        })}
+                        leftIcon={<IconDownload size={16} />}
+                        disabled={!primaryFile || archived}
+                        download
+                      >
+                        <Text align="center">
+                          {primaryFile
+                            ? `Download (${formatKBytes(primaryFile.sizeKB)})`
+                            : 'No file'}
+                        </Text>
+                      </Button>
+                      {/* {primaryFileDetails} */}
+                    </Stack>
+                  )
                 ) : (
                   <Stack sx={{ flex: 1 }} spacing={4}>
-                    <Button
-                      component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: version.id,
-                        primary: true,
-                      })}
-                      leftIcon={<IconDownload size={16} />}
-                      disabled={!primaryFile || archived}
-                      download
-                    >
-                      <Text align="center">
-                        {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
-                      </Text>
-                    </Button>
-                    {primaryFileDetails}
+                    <JoinPopover>
+                      <Button leftIcon={<IconDownload size={16} />} disabled={archived}>
+                        <Text align="center">
+                          {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
+                        </Text>
+                      </Button>
+                    </JoinPopover>
+                    {/* {primaryFileDetails} */}
                   </Stack>
-                )
-              ) : (
-                <Stack sx={{ flex: 1 }} spacing={4}>
-                  <JoinPopover>
-                    <Button leftIcon={<IconDownload size={16} />} disabled={archived}>
-                      <Text align="center">
-                        {`Download (${formatKBytes(primaryFile?.sizeKB ?? 0)})`}
-                      </Text>
-                    </Button>
-                  </JoinPopover>
-                  {primaryFileDetails}
-                </Stack>
-              )}
-              {displayCivitaiLink ? (
-                version.canDownload ? (
-                  <Menu position="bottom-end">
-                    <Menu.Target>
+                )}
+                {displayCivitaiLink ? (
+                  version.canDownload ? (
+                    <Menu position="bottom-end">
+                      <Menu.Target>
+                        <Tooltip label="Download options" withArrow>
+                          <Button px={0} w={36} variant="light" disabled={archived}>
+                            <IconDownload />
+                          </Button>
+                        </Tooltip>
+                      </Menu.Target>
+                      <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                    </Menu>
+                  ) : (
+                    <JoinPopover>
                       <Tooltip label="Download options" withArrow>
                         <Button px={0} w={36} variant="light" disabled={archived}>
                           <IconDownload />
                         </Button>
                       </Tooltip>
-                    </Menu.Target>
-                    <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                  </Menu>
+                    </JoinPopover>
+                  )
                 ) : (
-                  <JoinPopover>
-                    <Tooltip label="Download options" withArrow>
-                      <Button px={0} w={36} variant="light" disabled={archived}>
-                        <IconDownload />
+                  <RunButton modelVersionId={version.id} />
+                )}
+                <Tooltip label="Share" position="top" withArrow>
+                  <div>
+                    <ShareButton url={router.asPath} title={model.name}>
+                      <Button
+                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                        color="gray"
+                      >
+                        <IconShare3 />
                       </Button>
-                    </Tooltip>
-                  </JoinPopover>
-                )
-              ) : (
-                <RunButton modelVersionId={version.id} />
-              )}
-              <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                <div>
-                  <LoginRedirect reason="favorite-model">
-                    <Button
-                      onClick={onFavoriteClick}
-                      color={isFavorite ? 'red' : 'gray'}
-                      sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                    >
-                      <IconHeart color="#fff" />
-                    </Button>
-                  </LoginRedirect>
-                </div>
-              </Tooltip>
-            </Group>
+                    </ShareButton>
+                  </div>
+                </Tooltip>
+                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                  <div>
+                    <LoginRedirect reason="favorite-model">
+                      <Button
+                        onClick={onFavoriteClick}
+                        color={isFavorite ? 'red' : 'gray'}
+                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                      >
+                        <IconHeart color="#fff" />
+                      </Button>
+                    </LoginRedirect>
+                  </div>
+                </Tooltip>
+              </Group>
+              {primaryFileDetails}
+            </Stack>
           )}
           <EarlyAccessAlert
             versionId={version.id}

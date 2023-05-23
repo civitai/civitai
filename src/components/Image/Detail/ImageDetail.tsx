@@ -20,6 +20,7 @@ import {
   IconDotsVertical,
   IconAlertTriangle,
 } from '@tabler/icons';
+import { IconShare3 } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
@@ -93,7 +94,7 @@ export function ImageDetail() {
                     <Group spacing={4}>
                       <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
                         <ActionIcon size="lg">
-                          <IconShare />
+                          <IconShare3 />
                         </ActionIcon>
                       </ShareButton>
                       <ReportImageButton imageId={image.id}>
