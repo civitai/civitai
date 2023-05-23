@@ -1,19 +1,17 @@
-import { Anchor, createStyles, Grid, Group, Paper, Stack, Text } from '@mantine/core';
+import { createStyles, Grid, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
 import { InView } from 'react-intersection-observer';
 import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { LeaderboardGetModel } from '~/types/router';
 
 const linkQuery: Record<string, string> = {
   overall: '/models',
   overall_nsfw: '/models',
+  new_creators: '/models',
   writers: '/articles',
   'images-overall': '/images',
   'images-nsfw': '/images',
@@ -27,7 +25,7 @@ const linkQuery: Record<string, string> = {
   celebrity: '/models?tag=celebrity',
   buildings: '/models?tag=buildings',
   backgrounds: '/models?tag=background',
-  car: '/models?tag=car',
+  car: '/models?tag=vehicle',
 };
 
 export function CreatorCard({
