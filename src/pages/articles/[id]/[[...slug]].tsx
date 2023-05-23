@@ -1,17 +1,20 @@
 import {
   Badge,
   Box,
+  Card,
   Container,
   Divider,
   Group,
+  SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   createStyles,
   useMantineTheme,
 } from '@mantine/core';
 import { ArticleEngagementType } from '@prisma/client';
-import { IconHeart, IconBookmark } from '@tabler/icons';
+import { IconHeart, IconBookmark, IconFile } from '@tabler/icons';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
@@ -20,6 +23,7 @@ import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
+import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import { Collection } from '~/components/Collection/Collection';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -186,6 +190,23 @@ export default function ArticleDetailsPage({
             <EdgeImage src={article.cover} width={1320} />
           </Box>
           <RenderHtml html={article.content} />
+          {article.attachments.length > 0 && (
+            <>
+              <Divider />
+              <Title order={2}>Attachments</Title>
+              <SimpleGrid
+                cols={4}
+                breakpoints={[
+                  { maxWidth: 'md', cols: 2 },
+                  { maxWidth: 'sm', cols: 1 },
+                ]}
+              >
+                {article.attachments.map((attachment) => (
+                  <AttachmentCard key={attachment.id} {...attachment} />
+                ))}
+              </SimpleGrid>
+            </>
+          )}
           <Divider />
           <Group position="apart" align="flex-start">
             <Reactions

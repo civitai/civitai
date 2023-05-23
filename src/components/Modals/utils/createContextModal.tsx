@@ -21,7 +21,10 @@ export function createContextModal<T extends Record<string, unknown>>({
   ...modalProps
 }: CreateContextModalProps<T>) {
   const openModal = (innerProps: T) => {
-    if (!location.href.includes('#')) history.pushState(history.state, '', `${location.href}#`);
+    if (!location.href.includes('#')) {
+      const newUrl = ` ${location.href}#`;
+      history.pushState({ ...history.state, as: newUrl, url: newUrl }, '', `${location.href}#`);
+    }
     openContextModal({
       modal: name,
       ...modalProps,

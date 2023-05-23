@@ -40,7 +40,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 
 export function ImageDetail() {
   const { classes, cx } = useStyles();
