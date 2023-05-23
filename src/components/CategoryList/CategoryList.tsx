@@ -101,6 +101,7 @@ export function CategoryList<Item>({
                     render={RenderComponent}
                     itemId={itemId}
                     empty={empty?.({ id: category.id, name: category.name })}
+                    maxRows={3}
                   />
                 ) : (
                   <MasonryCarousel

@@ -1,7 +1,7 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { createStyles } from '@mantine/core';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 
@@ -10,6 +10,7 @@ type Props<TData> = {
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   itemId?: (data: TData) => string | number;
   empty?: React.ReactNode;
+  maxRows?: number;
 };
 
 export function UniformGrid<TData>({
@@ -17,6 +18,7 @@ export function UniformGrid<TData>({
   render: RenderComponent,
   itemId,
   empty = null,
+  maxRows,
 }: Props<TData>) {
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } =
     useMasonryContainerContext();
@@ -29,9 +31,16 @@ export function UniformGrid<TData>({
     maxSingleColumnWidth,
   });
 
-  return data.length ? (
+  const items = useMemo(() => {
+    if (!maxRows) return data;
+    const wholeRows = Math.floor(data.length / columnCount);
+    const rows = maxRows > wholeRows ? wholeRows : maxRows;
+    return data.slice(0, rows * columnCount);
+  }, [columnCount, data, maxRows]);
+
+  return items.length ? (
     <div className={classes.grid}>
-      {data.map((item, index) => {
+      {items.map((item, index) => {
         const key = itemId?.(item) ?? index;
         return (
           <div key={key} id={key.toString()}>
