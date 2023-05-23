@@ -1417,7 +1417,7 @@ export const getImagesByCategory = async ({
       WHERE toi."tagId" = ${c.id}
       AND ${Prisma.join(AND, ' AND ')}
       ORDER BY ${Prisma.raw(orderBy)}
-      LIMIT ${Math.ceil((input.imageLimit ?? 12) * 1.25)}
+      LIMIT ${input.imageLimit ?? 21}
     )`;
   });
 

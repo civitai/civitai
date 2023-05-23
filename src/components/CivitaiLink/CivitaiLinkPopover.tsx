@@ -36,6 +36,7 @@ import {
   IconCopy,
   IconAlertTriangle,
   IconNetworkOff,
+  IconScreenShare,
 } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -363,7 +364,7 @@ function LinkButton() {
     <Box sx={{ position: 'relative' }}>
       <ActionIcon>
         <Indicator color={color} showZero={!!color} dot={!!color}>
-          <IconLink />
+          <IconScreenShare />
         </Indicator>
       </ActionIcon>
       {activityProgress && activityProgress > 0 && activityProgress < 100 && (

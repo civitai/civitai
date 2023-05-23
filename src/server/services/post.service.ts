@@ -478,7 +478,7 @@ export const getPostsByCategory = async ({
       WHERE top."tagId" = ${c.id}
       AND ${Prisma.join(AND, ' AND ')}
       ORDER BY ${Prisma.raw(orderBy)}
-      LIMIT ${Math.ceil((input.postLimit ?? 12) * 1.25)}
+      LIMIT ${input.postLimit ?? 21}
     )`;
   });
 

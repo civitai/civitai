@@ -746,7 +746,7 @@ export const getModelsByCategory = async ({
   const items = await Promise.all(
     categories.map((c) =>
       getModels({
-        input: { ...input, tagname: c.name, take: Math.ceil((input.modelLimit ?? 12) * 1.25) },
+        input: { ...input, tagname: c.name, take: input.modelLimit ?? 21 },
         user,
         // Can we make this into a select schema? (low pri)
         select: {
