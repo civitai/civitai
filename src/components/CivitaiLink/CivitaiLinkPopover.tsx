@@ -23,7 +23,9 @@ import {
   useMantineTheme,
   List,
   Box,
+  Badge,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import {
   IconDownload,
   IconLink,
@@ -37,6 +39,9 @@ import {
   IconAlertTriangle,
   IconNetworkOff,
   IconScreenShare,
+  IconHeart,
+  IconQuestionMark,
+  IconVideo,
 } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -66,9 +71,59 @@ export function CivitaiLinkPopover() {
   );
 }
 
+function AboutCivitaiLink() {
+  return (
+    <>
+      <AlertWithIcon
+        icon={<IconAlertTriangle size={16} />}
+        iconColor="yellow"
+        radius={0}
+        size="md"
+        color="yellow"
+      >
+        This feature is currently in early access and only available to Supporters.
+      </AlertWithIcon>
+      <Stack py="sm" px="lg" spacing={4}>
+        <Center p="md" pb={0}>
+          <CivitaiLinkSvg />
+        </Center>
+        <Text my="xs">
+          Interact with your{' '}
+          <Text
+            component="a"
+            variant="link"
+            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
+            target="_blank"
+          >
+            Automatic1111 Stable Diffusion
+          </Text>{' '}
+          instance in realtime from Civitai
+        </Text>
+      </Stack>
+      <Divider />
+      <Group spacing={0} grow>
+        <Button
+          leftIcon={<IconVideo size={18} />}
+          radius={0}
+          component="a"
+          href="/v/civitai-link-intro"
+          variant="light"
+        >
+          Video Demo
+        </Button>
+        <Button rightIcon={<IconHeart size={18} />} radius={0} component={NextLink} href="/pricing">
+          Become a Supporter
+        </Button>
+      </Group>
+    </>
+  );
+}
+
 function LinkDropdown() {
   const [manage, setManage] = useState(false);
   const { instance, instances, status, error } = useCivitaiLink();
+  const features = useFeatureFlags();
+  const notAllowed = !features.civitaiLink;
 
   const handleManageClick = () => {
     setManage((o) => !o);
@@ -80,9 +135,14 @@ function LinkDropdown() {
     <Paper style={{ overflow: 'hidden' }}>
       <Stack spacing={0} p="xs">
         <Group position="apart" noWrap>
-          <Title order={4} size="sm">
-            Civitai Link
-          </Title>
+          <Group spacing="xs">
+            <Title order={4} size="sm">
+              Civitai Link
+            </Title>
+            <Badge size="xs" color="yellow">
+              alpha
+            </Badge>
+          </Group>
           {canToggleManageInstances && (
             <Tooltip label="Manage instances">
               <ActionIcon onClick={handleManageClick}>
@@ -100,6 +160,8 @@ function LinkDropdown() {
       <Divider />
       {manage ? (
         <InstancesManager />
+      ) : notAllowed ? (
+        <AboutCivitaiLink />
       ) : (
         {
           'not-connected': <NotConnected error={error} />,
@@ -356,8 +418,6 @@ function LinkButton() {
   // only show the connected indicator if there are any instances
   const { status } = useCivitaiLink();
   const activityProgress = useCivitaiLinkStore((state) => state.activityProgress);
-  const features = useFeatureFlags();
-  if (!features.civitaiLink) return null;
   const color = civitaiLinkStatusColors[status];
 
   return (
