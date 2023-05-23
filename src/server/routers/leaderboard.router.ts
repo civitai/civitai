@@ -11,7 +11,7 @@ import {
 } from '~/server/services/leaderboard.service';
 import { publicProcedure, router } from '~/server/trpc';
 
-const expireAt = () => dayjs().add(1, 'day').startOf('day').toDate();
+const expireAt = () => dayjs().add(1, 'day').startOf('day').add(1, 'minute').toDate();
 
 export const leaderboardRouter = router({
   getLeaderboards: publicProcedure.query(({ ctx }) =>

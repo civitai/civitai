@@ -43,7 +43,7 @@ export function IconBadge({ icon, children, tooltip, href, ...props }: IconBadge
 
 type IconBadgeProps = {
   icon: React.ReactNode;
-  tooltip?: string;
+  tooltip?: React.ReactNode;
   onClick?: React.MouseEventHandler<any> | undefined; //eslint-disable-line
   href?: string;
 } & Omit<BadgeProps, 'leftSection'>;

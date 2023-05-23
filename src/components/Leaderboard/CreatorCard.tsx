@@ -1,6 +1,6 @@
 import { Anchor, createStyles, Grid, Group, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCrown } from '@tabler/icons';
+import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
@@ -31,7 +31,7 @@ const linkQuery: Record<string, string> = {
 };
 
 export function CreatorCard({
-  data: { position, user, metrics, score },
+  data: { position, user, metrics, score, delta },
   index,
 }: {
   data: LeaderboardGetModel;
@@ -68,37 +68,39 @@ export function CreatorCard({
                 {/* {inView && ( */}
                 <Grid align="center">
                   <Grid.Col span={2}>
-                    <Group align="center" position="center" sx={{ position: 'relative' }}>
-                      {isTop3 ? (
+                    <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
+                      {isTop3 && (
                         <IconCrown
                           size={64}
                           color={iconColor}
-                          style={{ fill: iconColor, opacity: 0.4 }}
+                          className={classes.crown}
+                          style={{ fill: iconColor }}
                         />
-                      ) : null}
-                      <Text
-                        size="lg"
-                        weight="bold"
-                        sx={
-                          isTop3
-                            ? {
-                                position: 'absolute',
-                                top: '55%', // Slight vertical offset to center in icon
-                                left: '50%',
-                                transform: 'translate(-50%, -50%)',
-                                lineHeight: 1,
-                              }
-                            : undefined
-                        }
-                      >
+                      )}
+                      <Text size="lg" weight="bold">
                         {position}
                       </Text>
-                    </Group>
+                      {delta && delta.position !== 0 && (
+                        <Text
+                          size="xs"
+                          weight="bold"
+                          color={delta.position > 0 ? 'red' : 'green'}
+                          className={classes.delta}
+                        >
+                          {delta.position > 0 ? (
+                            <IconChevronDown strokeWidth={4} size={14} />
+                          ) : (
+                            <IconChevronUp strokeWidth={4} size={14} />
+                          )}
+                          {Math.abs(delta.position)}
+                        </Text>
+                      )}
+                    </Stack>
                   </Grid.Col>
                   <Grid.Col span={10}>
                     <Stack spacing={8}>
                       <UserAvatar user={user} textSize="lg" size="md" withUsername />
-                      <LeaderboardMetrics score={score} metrics={metrics} />
+                      <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
                     </Stack>
                   </Grid.Col>
                 </Grid>
@@ -125,5 +127,18 @@ const useStyles = createStyles((theme) => ({
       backgroundColor:
         theme.colorScheme === 'dark' ? 'rgba(255,255,255, 0.03)' : 'rgba(0,0,0, 0.01)',
     },
+  },
+  crown: {
+    position: 'absolute',
+    top: '40%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    opacity: 0.4,
+  },
+  delta: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: -25,
   },
 }));

@@ -141,9 +141,11 @@ const metricTypes: Record<
 export function LeaderboardMetrics({
   metrics,
   score,
+  delta,
 }: {
   metrics: { type: string; value: number }[];
   score: number;
+  delta?: number;
 }) {
   const { theme } = useStyles();
 
@@ -154,7 +156,17 @@ export function LeaderboardMetrics({
         color="gray"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         icon={<IconTrophy {...iconProps} />}
-        tooltip="Score"
+        tooltip={
+          <Stack spacing={0} align="center">
+            {delta && (
+              <Text size="xs" color={delta > 0 ? 'green' : 'red'}>
+                {delta > 0 ? '+' : ''}
+                {numberWithCommas(delta)}
+              </Text>
+            )}
+            <>Score</>
+          </Stack>
+        }
       >
         {numberWithCommas(score)}
       </IconBadge>
