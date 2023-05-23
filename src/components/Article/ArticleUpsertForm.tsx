@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { TagTarget } from '@prisma/client';
-import { IconQuestionMark } from '@tabler/icons';
+import { IconQuestionMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState, useEffect, useRef } from 'react';
 import { Subscription } from 'react-hook-form/dist/utils/createSubject';

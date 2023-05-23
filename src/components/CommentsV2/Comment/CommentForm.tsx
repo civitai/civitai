@@ -7,7 +7,7 @@ import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { SimpleUser } from '~/server/selectors/user.selector';
-import { IconLock } from '@tabler/icons';
+import { IconLock } from '@tabler/icons-react';
 import { useCommentsContext, useNewCommentStore } from '~/components/CommentsV2/CommentsProvider';
 import { removeDuplicates } from '~/utils/array-helpers';
 

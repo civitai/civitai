@@ -16,7 +16,7 @@ import {
   Title,
   Text,
 } from '@mantine/core';
-import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons';
+import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons-react';
 import { deleteCookie } from 'cookies-next';
 import Link from 'next/link';
 import router, { useRouter } from 'next/router';

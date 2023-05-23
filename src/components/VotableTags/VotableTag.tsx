@@ -4,7 +4,7 @@ import { immer } from 'zustand/middleware/immer';
 import { ActionIcon, Badge, Group, useMantineTheme } from '@mantine/core';
 import { useCallback, useRef } from 'react';
 import { TagType, NsfwLevel } from '@prisma/client';
-import { IconArrowBigDown, IconArrowBigTop, IconFlag, IconX } from '@tabler/icons';
+import { IconArrowBigDown, IconArrowBigUp, IconFlag, IconX } from '@tabler/icons-react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getTagDisplayName } from '~/libs/tags';
 import Link from 'next/link';
@@ -159,7 +159,7 @@ export function VotableTag({
                 onClick={handleUpvote}
                 color={vote === 1 ? voteColor : undefined}
               >
-                <IconArrowBigTop
+                <IconArrowBigUp
                   strokeWidth={0}
                   fill={vote === 1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
                   size="1rem"

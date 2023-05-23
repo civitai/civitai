@@ -24,7 +24,7 @@ import {
   SelectItem,
 } from '@mantine/core';
 import { ReportReason, ReportStatus } from '@prisma/client';
-import { IconExternalLink } from '@tabler/icons';
+import { IconExternalLink } from '@tabler/icons-react';
 import produce from 'immer';
 import { upperFirst } from 'lodash-es';
 import Link from 'next/link';

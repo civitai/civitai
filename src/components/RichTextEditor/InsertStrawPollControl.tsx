@@ -5,7 +5,7 @@ import {
   RichTextEditorControlProps,
   useRichTextEditorContext,
 } from '@mantine/tiptap';
-import { IconReportAnalytics } from '@tabler/icons';
+import { IconReportAnalytics } from '@tabler/icons-react';
 import { z } from 'zod';
 
 import { Form, InputText, useForm } from '~/libs/form';

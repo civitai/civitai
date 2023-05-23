@@ -2,7 +2,7 @@ import { Card, Group, Rating, Stack, Text, Divider, Button } from '@mantine/core
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { trpc } from '~/utils/trpc';
 import { useState, useEffect, useRef } from 'react';
-import { IconChevronDown } from '@tabler/icons';
+import { IconChevronDown } from '@tabler/icons-react';
 import { InputRTE, useForm, Form } from '~/libs/form';
 import { z } from 'zod';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';

@@ -22,7 +22,7 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReviewReactions } from '@prisma/client';
-import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons';
+import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons-react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';

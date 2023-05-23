@@ -8,7 +8,7 @@ import {
   IconFlag,
   IconLock,
   IconTrash,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 
 import { ToggleLockComments } from '~/components/CommentsV2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

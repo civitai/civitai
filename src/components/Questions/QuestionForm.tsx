@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { showNotification } from '@mantine/notifications';
-import { IconArrowLeft, IconCheck, IconLock, IconX } from '@tabler/icons';
+import { IconArrowLeft, IconCheck, IconLock, IconX } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';

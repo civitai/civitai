@@ -11,7 +11,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { IconCloudOff, IconTrash } from '@tabler/icons';
+import { IconCloudOff, IconTrash } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { DownloadList } from '~/components/Downloads/DownloadList';

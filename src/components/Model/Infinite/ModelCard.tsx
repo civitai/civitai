@@ -24,7 +24,7 @@ import {
   IconFlag,
   IconTagOff,
   IconDotsVertical,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useState, useMemo, useEffect } from 'react';

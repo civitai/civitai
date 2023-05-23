@@ -1,7 +1,7 @@
 import { Button, Grid, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
-import { IconAlertTriangle, IconArrowsSort } from '@tabler/icons';
+import { IconAlertTriangle, IconArrowsSort } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';

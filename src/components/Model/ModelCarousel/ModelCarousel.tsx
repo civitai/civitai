@@ -15,7 +15,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconInfoCircle, IconPhotoOff } from '@tabler/icons';
+import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { useQueryImages } from '~/components/Image/image.utils';

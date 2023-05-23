@@ -14,7 +14,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconSearch, IconX } from '@tabler/icons';
+import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
 import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 

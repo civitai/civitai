@@ -13,7 +13,7 @@ import {
   Text,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons';
+import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 

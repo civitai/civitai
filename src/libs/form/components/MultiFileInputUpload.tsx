@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
-import { IconFile, IconTrash, IconUpload, IconX } from '@tabler/icons';
+import { IconFile, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 
 import { useS3Upload } from '~/hooks/useS3Upload';

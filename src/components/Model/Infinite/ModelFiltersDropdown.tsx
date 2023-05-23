@@ -11,7 +11,7 @@ import {
   Stack,
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType } from '@prisma/client';
-import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons';
+import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons-react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';

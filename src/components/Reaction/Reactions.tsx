@@ -1,7 +1,7 @@
 import { Button, Group, Text, GroupProps } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons';
+import { IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';

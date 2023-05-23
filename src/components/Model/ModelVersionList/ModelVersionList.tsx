@@ -18,7 +18,7 @@ import {
   IconFileSettings,
   IconPhotoEdit,
   IconTrash,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 

@@ -2,7 +2,7 @@ import { Text, Box, Group, Badge, SelectItemProps, BadgeProps } from '@mantine/c
 import { useForm } from '@mantine/form';
 import { useHotkeys, useDebouncedState } from '@mantine/hooks';
 import { TagTarget } from '@prisma/client';
-import { IconSearch } from '@tabler/icons';
+import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useEffect, useMemo, forwardRef } from 'react';
 

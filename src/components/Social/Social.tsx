@@ -1,12 +1,12 @@
 import { Button, ButtonProps } from '@mantine/core';
 import {
-  TablerIconProps,
+  TablerIconsProps,
   IconBrandDiscord,
   IconBrandGithub,
   IconBrandGoogle,
   IconBrandReddit,
   IconMail,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
 
 type SocialProps = Partial<
@@ -14,7 +14,7 @@ type SocialProps = Partial<
     BuiltInProviderType,
     {
       label?: React.ReactNode;
-      Icon?: React.FunctionComponent<TablerIconProps>;
+      Icon?: React.FunctionComponent<TablerIconsProps>;
       Button?: React.FunctionComponent<ButtonProps>;
     }
   >

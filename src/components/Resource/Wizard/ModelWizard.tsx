@@ -8,7 +8,7 @@ import {
   Stepper,
   Title,
 } from '@mantine/core';
-import { IconX } from '@tabler/icons';
+import { IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';

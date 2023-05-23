@@ -36,7 +36,7 @@ import {
   IconCopy,
   IconAlertTriangle,
   IconNetworkOff,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {

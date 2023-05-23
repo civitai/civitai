@@ -1,5 +1,5 @@
 import { Center, Divider, Group, Stack, Text } from '@mantine/core';
-import { IconClock } from '@tabler/icons';
+import { IconClock } from '@tabler/icons-react';
 
 export function EndOfFeed() {
   return (

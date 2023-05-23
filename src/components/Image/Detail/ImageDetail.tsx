@@ -19,7 +19,7 @@ import {
   IconShare,
   IconDotsVertical,
   IconAlertTriangle,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { IconShare3 } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';

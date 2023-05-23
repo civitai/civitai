@@ -10,7 +10,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { IconClearAll, IconCloudUpload, IconX } from '@tabler/icons';
+import { IconClearAll, IconCloudUpload, IconX } from '@tabler/icons-react';
 import React from 'react';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';

@@ -13,7 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons';
+import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';

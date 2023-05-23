@@ -1,5 +1,5 @@
 import { Alert, Button, Group, LoadingOverlay, Modal, Stack, ThemeIcon, Text } from '@mantine/core';
-import { IconAlertCircle, IconExclamationMark } from '@tabler/icons';
+import { IconAlertCircle, IconExclamationMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';

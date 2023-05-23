@@ -8,7 +8,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { IconBan } from '@tabler/icons';
+import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';

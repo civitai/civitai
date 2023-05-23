@@ -8,7 +8,7 @@ import {
   IconLock,
   IconLockOpen,
   IconBan,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { SessionUser } from 'next-auth';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

@@ -1,5 +1,5 @@
 import { ActionIcon, Tooltip } from '@mantine/core';
-import { IconLayoutGrid, IconLayoutList } from '@tabler/icons';
+import { IconLayoutGrid, IconLayoutList } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
 import {

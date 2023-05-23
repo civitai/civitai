@@ -27,7 +27,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { IconCheck, IconX, IconAlertCircle } from '@tabler/icons';
+import { IconCheck, IconX, IconAlertCircle } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ModerationCard } from '~/components/Account/ModerationCard';

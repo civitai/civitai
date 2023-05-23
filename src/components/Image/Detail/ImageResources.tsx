@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDownload, IconHeart, IconMessageCircle2, IconStar, IconX } from '@tabler/icons';
+import { IconDownload, IconHeart, IconMessageCircle2, IconStar, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { cloneElement, useMemo, useState } from 'react';
 

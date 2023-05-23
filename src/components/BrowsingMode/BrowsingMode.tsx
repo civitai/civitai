@@ -9,7 +9,13 @@ import {
   ActionIcon,
   Indicator,
 } from '@mantine/core';
-import { IconEye, IconEyeOff, IconShield, IconShieldOff, TablerIconProps } from '@tabler/icons';
+import {
+  IconEye,
+  IconEyeOff,
+  IconShield,
+  IconShieldOff,
+  TablerIconsProps,
+} from '@tabler/icons-react';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -24,7 +30,7 @@ const options = [
   { label: 'Everything', value: BrowsingMode.All },
 ];
 
-const indicatorProps: TablerIconProps = { size: 12, strokeWidth: 4 };
+const indicatorProps: TablerIconsProps = { size: 12, strokeWidth: 4 };
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const currentUser = useCurrentUser();
@@ -74,7 +80,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   );
 }
 type BrowsingModeIconProps = {
-  iconProps?: TablerIconProps;
+  iconProps?: TablerIconsProps;
 };
 
 export function BrowsingModeMenu() {

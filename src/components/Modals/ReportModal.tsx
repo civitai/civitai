@@ -12,7 +12,7 @@ import {
 
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { NsfwLevel, ReportReason } from '@prisma/client';
-import { IconArrowLeft } from '@tabler/icons';
+import { IconArrowLeft } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';

@@ -25,7 +25,7 @@ import {
   IconCircleCheck,
   IconExclamationMark,
   IconHeartHandshake,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';

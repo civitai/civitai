@@ -1,5 +1,5 @@
 import { List, ThemeIcon, DefaultMantineColor } from '@mantine/core';
-import { IconCircleCheck } from '@tabler/icons';
+import { IconCircleCheck } from '@tabler/icons-react';
 
 export const benefitIconSize = 18;
 const themeIconSize = benefitIconSize + 6;

@@ -17,7 +17,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
-import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons';
+import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink } from '@mantine/next';

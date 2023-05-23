@@ -1,6 +1,6 @@
 import { ActionIcon, AspectRatio, Box, Card, createStyles, Group, Menu, Text } from '@mantine/core';
 import { useWindowSize } from '@react-hook/window-size';
-import { IconDotsVertical, IconFlag, IconMessageCircle2 } from '@tabler/icons';
+import { IconDotsVertical, IconFlag, IconMessageCircle2 } from '@tabler/icons-react';
 import {
   useContainerPosition,
   usePositioner,

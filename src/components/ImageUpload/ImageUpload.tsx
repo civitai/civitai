@@ -43,7 +43,7 @@ import {
   IconTrash,
   IconUpload,
   IconX,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import produce from 'immer';
 import { cloneElement, useMemo, useState } from 'react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';

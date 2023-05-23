@@ -3,7 +3,7 @@ import { closeModal, openConfirmModal } from '@mantine/modals';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IconTrash, IconBan, IconLock, IconPencil } from '@tabler/icons';
+import { IconTrash, IconBan, IconLock, IconPencil } from '@tabler/icons-react';
 import { ToggleLockComments } from '~/components/CommentsV2';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';

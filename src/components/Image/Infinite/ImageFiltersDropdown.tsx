@@ -3,7 +3,7 @@ import { ImageGenerationProcess } from '@prisma/client';
 import { FiltersDropdown } from '~/components/Filters/FiltersDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProviderOld';
-import { IconFilterOff } from '@tabler/icons';
+import { IconFilterOff } from '@tabler/icons-react';
 
 export function ImageFiltersDropdown() {
   const currentUser = useCurrentUser();

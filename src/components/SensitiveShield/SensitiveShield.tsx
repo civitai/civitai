@@ -1,6 +1,6 @@
 import { Button, Container, Group, Paper, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconEyeOff, IconKey } from '@tabler/icons';
+import { IconEyeOff, IconKey } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 export function SensitiveShield() {

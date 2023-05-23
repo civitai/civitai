@@ -26,7 +26,7 @@ import {
   IconExclamationMark,
   IconExclamationCircle,
   IconCheck,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';

@@ -30,7 +30,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { TagType } from '@prisma/client';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { IconInfoCircle } from '@tabler/icons';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 

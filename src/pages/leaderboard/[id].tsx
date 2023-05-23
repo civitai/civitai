@@ -25,7 +25,7 @@ import {
   MantineSize,
 } from '@mantine/core';
 import { useMemo, useState } from 'react';
-import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons';
+import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
 import { useDisclosure } from '@mantine/hooks';
 import { Countdown } from '~/components/Countdown/Countdown';
 import dayjs from 'dayjs';

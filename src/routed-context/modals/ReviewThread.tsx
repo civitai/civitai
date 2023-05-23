@@ -30,7 +30,7 @@ import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { ReviewDiscussionMenu } from '~/components/Model/ModelDiscussion/ReviewDiscussionMenu';
-import { IconExclamationCircle } from '@tabler/icons';
+import { IconExclamationCircle } from '@tabler/icons-react';
 import { AnchorNoTravel } from '~/components/AnchorNoTravel/AnchorNoTravel';
 
 const TRANSITION_DURATION = 200;

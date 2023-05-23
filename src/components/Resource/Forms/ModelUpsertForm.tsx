@@ -6,7 +6,7 @@ import {
   IconBrush,
   IconShoppingCart,
   IconExclamationMark,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';

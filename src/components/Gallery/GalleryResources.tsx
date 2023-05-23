@@ -1,5 +1,5 @@
 import { Badge, Card, createStyles, Group, Rating, Skeleton, Stack, Text } from '@mantine/core';
-import { IconDownload, IconMessageCircle2, IconHeart, IconStar } from '@tabler/icons';
+import { IconDownload, IconMessageCircle2, IconHeart, IconStar } from '@tabler/icons-react';
 import Link from 'next/link';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';

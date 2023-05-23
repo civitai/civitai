@@ -1,5 +1,5 @@
 import { Stack, Text, MantineSize, Group, ActionIcon } from '@mantine/core';
-import { IconTrash } from '@tabler/icons';
+import { IconTrash } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import Link from 'next/link';
 

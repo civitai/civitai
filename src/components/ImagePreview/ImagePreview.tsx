@@ -18,7 +18,7 @@ import { ImageModel } from '~/server/selectors/image.selector';
 // import { useImageLightbox } from '~/hooks/useImageLightbox';
 import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { IconAlertTriangle, IconCheck, IconInfoCircle, IconX } from '@tabler/icons';
+import { IconAlertTriangle, IconCheck, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { getClampedSize } from '~/utils/blurhash';
 import { CSSProperties, useState } from 'react';

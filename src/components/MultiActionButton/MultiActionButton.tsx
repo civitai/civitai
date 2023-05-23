@@ -7,7 +7,7 @@ import {
   MenuItemProps,
   Tooltip,
 } from '@mantine/core';
-import { IconChevronDown } from '@tabler/icons';
+import { IconChevronDown } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 
 const _MultiActionButton = forwardRef<HTMLButtonElement, Props>(

@@ -8,7 +8,7 @@ import {
   createStyles,
   Box,
 } from '@mantine/core';
-import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons';
+import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import useIsClient from '~/hooks/useIsClient';

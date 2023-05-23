@@ -10,7 +10,7 @@ import {
   Center,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons';
+import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';

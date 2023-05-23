@@ -16,7 +16,7 @@ import {
   Center,
   Paper,
 } from '@mantine/core';
-import { IconPlus, IconCopy, IconTrash } from '@tabler/icons';
+import { IconPlus, IconCopy, IconTrash } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
 

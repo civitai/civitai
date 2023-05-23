@@ -1,5 +1,5 @@
 import { BadgeProps, MantineSize, Text } from '@mantine/core';
-import { IconCrown } from '@tabler/icons';
+import { IconCrown } from '@tabler/icons-react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 export const RankBadge = ({ rank, size, textSize = 'sm', iconSize = 18, ...props }: Props) => {

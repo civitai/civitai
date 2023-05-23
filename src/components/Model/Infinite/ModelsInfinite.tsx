@@ -1,6 +1,6 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import { IconCloudOff } from '@tabler/icons';
+import { IconCloudOff } from '@tabler/icons-react';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 

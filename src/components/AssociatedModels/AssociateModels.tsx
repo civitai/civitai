@@ -23,7 +23,7 @@ import {
   Box,
 } from '@mantine/core';
 import { AssociationType } from '@prisma/client';
-import { IconGripVertical, IconSearch, IconTrash, IconUser } from '@tabler/icons';
+import { IconGripVertical, IconSearch, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { forwardRef, useState } from 'react';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';

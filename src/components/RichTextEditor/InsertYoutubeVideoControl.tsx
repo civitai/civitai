@@ -5,7 +5,7 @@ import {
   RichTextEditorControlProps,
   useRichTextEditorContext,
 } from '@mantine/tiptap';
-import { IconBrandYoutube } from '@tabler/icons';
+import { IconBrandYoutube } from '@tabler/icons-react';
 import { z } from 'zod';
 
 import { Form, InputText, useForm } from '~/libs/form';

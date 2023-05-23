@@ -1,5 +1,5 @@
 import { Card, Group, Stack, Text, ThemeIcon, createStyles } from '@mantine/core';
-import { IconBrandPython, IconFileText, IconMarkdown, IconTxt, IconZip } from '@tabler/icons';
+import { IconBrandPython, IconFileText, IconMarkdown, IconTxt, IconZip } from '@tabler/icons-react';
 
 import { ArticleGetById } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';

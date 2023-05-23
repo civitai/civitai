@@ -1,11 +1,11 @@
-import { TablerIconProps } from '@tabler/icons';
+import { TablerIconsProps } from '@tabler/icons-react';
 
 export function IconBrandHuggingFace({
   size = 24,
   color = 'currentColor',
   stroke = 2,
   ...props
-}: TablerIconProps) {
+}: TablerIconsProps) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

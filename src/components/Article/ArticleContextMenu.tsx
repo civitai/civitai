@@ -1,7 +1,7 @@
 import { ActionIcon, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons';
+import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

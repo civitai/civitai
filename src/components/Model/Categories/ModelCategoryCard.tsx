@@ -22,7 +22,7 @@ import {
   IconMessageCircle2,
   IconStar,
   IconTagOff,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';

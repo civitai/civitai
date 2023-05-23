@@ -24,7 +24,7 @@ import {
   IconReload,
   IconSquareCheck,
   IconSquareOff,
-} from '@tabler/icons';
+} from '@tabler/icons-react';
 import produce from 'immer';
 import Link from 'next/link';
 import { useEffect, useMemo } from 'react';

@@ -13,7 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
-import { IconSearch, IconX } from '@tabler/icons';
+import { IconSearch, IconX } from '@tabler/icons-react';
 
 import { trpc } from '~/utils/trpc';
 

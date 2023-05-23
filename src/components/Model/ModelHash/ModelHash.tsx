@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, CopyButton, Group, MantineColor, Tooltip } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { ModelHashType } from '@prisma/client';
-import { IconChevronRight } from '@tabler/icons';
+import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 
 export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Props) => {

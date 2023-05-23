@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { IconLock } from '@tabler/icons';
+import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';

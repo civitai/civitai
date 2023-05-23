@@ -16,7 +16,7 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
-import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons';
+import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
 
 //TODO - handle what to display when there is an error
 type Props = {

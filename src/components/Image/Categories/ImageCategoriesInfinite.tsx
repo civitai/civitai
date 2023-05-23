@@ -1,4 +1,4 @@
-import { IconArrowRight, IconPlus } from '@tabler/icons';
+import { IconArrowRight, IconPlus } from '@tabler/icons-react';
 import { CategoryList } from '~/components/CategoryList/CategoryList';
 import { CategoryListEmpty } from '~/components/CategoryList/CategoryListEmpty';
 import { useImageFilters, useQueryImageCategories } from '~/components/Image/image.utils';
