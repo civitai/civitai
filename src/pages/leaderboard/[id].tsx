@@ -63,7 +63,7 @@ export default function Leaderboard() {
     trpc.leaderboard.getLeaderboard.useQuery({ id, date });
   const { data: leaderboardPositionsRaw = [], isLoading: loadingLeaderboardPositions } =
     trpc.leaderboard.getLeaderboardPositions.useQuery(
-      { date },
+      { date, userId: currentUser?.id },
       {
         enabled: !!currentUser,
       }
