@@ -25,7 +25,7 @@ import { isProd } from '~/env/other';
 import { updateMetricsModelJob } from '~/server/jobs/update-metrics-models';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
-import { prepareLeaderboard, updateUserLeaderboardRank } from '~/server/jobs/prepare-leaderboard';
+import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 
 const jobs: Job[] = [
@@ -48,8 +48,7 @@ const jobs: Job[] = [
   applyContestTags,
   ...applyDiscordRoles,
   applyNsfwBaseline,
-  prepareLeaderboard,
-  updateUserLeaderboardRank,
+  ...leaderboardJobs,
 ];
 
 const log = createLogger('jobs', 'green');

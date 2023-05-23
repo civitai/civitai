@@ -58,6 +58,8 @@ export const serverSchema = z.object({
   RATE_LIMITING: zc.booleanString,
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
+  CF_API_TOKEN: z.string().optional(),
+  CF_ZONE_ID: z.string().optional(),
   JOB_TOKEN: z.string(),
   WEBHOOK_TOKEN: z.string(),
   SCANNING_ENDPOINT: z.string(),

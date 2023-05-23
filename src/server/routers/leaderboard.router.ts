@@ -11,24 +11,33 @@ import {
 } from '~/server/services/leaderboard.service';
 import { publicProcedure, router } from '~/server/trpc';
 
-const expireAt = () => dayjs().add(1, 'day').startOf('day').add(1, 'minute').toDate();
-
 export const leaderboardRouter = router({
   getLeaderboards: publicProcedure.query(({ ctx }) =>
     getLeaderboards({ isModerator: ctx?.user?.isModerator ?? false })
   ),
   getLeaderboardPositions: publicProcedure
     .input(getLeaderboardPositionsSchema)
+    .use(
+      edgeCacheIt({
+        ttl: false,
+        tags: (input) => ['leaderboard', `leaderboard-positions-${input.userId}`],
+      })
+    )
     .query(({ input, ctx }) =>
       getLeaderboardPositions({
         ...input,
-        userId: input.userId ?? ctx.user?.id,
+        userId: input.userId,
         isModerator: ctx?.user?.isModerator ?? false,
       })
     ),
   getLeaderboard: publicProcedure
     .input(getLeaderboardSchema)
-    .use(edgeCacheIt({ expireAt }))
+    .use(
+      edgeCacheIt({
+        ttl: false,
+        tags: (input) => ['leaderboard', `leaderboard-${input.id}`],
+      })
+    )
     .query(({ input, ctx }) =>
       getLeaderboard({ ...input, isModerator: ctx?.user?.isModerator ?? false })
     ),

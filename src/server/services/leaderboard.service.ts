@@ -30,8 +30,16 @@ export async function getLeaderboards(input: IsMod) {
   return leaderboards;
 }
 
+type LeaderboardPosition = {
+  leaderboardId: string;
+  position: number;
+  score: number;
+  metrics: Prisma.JsonValue;
+};
 export async function getLeaderboardPositions(input: GetLeaderboardPositionsInput & IsMod) {
   const userId = input.userId;
+  if (!userId) return [] as LeaderboardPosition[];
+
   // strip time from date
   let date = input.date ?? new Date();
   date = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -50,7 +58,7 @@ export async function getLeaderboardPositions(input: GetLeaderboardPositionsInpu
     },
   });
 
-  return positions;
+  return positions as LeaderboardPosition[];
 }
 
 const metricOrder = ['ratingCount', 'heart', 'downloadCount', 'viewCount', 'shots', 'hit', 'miss'];
