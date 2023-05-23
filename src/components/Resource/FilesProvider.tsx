@@ -37,6 +37,7 @@ export type FileFromContextProps = {
   uuid: string;
   isPending?: boolean;
   isUploading?: boolean;
+  status: 'pending' | 'uploading' | 'error' | 'aborted' | 'success';
 };
 
 type FilesContextState = {
@@ -351,7 +352,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
     await Promise.all(
       toUpload.map((file) => {
-        if (!checkValidation()) return;
+        if (!checkValidation()) throw new Error('validation failed');
 
         handleUpload(file);
       })
