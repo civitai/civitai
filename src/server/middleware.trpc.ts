@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { BrowsingMode } from '~/server/common/enums';
 import { env } from '~/env/server.mjs';
 import { redis } from '~/server/redis/client';
-import { hashifyObject } from '~/utils/string-helpers';
+import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { applyAnonymousUserRules } from '~/server/services/image.service';
 import { isProd } from '~/env/other';
@@ -110,14 +110,13 @@ export function cacheIt<TInput extends object>({
 }
 
 type EdgeCacheItProps = {
-  ttl?: number;
+  ttl?: number | false;
   expireAt?: () => Date;
+  tags?: (input: any) => string[];
 };
-export function edgeCacheIt({ ttl, expireAt }: EdgeCacheItProps = {}) {
-  ttl ??= 60 * 3;
-
-  return middleware(async ({ next, ctx }) => {
-    let reqTTL = ttl as number;
+export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
+  return middleware(async ({ next, ctx, input }) => {
+    let reqTTL = ttl === false ? 24 * 60 * 60 : ttl ?? 60 * 3;
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
@@ -127,6 +126,14 @@ export function edgeCacheIt({ ttl, expireAt }: EdgeCacheItProps = {}) {
         `public, max-age=${Math.min(60, reqTTL)}, s-maxage=${reqTTL}, stale-while-revalidate=30`
       );
       ctx.res?.removeHeader('Set-Cookie');
+    }
+    if (tags) {
+      ctx.res?.setHeader(
+        'Cache-Tag',
+        tags(input)
+          .map((x) => slugit(x))
+          .join(',')
+      );
     }
 
     return result;

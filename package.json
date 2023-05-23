@@ -84,6 +84,7 @@
     "axios": "^1.2.3",
     "blurhash": "^2.0.4",
     "chalk": "^5.2.0",
+    "cloudflare": "^2.9.1",
     "cookies-next": "^2.1.1",
     "cron-parser": "^4.6.0",
     "dayjs": "^1.11.6",
@@ -137,6 +138,7 @@
   "devDependencies": {
     "@babel/core": "^7.19.3",
     "@next/eslint-plugin-next": "^12.1.4",
+    "@types/cloudflare": "^2.7.9",
     "@types/lodash": "^4.14.189",
     "@types/lodash-es": "^4.17.7",
     "@types/marked": "^4.0.7",

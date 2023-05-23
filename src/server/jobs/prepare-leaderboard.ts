@@ -2,10 +2,11 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import dayjs from 'dayjs';
 import { createLogger } from '~/utils/logging';
+import { purgeCache } from '~/server/cloudflare/client';
 
 const log = createLogger('leaderboard', 'blue');
 
-export const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async () => {
+const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async () => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
   await setModelCoverImageNsfwLevel();
@@ -49,7 +50,7 @@ export const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *',
   await setLastRun();
 });
 
-export const updateUserLeaderboardRank = createJob(
+const updateUserLeaderboardRank = createJob(
   'update-user-leaderboard-rank',
   '1 0 * * *',
   async () => {
@@ -103,3 +104,13 @@ async function setModelCoverImageNsfwLevel() {
     WHERE mnl.id = m.id;
   `;
 }
+
+const clearLeaderboardCache = createJob('clear-leaderboard-cache', '0 0 * * *', async () => {
+  await purgeCache({ tags: ['leaderboard'] });
+});
+
+export const leaderboardJobs = [
+  prepareLeaderboard,
+  updateUserLeaderboardRank,
+  clearLeaderboardCache,
+];
