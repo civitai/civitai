@@ -51,63 +51,56 @@ export function CreatorCard({
   if (leaderboardId && typeof leaderboardId === 'string') link += linkQuery[leaderboardId] ?? '';
 
   return (
-    <InView rootMargin="100%">
-      {({ inView, ref }) => (
-        <div ref={ref} className={classes.wrapper}>
-          {inView && (
-            <NextLink href={link}>
-              <Paper
-                className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
-                p="sm"
-                radius="md"
-                shadow="xs"
-                withBorder
-              >
-                {/* {inView && ( */}
-                <Grid align="center">
-                  <Grid.Col span={2}>
-                    <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
-                      {isTop3 && (
-                        <IconCrown
-                          size={64}
-                          color={iconColor}
-                          className={classes.crown}
-                          style={{ fill: iconColor }}
-                        />
-                      )}
-                      <Text size="lg" weight="bold">
-                        {position}
-                      </Text>
-                      {delta && delta.position !== 0 && (
-                        <Text
-                          size="xs"
-                          weight="bold"
-                          color={delta.position > 0 ? 'red' : 'green'}
-                          className={classes.delta}
-                        >
-                          {delta.position > 0 ? (
-                            <IconChevronDown strokeWidth={4} size={14} />
-                          ) : (
-                            <IconChevronUp strokeWidth={4} size={14} />
-                          )}
-                          {Math.abs(delta.position)}
-                        </Text>
-                      )}
-                    </Stack>
-                  </Grid.Col>
-                  <Grid.Col span={10}>
-                    <Stack spacing={8}>
-                      <UserAvatar user={user} textSize="lg" size="md" withUsername />
-                      <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
-                    </Stack>
-                  </Grid.Col>
-                </Grid>
-              </Paper>
-            </NextLink>
-          )}
-        </div>
-      )}
-    </InView>
+    <div className={classes.wrapper}>
+      <NextLink href={link}>
+        <Paper
+          className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
+          p="sm"
+          radius="md"
+          shadow="xs"
+          withBorder
+        >
+          <Grid align="center">
+            <Grid.Col span={2}>
+              <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
+                {isTop3 && (
+                  <IconCrown
+                    size={64}
+                    color={iconColor}
+                    className={classes.crown}
+                    style={{ fill: iconColor }}
+                  />
+                )}
+                <Text size="lg" weight="bold">
+                  {position}
+                </Text>
+                {delta && delta.position !== 0 && (
+                  <Text
+                    size="xs"
+                    weight="bold"
+                    color={delta.position > 0 ? 'red' : 'green'}
+                    className={classes.delta}
+                  >
+                    {delta.position > 0 ? (
+                      <IconChevronDown strokeWidth={4} size={14} />
+                    ) : (
+                      <IconChevronUp strokeWidth={4} size={14} />
+                    )}
+                    {Math.abs(delta.position)}
+                  </Text>
+                )}
+              </Stack>
+            </Grid.Col>
+            <Grid.Col span={10}>
+              <Stack spacing={8}>
+                <UserAvatar user={user} textSize="lg" size="md" withUsername />
+                <LeaderboardMetrics score={score} metrics={metrics} delta={delta?.score} />
+              </Stack>
+            </Grid.Col>
+          </Grid>
+        </Paper>
+      </NextLink>
+    </div>
   );
 }
 
