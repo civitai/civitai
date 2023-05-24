@@ -10,7 +10,6 @@ import {
   ArticleEngagementType,
 } from '@prisma/client';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
-import { getInternalUrl } from '~/server/utils/url-helpers';
 
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 export const clickhouse = shouldConnect
@@ -103,7 +102,7 @@ export class Tracker {
   }
 
   private async track(table: string, custom: object) {
-    if (!clickhouse) return;
+    if (!clickhouse || !env.CLICKHOUSE_TRACKER_URL) return;
 
     if (this.session) await this.session;
 
