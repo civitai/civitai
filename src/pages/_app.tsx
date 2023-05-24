@@ -14,7 +14,7 @@ import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
-import { getSession } from 'next-auth/react';
+import { SessionProvider, getSession } from 'next-auth/react';
 import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -112,27 +112,29 @@ function MyApp(props: CustomAppProps) {
       <ClientHistoryStore />
       <RegisterCatchNavigation />
       <RouterTransition />
-      <CivitaiSessionProvider session={session}>
-        <CookiesProvider value={cookies}>
-          <FiltersProviderOld value={filtersOld}>
-            <FiltersProvider value={filters}>
-              <FeatureFlagsProvider flags={flags}>
-                <CivitaiLinkProvider>
-                  <CustomModalsProvider>
-                    <NotificationsProvider>
-                      <FreezeProvider>
-                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                      </FreezeProvider>
-                      <CannyIdentityProvider />
-                      <RoutedContextProvider2 />
-                    </NotificationsProvider>
-                  </CustomModalsProvider>
-                </CivitaiLinkProvider>
-              </FeatureFlagsProvider>
-            </FiltersProvider>
-          </FiltersProviderOld>
-        </CookiesProvider>
-      </CivitaiSessionProvider>
+      <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
+        <CivitaiSessionProvider>
+          <CookiesProvider value={cookies}>
+            <FiltersProviderOld value={filtersOld}>
+              <FiltersProvider value={filters}>
+                <FeatureFlagsProvider flags={flags}>
+                  <CivitaiLinkProvider>
+                    <CustomModalsProvider>
+                      <NotificationsProvider>
+                        <FreezeProvider>
+                          <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                        </FreezeProvider>
+                        <CannyIdentityProvider />
+                        <RoutedContextProvider2 />
+                      </NotificationsProvider>
+                    </CustomModalsProvider>
+                  </CivitaiLinkProvider>
+                </FeatureFlagsProvider>
+              </FiltersProvider>
+            </FiltersProviderOld>
+          </CookiesProvider>
+        </CivitaiSessionProvider>
+      </SessionProvider>
     </>
   );
 
@@ -223,7 +225,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   } else {
     const hasAuthCookie =
       !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-    const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+    const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
     const flags = getFeatureFlags({ user: session?.user });
     // Pass this via the request so we can use it in SSR
     if (session) {

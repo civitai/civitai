@@ -6,6 +6,7 @@ interface ExtendedUser {
   blurNsfw: boolean;
   username: string;
   // cannyToken?: string;
+  image?: string;
   email?: string;
   createdAt?: Date;
   tos?: boolean;

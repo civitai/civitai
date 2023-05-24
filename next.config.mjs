@@ -37,12 +37,7 @@ export default defineNextConfig(withAxiom({
   experimental: {
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
-    modularizeImports: {
-      'lodash': {
-        transform: 'lodash/{{member}}',
-        preventFullImport: true
-      }
-    }
+
   },
   poweredByHeader: false,
   redirects: async () => {

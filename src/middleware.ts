@@ -8,7 +8,13 @@ export async function middleware(request: NextRequest) {
 
 // See "Matching Paths" below to learn more
 export const config = {
-  matcher: middlewareMatcher,
+  matcher: [
+    '/moderator/:path*',
+    '/api/trpc/:path*',
+    '/api/v1/:path*',
+    '/models/:path*',
+    '/user/:path*',
+  ],
   api: {
     bodyParser: {
       sizeLimit: '10mb',

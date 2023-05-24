@@ -1,4 +1,3 @@
-import { Alert, useMantineColorScheme } from '@mantine/core';
 import { useEffect } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client.mjs';

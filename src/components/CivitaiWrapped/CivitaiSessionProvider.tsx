@@ -1,36 +1,28 @@
-import { Session } from 'next-auth';
-import { SessionContext, SessionProvider, SessionProviderProps } from 'next-auth/react';
-import { useMemo, useState } from 'react';
+import { SessionUser } from 'next-auth';
+import { useSession } from 'next-auth/react';
+import { createContext, useContext, useMemo } from 'react';
 
-export let isAuthed = false;
-export function CivitaiSessionProvider({
-  children,
-  session: initialSession,
-}: SessionProviderProps) {
-  const [session, setSession] = useState(initialSession);
-  if (!session && initialSession) setSession(initialSession);
+type CivitaiSessionState = SessionUser & { isMember: boolean; refresh: () => void };
+const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);
+export const useCivitaiSessionContext = () => useContext(CivitaiSessionContext);
 
-  if (session?.user) {
-    isAuthed = true;
-    return (
-      <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
-        {children}
-      </SessionProvider>
-    );
-  } else {
-    return <CivitaiDummySession>{children}</CivitaiDummySession>;
-  }
+export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
+  const { data, update } = useSession();
+
+  const value = useMemo(() => {
+    if (!data?.user) return null;
+    return {
+      ...data.user,
+      isMember: data.user.tier != null,
+      refresh: update,
+    };
+  }, [data?.user, update]);
+
+  return <CivitaiSessionContext.Provider value={value}>{children}</CivitaiSessionContext.Provider>;
 }
 
-function CivitaiDummySession({ children }: { children: React.ReactNode }) {
-  const value: any = useMemo(
-    () => ({
-      data: {},
-      status: 'unauthenticated',
-      update: async () => ({} as Session),
-    }),
-    []
-  );
-
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
-}
+// export const reloadSession = async () => {
+//   await fetch('/api/auth/session?update');
+//   const event = new Event('visibilitychange');
+//   document.dispatchEvent(event);
+// };
