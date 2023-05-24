@@ -1,6 +1,8 @@
 import {
   ActionIcon,
+  Anchor,
   AspectRatio,
+  Badge,
   Box,
   Card,
   Center,
@@ -8,8 +10,8 @@ import {
   Container,
   Group,
   Loader,
-  Menu,
   Paper,
+  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -24,27 +26,27 @@ import {
   IconReload,
   IconSquareCheck,
   IconSquareOff,
-  IconTag,
-  IconTagOff,
   IconTrash,
 } from '@tabler/icons';
 import produce from 'immer';
 import Link from 'next/link';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
+
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
+import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ImageSort } from '~/server/common/enums';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ImageInclude, ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageGetInfinite } from '~/types/router';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 // export const getServerSideProps = createServerSideProps({
@@ -61,26 +63,37 @@ import { trpc } from '~/utils/trpc';
 //   },
 // });
 
-const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
-const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
+// const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
+// const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
 
 export default function Images() {
   const { ref, inView } = useInView();
   const queryUtils = trpc.useContext();
   const [selected, selectedHandlers] = useListState([] as number[]);
+  const [type, setType] = useState<'Flagged' | 'Reported'>('Flagged');
 
+  const viewingReported = type === 'Reported';
+
+  const filters = useMemo(
+    () => ({
+      needsReview: !viewingReported ? true : undefined,
+      reportReview: viewingReported ? true : undefined,
+      include: viewingReported ? (['report'] as ImageInclude[]) : undefined,
+      sort: ImageSort.Newest,
+    }),
+    [viewingReported]
+  );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
-    trpc.image.getInfinite.useInfiniteQuery(
-      { needsReview: true, sort: ImageSort.Newest },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
-    );
+    trpc.image.getInfinite.useInfiniteQuery(filters, {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
     async onMutate({ ids, needsReview, delete: deleted }) {
       await queryUtils.image.getInfinite.cancel();
       queryUtils.image.getInfinite.setInfiniteData(
-        { needsReview: true, sort: ImageSort.Newest },
+        filters,
         produce((data) => {
           if (!data?.pages?.length) return;
 
@@ -103,8 +116,34 @@ export default function Images() {
     },
   });
 
-  const disableTagMutation = trpc.tag.disableTags.useMutation();
-  const addTagMutation = trpc.tag.addTags.useMutation();
+  const reportMutation = trpc.report.bulkUpdateStatus.useMutation({
+    async onMutate({ ids, status }) {
+      await queryUtils.image.getInfinite.cancel();
+      queryUtils.image.getInfinite.setInfiniteData(
+        filters,
+        produce((data) => {
+          if (!data?.pages?.length) return;
+
+          for (const page of data.pages)
+            for (const item of page.items) {
+              if (item.report && ids.includes(item.report.id)) {
+                item.report.status = status;
+              }
+            }
+        })
+      );
+    },
+    async onSuccess() {
+      await queryUtils.report.getAll.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update',
+        error: new Error(error.message),
+        reason: 'Something went wrong while updating the reports. Please try again later.',
+      });
+    },
+  });
 
   const handleSelect = (id: number, checked: boolean) => {
     const idIndex = selected.indexOf(id);
@@ -112,18 +151,25 @@ export default function Images() {
     else if (!checked && idIndex != -1) selectedHandlers.remove(idIndex);
   };
 
-  const handleDisableTagOnImage = (imageId: number, tag: number) =>
-    disableTagMutation.mutate({
-      tags: [tag],
-      entityIds: [imageId],
-      entityType: 'image',
-    });
-
   const handleDeleteSelected = () => {
-    moderateImagesMutation.mutate({
-      ids: selected,
-      delete: true,
-    });
+    moderateImagesMutation.mutate(
+      {
+        ids: selected,
+        delete: true,
+      },
+      {
+        onSuccess() {
+          if (viewingReported) {
+            const selectedReports = images
+              .filter((x) => selected.includes(x.id) && !!x.report)
+              // Explicit casting cause we know report is defined
+              .map((x) => x.report?.id as number);
+
+            return reportMutation.mutate({ ids: selectedReports, status: 'Actioned' });
+          }
+        },
+      }
+    );
     selectedHandlers.setState([]);
   };
 
@@ -136,25 +182,22 @@ export default function Images() {
     selectedHandlers.setState([]);
   };
 
-  const handleApproveSelected = () =>
-    moderateImagesMutation.mutate({
+  const handleApproveSelected = () => {
+    selectedHandlers.setState([]);
+    if (viewingReported) {
+      const selectedReports = images
+        .filter((x) => selected.includes(x.id) && !!x.report)
+        // Explicit casting cause we know report is defined
+        .map((x) => x.report?.id as number);
+
+      return reportMutation.mutate({ ids: selectedReports, status: 'Unactioned' });
+    }
+
+    return moderateImagesMutation.mutate({
       ids: selected,
       needsReview: false,
     });
-
-  const handleAddTag = (tag: string) =>
-    addTagMutation.mutate({
-      tags: [tag],
-      entityIds: selected,
-      entityType: 'image',
-    });
-
-  const handleDisableTag = (tag: string) =>
-    disableTagMutation.mutate({
-      tags: [tag],
-      entityIds: selected,
-      entityType: 'image',
-    });
+  };
 
   const handleRefresh = () => {
     handleClearAll();
@@ -165,6 +208,11 @@ export default function Images() {
       message: 'Grabbing the latest data...',
       color: 'blue',
     });
+  };
+
+  const handleTypeChange = (value: 'Flagged' | 'Reported') => {
+    setType(value);
+    selectedHandlers.setState([]);
   };
 
   useEffect(() => {
@@ -178,7 +226,7 @@ export default function Images() {
   };
 
   return (
-    <Container size="xl">
+    <Container size="xl" py="xl">
       <Stack>
         <Paper
           withBorder
@@ -206,40 +254,6 @@ export default function Images() {
                 <IconSquareOff size="1.25rem" />
               </ActionIcon>
             </ButtonTooltip>
-            <Menu>
-              <Menu.Target>
-                <ButtonTooltip label="Add tag" {...tooltipProps}>
-                  <ActionIcon variant="outline" disabled={!selected.length}>
-                    <IconTag size="1.25rem" />
-                  </ActionIcon>
-                </ButtonTooltip>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label>Add Tag</Menu.Label>
-                {ADDABLE_TAGS.map((tag) => (
-                  <Menu.Item key={tag} onClick={() => handleAddTag(tag)}>
-                    {tag}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
-            <Menu>
-              <Menu.Target>
-                <ButtonTooltip label="Remove tag" {...tooltipProps}>
-                  <ActionIcon variant="outline" disabled={!selected.length}>
-                    <IconTagOff size="1.25rem" />
-                  </ActionIcon>
-                </ButtonTooltip>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label>Remove Tag</Menu.Label>
-                {REMOVABLE_TAGS.map((tag) => (
-                  <Menu.Item key={tag} onClick={() => handleDisableTag(tag)}>
-                    {tag}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
             <PopConfirm
               message={`Are you sure you want to approve ${selected.length} image(s)?`}
               position="bottom-end"
@@ -273,10 +287,19 @@ export default function Images() {
         </Paper>
 
         <Stack spacing={0} mb="lg">
-          <Title order={1}>Images Needing Review</Title>
+          <Group>
+            <Title order={1}>Images Needing Review</Title>
+            <SegmentedControl
+              size="sm"
+              data={['Flagged', 'Reported']}
+              onChange={handleTypeChange}
+              value={type}
+            />
+          </Group>
           <Text color="dimmed">
-            These are images that have been marked by our AI which needs further attention from the
-            mods
+            These are images that have been{' '}
+            {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
+            attention from the mods
           </Text>
         </Stack>
 
@@ -285,16 +308,19 @@ export default function Images() {
             <Loader size="xl" />
           </Center>
         ) : images.length ? (
-          <MasonryGrid
-            items={images}
+          <MasonryGrid2
+            data={images}
             isRefetching={isRefetching}
             isFetchingNextPage={isFetchingNextPage}
+            hasNextPage={hasNextPage}
+            fetchNextPage={fetchNextPage}
+            columnWidth={300}
+            filters={filters}
             render={(props) => (
               <ImageGridItem
                 {...props}
                 selected={selected.includes(props.data.id)}
                 onSelect={handleSelect}
-                disableTag={handleDisableTagOnImage}
               />
             )}
           />
@@ -320,11 +346,14 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
     return Math.min(imageHeight, 600);
   }, [itemWidth, image.width, image.height]);
 
+  const hasReport = !!image.report;
+  const pendingReport = hasReport && image.report?.status === 'Pending';
+
   return (
     <Card
       shadow="sm"
       p="xs"
-      sx={{ opacity: image.needsReview === false ? 0.2 : undefined }}
+      sx={{ opacity: image.needsReview === false && !pendingReport ? 0.2 : undefined }}
       withBorder
     >
       <Card.Section sx={{ height: `${height}px` }}>
@@ -409,6 +438,40 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
           )}
         />
       </Card.Section>
+      {hasReport && (
+        <Stack spacing={8} pt="xs">
+          <Group position="apart" noWrap>
+            <Stack spacing={2}>
+              <Text size="xs" color="dimmed" inline>
+                Reported by
+              </Text>
+              <Link href={`/user/${image.report?.user.username}`} passHref>
+                <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                  {image.report?.user.username}
+                </Anchor>
+              </Link>
+            </Stack>
+            <Stack spacing={2} align="flex-end">
+              <Text size="xs" color="dimmed" inline>
+                Reported for
+              </Text>
+              <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
+            </Stack>
+          </Group>
+          <ContentClamp maxHeight={150}>
+            {image.report?.details
+              ? Object.entries(image.report.details).map(([key, value]) => (
+                  <Text key={key} size="sm">
+                    <Text weight="bold" span>
+                      {titleCase(key)}:
+                    </Text>{' '}
+                    {value}
+                  </Text>
+                ))
+              : null}
+          </ContentClamp>
+        </Stack>
+      )}
     </Card>
   );
 }
@@ -419,5 +482,4 @@ type ImageGridItemProps = {
   width: number;
   selected: boolean;
   onSelect: (id: number, checked: boolean) => void;
-  disableTag: (imageId: number, tagId: number) => void;
 };

@@ -502,7 +502,6 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
         { queryKey, exact: false },
         produce((old: any) => {
           const item = old?.items?.find((x: any) => x.id == id);
-          console.log({ old, item });
           if (item) item.status = request.status;
         })
       );
