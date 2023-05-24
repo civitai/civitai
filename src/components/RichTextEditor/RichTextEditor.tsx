@@ -353,7 +353,7 @@ export function RichTextEditor({
                 <RTE.Strikethrough />
                 <RTE.ClearFormatting />
                 <RTE.CodeBlock />
-                <RTE.ColorPicker colors={constants.richTextEditor.presetColors} />
+                <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
               </RTE.ControlsGroup>
             )}
 

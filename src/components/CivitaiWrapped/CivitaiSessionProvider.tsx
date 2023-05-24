@@ -6,11 +6,13 @@ type CivitaiSessionState = SessionUser & { isMember: boolean; refresh: () => voi
 const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);
 export const useCivitaiSessionContext = () => useContext(CivitaiSessionContext);
 
+export let isAuthed = false;
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
 
   const value = useMemo(() => {
     if (!data?.user) return null;
+    isAuthed = true;
     return {
       ...data.user,
       isMember: data.user.tier != null,
