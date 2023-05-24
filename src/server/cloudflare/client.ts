@@ -14,12 +14,10 @@ const getClient = () => {
   return cf;
 };
 
-const client: ReturnType<typeof getClient> | null = null;
-getClient();
-
+const client = getClient();
 export function purgeCache({ urls, tags }: { urls?: string[]; tags?: string[] }) {
-  if (!env.CF_ZONE_ID) return;
-  client?.zones.purgeCache(env.CF_ZONE_ID, {
+  if (!env.CF_ZONE_ID || !client) return;
+  client.zones.purgeCache(env.CF_ZONE_ID, {
     tags,
     prefixes: urls,
   });

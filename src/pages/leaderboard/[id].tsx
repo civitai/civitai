@@ -160,7 +160,11 @@ export default function Leaderboard() {
                 </Popover>
               </Group>
               <Text color="dimmed" size="xs" mb="lg">
-                As of {dayjs(leaderboardResults[0]?.date).format('MMMM D, YYYY')} UTC. Refreshes in:{' '}
+                As of{' '}
+                {leaderboardResults[0]
+                  ? dayjs(leaderboardResults[0].date).format('MMMM D, YYYY h:mma')
+                  : 'loading..'}
+                . Refreshes in:{' '}
                 <Text span>
                   <Countdown endTime={dayjs().utc().endOf('day').toDate()} />
                 </Text>
