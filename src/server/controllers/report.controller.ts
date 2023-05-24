@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
 import {
+  BulkUpdateReportStatusInput,
   CreateReportInput,
   GetReportsInput,
   SetReportStatusInput,
@@ -11,6 +12,7 @@ import {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
+  bulkUpdateReports,
   createReport,
   getReportById,
   getReports,
@@ -89,6 +91,43 @@ export async function setReportStatusHandler({
     // });
 
     return updatedReport;
+  } catch (e) {
+    if (e instanceof TRPCError) throw e;
+    else throw throwDbError(e);
+  }
+}
+
+export async function bulkUpdateReportStatusHandler({
+  input,
+  ctx,
+}: {
+  input: BulkUpdateReportStatusInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { ids, status } = input;
+    const { count } = await bulkUpdateReports({
+      ids,
+      data: {
+        status,
+        statusSetAt: new Date(),
+        statusSetBy: ctx.user.id,
+        previouslyReviewedCount: status === ReportStatus.Actioned ? { increment: 1 } : undefined,
+      },
+    });
+
+    // Track mod activity in the background
+    Promise.all(
+      ids.map((id) =>
+        trackModActivity(ctx.user.id, {
+          entityType: 'report',
+          entityId: id,
+          activity: 'review',
+        })
+      )
+    );
+
+    return count;
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     else throw throwDbError(e);
