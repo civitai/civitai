@@ -22,7 +22,6 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session }) => {
     const features = getFeatureFlags({ user: session?.user });
-    console.log({ features });
     if (!features.articles)
       return {
         redirect: {
