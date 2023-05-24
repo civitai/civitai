@@ -24,6 +24,7 @@ export const articleWhereSchema = z.object({
   userIds: z.array(z.number()).optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
+  includeDrafts: z.boolean().optional(),
 });
 
 // export const articleSortSchema = z.object({

@@ -48,8 +48,6 @@ export default function UserArticlesPage() {
   );
   const viewingPublished = section === 'published';
 
-  const { data: user } = trpc.user.getCreator.useQuery({ username });
-
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
 
@@ -97,6 +95,7 @@ export default function UserArticlesPage() {
                   ...queryFilters,
                   sort,
                   period,
+                  includeDrafts: !!currentUser?.isModerator,
                 }}
               />
             ) : (

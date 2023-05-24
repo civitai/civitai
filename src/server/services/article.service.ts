@@ -35,6 +35,7 @@ export const getArticles = async ({
   favorites,
   hidden,
   username,
+  includeDrafts,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
@@ -66,7 +67,7 @@ export const getArticles = async ({
     }
 
     const where: Prisma.ArticleFindManyArgs['where'] = {
-      publishedAt: isMod ? undefined : { not: null },
+      publishedAt: isMod && includeDrafts ? undefined : { not: null },
       AND: AND.length ? AND : undefined,
     };
 

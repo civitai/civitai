@@ -11,24 +11,27 @@ import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { Link, RichTextEditorProps, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle } from '@tabler/icons-react';
+import { Color } from '@tiptap/extension-color';
 import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
+import TextStyle from '@tiptap/extension-text-style';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
 import { BubbleMenu, Editor, Extension, Extensions, nodePasteRule, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
 
+import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
+import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
+import { Instagram } from '~/libs/tiptap/extensions/Instagram';
+import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
+import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
-import { Instagram } from '~/libs/tiptap/extensions/Instagram';
-import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
-import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
-import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -186,7 +189,7 @@ export function RichTextEditor({
           }),
         ]
       : []),
-    ...(addFormatting ? [Underline] : []),
+    ...(addFormatting ? [Underline, TextStyle, Color] : []),
     ...(addLink ? [linkExtension] : []),
     ...(addMedia
       ? [
@@ -350,6 +353,7 @@ export function RichTextEditor({
                 <RTE.Strikethrough />
                 <RTE.ClearFormatting />
                 <RTE.CodeBlock />
+                <RTE.ColorPicker colors={constants.richTextEditor.presetColors} />
               </RTE.ControlsGroup>
             )}
 
@@ -385,6 +389,13 @@ export function RichTextEditor({
         {editor && (
           <BubbleMenu editor={editor}>
             <RTE.ControlsGroup>
+              {addHeading ? (
+                <>
+                  <RTE.H1 />
+                  <RTE.H2 />
+                  <RTE.H3 />
+                </>
+              ) : null}
               {addFormatting ? (
                 <>
                   <RTE.Bold />
