@@ -16,11 +16,10 @@ export function CannyIdentityProvider() {
   const currentUser = useCurrentUser();
 
   useEffect(() => {
-    if (!currentUser || !env.NEXT_PUBLIC_CANNY_APP_ID) return;
+    if (!currentUser || !env.NEXT_PUBLIC_CANNY_APP_ID || initialized) return;
+    initialized = true;
 
     (function (w: Window, d: Document, i: string, s: string) {
-      if (initialized) return;
-      initialized = true;
       function l() {
         if (!d.getElementById(i)) {
           const f = d.getElementsByTagName(s)[0];
