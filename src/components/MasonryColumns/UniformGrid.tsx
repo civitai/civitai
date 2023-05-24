@@ -35,6 +35,7 @@ export function UniformGrid<TData>({
     if (!maxRows) return data;
     const wholeRows = Math.floor(data.length / columnCount);
     const rows = maxRows > wholeRows ? wholeRows : maxRows;
+    if (rows < 1) return data;
     return data.slice(0, rows * columnCount);
   }, [columnCount, data, maxRows]);
 
