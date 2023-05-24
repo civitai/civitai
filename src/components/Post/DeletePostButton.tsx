@@ -42,10 +42,10 @@ export function DeletePostButton({
       children: (
         <Text>
           Are you sure you want to delete this post? The images in this post{' '}
-          <strong>will not be deleted</strong> from your account.
+          <strong>will also be deleted</strong>.
         </Text>
       ),
-      labels: { cancel: `Cancel`, confirm: `Delete Post Only` },
+      labels: { cancel: `Cancel`, confirm: `Delete Post` },
       confirmProps: { color: 'red' },
       onConfirm: () => {
         mutate({ id: postId });
