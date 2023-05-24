@@ -88,6 +88,12 @@ export const setReportStatusSchema = z.object({
   status: z.nativeEnum(ReportStatus),
 });
 
+export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
+export const bulkUpdateReportStatusSchema = z.object({
+  ids: z.number().array(),
+  status: z.nativeEnum(ReportStatus),
+});
+
 export type GetReportsInput = z.infer<typeof getReportsSchema>;
 export const getReportsSchema = getAllQuerySchema.extend({
   type: z.nativeEnum(ReportEntity),

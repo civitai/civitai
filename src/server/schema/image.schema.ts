@@ -184,7 +184,7 @@ export const ingestImageSchema = z.object({
 });
 
 // #region [new schemas]
-const imageInclude = z.enum(['tags', 'count', 'cosmetics']);
+const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report']);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z
@@ -210,6 +210,7 @@ export const getInfiniteImagesSchema = z
     browsingMode: z.nativeEnum(BrowsingMode).optional(),
     needsReview: z.boolean().optional(),
     tagReview: z.boolean().optional(),
+    reportReview: z.boolean().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
     excludeCrossPosts: z.boolean().optional(),
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),

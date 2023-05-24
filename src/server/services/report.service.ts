@@ -3,6 +3,7 @@ import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  BulkUpdateReportStatusInput,
   CreateReportInput,
   GetReportCountInput,
   GetReportsInput,
@@ -225,6 +226,16 @@ export const updateReportById = ({
   data,
 }: GetByIdInput & { data: Prisma.ReportUpdateArgs['data'] }) => {
   return dbWrite.report.update({ where: { id }, data });
+};
+
+export const bulkUpdateReports = ({
+  ids,
+  data,
+}: {
+  ids: number[];
+  data: Prisma.ReportUpdateManyArgs['data'];
+}) => {
+  return dbWrite.report.updateMany({ where: { id: { in: ids } }, data });
 };
 
 export const getReportCounts = ({ type }: GetReportCountInput) => {
