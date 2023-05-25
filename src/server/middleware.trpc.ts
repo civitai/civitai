@@ -120,20 +120,11 @@ export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
-    if (isProd) {
-      ctx.res?.setHeader(
-        'Cache-Control',
-        `public, max-age=${Math.min(60, reqTTL)}, s-maxage=${reqTTL}, stale-while-revalidate=30`
-      );
-      ctx.res?.removeHeader('Set-Cookie');
-    }
-    if (tags) {
-      ctx.res?.setHeader(
-        'Cache-Tag',
-        tags(input)
-          .map((x) => slugit(x))
-          .join(',')
-      );
+    if (ctx.cache) {
+      ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;
+      ctx.cache.edgeTTL = reqTTL;
+      ctx.cache.staleWhileRevalidate = 30;
+      ctx.cache.tags = tags?.(input).map((x) => slugit(x));
     }
 
     return result;

@@ -16,6 +16,13 @@ export const parseBrowsingMode = (
   return browsingMode; // NSFW = "My Filters" and should be the default if a user is logged in
 };
 
+type CacheSettings = {
+  browserTTL?: number;
+  edgeTTL?: number;
+  staleWhileRevalidate?: number;
+  tags?: string[];
+};
+
 const origins = [env.NEXTAUTH_URL, ...(env.TRPC_ORIGINS ?? [])];
 export const createContext = async ({
   req,
@@ -28,12 +35,18 @@ export const createContext = async ({
   const acceptableOrigin = origins.some((o) => req.headers.referer?.startsWith(o)) ?? false;
   const browsingMode = parseBrowsingMode(req.cookies, session);
   const track = new Tracker(req, res);
+  const cache: CacheSettings | null = {
+    browserTTL: session?.user ? 0 : 60,
+    edgeTTL: session?.user ? 0 : 60,
+    staleWhileRevalidate: session?.user ? 0 : 30,
+  };
 
   return {
     user: session?.user,
     browsingMode,
     acceptableOrigin,
     track,
+    cache,
     res,
   };
 };
@@ -43,6 +56,11 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
   acceptableOrigin: true,
   browsingMode: BrowsingMode.All,
   track: new Tracker(req, res),
+  cache: {
+    browserCacheTTL: 3 * 60,
+    edgeCacheTTL: 3 * 60,
+    staleWhileRevalidate: 60,
+  },
   res,
 });
 

@@ -6,9 +6,6 @@ import { createContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { handleTRPCError } from '~/server/utils/errorHandling';
 
-const PUBLIC_CACHE_MAX_AGE = 60;
-const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = 30;
-
 export const config = {
   api: {
     bodyParser: {
@@ -23,14 +20,19 @@ export default withAxiom(
     router: appRouter,
     createContext,
     responseMeta: ({ ctx, type }) => {
-      // only public GET requests are cacheable
-      const cacheable = !ctx?.user && type === 'query' && !ctx?.res?.hasHeader('Cache-Control');
-      if (cacheable) {
-        return {
-          headers: {
-            'Cache-Control': `public, s-maxage=${PUBLIC_CACHE_MAX_AGE}, stale-while-revalidate=${PUBLIC_CACHE_STALE_WHILE_REVALIDATE}`,
-          },
+      const willEdgeCache = ctx?.cache && !!ctx?.cache.edgeTTL && ctx?.cache.edgeTTL > 0;
+      if (willEdgeCache && type === 'query') {
+        ctx.res?.removeHeader('Set-Cookie');
+        const headers: Record<string, string> = {
+          'Cache-Control': [
+            'public',
+            `max-age=${ctx.cache.browserTTL ?? 0}`,
+            `s-maxage=${ctx.cache.edgeTTL}`,
+            `stale-while-revalidate=${ctx.cache.staleWhileRevalidate}`,
+          ].join(', '),
         };
+        if (ctx.cache.tags) headers['Cache-Tag'] = ctx.cache.tags.join(', ');
+        return { headers };
       }
 
       return {};
