@@ -8,6 +8,7 @@ import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { applyAnonymousUserRules } from '~/server/services/image.service';
 import { isProd } from '~/env/other';
+import { purgeCache } from '~/server/cloudflare/client';
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 const userPreferencesSchema = z.object({
@@ -126,6 +127,15 @@ export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
       ctx.cache.staleWhileRevalidate = 30;
       ctx.cache.tags = tags?.(input).map((x) => slugit(x));
     }
+
+    return result;
+  });
+}
+
+export function purgeOnSuccess(tags: string[]) {
+  return middleware(async ({ next }) => {
+    const result = await next();
+    if (result.ok) await purgeCache({ tags });
 
     return result;
   });
