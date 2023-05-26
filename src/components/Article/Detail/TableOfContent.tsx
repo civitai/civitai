@@ -1,4 +1,4 @@
-import { Text, Stack, Collapse } from '@mantine/core';
+import { Text, Stack, Collapse, ScrollArea, Anchor } from '@mantine/core';
 import { useState } from 'react';
 
 import { NestedHeading, useIntersectionObserver } from '~/hooks/useHeadingsData';
@@ -9,9 +9,11 @@ export function TableOfContent({ headings }: Props) {
 
   return (
     <nav aria-label="Table of contents">
-      {headings.map((heading, index) => (
-        <Heading key={index} activeId={activeId} {...heading} />
-      ))}
+      <ScrollArea style={{ height: 300 }}>
+        {headings.map((heading, index) => (
+          <Heading key={index} activeId={activeId} {...heading} />
+        ))}
+      </ScrollArea>
     </nav>
   );
 }
@@ -23,17 +25,15 @@ function Heading({
   activeId,
   ...heading
 }: NestedHeading & { parentIndex?: number; activeId?: string }) {
-  const isActive = activeId === heading.id || heading.items.some((item) => item.id === activeId);
+  const isActive = !!activeId && activeId === heading.id; // || heading.items.some((item) => item.id === activeId);
   const isFirstLevel = parentIndex === 1;
   const labelSize = isFirstLevel ? 'md' : 'sm';
 
   return (
     <Stack spacing={0}>
-      <Text
-        component="a"
-        lineClamp={1}
+      <Anchor
         href={`#${heading.id}`}
-        size={labelSize}
+        variant="text"
         sx={(theme) => ({
           padding: theme.spacing.sm,
           paddingLeft: isFirstLevel ? theme.spacing.sm : `${parentIndex * theme.spacing.md}px`,
@@ -48,10 +48,12 @@ function Heading({
           });
         }}
       >
-        {heading.title}
-      </Text>
+        <Text size={labelSize} lineClamp={2} inherit>
+          {heading.title}
+        </Text>
+      </Anchor>
       {!!heading.items.length ? (
-        <Collapse in={isActive}>
+        <Collapse in={true}>
           {heading.items.map((item, index) => (
             <Heading key={index} activeId={activeId} parentIndex={parentIndex + 1} {...item} />
           ))}
