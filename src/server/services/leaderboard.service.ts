@@ -49,6 +49,7 @@ export async function getLeaderboardPositions(input: GetLeaderboardPositionsInpu
       userId,
       date,
       leaderboard: !input.isModerator ? { public: true } : undefined,
+      position: input.top ? { lte: input.top } : undefined,
     },
     select: {
       leaderboardId: true,

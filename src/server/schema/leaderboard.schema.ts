@@ -4,6 +4,7 @@ export type GetLeaderboardPositionsInput = z.infer<typeof getLeaderboardPosition
 export const getLeaderboardPositionsSchema = z.object({
   userId: z.number().optional(),
   date: z.date().optional(),
+  top: z.number().optional(),
 });
 
 export type GetLeaderboardInput = z.infer<typeof getLeaderboardSchema>;
