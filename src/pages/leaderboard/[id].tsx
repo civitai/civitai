@@ -26,7 +26,7 @@ import { useMemo, useState } from 'react';
 import { z } from 'zod';
 
 import { Countdown } from '~/components/Countdown/Countdown';
-import { ScrollToTopFab } from '~/components/FloatingActionButton/ScrollToTopFAB';
+import { ScrollToTopFab } from '~/components/FloatingActionButton/ScrollToTopFab';
 import { CreatorList } from '~/components/Leaderboard/CreatorList';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
