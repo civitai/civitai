@@ -3,6 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import dayjs from 'dayjs';
 import { createLogger } from '~/utils/logging';
 import { purgeCache } from '~/server/cloudflare/client';
+import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 
 const log = createLogger('leaderboard', 'blue');
 
@@ -72,6 +73,8 @@ const updateUserLeaderboardRank = createJob(
         "leaderboardTitle" = excluded."leaderboardTitle";
     `,
     ]);
+
+    await applyDiscordLeaderboardRoles();
   }
 );
 
