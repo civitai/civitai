@@ -13,12 +13,10 @@ import {
   TooltipProps,
   createStyles,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState, useEffect, useRef } from 'react';
-import { Subscription } from 'react-hook-form/dist/utils/createSubject';
+import React, { useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -39,7 +37,6 @@ import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
-import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
@@ -151,8 +148,17 @@ export function ArticleUpsertForm({ article }: Props) {
               name="content"
               label="Content"
               editorSize="xl"
-              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'polls']}
+              includeControls={[
+                'heading',
+                'formatting',
+                'list',
+                'link',
+                'media',
+                'polls',
+                'colors',
+              ]}
               withAsterisk
+              stickyToolbar
             />
           </Stack>
         </Grid.Col>

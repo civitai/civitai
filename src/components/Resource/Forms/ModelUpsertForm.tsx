@@ -191,7 +191,15 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               name="description"
               label="About your model"
               description="Tell us what your model does"
-              includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
+              includeControls={[
+                'heading',
+                'formatting',
+                'list',
+                'link',
+                'media',
+                'mentions',
+                'colors',
+              ]}
               editorSize="xl"
             />
           </Stack>

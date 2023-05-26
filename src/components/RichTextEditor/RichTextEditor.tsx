@@ -12,13 +12,23 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { Link, RichTextEditorProps, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { Color } from '@tiptap/extension-color';
+import Heading from '@tiptap/extension-heading';
 import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
 import TextStyle from '@tiptap/extension-text-style';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
-import { BubbleMenu, Editor, Extension, Extensions, nodePasteRule, useEditor } from '@tiptap/react';
+import {
+  BubbleMenu,
+  Editor,
+  Extension,
+  Extensions,
+  mergeAttributes,
+  nodePasteRule,
+  useEditor,
+} from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import { uniqueId } from 'lodash-es';
 import { useEffect, useImperativeHandle, useRef } from 'react';
 
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
@@ -28,7 +38,7 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { validateThirdPartyUrl } from '~/utils/string-helpers';
+import { slugit, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -148,11 +158,14 @@ export function RichTextEditor({
   innerRef,
   onSuperEnter,
   withLinkValidation,
+  stickyToolbar,
+  toolbarOffset = 70,
   ...props
 }: Props) {
   const { classes } = useStyles();
   const addHeading = includeControls.includes('heading');
   const addFormatting = includeControls.includes('formatting');
+  const addColors = addFormatting && includeControls.includes('colors');
   const addList = includeControls.includes('list');
   const addLink = includeControls.includes('link');
   const addMedia = includeControls.includes('media');
@@ -166,7 +179,8 @@ export function RichTextEditor({
   const extensions: Extensions = [
     Placeholder.configure({ placeholder }),
     StarterKit.configure({
-      heading: !addHeading ? false : { levels: [1, 2, 3] },
+      // heading: !addHeading ? false : { levels: [1, 2, 3] },
+      heading: false,
       bulletList: !addList ? false : undefined,
       orderedList: !addList ? false : undefined,
       bold: !addFormatting ? false : undefined,
@@ -176,6 +190,35 @@ export function RichTextEditor({
       blockquote: !addFormatting ? false : undefined,
       codeBlock: !addFormatting ? false : undefined,
     }),
+    ...(addHeading
+      ? [
+          Heading.configure({
+            levels: [1, 2, 3],
+          }).extend({
+            addAttributes() {
+              return {
+                ...this.parent?.(),
+                id: { default: null },
+              };
+            },
+            addOptions() {
+              return {
+                ...this.parent?.(),
+                HTMLAttributes: {
+                  id: null,
+                },
+              };
+            },
+            renderHTML({ node }) {
+              const hasLevel = this.options.levels.includes(node.attrs.level);
+              const level = hasLevel ? node.attrs.level : this.options.levels[0];
+              const id = node.attrs.id || slugit(node.textContent) || uniqueId('heading-');
+
+              return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
+            },
+          }),
+        ]
+      : []),
     ...(onSuperEnter
       ? [
           Extension.create({
@@ -189,7 +232,8 @@ export function RichTextEditor({
           }),
         ]
       : []),
-    ...(addFormatting ? [Underline, TextStyle, Color] : []),
+    ...(addFormatting ? [Underline] : []),
+    ...(addColors ? [TextStyle, Color] : []),
     ...(addLink ? [linkExtension] : []),
     ...(addMedia
       ? [
@@ -336,7 +380,7 @@ export function RichTextEditor({
         })}
       >
         {!hideToolbar && (
-          <RTE.Toolbar>
+          <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
             {addHeading && (
               <RTE.ControlsGroup>
                 <RTE.H1 />
@@ -353,7 +397,9 @@ export function RichTextEditor({
                 <RTE.Strikethrough />
                 <RTE.ClearFormatting />
                 <RTE.CodeBlock />
-                <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
+                {addColors && (
+                  <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
+                )}
               </RTE.ControlsGroup>
             )}
 
@@ -419,7 +465,15 @@ export type EditorCommandsRef = {
   focus: () => void;
 };
 
-type ControlType = 'heading' | 'formatting' | 'list' | 'link' | 'media' | 'mentions' | 'polls';
+type ControlType =
+  | 'heading'
+  | 'formatting'
+  | 'list'
+  | 'link'
+  | 'media'
+  | 'mentions'
+  | 'polls'
+  | 'colors';
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
@@ -434,4 +488,6 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     innerRef?: React.ForwardedRef<EditorCommandsRef>;
     onSuperEnter?: () => void;
     withLinkValidation?: boolean;
+    stickyToolbar?: boolean;
+    toolbarOffset?: number;
   };

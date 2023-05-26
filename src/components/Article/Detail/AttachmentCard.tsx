@@ -46,21 +46,25 @@ export function AttachmentCard({ id, name, sizeKB, url }: Props) {
   return (
     <Card
       className={classes.attachment}
+      radius={0}
+      py="xs"
       component="a"
       href={`/api/download/attachments/${id}`}
       download
     >
-      <Stack spacing={8}>
-        <Group position="apart">
-          <ThemeIcon size="sm" variant="light" color={color}>
-            {icon}
-          </ThemeIcon>
-          <Text color="dimmed" size="sm">
+      <Group spacing="xs" noWrap>
+        <ThemeIcon size="lg" variant="light" color={color} sx={{ backgroundColor: 'transparent' }}>
+          {icon}
+        </ThemeIcon>
+        <Stack spacing={0}>
+          <Text size="sm" lineClamp={1}>
+            {name}
+          </Text>
+          <Text color="dimmed" size="xs">
             {formatKBytes(sizeKB)}
           </Text>
-        </Group>
-        <Text lineClamp={3}>{name}</Text>
-      </Stack>
+        </Stack>
+      </Group>
     </Card>
   );
 }
