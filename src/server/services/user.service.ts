@@ -36,11 +36,14 @@ import { getSystemPermissions } from '~/server/services/system-cache';
 //   }
 // })
 
-export const getUserCreator = async (where: { username?: string; id?: number }) => {
-  if (!where.username && !where.id) {
-    throw new Error('Must provide username or id');
-  }
-
+export const getUserCreator = async ({
+  leaderboardId,
+  ...where
+}: {
+  username?: string;
+  id?: number;
+  leaderboardId?: string;
+}) => {
   return dbRead.user.findFirst({
     where: {
       ...where,
@@ -69,7 +72,15 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
           followerCountAllTime: true,
         },
       },
-      rank: { select: { leaderboardRank: true, leaderboardId: true, leaderboardTitle: true } },
+      leaderboardResults: {
+        where: { date: new Date(), leaderboardId },
+        orderBy: { position: 'asc' },
+        select: {
+          position: true,
+          leaderboard: { select: { title: true, id: true } },
+        },
+      },
+      // rank: { select: { leaderboardRank: true, leaderboardId: true, leaderboardTitle: true } },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {

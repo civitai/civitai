@@ -27,7 +27,11 @@ export function CreatorCard({ user }: Props) {
   const theme = useMantineTheme();
 
   const { data: creator } = trpc.user.getCreator.useQuery(
-    { id: user.id },
+    {
+      id: user.id,
+      // TODO.leaderboard: uncomment when migration is done
+      // leaderboardId: user.leaderboardShowcase !== null ? user.leaderboardShowcase : undefined,
+    },
     {
       placeholderData: {
         ...user,

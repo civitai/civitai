@@ -20,6 +20,7 @@ interface ExtendedUser {
   onboarded?: boolean;
   permissions?: string[];
   filePreferences?: UserFilePreferences;
+  leaderboardShowcase?: string;
 }
 
 declare module 'next-auth' {

@@ -72,13 +72,29 @@ export const getAllUsersHandler = async ({
 };
 
 export const getUserCreatorHandler = async ({
-  input: { username, id },
+  input: { username, id, leaderboardId },
 }: {
   input: GetUserByUsernameSchema;
 }) => {
+  if (!username && !id) throw throwBadRequestError('Must provide username or id');
+
   try {
-    return await getUserCreator({ username, id });
+    const user = await getUserCreator({ username, id, leaderboardId });
+    if (!user) throw throwNotFoundError('Could not find user');
+
+    const { leaderboardResults, ...creator } = user;
+    const [topLeaderboard] = leaderboardResults;
+
+    return {
+      ...creator,
+      rank: {
+        leaderboardRank: topLeaderboard.position,
+        leaderboardTitle: topLeaderboard.leaderboard.title,
+        leaderboardId: topLeaderboard.leaderboard.id,
+      },
+    };
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
