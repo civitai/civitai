@@ -78,6 +78,7 @@ export const getPostsInfinite = async ({
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
+    if (!user?.isModerator) AND.push({ modelVersion: { status: 'Published' } });
   }
 
   // sorting
@@ -160,6 +161,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
     where: {
       id,
       OR: user?.isModerator ? undefined : [{ publishedAt: { not: null } }, { userId: user?.id }],
+      modelVersion: user?.isModerator ? undefined : { status: 'Published' },
     },
     select: {
       id: true,

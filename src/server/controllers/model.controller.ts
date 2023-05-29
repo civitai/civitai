@@ -43,6 +43,7 @@ import {
   toggleLockModel,
   unpublishModelById,
   updateModelById,
+  updateModelEarlyAccessDeadline,
   upsertModel,
 } from '~/server/services/model.service';
 import {
@@ -377,6 +378,11 @@ export const publishModelHandler = async ({
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
       (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
+
+    await updateModelEarlyAccessDeadline({ id: updatedModel.id }).catch((e) => {
+      console.error('Unable to update model early access deadline');
+      console.error(e);
+    });
 
     await ctx.track.modelEvent({
       type: 'Publish',
