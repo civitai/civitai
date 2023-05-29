@@ -22,6 +22,7 @@ import {
   modelVersionUpsertSchema2,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
+import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -123,6 +124,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
+  const atEarlyAccess = isEarlyAccess({
+    publishedAt: model?.publishedAt ?? new Date(),
+    earlyAccessTimeframe: version?.earlyAccessTimeFrame ?? 0,
+    versionCreatedAt: version?.createdAt ?? new Date(),
+  });
+  const showEarlyAccessInput = version?.status !== 'Published' || atEarlyAccess;
+
   return (
     <>
       <Form form={form} onSubmit={handleSubmit}>
@@ -134,54 +142,56 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             withAsterisk
             maxLength={25}
           />
-          <Input.Wrapper
-            label="Early Access"
-            description={
-              <DismissibleAlert
-                id="ea-info"
-                size="sm"
-                title="Get feedback on your model before full release"
-                content={
-                  <>
-                    {`This puts your model in the "Early Access" list of models
+          {showEarlyAccessInput && (
+            <Input.Wrapper
+              label="Early Access"
+              description={
+                <DismissibleAlert
+                  id="ea-info"
+                  size="sm"
+                  title="Get feedback on your model before full release"
+                  content={
+                    <>
+                      {`This puts your model in the "Early Access" list of models
                   available to `}
-                    <Text component={NextLink} href="/pricing" variant="link" target="_blank">
-                      Supporter Tier members
-                    </Text>
-                    {
-                      ' of the community. This can be a great way to get feedback from an engaged community before your model is available to the general public. If you choose to enable Early Access, your model will be released to the public after the selected time frame.'
-                    }
-                  </>
-                }
-                mb="xs"
+                      <Text component={NextLink} href="/pricing" variant="link" target="_blank">
+                        Supporter Tier members
+                      </Text>
+                      {
+                        ' of the community. This can be a great way to get feedback from an engaged community before your model is available to the general public. If you choose to enable Early Access, your model will be released to the public after the selected time frame.'
+                      }
+                    </>
+                  }
+                  mb="xs"
+                />
+              }
+              error={form.formState.errors.earlyAccessTimeFrame?.message}
+            >
+              <InputSegmentedControl
+                name="earlyAccessTimeFrame"
+                data={[
+                  { label: 'None', value: '0' },
+                  { label: '1 day', value: '1' },
+                  { label: '2 days', value: '2' },
+                  { label: '3 days', value: '3' },
+                  { label: '4 days', value: '4' },
+                  { label: '5 days', value: '5' },
+                ]}
+                color="blue"
+                size="xs"
+                styles={(theme) => ({
+                  root: {
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                    }`,
+                    background: 'none',
+                    marginTop: theme.spacing.xs * 0.5, // 5px
+                  },
+                })}
+                fullWidth
               />
-            }
-            error={form.formState.errors.earlyAccessTimeFrame?.message}
-          >
-            <InputSegmentedControl
-              name="earlyAccessTimeFrame"
-              data={[
-                { label: 'None', value: '0' },
-                { label: '1 day', value: '1' },
-                { label: '2 days', value: '2' },
-                { label: '3 days', value: '3' },
-                { label: '4 days', value: '4' },
-                { label: '5 days', value: '5' },
-              ]}
-              color="blue"
-              size="xs"
-              styles={(theme) => ({
-                root: {
-                  border: `1px solid ${
-                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                  }`,
-                  background: 'none',
-                  marginTop: theme.spacing.xs * 0.5, // 5px
-                },
-              })}
-              fullWidth
-            />
-          </Input.Wrapper>
+            </Input.Wrapper>
+          )}
           <InputSelect
             name="baseModel"
             label="Base Model"
@@ -254,6 +264,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean }) => React.ReactNode;
-  model?: Partial<ModelUpsertInput>;
-  version?: Partial<ModelVersionUpsertInput>;
+  model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
+  version?: Partial<ModelVersionUpsertInput & { createdAt: Date | null }>;
 };

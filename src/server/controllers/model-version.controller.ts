@@ -48,12 +48,15 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         trainedWords: true,
         epochs: true,
         steps: true,
+        status: true,
+        createdAt: true,
         model: {
           select: {
             id: true,
             name: true,
             type: true,
             status: true,
+            publishedAt: true,
             user: { select: { id: true } },
           },
         },
