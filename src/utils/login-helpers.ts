@@ -17,6 +17,7 @@ export const loginRedirectReasons = {
   'discord-link': 'Login with Discord to link your account',
   'create-article': 'You need to be logged in to create an article',
   'favorite-article': 'You need to be logged in to like an article',
+  'post-images': 'You need to be logged in to post images',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;
