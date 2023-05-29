@@ -492,16 +492,12 @@ export const ingestImage = async ({
 }): Promise<IngestImageReturnType> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-  const { url, id, width: oWidth, name } = ingestImageSchema.parse(image);
-  const width = Math.min(oWidth ?? 450, 4096);
-  const anim = name?.endsWith('.gif') ? false : undefined;
-  const gamma = anim === false ? 0.99 : undefined;
-  const edgeUrl = getEdgeUrl(url, { width, anim, gamma });
+  const { url, id } = ingestImageSchema.parse(image);
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const payload = {
     imageId: id,
-    url: edgeUrl,
+    imageKey: url,
     wait: true,
     scans: [ImageScanType.Label, ImageScanType.Moderation],
     callbackUrl,
