@@ -44,8 +44,13 @@ import {
   batchBlockTagsSchema,
   getUserCosmeticsSchema,
   toggleUserArticleEngagementSchema,
+  getHiddenPreferencesSchema,
 } from '~/server/schema/user.schema';
-import { getUserArticleEngagements, removeAllContent } from '~/server/services/user.service';
+import {
+  getHiddenPreferences,
+  getUserArticleEngagements,
+  removeAllContent,
+} from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
@@ -95,4 +100,7 @@ export const userRouter = router({
   toggleArticleEngagement: protectedProcedure
     .input(toggleUserArticleEngagementSchema)
     .mutation(toggleArticleEngagementHandler),
+  getHiddenPreferences: protectedProcedure
+    .input(getHiddenPreferencesSchema)
+    .query(({ input, ctx }) => getHiddenPreferences({ ...input, userId: ctx.user.id })),
 });

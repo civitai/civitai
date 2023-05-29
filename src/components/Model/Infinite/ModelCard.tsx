@@ -27,7 +27,7 @@ import {
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
@@ -40,12 +40,12 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { ModelsInfiniteDetail } from '~/components/Model/model.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -532,6 +532,6 @@ export function AmbientModelCard({ data, height }: Props) {
 
 type Props = {
   index: number;
-  data: ModelGetAll['items'][number];
+  data: ModelsInfiniteDetail;
   height: number;
 };

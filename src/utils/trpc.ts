@@ -5,7 +5,7 @@ import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
-import { isAuthed } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { isAuthed } from '~/providers/CivitaiSessionProvider';
 
 const url = '/api/trpc';
 
@@ -37,12 +37,13 @@ export const trpc = createTRPCNext<AppRouter>({
           enabled: (opts) => isDev || (opts.direction === 'down' && opts.result instanceof Error),
         }),
         splitLink({
-          condition: (op) => op.context.skipBatch === true,
+          // condition: (op) => op.context.skipBatch === true,
+          condition: (op) => op.context.skipBatch !== false,
           // when condition is true, use normal request
           true: httpLink({ url }),
           // when condition is false, use batching
-          // false: httpBatchLink({ url, maxURLLength: 2083 }),
-          false: httpLink({ url }), // Let's disable batching for now
+          false: httpBatchLink({ url, maxURLLength: 2083 }),
+          // false: httpLink({ url }), // Let's disable batching for now
         }),
       ],
     };

@@ -1,16 +1,20 @@
+import { isDefined } from '~/utils/type-guards';
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { GetAllInput } from '~/server/edge-services/model/schemas';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetAllModelsInput, GetModelsByCategoryInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ModelsInfinite } from '~/server/edge-services/model/getInfinite';
+import { useHiddenPreferences } from '~/hooks/useHiddenPreferences';
 
 const modelQueryParamSchema = z
   .object({
@@ -97,4 +101,61 @@ export const useQueryModelCategories = (
   const categories = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return { data, categories, ...rest };
+};
+
+export const useQueryInfiniteModels = (
+  filters: Omit<GetAllInput, 'browsingMode'>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const { data, ...rest } = trpc.model.getInfinite.useInfiniteQuery(
+    {
+      ...filters,
+      // we only query by SFW and All
+      browsingMode: browsingMode === BrowsingMode.NSFW ? BrowsingMode.All : browsingMode,
+    },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+      ...options,
+    }
+  );
+  const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const transformed = useModelsWithPreferences(models);
+  return { data, models: transformed, ...rest };
+};
+
+export type ModelsInfiniteDetail = ReturnType<typeof useModelsWithPreferences>[number];
+const useModelsWithPreferences = (models: ModelsInfinite) => {
+  const { imageIds, userIds, modelIds, tagIds } = useHiddenPreferences({
+    users: true,
+    tags: true,
+    models: true,
+    images: true,
+  });
+
+  // get user preferences here
+  const preferredModels = useMemo(
+    () =>
+      models
+        .map(({ images, ...model }) => {
+          const [image] = images.filter(
+            (image) => !imageIds.includes(image.id) && !tagIds.some((x) => image.tags.includes(x))
+          );
+          if (!image) return null;
+          return { ...model, image };
+        })
+        .filter(
+          (model) =>
+            !!model &&
+            !modelIds.includes(model.id) &&
+            !userIds.includes(model.user.id) &&
+            !tagIds.some((x) => model.tags.includes(x))
+        )
+        .filter(isDefined),
+    [imageIds, modelIds, models, tagIds, userIds]
+  );
+
+  return preferredModels;
 };

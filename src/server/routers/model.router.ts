@@ -72,6 +72,8 @@ import {
   setModelsCategory,
 } from '~/server/services/model.service';
 import { cacheIt } from '~/server/middleware.trpc';
+import { getAllSchema } from '~/server/edge-services/model/schemas';
+import { getInfinite } from '~/server/edge-services/model/getInfinite';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -151,6 +153,9 @@ export const modelRouter = router({
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .use(applyUserPreferences)
     .query(getModelsInfiniteHandler),
+  getInfinite: publicProcedure
+    .input(getAllSchema)
+    .query(({ input, ctx }) => getInfinite({ ...input, currentUser: ctx.user })),
   getAllPagedSimple: publicProcedure
     .input(getAllModelsSchema)
     .use(cacheIt({ ttl: 60 }))

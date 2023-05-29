@@ -1,4 +1,4 @@
-import { applyUserPreferences, applyBrowsingMode, cacheIt } from './../middleware.trpc';
+import { applyUserPreferences, cacheIt } from './../middleware.trpc';
 import { getByIdSchema } from './../schema/base.schema';
 import { publicProcedure } from './../trpc';
 import {
@@ -80,7 +80,6 @@ export const postRouter = router({
   getInfinite: publicProcedure
     .input(postsQuerySchema)
     .use(applyUserPreferences())
-    .use(applyBrowsingMode())
     .query(getPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getPostHandler),
   getEdit: protectedProcedure.input(getByIdSchema).query(getPostEditHandler),

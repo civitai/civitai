@@ -1,4 +1,4 @@
-import { applyBrowsingMode, cacheIt } from './../middleware.trpc';
+import { cacheIt } from './../middleware.trpc';
 import {
   getImageDetailHandler,
   getImageHandler,
@@ -100,12 +100,10 @@ export const imageRouter = router({
   getInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
     .use(applyUserPreferences())
-    .use(applyBrowsingMode())
     .query(getInfiniteImagesHandler),
   getImagesAsPostsInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
     .use(applyUserPreferences())
-    .use(applyBrowsingMode())
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getByIdSchema).query(getImageHandler),
   getResources: publicProcedure.input(getByIdSchema).query(getImageResourcesHandler),

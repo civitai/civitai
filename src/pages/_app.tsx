@@ -40,7 +40,7 @@ import {
   parseFiltersCookieOld,
 } from '~/providers/FiltersProviderOld';
 import PlausibleProvider from 'next-plausible';
-import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { CivitaiSessionProvider } from '~/providers/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { CannyIdentityProvider } from '~/components/Canny/CannyProvider';

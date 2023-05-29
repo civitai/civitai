@@ -130,3 +130,6 @@ export function hashifyObject(obj: any) {
   const str = toJson(obj);
   return hashify(str);
 }
+
+export const camelToSnakeCase = (str: string) =>
+  str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);

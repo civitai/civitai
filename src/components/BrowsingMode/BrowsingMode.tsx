@@ -85,13 +85,13 @@ type BrowsingModeIconProps = {
 
 export function BrowsingModeMenu() {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  // const queryUtils = trpc.useContext();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
   const setBrowsingMode = useFiltersContext((state) => state.setBrowsingMode);
 
   const handleChange = (mode: BrowsingMode) => {
     setBrowsingMode(mode);
-    invalidateModeratedContentDebounced(queryUtils);
+    // invalidateModeratedContentDebounced(queryUtils);
   };
 
   const isMobile = useIsMobile();

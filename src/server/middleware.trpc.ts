@@ -21,10 +21,9 @@ const userPreferencesSchema = z.object({
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
     const _input = input as TInput;
-    let browsingMode = ctx.user ? _input.browsingMode : undefined;
-    if (!browsingMode) browsingMode = ctx.browsingMode;
+    _input.browsingMode ??= ctx.browsingMode;
 
-    if (browsingMode !== BrowsingMode.All) {
+    if (_input.browsingMode !== BrowsingMode.All) {
       const { hidden } = userCache(ctx.user?.id);
       const hiddenTags = await hidden.tags.get();
       const hiddenUsers = await hidden.users.get();
@@ -37,7 +36,7 @@ export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
       _input.excludedUserIds = [...hiddenUsers, ...(_input.excludedUserIds ?? [])];
       _input.excludedImageIds = [...hiddenImages, ...(_input.excludedUserIds ?? [])];
 
-      if (browsingMode === BrowsingMode.SFW) {
+      if (_input.browsingMode === BrowsingMode.SFW) {
         const systemHidden = await getHiddenTagsForUser({ userId: -1 });
         _input.excludedTagIds = [
           ...systemHidden.hiddenTags,
@@ -59,12 +58,14 @@ const browsingModeSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).default(BrowsingMode.All),
 });
 
+// ? Do we need this?
 export const applyBrowsingMode = <TInput extends BrowsingModeInput>() =>
   middleware(async ({ input, ctx, next }) => {
     const _input = input as TInput;
-    const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
-    if (canViewNsfw && !_input.browsingMode) _input.browsingMode = BrowsingMode.All;
-    else if (!canViewNsfw) _input.browsingMode = BrowsingMode.SFW;
+    _input.browsingMode ??= ctx.browsingMode;
+    // const canViewNsfw = ctx.user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
+    // if (canViewNsfw && !_input.browsingMode) _input.browsingMode = BrowsingMode.All;
+    // else if (!canViewNsfw) _input.browsingMode = BrowsingMode.SFW;
 
     return next({
       ctx: { user: ctx.user },

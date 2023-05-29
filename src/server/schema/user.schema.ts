@@ -1,6 +1,7 @@
 import { TagEngagementType, ArticleEngagementType } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { BrowsingMode } from '~/server/common/enums';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -101,4 +102,19 @@ export const getUserArticleEngagementsSchema = z.object({
 export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticleEngagementSchema>;
 export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema.extend({
   articleId: z.number(),
+});
+
+const hiddenPreferenceTypes = z.enum(['tags', 'users', 'models', 'images']);
+export type HiddenPreferenceTypes = z.infer<typeof hiddenPreferenceTypes>;
+export type GetHiddenPreferencesOutput = z.output<typeof getHiddenPreferencesSchema>;
+export const getHiddenPreferencesSchema = z.object({
+  type: hiddenPreferenceTypes,
+  browsingMode: z.nativeEnum(BrowsingMode).optional(),
+  refreshCache: z.boolean().optional(),
+});
+
+export type ToggleHiddenPreferenceOutput = z.output<typeof toggleHiddenPreferenceSchema>;
+export const toggleHiddenPreferenceSchema = z.object({
+  entityType: z.enum(['users', 'models']),
+  entityId: z.number(),
 });

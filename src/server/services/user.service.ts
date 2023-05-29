@@ -1,4 +1,8 @@
-import { ToggleUserArticleEngagementsInput } from './../schema/user.schema';
+import {
+  GetHiddenPreferencesOutput,
+  ToggleHiddenPreferenceOutput,
+  ToggleUserArticleEngagementsInput,
+} from './../schema/user.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   ArticleEngagementType,
@@ -20,6 +24,10 @@ import {
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
 import {
+  getHiddenImagesForUser,
+  getHiddenModelsForUser,
+  getHiddenTagsForUser,
+  getHiddenUsersForUser,
   refreshAllHiddenForUser,
   refreshHiddenModelsForUser,
   refreshHiddenUsersForUser,
@@ -556,3 +564,38 @@ export const toggleUserArticleEngagement = async ({
   return !exists;
 };
 // #endregion
+
+export const getHiddenPreferences = async ({
+  type,
+  refreshCache,
+  userId,
+}: GetHiddenPreferencesOutput & { userId: number }) => {
+  switch (type) {
+    case 'images':
+      return await getHiddenImagesForUser({ userId, refreshCache });
+    case 'models':
+      return await getHiddenModelsForUser({ userId, refreshCache });
+    case 'tags':
+      const tags = await getHiddenTagsForUser({ userId, refreshCache });
+      return [...new Set([...tags.moderatedTags, ...tags.hiddenTags])];
+    case 'users':
+      return await getHiddenUsersForUser({ userId, refreshCache });
+    default:
+      throw new Error('unhandled hidden user preferences type');
+  }
+};
+
+export const toggleHiddenPreference = async ({
+  entityType,
+  entityId,
+  userId,
+}: ToggleHiddenPreferenceOutput & { userId: number }) => {
+  switch (entityType) {
+    case 'models':
+      return await toggleModelHide({ userId, modelId: entityId });
+    case 'users':
+      return await toggleHideUser({ userId, targetUserId: entityId });
+    default:
+      throw new Error('unhandled hidden user preferences type');
+  }
+};

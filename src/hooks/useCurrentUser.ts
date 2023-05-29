@@ -1,4 +1,4 @@
-import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useCivitaiSessionContext } from '~/providers/CivitaiSessionProvider';
 
 // export function useCurrentUser() {
 //   const { data, update } = useSession();

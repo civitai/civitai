@@ -6,8 +6,9 @@ import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 // import { immer } from 'zustand/middleware/immer';
 import { z } from 'zod';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+// import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { mergeWith, isArray } from 'lodash-es';
+import { useCurrentUser } from '~/providers/CivitaiSessionProvider';
 
 export const modelFilterSchema = z
   .object({

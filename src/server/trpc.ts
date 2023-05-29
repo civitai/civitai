@@ -3,6 +3,7 @@ import { SessionUser } from 'next-auth';
 import superjson from 'superjson';
 import { FeatureFlags, getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { Context } from './createContext';
+import { isProd } from '~/env/other';
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
@@ -17,7 +18,7 @@ export const { router, middleware } = t;
  * Unprotected procedure
  **/
 const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next }) => {
-  if (!acceptableOrigin)
+  if (!acceptableOrigin && isProd)
     throw new TRPCError({
       code: 'UNAUTHORIZED',
       message:

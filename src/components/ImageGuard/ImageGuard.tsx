@@ -41,6 +41,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { useImageStore } from '~/store/images.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { devtools } from 'zustand/middleware';
 
 export type ImageGuardConnect = {
   entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
@@ -57,27 +58,29 @@ type SfwStore = {
 const getConnectionKey = ({ entityId, entityType }: ImageGuardConnect) =>
   `${entityId}_${entityType}`;
 const useStore = create<SfwStore>()(
-  immer((set) => ({
-    showingConnections: {},
-    showingImages: {},
+  devtools(
+    immer((set) => ({
+      showingConnections: {},
+      showingImages: {},
 
-    toggleImage: (id) => {
-      set((state) => {
-        state.showingImages[id.toString()] = !state.showingImages[id.toString()];
-      });
-    },
-    showImages: (ids) => {
-      set((state) => {
-        ids.map((id) => (state.showingImages[id.toString()] = true));
-      });
-    },
-    toggleConnection: (args) => {
-      set((state) => {
-        const key = getConnectionKey(args);
-        state.showingConnections[key] = !state.showingConnections[key];
-      });
-    },
-  }))
+      toggleImage: (id) => {
+        set((state) => {
+          state.showingImages[id.toString()] = !state.showingImages[id.toString()];
+        });
+      },
+      showImages: (ids) => {
+        set((state) => {
+          ids.map((id) => (state.showingImages[id.toString()] = true));
+        });
+      },
+      toggleConnection: (args) => {
+        set((state) => {
+          const key = getConnectionKey(args);
+          state.showingConnections[key] = !state.showingConnections[key];
+        });
+      },
+    }))
+  )
 );
 // #endregion
 

@@ -1,10 +1,12 @@
 import { SessionUser } from 'next-auth';
 import { useSession } from 'next-auth/react';
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo } from 'react';
+import { trpc } from '~/utils/trpc';
 
 type CivitaiSessionState = SessionUser & { isMember: boolean; refresh: () => void };
 const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);
 export const useCivitaiSessionContext = () => useContext(CivitaiSessionContext);
+export const useCurrentUser = useCivitaiSessionContext;
 
 export let isAuthed = false;
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
@@ -19,6 +21,11 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       refresh: update,
     };
   }, [data?.user, update]);
+
+  const queryUtils = trpc.useContext();
+  useEffect(() => {
+    queryUtils.user.getHiddenPreferences.invalidate({ type: 'tags' });
+  }, [value?.showNsfw]); //eslint-disable-line
 
   return <CivitaiSessionContext.Provider value={value}>{children}</CivitaiSessionContext.Provider>;
 }
