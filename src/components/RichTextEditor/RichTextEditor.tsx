@@ -212,7 +212,7 @@ export function RichTextEditor({
             renderHTML({ node }) {
               const hasLevel = this.options.levels.includes(node.attrs.level);
               const level = hasLevel ? node.attrs.level : this.options.levels[0];
-              const id = node.attrs.id || slugit(node.textContent) || uniqueId('heading-');
+              const id = node.attrs.id || uniqueId('heading-');
 
               return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
             },

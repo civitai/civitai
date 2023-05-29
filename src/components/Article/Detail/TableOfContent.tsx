@@ -53,6 +53,7 @@ function Heading({
         </Text>
       </Anchor>
       {!!heading.items.length ? (
+        // TODO: update to actually open/close when highlighted
         <Collapse in={true}>
           {heading.items.map((item, index) => (
             <Heading key={index} activeId={activeId} parentIndex={parentIndex + 1} {...item} />
