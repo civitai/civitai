@@ -10,8 +10,7 @@ export const parseBrowsingMode = (
   cookies: Partial<{ [key: string]: string }>,
   session: Session | null
 ) => {
-  if (!session) return BrowsingMode.SFW;
-  if (!session.user?.showNsfw) return BrowsingMode.SFW;
+  if (!session?.user?.showNsfw) return BrowsingMode.SFW;
   const browsingMode = parseFilterCookies(cookies).browsingMode;
   return browsingMode; // NSFW = "My Filters" and should be the default if a user is logged in
 };

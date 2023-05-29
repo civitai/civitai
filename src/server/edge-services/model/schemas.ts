@@ -18,7 +18,7 @@ export const getAllSchema = z.object({
   tagname: z.string().optional(),
   user: z.string().transform(postgresSlugify).optional(),
   username: z.string().transform(postgresSlugify).optional(),
-  browsingMode: z.nativeEnum(BrowsingMode),
+  // browsingMode: z.nativeEnum(BrowsingMode),
   types: z
     .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
     .optional()

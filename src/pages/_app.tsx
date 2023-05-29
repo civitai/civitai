@@ -114,9 +114,9 @@ function MyApp(props: CustomAppProps) {
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
         <CivitaiSessionProvider>
-          <CookiesProvider value={cookies}>
-            <FiltersProviderOld value={filtersOld}>
-              <FiltersProvider value={filters}>
+          <FiltersProvider value={filters}>
+            <CookiesProvider value={cookies}>
+              <FiltersProviderOld value={filtersOld}>
                 <FeatureFlagsProvider flags={flags}>
                   <CivitaiLinkProvider>
                     <CustomModalsProvider>
@@ -130,9 +130,9 @@ function MyApp(props: CustomAppProps) {
                     </CustomModalsProvider>
                   </CivitaiLinkProvider>
                 </FeatureFlagsProvider>
-              </FiltersProvider>
-            </FiltersProviderOld>
-          </CookiesProvider>
+              </FiltersProviderOld>
+            </CookiesProvider>
+          </FiltersProvider>
         </CivitaiSessionProvider>
       </SessionProvider>
     </>

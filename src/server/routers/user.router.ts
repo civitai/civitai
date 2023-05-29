@@ -48,6 +48,7 @@ import {
 } from '~/server/schema/user.schema';
 import {
   getHiddenPreferences,
+  getSystemHiddenTags,
   getUserArticleEngagements,
   removeAllContent,
 } from '~/server/services/user.service';
@@ -100,6 +101,9 @@ export const userRouter = router({
   toggleArticleEngagement: protectedProcedure
     .input(toggleUserArticleEngagementSchema)
     .mutation(toggleArticleEngagementHandler),
+  getSystemHiddenTags: publicProcedure.query(({ ctx }) =>
+    getSystemHiddenTags({ userId: ctx.user?.id })
+  ),
   getHiddenPreferences: protectedProcedure
     .input(getHiddenPreferencesSchema)
     .query(({ input, ctx }) => getHiddenPreferences({ ...input, userId: ctx.user.id })),

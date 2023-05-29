@@ -107,12 +107,16 @@ export const useQueryInfiniteModels = (
   filters: Omit<GetAllInput, 'browsingMode'>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const { imageIds, userIds, modelIds, tagIds } = useHiddenPreferences({
+    users: true,
+    tags: true,
+    models: true,
+    images: true,
+  });
+
   const { data, ...rest } = trpc.model.getInfinite.useInfiniteQuery(
     {
       ...filters,
-      // we only query by SFW and All
-      browsingMode: browsingMode === BrowsingMode.NSFW ? BrowsingMode.All : browsingMode,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
@@ -122,19 +126,23 @@ export const useQueryInfiniteModels = (
     }
   );
   const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
-  const transformed = useModelsWithPreferences(models);
-  return { data, models: transformed, ...rest };
+
+  // get user preferences here
+  const preferredModels = useModelsWithPreferences(models, { tagIds, imageIds, userIds, modelIds });
+
+  return { data, models: preferredModels, ...rest };
 };
 
 export type ModelsInfiniteDetail = ReturnType<typeof useModelsWithPreferences>[number];
-const useModelsWithPreferences = (models: ModelsInfinite) => {
-  const { imageIds, userIds, modelIds, tagIds } = useHiddenPreferences({
-    users: true,
-    tags: true,
-    models: true,
-    images: true,
-  });
-
+const useModelsWithPreferences = (
+  models: ModelsInfinite,
+  {
+    userIds,
+    imageIds,
+    modelIds,
+    tagIds,
+  }: { userIds: number[]; imageIds: number[]; modelIds: number[]; tagIds: number[] }
+) => {
   // get user preferences here
   const preferredModels = useMemo(
     () =>

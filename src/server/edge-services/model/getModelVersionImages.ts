@@ -1,8 +1,5 @@
 import { NsfwLevel, Prisma } from '@prisma/client';
-import { SessionUser } from 'next-auth';
-import { BrowsingMode } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { getShowNsfw } from '~/server/edge-services/edge-services.utils';
 
 type ImagesForModelVersions = {
   id: number;
@@ -20,25 +17,21 @@ type ImagesForModelVersions = {
 
 export const getModelVersionImages = async ({
   modelVersionIds,
-  browsingMode,
-  currentUser,
   imagesPerVersion = 10,
 }: {
   modelVersionIds: number[];
-  browsingMode: BrowsingMode;
-  currentUser?: SessionUser;
   imagesPerVersion?: number;
 }) => {
   if (!modelVersionIds.length) return [];
-  const showNsfw = getShowNsfw(browsingMode, currentUser);
+  // const showNsfw = getShowNsfw(browsingMode, currentUser);
 
   const imageWhere: Prisma.Sql[] = [
     Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
     Prisma.sql`i."needsReview" = false`,
   ];
-  if (!currentUser?.id) {
-    imageWhere.push(Prisma.sql`(i."nsfw" = 'None' OR i."nsfw" = 'Soft')`);
-  } else if (!showNsfw) imageWhere.push(Prisma.sql`i."nsfw" = 'None'`);
+  // if (!currentUser?.id) {
+  //   imageWhere.push(Prisma.sql`(i."nsfw" = 'None' OR i."nsfw" = 'Soft')`);
+  // } else if (!showNsfw) imageWhere.push(Prisma.sql`i."nsfw" = 'None'`);
 
   const images = await dbRead.$queryRaw<ImagesForModelVersions[]>`
     WITH targets AS (

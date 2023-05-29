@@ -13,12 +13,11 @@ export type ModelsInfinite = GetInfiniteReturnType['items'];
 export type ModelsInfiniteItem = ModelsInfinite[number];
 export const getInfinite = async ({
   currentUser,
-  browsingMode,
   take,
   ...query
 }: GetAllOutput & { currentUser?: SessionUser }) => {
   const models = await getAll(
-    { ...query, currentUser, browsingMode, take: take + 1 },
+    { ...query, currentUser, take: take + 1 },
     {
       id: true,
       name: true,
@@ -61,7 +60,7 @@ export const getInfinite = async ({
   );
 
   const modelVersionIds = models.flatMap((x) => x.modelVersions).map((x) => x.id);
-  const images = await getModelVersionImages({ modelVersionIds, browsingMode, currentUser });
+  const images = await getModelVersionImages({ modelVersionIds });
 
   let nextCursor: number | undefined;
   if (models.length > take) {

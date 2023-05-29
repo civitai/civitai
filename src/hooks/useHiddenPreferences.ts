@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
@@ -11,15 +11,26 @@ type UseHiddenPreferencesProps = {
   models?: boolean;
 };
 
+/*
+  - Safe
+    - system tags
+    - my tags
+  - My Filters
+    - my tags
+  - Everything
+    - no tags
+*/
 export const useHiddenPreferences = ({
   tags,
   users,
   images,
   models,
 }: UseHiddenPreferencesProps) => {
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
-  const showAll = browsingMode === BrowsingMode.All;
   const currentUser = useCurrentUser();
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const hideNsfw =
+    !currentUser?.showNsfw || (currentUser.showNsfw && browsingMode === BrowsingMode.SFW);
+  const showAll = !!currentUser && browsingMode === BrowsingMode.All;
   const enabled = !!currentUser;
   const options = {
     cacheTime: Infinity,
@@ -28,6 +39,7 @@ export const useHiddenPreferences = ({
     placeholderData: [],
     keepPreviousData: true,
   };
+
   const imageResults = trpc.user.getHiddenPreferences.useQuery(
     { type: 'images' },
     { enabled: images && enabled, ...options }
@@ -59,10 +71,40 @@ export const useHiddenPreferences = ({
     { type: 'tags' },
     { enabled: tags && enabled, ...options }
   );
-  const tagIds = useMemo(
-    () => (showAll || tagResults.isLoading || tagResults.error ? [] : tagResults.data),
-    [tagResults.data, tagResults.error, tagResults.isLoading, showAll]
-  );
+  // need system tags when browsing in SFW mode or when there is no session user
+  const systemTagResults = trpc.user.getSystemHiddenTags.useQuery(undefined, {
+    enabled: tags && hideNsfw,
+    ...options,
+  });
+  const tagIds = useMemo(() => {
+    const userHiddenTags =
+      showAll || tagResults.isLoading || tagResults.error ? [] : tagResults.data;
+
+    const systemHiddenTags =
+      showAll || systemTagResults.isLoading || systemTagResults.error
+        ? { moderated: [], hidden: [] }
+        : systemTagResults.data;
+
+    return [
+      ...new Set([
+        ...userHiddenTags,
+        ...(hideNsfw
+          ? [...(systemHiddenTags.moderated ?? []), ...(systemHiddenTags.hidden ?? [])]
+          : []),
+      ]),
+    ];
+  }, [
+    tagResults.data,
+    tagResults.error,
+    tagResults.isLoading,
+    showAll,
+    hideNsfw,
+    systemTagResults.isLoading,
+    systemTagResults.error,
+    systemTagResults.data,
+  ]);
+
+  // const isLoading = (images && imageResults.isLoading) || (models && modelResults.)
 
   return {
     imageIds,

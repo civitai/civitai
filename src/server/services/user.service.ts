@@ -565,6 +565,22 @@ export const toggleUserArticleEngagement = async ({
 };
 // #endregion
 
+export const getSystemHiddenTags = async ({
+  userId,
+}: {
+  userId?: number;
+}): Promise<{ hidden?: number[]; moderated: number[] }> => {
+  const tags = await getHiddenTagsForUser({ userId: -1 });
+  return !userId
+    ? {
+        hidden: tags.hiddenTags,
+        moderated: tags.moderatedTags,
+      }
+    : {
+        moderated: tags.moderatedTags,
+      };
+};
+
 export const getHiddenPreferences = async ({
   type,
   refreshCache,

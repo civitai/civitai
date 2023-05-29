@@ -16,7 +16,6 @@ export const getAll = async <TSelect extends Prisma.ModelSelect>(
     tagname,
     user,
     username = user,
-    browsingMode,
     types,
     status,
     checkpointType,
@@ -33,7 +32,7 @@ export const getAll = async <TSelect extends Prisma.ModelSelect>(
   }: GetAllOutput & { currentUser?: SessionUser },
   select: TSelect
 ) => {
-  const showNsfw = getShowNsfw(browsingMode, currentUser);
+  // const showNsfw = getShowNsfw(browsingMode, currentUser);
   const lowerQuery = query?.toLowerCase();
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
 
@@ -81,7 +80,7 @@ export const getAll = async <TSelect extends Prisma.ModelSelect>(
     });
   }
 
-  if (!showNsfw) AND.push({ nsfw: false });
+  // if (!showNsfw) AND.push({ nsfw: false });
 
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
     const TypeOr: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ checkpointType }];
