@@ -13,6 +13,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 const fileFormats = constants.modelFileFormats.filter((type) => type !== 'Other');
 const fileFormatCount = fileFormats.length;
 
+// This is deprecated
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
   Model: '.ckpt,.pt,.safetensors,.bin,.onnx',
   'Pruned Model': '.ckpt,.pt,.safetensors',
