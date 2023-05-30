@@ -628,6 +628,7 @@ type GetAllImagesRaw = {
   postId: number;
   postTitle: string;
   modelVersionId: number | null;
+  imageId: number | null;
   publishedAt: Date | null;
   username: string | null;
   userImage: string | null;
@@ -649,6 +650,7 @@ export const getAllImages = async ({
   postId,
   modelId,
   modelVersionId,
+  imageId,
   username,
   excludedTagIds,
   excludedUserIds,
@@ -747,6 +749,9 @@ export const getAllImages = async ({
 
   // Filter to a specific post
   if (postId) AND.push(Prisma.sql`i."postId" = ${postId}`);
+
+  // Filter to a specific image
+  if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
 
   if (postId && !modelId) {
     // a post image query won't include modelId
