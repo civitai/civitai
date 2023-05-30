@@ -4,6 +4,7 @@ import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferences } from '~/hooks/user-preferences/useHiddenPreferences';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -11,10 +12,13 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
+  const { modelIds } = useHiddenPreferences({ models: true });
+
   const { data: { Hide: hidden = [] } = { Hide: [] } } = trpc.user.getEngagedModels.useQuery(
     undefined,
     { enabled: !!currentUser }
   );
+
   const alreadyHiding = hidden.includes(modelId);
 
   const toggleHideMutation = trpc.user.toggleHideModel.useMutation({

@@ -4,7 +4,7 @@ import {
   TagType,
   UserEngagementType,
 } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { getModerationTags } from '~/server/services/system-cache';
 import { createLogger } from '~/utils/logging';
@@ -162,6 +162,8 @@ export async function getHiddenModelsForUser({
   if (refreshCache) await redis.del(`user:${userId}:hidden-models`);
 
   const hiddenModels = await getHiddenModels(userId);
+  console.log('___________________3', hiddenModels);
+
   await redis.set(`user:${userId}:hidden-models`, JSON.stringify(hiddenModels), {
     EX: HIDDEN_CACHE_EXPIRY,
   });
@@ -171,6 +173,7 @@ export async function getHiddenModelsForUser({
 
 export async function refreshHiddenModelsForUser({ userId }: { userId: number }) {
   log('refreshing hidden models for user', userId);
+  console.log(`del user:${userId}:hidden-models`);
   await redis.del(`user:${userId}:hidden-models`);
 }
 // #endregion

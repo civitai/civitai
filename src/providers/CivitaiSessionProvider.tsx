@@ -22,6 +22,9 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     };
   }, [data?.user, update]);
 
+  // TODO.Briant - consider removing this once we've nailed down user/system tag preferences.
+  // you should be able to remove this once we have tag preferences split so that the user cached tags doesn't ever return the system cached tags
+  // currently, the system cached tags are grouped with the user cached tags when currentUser.showNsfw = false
   const queryUtils = trpc.useContext();
   useEffect(() => {
     queryUtils.user.getHiddenPreferences.invalidate({ type: 'tags' });

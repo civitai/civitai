@@ -14,7 +14,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ModelsInfinite } from '~/server/edge-services/model/getInfinite';
-import { useHiddenPreferences } from '~/hooks/useHiddenPreferences';
+import { useHiddenPreferences } from '~/hooks/user-preferences/useHiddenPreferences';
 
 const modelQueryParamSchema = z
   .object({

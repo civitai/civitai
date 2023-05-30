@@ -269,6 +269,10 @@ export const toggleModelEngagement = async ({
         data: { type, createdAt: new Date() },
       });
 
+    if (type === 'Hide') {
+      await refreshHiddenModelsForUser({ userId });
+    }
+
     return engagement.type !== type;
   }
 

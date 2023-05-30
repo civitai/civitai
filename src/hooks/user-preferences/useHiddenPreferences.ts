@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
@@ -21,10 +21,10 @@ type UseHiddenPreferencesProps = {
     - no tags
 */
 export const useHiddenPreferences = ({
-  tags,
-  users,
-  images,
-  models,
+  tags = false,
+  users = false,
+  images = false,
+  models = false,
 }: UseHiddenPreferencesProps) => {
   const currentUser = useCurrentUser();
   const browsingMode = useFiltersContext((state) => state.browsingMode);
@@ -57,6 +57,8 @@ export const useHiddenPreferences = ({
     () => (showAll || modelResults.isLoading || modelResults.error ? [] : modelResults.data),
     [modelResults.data, modelResults.error, modelResults.isLoading, showAll]
   );
+
+  useEffect(() => console.log({ modelIds }), [modelIds]);
 
   const userResults = trpc.user.getHiddenPreferences.useQuery(
     { type: 'users' },

@@ -15,7 +15,7 @@ export async function invalidateModeratedContent(
   // This  may be a temporary measure, implemented so as to avoid invalidating the models index page when the browsing mode changes
   await queryUtils.model.getById.invalidate();
   await queryUtils.model.getAll.invalidate();
-  await queryUtils.model.getInfinite.invalidate();
+  // await queryUtils.model.getInfinite.invalidate(); // not this one
   await queryUtils.model.getAllPagedSimple.invalidate();
   await queryUtils.model.getAllWithVersions.invalidate();
   await queryUtils.model.getByIdWithVersions.invalidate();
