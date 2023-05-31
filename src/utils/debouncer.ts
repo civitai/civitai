@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react';
 
+export const createDebouncer = (timeout: number) => {
+  let timer: NodeJS.Timeout | undefined;
+  const debouncer = (func: () => void) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(func, timeout);
+  };
+  return debouncer;
+};
+
 export const useDebouncer = (timeout: number) => {
   const timeoutRef = useRef<NodeJS.Timeout | undefined>();
 
