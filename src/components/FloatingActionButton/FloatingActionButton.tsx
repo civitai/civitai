@@ -13,7 +13,7 @@ export function FloatingActionButton({
   ...buttonProps
 }: Props) {
   return (
-    <Affix position={{ bottom: 20, right: 20 }}>
+    <Affix position={{ bottom: 70, right: 20 }}>
       <Transition transition={transition} mounted={mounted} duration={duration}>
         {(transitionStyles) => (
           <Button {...buttonProps} style={transitionStyles}>

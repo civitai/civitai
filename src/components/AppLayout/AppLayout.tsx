@@ -8,18 +8,24 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { IconBan } from '@tabler/icons-react';
+import { useDisclosure } from '@mantine/hooks';
+import { IconBan, IconBolt } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
+import { MouseEvent } from 'react';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader } from '~/components/AppLayout/AppHeader';
 import { SideNavigation } from '~/components/AppLayout/SideNavigation';
+import { FloatingActionButton } from '~/components/FloatingActionButton/FloatingActionButton';
+import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function AppLayout({ children, showNavbar }: Props) {
   const { colorScheme } = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
+
+  const [opened, { open, close }] = useDisclosure();
 
   return (
     <>
@@ -43,7 +49,13 @@ export function AppLayout({ children, showNavbar }: Props) {
         }}
       >
         {!isBanned ? (
-          children
+          <>
+            {children}
+            <GenerationDrawer opened={opened} onClose={close} />
+            <FloatingActionButton transition="pop" onClick={open} mounted={!opened}>
+              <IconBolt />
+            </FloatingActionButton>
+          </>
         ) : (
           <Center py="xl">
             <Stack align="center">
