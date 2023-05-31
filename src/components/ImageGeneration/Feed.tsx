@@ -1,11 +1,8 @@
 import {
   ActionIcon,
-  AspectRatio,
   Autocomplete,
   Card,
-  Checkbox,
   Group,
-  Paper,
   ScrollArea,
   SimpleGrid,
   Stack,
@@ -25,8 +22,9 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { useState } from 'react';
+import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { FeedItem } from '~/components/ImageGeneration/FeedItem';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 // TODO.generation: remove mock data
@@ -782,13 +780,26 @@ const images = [
 type State = {
   layout: 'list' | 'grid';
   selectedItems: number[];
+  variantModalOpened: boolean;
 };
 
+/**
+ * TODO.generation:
+ * - add search by prompt
+ * - add sort by
+ * - add filter by
+ * - add toggle layout
+ * - add infinite scroll
+ * - handle variant generation
+ * - handle image deletion
+ * - handle post images
+ */
 export function Feed() {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [state, setState] = useState<State>({
     layout: 'grid',
     selectedItems: [],
+    variantModalOpened: false,
   });
 
   return (
@@ -796,6 +807,7 @@ export function Feed() {
       <Group spacing="xs">
         <Autocomplete
           placeholder="Search by prompt"
+          // TODO.generation: add search by prompt
           data={[]}
           icon={<IconSearch size={14} />}
           sx={{ flex: 1 }}
@@ -832,54 +844,31 @@ export function Feed() {
             const selected = state.selectedItems.includes(image.id);
 
             return (
-              <Paper
+              <FeedItem
                 key={image.id}
-                radius="sm"
-                sx={(theme) => ({
-                  position: 'relative',
-                  // If the item is selected, we want to add an overlay to it
-                  '&::after': selected
-                    ? {
-                        content: '""',
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        backgroundColor: theme.fn.rgba(
-                          theme.colors.blue[theme.fn.primaryShade()],
-                          0.3
-                        ),
-                      }
-                    : undefined,
-                })}
-              >
-                <Checkbox
-                  sx={(theme) => ({
-                    position: 'absolute',
-                    top: theme.spacing.xs,
-                    left: theme.spacing.xs,
-                    zIndex: 100,
-                  })}
-                  checked={selected}
-                  onChange={(event) => {
-                    if (event.target.checked) {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: [...current.selectedItems, image.id],
-                      }));
-                    } else {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                      }));
-                    }
-                  }}
-                />
-                <AspectRatio ratio={1}>
-                  <EdgeImage src={image.url} width={image.width} />
-                </AspectRatio>
-              </Paper>
+                image={image}
+                selected={selected}
+                onCheckboxClick={({ image, checked }) => {
+                  if (checked) {
+                    setState((current) => ({
+                      ...current,
+                      selectedItems: [...current.selectedItems, image.id],
+                    }));
+                  } else {
+                    setState((current) => ({
+                      ...current,
+                      selectedItems: current.selectedItems.filter((id) => id !== image.id),
+                    }));
+                  }
+                }}
+                onCreateVariantClick={(image) =>
+                  setState((current) => ({
+                    ...current,
+                    variantModalOpened: true,
+                    selectedItems: [image.id],
+                  }))
+                }
+              />
             );
           })}
         </SimpleGrid>
@@ -891,6 +880,15 @@ export function Feed() {
             ...current,
             selectedItems: [],
           }))
+        }
+        onPostClick={() => console.log('post images')}
+        onUpscaleClick={() => console.log('upscale images')}
+        onDeleteClick={() => console.log('delete images')}
+      />
+      <CreateVariantsModal
+        opened={state.variantModalOpened}
+        onClose={() =>
+          setState((current) => ({ ...current, variantModalOpened: false, selectedItems: [] }))
         }
       />
     </Stack>
@@ -905,7 +903,7 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
           p="xs"
           radius={0}
           style={transitionStyles}
-          sx={{ position: 'absolute', bottom: 0, left: 0 }}
+          sx={{ position: 'absolute', bottom: 0, left: 0, zIndex: 2 }}
           withBorder
         >
           <Stack spacing={4}>
@@ -944,4 +942,7 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
 type FloatingActionsProps = {
   selectCount: number;
   onDeselectClick: () => void;
+  onPostClick: () => void;
+  onUpscaleClick: () => void;
+  onDeleteClick: () => void;
 };
