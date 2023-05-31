@@ -1,3 +1,3 @@
 export function Generate() {
-  return <></>;
+  return <>Generate</>;
 }

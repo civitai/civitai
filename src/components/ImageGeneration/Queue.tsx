@@ -1,3 +1,3 @@
 export function Queue() {
-  return <></>;
+  return <>Queue</>;
 }

@@ -19,7 +19,6 @@ import { PeriodMode } from '~/server/schema/base.schema';
 import { ModelCategoriesInfinite } from '~/components/Model/Categories/ModelCategoriesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 
-
 function Home() {
   const currentUser = useCurrentUser();
   const storedView = useFiltersContext((state) => state.models.view);
