@@ -78,7 +78,8 @@ export const getPostsInfinite = async ({
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-    if (!user?.isModerator) AND.push({ modelVersion: { status: 'Published' } });
+    if (!user?.isModerator)
+      AND.push({ OR: [{ modelVersion: { status: 'Published' } }, { modelVersionId: null }] });
   }
 
   // sorting
@@ -160,8 +161,15 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   const post = await dbRead.post.findFirst({
     where: {
       id,
-      OR: user?.isModerator ? undefined : [{ publishedAt: { not: null } }, { userId: user?.id }],
-      modelVersion: user?.isModerator ? undefined : { status: 'Published' },
+      OR: user?.isModerator
+        ? undefined
+        : [
+            { publishedAt: { not: null } },
+            { userId: user?.id },
+            { modelVersionId: null },
+            { modelVersion: { status: 'Published' } },
+          ],
+      // modelVersion: user?.isModerator ? undefined : { status: 'Published' },
     },
     select: {
       id: true,
@@ -471,11 +479,7 @@ export const getPostsByCategory = async ({
             ? `AND p."publishedAt" > now() - INTERVAL '1 ${input.period}'`
             : 'AND p."publishedAt" IS NOT NULL'
         )}
-      ${Prisma.raw(
-        input.modelId
-          ? `JOIN "ModelVersion" mv ON mv.id = p."modelVersionId" AND mv.status === 'Published'`
-          : ''
-      )}
+      ${Prisma.raw(input.modelId ? `JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"` : '')}
       ${Prisma.raw(
         orderBy.startsWith('pm')
           ? `LEFT JOIN "PostMetric" pm ON pm."postId" = top."postId" AND pm.timeframe = '${input.period}'`
