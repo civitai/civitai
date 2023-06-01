@@ -60,6 +60,7 @@ export function GenerationDrawer({ ...props }: Props) {
         onTabChange={(value: TabKey | null) => (value ? setView(value) : undefined)}
         variant="pills"
         classNames={classes}
+        keepMounted={false}
         inverted
       >
         <Tabs.Panel value="queue">

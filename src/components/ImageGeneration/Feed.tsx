@@ -902,8 +902,9 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
         <Card
           p="xs"
           radius={0}
+          shadow="xl"
           style={transitionStyles}
-          sx={{ position: 'absolute', bottom: 0, left: 0, zIndex: 2 }}
+          sx={{ position: 'absolute', bottom: 8, left: 8, zIndex: 2 }}
           withBorder
         >
           <Stack spacing={4}>

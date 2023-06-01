@@ -35,7 +35,7 @@ export function CreateVariantsModal({ onClose, ...props }: Props) {
       }
     >
       <Stack>
-        <AlertWithIcon icon={<IconExclamationMark />}>
+        <AlertWithIcon icon={<IconExclamationMark />} size="sm">
           {`This will generate images similar to the one you've selected with the level of variation driven by your selection below.`}
         </AlertWithIcon>
         <Input.Wrapper label="Similarity">
@@ -53,7 +53,7 @@ export function CreateVariantsModal({ onClose, ...props }: Props) {
             </Paper>
           </Group>
         </Input.Wrapper>
-        {/* <Input.Wrapper label="Quantity">
+        <Input.Wrapper label="Quantity">
           <Group>
             <Slider
               min={1}
@@ -66,9 +66,9 @@ export function CreateVariantsModal({ onClose, ...props }: Props) {
               <Text size="sm">{state.quantity}</Text>
             </Paper>
           </Group>
-        </Input.Wrapper> */}
+        </Input.Wrapper>
         <Group spacing={8} align="flex-end" grow>
-          <NumberInput label="Quantity" defaultValue={state.quantity} min={1} max={100} />
+          {/* <NumberInput label="Quantity" defaultValue={state.quantity} min={1} max={100} /> */}
           <Button onClick={handleClose}>Go</Button>
         </Group>
       </Stack>
