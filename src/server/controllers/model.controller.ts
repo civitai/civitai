@@ -344,14 +344,14 @@ export const upsertModelHandler = async ({
     // Check tags for multiple categories
     const { tagsOnModels } = input;
     if (tagsOnModels?.length) {
-      const categoryTags = await getTags({ categories: true, entityType: ['Model'] });
+      const modelCategories = await getCategoryTags('model');
       const matchedTags = tagsOnModels.filter((tag) =>
-        categoryTags.items.some((categoryTag) => categoryTag.name === tag.name)
+        modelCategories.some((categoryTag) => categoryTag.name === tag.name)
       );
 
       if (matchedTags.length > 1)
         throw throwBadRequestError(
-          `Model cannot have multiple categories. Please include one from: ${matchedTags
+          `Model cannot have multiple categories. Please include only one from: ${matchedTags
             .map((tag) => tag.name)
             .join(', ')} `
         );
