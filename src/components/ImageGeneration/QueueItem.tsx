@@ -5,10 +5,13 @@ import {
   Button,
   Card,
   Group,
+  Paper,
   Stack,
   Text,
   ThemeIcon,
+  UnstyledButton,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
@@ -19,6 +22,8 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 
 export function QueueItem({ item, onBoostClick }: Props) {
+  const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
+
   const { prompt, ...details } = item.params;
   const detailItems = Object.entries(details).map(([key, value]) => ({
     label: titleCase(splitUppercase(key)),
@@ -39,17 +44,24 @@ export function QueueItem({ item, onBoostClick }: Props) {
               </Group>
             </ThemeIcon>
             <Button.Group>
-              <Button size="xs" variant="outline" compact>
+              <Button size="xs" variant="outline" color="gray" sx={{ pointerEvents: 'none' }} compact>
                 ETA <Countdown endTime={item.estimatedCompletionDate} />
               </Button>
               <Button
                 size="xs"
-                leftIcon={<IconBolt size={16} />}
+                // TODO.generations: add action when modal is deactivated
+                rightIcon={showBoostModal ? <IconBolt size={16} /> : undefined}
                 onClick={() => onBoostClick(item)}
                 compact
               >
                 Boost
               </Button>
+              {!showBoostModal && <Button size="xs" variant="white" color="gray" px={4} sx={{ pointerEvents: 'none' }} compact>
+                <Group spacing={2}>
+                  <IconBolt size={16} />
+                  <Text size="xs" inline>10</Text>
+                </Group>
+              </Button>}
             </Button.Group>
           </Group>
           <ActionIcon color="red" size="md">

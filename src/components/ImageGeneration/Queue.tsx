@@ -1,5 +1,5 @@
 import { Center, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
 import { useState } from 'react';
 
@@ -290,6 +290,7 @@ type State = {
 export function Queue() {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [state, setState] = useState<State>({ selectedItem: null, opened: false });
+  const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
 
   return items.length > 0 ? (
     <>
@@ -299,15 +300,15 @@ export function Queue() {
             <QueueItem
               key={item.id}
               item={item}
-              onBoostClick={(item) => setState({ selectedItem: item, opened: true })}
+              onBoostClick={(item) => showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined}
             />
           ))}
         </SimpleGrid>
       </ScrollArea.Autosize>
-      <BoostModal
+      {showBoostModal && <BoostModal
         opened={state.opened}
         onClose={() => setState({ selectedItem: null, opened: false })}
-      />
+      />}
     </>
   ) : (
     <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>

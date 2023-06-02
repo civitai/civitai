@@ -1,11 +1,22 @@
 import { Button, Checkbox, Group, Modal, ModalProps, Paper, Stack, Text } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconExclamationMark } from '@tabler/icons-react';
+import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 export function BoostModal({ onClose, ...props }: Props) {
+  const [checked, setChecked] = useState(false);
+  const [, setShowBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
+
   const handleClose = () => {
     onClose();
+    setChecked(false);
   };
+
+  const handleSubmit = () => {
+    if (checked) setShowBoostModal(false);
+    handleClose();
+  }
 
   return (
     <Modal
@@ -31,11 +42,11 @@ export function BoostModal({ onClose, ...props }: Props) {
                 </Text>
               </Group>
             </Paper>
-            <Checkbox label="Don't show me this again" />
+            <Checkbox label="Don't show me this again" checked={checked} onChange={(event) => setChecked(event.target.checked)} />
           </Stack>
         </Group>
         <Group spacing={8} align="flex-end" grow>
-          <Button onClick={handleClose}>Boost it!</Button>
+          <Button onClick={handleSubmit}>Boost it!</Button>
         </Group>
       </Stack>
     </Modal>
