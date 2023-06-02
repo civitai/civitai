@@ -67,6 +67,7 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { ModelSort } from '~/server/common/enums';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getTags } from '~/server/services/tag.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -340,6 +341,22 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
+    // Check tags for multiple categories
+    const { tagsOnModels } = input;
+    if (tagsOnModels?.length) {
+      const categoryTags = await getTags({ categories: true, entityType: ['Model'] });
+      const matchedTags = tagsOnModels.filter((tag) =>
+        categoryTags.items.some((categoryTag) => categoryTag.name === tag.name)
+      );
+
+      if (matchedTags.length > 1)
+        throw throwBadRequestError(
+          `Model cannot have multiple categories. Please include one from: ${matchedTags
+            .map((tag) => tag.name)
+            .join(', ')} `
+        );
+    }
+
     const model = await upsertModel({ ...input, userId });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
