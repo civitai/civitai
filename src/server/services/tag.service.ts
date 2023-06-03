@@ -42,6 +42,22 @@ export const getTag = ({ id }: { id: number }) => {
   });
 };
 
+export const getTagCountForImages = async (imageIds: number[]) => {
+  const results = await dbRead.$queryRaw<{ imageId: number; count: number }[]>`
+    SELECT
+      "public"."TagsOnImage"."imageId",
+      CAST(COUNT("public"."TagsOnImage"."tagId") AS INTEGER) as count
+    FROM "public"."TagsOnImage"
+    WHERE "public"."TagsOnImage"."imageId" IN (${Prisma.join(imageIds)})
+    GROUP BY "public"."TagsOnImage"."imageId"
+  `;
+
+  return results.reduce((acc, { imageId, count }) => {
+    acc[imageId] = count;
+    return acc;
+  }, {} as Record<number, number>);
+};
+
 export const getTags = async ({
   take,
   skip,
