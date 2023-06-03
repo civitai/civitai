@@ -17,7 +17,8 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   resourceHelper: true,
 });
 type PostImageNavigationProps = { previewUrl?: string };
-export type PostImage = Prisma.ImageGetPayload<typeof postImage> & PostImageNavigationProps;
+export type PostImage = Prisma.ImageGetPayload<typeof postImage> &
+  PostImageNavigationProps & { _count: { tags: number } };
 const postImage = Prisma.validator<Prisma.ImageArgs>()({ select: editPostImageSelect });
 
 export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({

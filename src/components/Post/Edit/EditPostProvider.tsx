@@ -283,7 +283,7 @@ export const EditPostProvider = ({
     await upload(file, async (result) => {
       if (!result.success) return;
       const { url, id, uuid } = result.data;
-      mutateAsync({ ...data, url: id, postId, modelVersionId }).then(cb);
+      mutateAsync({ ...data, url: id, postId, modelVersionId }).then(cb as any);
     });
   };
 
