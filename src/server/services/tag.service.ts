@@ -43,6 +43,7 @@ export const getTag = ({ id }: { id: number }) => {
 };
 
 export const getTagCountForImages = async (imageIds: number[]) => {
+  if (!imageIds.length) return {};
   const results = await dbRead.$queryRaw<{ imageId: number; count: number }[]>`
     SELECT
       "public"."TagsOnImage"."imageId",
