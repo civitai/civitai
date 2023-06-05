@@ -436,7 +436,10 @@ export function RichTextEditor({
 
         {editor && (
           // Don't show the bubble menu for images, to prevent setting images as headings, etc.
-          <BubbleMenu editor={editor} shouldShow={({ editor }) => !editor.isActive('image')}>
+          <BubbleMenu
+            editor={editor}
+            shouldShow={({ editor }) => !editor.state.selection.empty && !editor.isActive('image')}
+          >
             <RTE.ControlsGroup>
               {addHeading ? (
                 <>
