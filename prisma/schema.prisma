@@ -655,6 +655,7 @@ model Report {
   image          ImageReport?
   resourceReview ResourceReviewReport?
   article        ArticleReport?
+  post           PostReport?
 }
 
 model ResourceReviewReport {
@@ -718,6 +719,15 @@ model ArticleReport {
   report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, articleId])
+}
+
+model PostReport {
+  postId   Int
+  post     Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, postId])
 }
 
 model Review {
@@ -819,6 +829,7 @@ model Post {
   updatedAt      DateTime      @updatedAt
   publishedAt    DateTime?
   metadata       Json?
+  tosViolation   Boolean       @default(false)
 
   images         Image[]
   tags           TagsOnPost[]
@@ -832,6 +843,7 @@ model Post {
   imageTags      PostImageTag[]
   tagsComposite  PostTag[]
   tagVotes       TagsOnPostVote[]
+  reports        PostReport[]
 
   @@index([modelVersionId])
   @@index([publishedAt])

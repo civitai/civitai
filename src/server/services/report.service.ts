@@ -3,7 +3,6 @@ import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
-  BulkUpdateReportStatusInput,
   CreateReportInput,
   GetReportCountInput,
   GetReportsInput,
@@ -172,6 +171,17 @@ export const createReport = async ({
         await tx.articleReport.create({
           data: {
             article: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Post:
+        if (data.reason === ReportReason.NSFW)
+          await tx.post.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.postReport.create({
+          data: {
+            post: { connect: { id } },
             report,
           },
         });

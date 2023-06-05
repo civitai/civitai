@@ -485,7 +485,9 @@ const getReportLink = (report: ReportDetail) => {
     if (report.image.modelVersionId) parts.push(`modelVersionId=${report.image.modelVersionId}`);
     if (report.image.reviewId) parts.push(`reviewId=${report.image.reviewId}`);
     return `/images/${report.image.id}/?${parts.join('&')}`;
-  } else if (report.article) return `/articles/${report.article.id}`;
+  } else if (report.article) {
+    return `/articles/${report.article.id}`;
+  } else if (report.post) return `/posts/${report.post.id}`;
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {
