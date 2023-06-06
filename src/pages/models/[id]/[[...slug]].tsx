@@ -97,6 +97,8 @@ import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
+import { getImage } from '~/libs/picfinder-socket';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -397,6 +399,27 @@ export default function ModelDetailsV2({
 
     return () => router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
+
+  useEffect(() => {
+    getImage({ promptText: 'A tiger' }).then((image) => {
+      console.log('image', image);
+    });
+  }, []);
+
+  // useEffect(() => {
+  //   function onConnect() {
+  //     console.log('connected');
+  //     picFinderSocket.send(
+  //       JSON.stringify({ newConnection: { apiKey: env.NEXT_PUBLIC_PICFINDER_API_KEY } })
+  //     );
+  //   }
+
+  //   picFinderSocket.on('connect', onConnect);
+
+  //   return () => {
+  //     picFinderSocket.off('connect', onConnect);
+  //   };
+  // }, []);
 
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;

@@ -26,6 +26,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { ModelGenerationCard } from '~/components/Model/ModelGenerationCard/ModelGenerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useSetFilters } from '~/providers/FiltersProvider';
@@ -172,6 +173,7 @@ export default function ImagesAsPostsInfinite({
             ) : !!items.length ? (
               <div style={{ position: 'relative' }}>
                 <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+                <ModelGenerationCard />
                 <MasonryColumns
                   data={items}
                   imageDimensions={(data) => {
