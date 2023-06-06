@@ -11,35 +11,41 @@ type ImageResult = {
   taskUUID: string;
 };
 
-let socket: WebSocket | null;
 let sessionId: string;
 const imageRequests: Record<string, (image: ImageResult) => void> = {};
 
-const setupSocket = () =>
-  new Promise<void>((resolve, reject) => {
-    socket = new WebSocket(env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT);
+let socketPromise: Promise<WebSocket>;
+let socket: WebSocket;
+const getSocket = () => {
+  if (socketPromise) return socketPromise;
+  if (socket) return Promise.resolve(socket);
+
+  socketPromise = new Promise((resolve, reject) => {
+    const newSocket = new WebSocket(env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT);
 
     // Handle sending API Key
-    socket.onopen = (event) => {
+    newSocket.onopen = () => {
       const newConnection: Record<string, any> = { apiKey: env.NEXT_PUBLIC_PICFINDER_API_KEY };
       if (sessionId) newConnection.connectionSessionUUID = sessionId;
-      socket?.send(JSON.stringify({ newConnection }));
-      resolve();
+      socket = newSocket;
+      socket.send(JSON.stringify({ newConnection }));
     };
 
     // Handle disconnect
-    socket.onerror = (event) => {
-      console.error('PicFinder API Error', event);
-      socket = null;
-      reject();
-    };
+    // newSocket.onerror = (event) => {
+    //   console.log('onerror');
+    //   console.error('PicFinder API Error', event);
+    //   reject();
+    // };
 
     // Handle incoming messages
-    socket.onmessage = (event) => {
+    newSocket.onmessage = (event) => {
       const data = JSON.parse(event.data);
       // Handle setting the session id
-      if (data.newConnectionSessionUUID)
+      if (data.newConnectionSessionUUID) {
         sessionId = data.newConnectionSessionUUID.connectionSessionUUID;
+        resolve(socket);
+      }
 
       // Handle new images
       if (data.newImages) {
@@ -50,17 +56,28 @@ const setupSocket = () =>
     };
   });
 
+  return socketPromise;
+};
+
 const socketRequest = async (request: any) => {
+  console.log('req', request);
   try {
-    if (!socket) await setupSocket();
-    socket?.send(JSON.stringify(request));
+    const socket = await getSocket();
+    console.log('socket', socket);
+    socket.send(JSON.stringify(request));
   } catch (e) {
-    console.error("PicFinder API Error: Couldn't setup connection");
+    console.error("PicFinder API Error: Couldn't setup connection", e);
   }
 };
 
+const requestOffset: Record<string, number> = {};
 const requestImage = (taskUUID: string, imageRequest: GetImageRequest) => {
   taskUUID = taskUUID ?? uuidv4();
+
+  const requestKey = `${imageRequest.promptText}-${imageRequest.modelId}`;
+  if (typeof requestOffset[requestKey] === 'undefined') requestOffset[requestKey] = 0;
+  else requestOffset[requestKey]++;
+
   socketRequest({
     newTask: {
       taskUUID,
@@ -68,8 +85,10 @@ const requestImage = (taskUUID: string, imageRequest: GetImageRequest) => {
       numberResults: 1,
       sizeId: 2,
       steps: 20,
-      modelId: 1,
+      modelId: 3,
       gScale: 7.5,
+      seed: 0,
+      offset: requestOffset[requestKey],
       ...imageRequest,
     },
   });
@@ -79,8 +98,8 @@ const requestImage = (taskUUID: string, imageRequest: GetImageRequest) => {
 
 type GetImageRequest = {
   promptText: string;
-  seed?: number;
   modelId?: number;
+  numberResults?: number;
 };
 
 export const getImage = async (imageRequest: GetImageRequest, includeNsfw = false) =>
