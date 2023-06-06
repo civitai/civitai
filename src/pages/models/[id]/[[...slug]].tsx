@@ -97,7 +97,6 @@ import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { getImage } from '~/libs/picfinder-socket';
 import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
@@ -399,12 +398,6 @@ export default function ModelDetailsV2({
 
     return () => router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
-
-  useEffect(() => {
-    getImage({ promptText: 'A tiger' }).then((image) => {
-      console.log('image', image);
-    });
-  }, []);
 
   // useEffect(() => {
   //   function onConnect() {
