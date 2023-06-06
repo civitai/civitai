@@ -8,12 +8,11 @@ import osu from 'node-os-utils';
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
-  const writeDbCheck = true; // disabled for now - was causing DB deadlocks
-  // const writeDbCheck = !!(await dbWrite.user.updateMany({
-  //   where: { id: -1 },
-  //   data: { username: 'civitai' },
-  // }));
-  const readDbCheck = !!(await dbRead.user.findUnique({ where: { id: 1 }, select: { id: true } }));
+  const writeDbCheck = !!(await dbWrite.user.findUnique({
+    where: { id: -1 },
+    select: { id: true },
+  }));
+  const readDbCheck = !!(await dbRead.user.findUnique({ where: { id: -1 }, select: { id: true } }));
 
   const redisCheck = await redis
     .ping()
