@@ -1,6 +1,5 @@
 import { trpc } from '~/utils/trpc';
-import { useState, useEffect, forwardRef } from 'react';
-import { useDebouncer } from '~/utils/debouncer';
+import { useState, forwardRef } from 'react';
 import { ModelType } from '@prisma/client';
 import {
   Card,
@@ -19,49 +18,55 @@ import { withController } from '~/libs/form/hoc/withController';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useFormContext } from 'react-hook-form';
-import { useDebouncedState, useDebouncedValue, useDidUpdate } from '@mantine/hooks';
+import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 
-function CheckpointSelectComponent({
-  value: initialValue,
+function GenerationResourceSelect({
+  value: initialValue = [],
   onChange,
+  limit,
+  types,
+  notTypes,
   ...inputWrapperProps
 }: {
-  value?: GenerationResourceModel;
-  onChange?: (value?: GenerationResourceModel) => void;
+  value?: GenerationResourceModel[];
+  onChange?: (value: GenerationResourceModel[]) => void;
+  limit?: number;
+  types?: ModelType[];
+  notTypes?: ModelType[];
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
-  // const debouncer = useDebouncer(300);
   const [value, setValue] = useState(initialValue);
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
   const { data, isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
-    { type: ModelType.Checkpoint, query: debounced },
+    { types, notTypes, query: debounced },
     { enabled: debounced.length >= 3 }
   );
 
-  const autoCompleteData =
+  const selectedModelVersionIds = value.map((x) => x.id);
+  const autoCompleteData: SearchItemProps[] =
     search.length >= 3 && !!data?.length
-      ? data.map((resource) => ({
-          value: resource.name,
-          resource,
-        }))
+      ? data
+          .filter((x) => !selectedModelVersionIds.includes(x.id))
+          .map((resource) => ({
+            value: resource.id.toString(),
+            resource,
+          }))
       : [];
 
   const handleClear = () => setSearch('');
   const handleChange = (value: string) => setSearch(value);
-  const handleDeselect = () => {
-    setValue(undefined);
-    onChange?.(undefined);
+  const handleDeselect = (id: number) => {
+    const filtered = value.filter((x) => x.id !== id);
+    setValue(filtered);
+    onChange?.(filtered);
   };
   const handleItemSubmit = ({ resource }: SearchItemProps) => {
-    setValue(resource);
-    onChange?.(resource);
-    handleClear();
+    const newValue = [...value, resource];
+    setValue(newValue);
+    onChange?.(newValue);
+    setSearch(search);
   };
-
-  // useEffect(() => {
-  //   if (search.length >= 3) debouncer(refetch);
-  // }, [search, debouncer, refetch]);
 
   const { formState } = useFormContext();
   const { isSubmitted, isDirty } = formState;
@@ -74,7 +79,34 @@ function CheckpointSelectComponent({
 
   return (
     <Input.Wrapper {...inputWrapperProps}>
-      {!value ? (
+      {value.map((resource) => (
+        <Card p="xs" withBorder key={resource.id}>
+          <Stack spacing={0}>
+            <Group position="apart" noWrap>
+              <Text weight={700} lineClamp={1}>
+                {resource.modelName}
+              </Text>
+              <Group spacing={4} noWrap>
+                <Badge>{resource.modelType}</Badge>
+                <ActionIcon
+                  color="red"
+                  size="sm"
+                  variant="light"
+                  onClick={() => handleDeselect(resource.id)}
+                >
+                  <IconX />
+                </ActionIcon>
+              </Group>
+            </Group>
+            <Group position="apart">
+              <Text size="sm">{resource.name}</Text>
+              {/* TODO.Briant - determine if we will be using trained words here. If so, we'll probably need to pull in the version files for their types ([{ type}, { type}, ...]) to pass into the TrainedWords component */}
+              <TrainedWords trainedWords={resource.trainedWords} type={resource.modelType} />
+            </Group>
+          </Stack>
+        </Card>
+      ))}
+      {(!limit || limit > value.length) && (
         <ClearableAutoComplete
           value={search}
           data={autoCompleteData}
@@ -88,27 +120,6 @@ function CheckpointSelectComponent({
           filter={() => true}
           limit={10}
         />
-      ) : (
-        <Card p="xs" withBorder>
-          <Stack spacing={0}>
-            <Group position="apart" noWrap>
-              <Text weight={700} lineClamp={1}>
-                {value.modelName}
-              </Text>
-              <Group spacing={4} noWrap>
-                <Badge>{value.modelType}</Badge>
-                <ActionIcon color="red" size="sm" variant="light" onClick={handleDeselect}>
-                  <IconX />
-                </ActionIcon>
-              </Group>
-            </Group>
-            <Group position="apart">
-              <Text size="sm">{value.name}</Text>
-              {/* TODO.Briant - determine if we will be using trained words here. If so, we'll probably need to pull in the version files for their types ([{ type}, { type}, ...]) to pass into the TrainedWords component */}
-              <TrainedWords trainedWords={value.trainedWords} type={value.modelType} />
-            </Group>
-          </Stack>
-        </Card>
       )}
     </Input.Wrapper>
   );
@@ -117,6 +128,7 @@ function CheckpointSelectComponent({
 type SearchItemProps = { value: string; resource: GenerationResourceModel };
 const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
   ({ value, resource, ...props }, ref) => {
+    console.log({ props });
     return (
       <Stack spacing={0} ref={ref} {...props} key={`${resource.modelId}_${resource.id}`}>
         <Group position="apart" noWrap>
@@ -125,20 +137,13 @@ const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
           </Text>
           <Badge>{resource.modelType}</Badge>
         </Group>
-        <Group position="apart">
-          <Text size="sm">{resource.name}</Text>
-          {/* <Group spacing={4} align="flex-end">
-            {resource.trainedWords.map((x, i) => (
-              <Badge key={i} color="violet" size="xs">
-                {x}
-              </Badge>
-            ))}
-          </Group> */}
-        </Group>
+        <Text size="sm">{resource.name}</Text>
       </Stack>
     );
   }
 );
 SearchItem.displayName = 'SearchItem';
 
-export const CheckpointSelect = withController(CheckpointSelectComponent);
+export const CheckpointSelect = withController(GenerationResourceSelect, ({ field }) => ({
+  value: Array.isArray(field.value) ? field.value : [],
+}));

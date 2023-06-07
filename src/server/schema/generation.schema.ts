@@ -11,7 +11,8 @@ export type GetGenerationResourcesInput = z.infer<typeof getGenerationResourcesS
 export const getGenerationResourcesSchema = z.object({
   take: z.number().default(10),
   query: z.string(),
-  type: z.nativeEnum(ModelType).optional(),
+  types: z.nativeEnum(ModelType).array().optional(),
+  notTypes: z.nativeEnum(ModelType).array().optional(),
   ids: z.number().array().optional(),
 });
 

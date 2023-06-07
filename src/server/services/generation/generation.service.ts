@@ -40,7 +40,8 @@ export const getGenerationResource = async ({
 export const getGenerationResources = async ({
   take,
   query,
-  type,
+  types,
+  notTypes,
   ids, // used for getting initial values of resources
   user,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<GenerationResourceModel[]> => {
@@ -49,7 +50,8 @@ export const getGenerationResources = async ({
   const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [{ publishedAt: { not: null } }];
   const MODEL_AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   if (ids) AND.push({ id: { in: ids } });
-  if (type) MODEL_AND.push({ type });
+  if (!!types?.length) MODEL_AND.push({ type: { in: types } });
+  if (!!notTypes?.length) MODEL_AND.push({ type: { notIn: notTypes } });
   if (query) {
     // MODEL_AND.push({ name: { contains: query, mode: 'insensitive' } });
     AND.push({

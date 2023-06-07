@@ -22,7 +22,7 @@ import { ModelType } from '@prisma/client';
 import { IconBook2 } from '@tabler/icons-react';
 import { z } from 'zod';
 import { ClearableNumberInput } from '~/components/ClearableNumberInput/ClearableNumberInput';
-import { CheckpointSelect } from '~/components/ImageGeneration/GenerationForm/CheckpointSelect';
+import { CheckpointSelect } from '~/components/ImageGeneration/GenerationForm/GenerationResourceSelect';
 import MentionExample from '~/components/ImageGeneration/SlateEditor/SlateEditor';
 import {
   Form,
@@ -49,7 +49,8 @@ const resourceSchema = z
   .passthrough();
 
 const schema = generationParamsSchema.extend({
-  model: resourceSchema,
+  model: resourceSchema.array().max(1),
+  additionalResources: resourceSchema.array().optional(),
   aspectRatio: z.string(),
 });
 
@@ -61,7 +62,7 @@ export function Generate({
   onSuccess?: () => void;
 }) {
   const defaultValues = {
-    model: request?.resources.find((x) => x.modelType === ModelType.Checkpoint),
+    model: [request?.resources.find((x) => x.modelType === ModelType.Checkpoint)],
     ...request?.params,
   };
   const form = useForm({ schema, defaultValues: defaultDemoValues });
@@ -80,7 +81,7 @@ export function Generate({
         mutate({
           height: Number(height),
           width: Number(width),
-          resources: [values.model].map((resource) => ({
+          resources: [...values.model, ...values.additionalResources].map((resource) => ({
             modelVersionId: resource.id,
             type: resource.modelType,
             strength: resource.strength,
@@ -97,7 +98,19 @@ export function Generate({
       }}
     >
       <Stack>
-        <CheckpointSelect label="Model" name="model" required />
+        <CheckpointSelect
+          label="Model"
+          name="model"
+          required
+          limit={1}
+          types={[ModelType.Checkpoint]}
+        />
+        <CheckpointSelect
+          label="Additional Resources"
+          name="additionalResources"
+          required
+          notTypes={[ModelType.Checkpoint]}
+        />
 
         <Input.Wrapper
           labelProps={{ sx: { width: '100%' } }}
@@ -241,13 +254,15 @@ const defaultDemoValues = {
   aspectRatio: '768x512',
   quantity: 2,
   clipSkip: 1,
-  model: {
-    id: 29460,
-    name: 'V2.0',
-    trainedWords: ['analog style', 'modelshoot style', 'nsfw', 'nudity'],
-    modelId: 4201,
-    modelName: 'Realistic Vision V2.0',
-    modelType: ModelType.Checkpoint,
-  },
+  model: [
+    {
+      id: 29460,
+      name: 'V2.0',
+      trainedWords: ['analog style', 'modelshoot style', 'nsfw', 'nudity'],
+      modelId: 4201,
+      modelName: 'Realistic Vision V2.0',
+      modelType: ModelType.Checkpoint,
+    },
+  ],
 };
 // #endregion
