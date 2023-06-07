@@ -15,18 +15,90 @@ import {
   Divider,
   Grid,
   NumberInput,
+  Select,
+  Button,
 } from '@mantine/core';
+import { ModelType } from '@prisma/client';
 import { IconBook2 } from '@tabler/icons-react';
+import { z } from 'zod';
 import { ClearableNumberInput } from '~/components/ClearableNumberInput/ClearableNumberInput';
+import { CheckpointSelect } from '~/components/ImageGeneration/GenerationForm/CheckpointSelect';
+import MentionExample from '~/components/ImageGeneration/SlateEditor/SlateEditor';
+import {
+  Form,
+  InputNumber,
+  InputSegmentedControl,
+  InputSelect,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
+import { generationParamsSchema } from '~/server/schema/generation.schema';
+import { GenerationRequestModel, GenerationResourceModel } from '~/server/services/generation';
+import { trpc } from '~/utils/trpc';
 
-export function Generate() {
+const prompt =
+  '1girl, coils, head, food, burger, hamburger steak, masterpiece, best quality, highly detailed <lora:coils_v1:0.8> <lora:bbox_v1:0.5>chibi, open mouth, (smile, looking at viewer:1.3), warmcolor,';
+const negativePrompt = 'blurry';
+
+const resourceSchema = z
+  .object({
+    id: z.number(),
+    modelType: z.nativeEnum(ModelType),
+    strength: z.number().optional(),
+  })
+  .passthrough();
+
+const schema = generationParamsSchema.extend({
+  model: resourceSchema,
+  aspectRatio: z.string(),
+});
+
+export function Generate({
+  request,
+  onSuccess,
+}: {
+  request?: GenerationRequestModel;
+  onSuccess?: () => void;
+}) {
+  const defaultValues = {
+    model: request?.resources.find((x) => x.modelType === ModelType.Checkpoint),
+    ...request?.params,
+  };
+  const form = useForm({ schema, defaultValues: defaultDemoValues });
+  const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
+    onSuccess: () => {
+      console.log('success');
+      onSuccess?.();
+    },
+  });
+
   return (
-    <form>
+    <Form
+      form={form}
+      onSubmit={(values) => {
+        const [width, height] = values.aspectRatio.split('x');
+        mutate({
+          height: Number(height),
+          width: Number(width),
+          resources: [values.model].map((resource) => ({
+            modelVersionId: resource.id,
+            type: resource.modelType,
+            strength: resource.strength,
+          })),
+          prompt: values.prompt,
+          negativePrompt: values.negativePrompt,
+          cfgScale: values.cfgScale,
+          sampler: values.sampler,
+          steps: values.steps,
+          seed: values.seed,
+          clipSkip: values.clipSkip,
+          quantity: values.quantity,
+        });
+      }}
+    >
       <Stack>
-        <Input.Wrapper label="Model">
-          <div></div>
-          {/* TODO.Resource selection */}
-        </Input.Wrapper>
+        <CheckpointSelect label="Model" name="model" required />
+
         <Input.Wrapper
           labelProps={{ sx: { width: '100%' } }}
           label={
@@ -40,12 +112,13 @@ export function Generate() {
             </Group>
           }
         >
-          <Textarea />
-          {/* TODO.prompt */}
+          <InputTextArea name="prompt" autosize value={prompt} />
+          <InputTextArea name="negativePrompt" autosize value={negativePrompt} />
+          {/* <MentionExample value={prompt} /> */}
         </Input.Wrapper>
         <Stack spacing={0}>
           <Input.Label>Aspect Ratio</Input.Label>
-          <SegmentedControl data={aspectRatioControls} />
+          <InputSegmentedControl name="aspectRatio" data={aspectRatioControls} />
         </Stack>
 
         {/* ADVANCED */}
@@ -56,7 +129,10 @@ export function Generate() {
             </Accordion.Control>
             <Accordion.Panel>
               <Stack>
-                <Stack spacing={0}>
+                <InputNumber name="cfgScale" label="Creativity (CFG Scale)" />
+                <InputSelect name="sampler" label="Engine (Sampler)" data={samplers} />
+                <InputNumber name="steps" label="Quality (Steps)" />
+                {/* <Stack spacing={0}>
                   <Input.Label>Creativity (CFG Scale)</Input.Label>
                   <SegmentedControl data={cfgScales} />
                 </Stack>
@@ -67,13 +143,13 @@ export function Generate() {
                 <Stack spacing={0}>
                   <Input.Label>Quality (Steps)</Input.Label>
                   <SegmentedControl data={steps} />
-                </Stack>
+                </Stack> */}
                 <Grid>
                   <Grid.Col span={6}>
-                    <ClearableNumberInput label="Seed" placeholder="Random" min={0} clearable />
+                    <InputNumber name="seed" label="Seed" placeholder="Random" min={0} />
                   </Grid.Col>
                   <Grid.Col span={6}>
-                    <NumberInput label="Clip Skip" min={0} />
+                    <InputNumber name="clipSkip" label="Clip Skip" min={0} />
                   </Grid.Col>
                 </Grid>
               </Stack>
@@ -81,9 +157,11 @@ export function Generate() {
           </Accordion.Item>
         </Accordion>
 
+        <InputNumber name="quantity" label="Quantity" />
+        <Button type="submit">Go</Button>
         {/* TODO.Quantity,Go */}
       </Stack>
-    </form>
+    </Form>
   );
 }
 
@@ -121,3 +199,27 @@ const steps = [
   { label: 'Balanced', value: '20' },
   { label: 'High', value: '30' },
 ];
+
+// #region [developement]
+const defaultDemoValues = {
+  prompt:
+    'close up photo of a rabbit, forest, haze, halation, bloom, dramatic atmosphere, centred, rule of thirds, 200mm 1.4f macro shot',
+  negativePrompt:
+    '(semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime:1.4), text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
+  cfgScale: 7,
+  steps: 25,
+  sampler: 'Euler A',
+  seed: 2299724292,
+  aspectRatio: '768x512',
+  quantity: 2,
+  clipSkip: 1,
+  model: {
+    id: 29460,
+    name: 'V2.0',
+    trainedWords: ['analog style', 'modelshoot style', 'nsfw', 'nudity'],
+    modelId: 4201,
+    modelName: 'Realistic Vision V2.0',
+    modelType: ModelType.Checkpoint,
+  },
+};
+// #endregion

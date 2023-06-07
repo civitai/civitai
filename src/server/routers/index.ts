@@ -29,6 +29,7 @@ import { tagRouter } from './tag.router';
 import { trackRouter } from './track.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
+import { generationRouter } from './generation.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -60,6 +61,7 @@ export const appRouter = router({
   user: userRouter,
   userLink: userLinkRouter,
   leaderboard: leaderboardRouter,
+  generation: generationRouter,
 });
 
 // export type definition of API
