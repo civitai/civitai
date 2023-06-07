@@ -19,7 +19,7 @@ import { withController } from '~/libs/form/hoc/withController';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useFormContext } from 'react-hook-form';
-import { useDidUpdate } from '@mantine/hooks';
+import { useDebouncedState, useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 
 function CheckpointSelectComponent({
   value: initialValue,
@@ -29,13 +29,14 @@ function CheckpointSelectComponent({
   value?: GenerationResourceModel;
   onChange?: (value?: GenerationResourceModel) => void;
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
-  const debouncer = useDebouncer(300);
+  // const debouncer = useDebouncer(300);
   const [value, setValue] = useState(initialValue);
   const [search, setSearch] = useState('');
+  const [debounced] = useDebouncedValue(search, 300);
 
-  const { data, isFetching, refetch } = trpc.generation.getResources.useQuery(
-    { type: ModelType.Checkpoint, query: search },
-    { enabled: false }
+  const { data, isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
+    { type: ModelType.Checkpoint, query: debounced },
+    { enabled: debounced.length >= 3 }
   );
 
   const autoCompleteData =
@@ -58,9 +59,9 @@ function CheckpointSelectComponent({
     handleClear();
   };
 
-  useEffect(() => {
-    if (search.length >= 3) debouncer(refetch);
-  }, [search, debouncer, refetch]);
+  // useEffect(() => {
+  //   if (search.length >= 3) debouncer(refetch);
+  // }, [search, debouncer, refetch]);
 
   const { formState } = useFormContext();
   const { isSubmitted, isDirty } = formState;
@@ -81,7 +82,7 @@ function CheckpointSelectComponent({
           onClear={handleClear}
           itemComponent={SearchItem}
           onItemSubmit={handleItemSubmit}
-          icon={isFetching ? <Loader size="xs" /> : <IconSearch />}
+          icon={isLoading ? <Loader size="xs" /> : <IconSearch />}
           clearable
           placeholder={inputWrapperProps.placeholder}
           filter={() => true}
