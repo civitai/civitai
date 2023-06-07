@@ -800,7 +800,7 @@ export const getAllImages = async ({
     else {
       // For everyone else, only show their images.
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
-      orderBy = `i."postId" + i."index"`; // Order by oldest post first
+      orderBy = `(i."postId" * 100) + i."index"`; // Order by oldest post first
     }
   }
 
