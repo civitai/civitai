@@ -3,8 +3,8 @@ import { usePicFinder } from '~/libs/picfinder';
 
 const prompts = {
   tiger: 'tiger',
-  mouse: 'mouse',
-  woman: 'woman',
+  mouse: 'mouse -no cartoon, animated, cat',
+  woman: 'woman -no bikini, animated, underwear, nsfw',
   dog: 'dog',
 };
 

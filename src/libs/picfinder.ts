@@ -109,7 +109,6 @@ const requestImage = (taskUUID: string, imageRequest: GetImageRequest) => {
       steps: 20,
       modelId: 3,
       gScale: 7.5,
-      seed: 1,
       offset: getRequestOffset(imageRequest),
       ...imageRequest,
     },
@@ -127,13 +126,18 @@ type GetImageRequest = {
 
 function requestImages(
   { includeNsfw, ...imageRequest }: GetImageRequest,
-  cb: (url: string, isComplete: boolean) => void
+  cb: (url: string | undefined, isComplete: boolean) => void
 ) {
   if (Object.keys(imageRequests).length > REQUEST_LIMIT) throw new Error('Too many requests');
 
   const taskUUID = uuidv4();
   let attemptCount = 0;
   let imagesRemaining = imageRequest.numberResults ?? 1;
+  const requestTimeout = setTimeout(() => {
+    if (imageRequests[taskUUID]) delete imageRequests[taskUUID];
+    cb(undefined, true);
+  }, 1000 * 10 * imagesRemaining);
+
   imageRequests[taskUUID] = (image: ImageResult) => {
     // If NSFW and they don't want NSFW, try again
     if (image.bNSFWContent && !includeNsfw) {
@@ -150,7 +154,10 @@ function requestImages(
     // Delete the request handler
     imagesRemaining--;
     const isComplete = imagesRemaining <= 0;
-    if (isComplete) delete imageRequests[taskUUID];
+    if (isComplete) {
+      delete imageRequests[taskUUID];
+      clearTimeout(requestTimeout);
+    }
 
     // Otherwise, send the image url
     cb(image.imageSrc, isComplete);
@@ -189,6 +196,8 @@ export function usePicFinder({
 
     const onImageReady = (url: string, isComplete: boolean) => {
       if (isComplete) setLoading((x) => ({ ...x, [promptText]: false }));
+      if (!url) return;
+
       setImages((x) => ({
         ...x,
         [promptText]: [url, ...(x[promptText] ?? [])],
