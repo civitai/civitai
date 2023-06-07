@@ -28,7 +28,7 @@ export const reviewNotifications = createNotificationProcessor({
             'modelName', m.name,
             'modelVersionName', mv.name,
             'username', u.username,
-            'rating', r.rating,
+            'rating', r.rating
           ) "details"
         FROM "ResourceReview" r
         JOIN "User" u ON r."userId" = u.id
