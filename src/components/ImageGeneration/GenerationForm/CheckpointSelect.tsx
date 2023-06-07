@@ -18,6 +18,8 @@ import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/Cleara
 import { withController } from '~/libs/form/hoc/withController';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { useFormContext } from 'react-hook-form';
+import { useDidUpdate } from '@mantine/hooks';
 
 function CheckpointSelectComponent({
   value: initialValue,
@@ -25,7 +27,7 @@ function CheckpointSelectComponent({
   ...inputWrapperProps
 }: {
   value?: GenerationResourceModel;
-  onChange?: (value: GenerationResourceModel) => void;
+  onChange?: (value?: GenerationResourceModel) => void;
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
   const debouncer = useDebouncer(300);
   const [value, setValue] = useState(initialValue);
@@ -46,7 +48,10 @@ function CheckpointSelectComponent({
 
   const handleClear = () => setSearch('');
   const handleChange = (value: string) => setSearch(value);
-  const handleDeselect = () => setValue(undefined);
+  const handleDeselect = () => {
+    setValue(undefined);
+    onChange?.(undefined);
+  };
   const handleItemSubmit = ({ resource }: SearchItemProps) => {
     setValue(resource);
     onChange?.(resource);
@@ -56,6 +61,15 @@ function CheckpointSelectComponent({
   useEffect(() => {
     if (search.length >= 3) debouncer(refetch);
   }, [search, debouncer, refetch]);
+
+  const { formState } = useFormContext();
+  const { isSubmitted, isDirty } = formState;
+  useDidUpdate(() => {
+    if (!isSubmitted && !isDirty) {
+      // clear value when form is reset
+      setValue(initialValue);
+    }
+  }, [isDirty]); //eslint-disable-line
 
   return (
     <Input.Wrapper {...inputWrapperProps}>

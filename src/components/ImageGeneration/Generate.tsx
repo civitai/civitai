@@ -129,8 +129,8 @@ export function Generate({
             </Accordion.Control>
             <Accordion.Panel>
               <Stack>
-                <InputNumber name="cfgScale" label="Creativity (CFG Scale)" />
-                <InputSelect name="sampler" label="Engine (Sampler)" data={samplers} />
+                <InputNumber name="cfgScale" label="Creativity (CFG Scale)" step={0.5} />
+                <InputSelect name="sampler" label="Engine (Sampler)" data={allSamplers} />
                 <InputNumber name="steps" label="Quality (Steps)" />
                 {/* <Stack spacing={0}>
                   <Input.Label>Creativity (CFG Scale)</Input.Label>
@@ -158,7 +158,12 @@ export function Generate({
         </Accordion>
 
         <InputNumber name="quantity" label="Quantity" />
-        <Button type="submit">Go</Button>
+        <Group>
+          <Button onClick={() => form.reset()} variant="default">
+            Reset
+          </Button>
+          <Button type="submit">Go</Button>
+        </Group>
         {/* TODO.Quantity,Go */}
       </Stack>
     </Form>
@@ -194,6 +199,29 @@ const samplers = [
   { label: 'Quality', value: 'DPM++ SDE Karras' },
 ];
 
+const allSamplers = [
+  'Euler a',
+  'Euler',
+  'LMS',
+  'Heun',
+  'DPM2',
+  'DPM2 a',
+  'DPM++ 2S a',
+  'DPM++ 2M',
+  'DPM++ SDE',
+  'DPM fast',
+  'DPM adaptive',
+  'LMS Karras',
+  'DPM2 Karras',
+  'DPM2 a Karras',
+  'DPM++ 2S a Karras',
+  'DPM++ 2M Karras',
+  'DPM++ SDE Karras',
+  'DDIM',
+  'PLMS',
+  'UniPC',
+];
+
 const steps = [
   { label: 'Fast', value: '10' },
   { label: 'Balanced', value: '20' },
@@ -208,7 +236,7 @@ const defaultDemoValues = {
     '(semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime:1.4), text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
   cfgScale: 7,
   steps: 25,
-  sampler: 'Euler A',
+  sampler: 'Euler a',
   seed: 2299724292,
   aspectRatio: '768x512',
   quantity: 2,

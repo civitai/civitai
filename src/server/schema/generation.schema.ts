@@ -26,11 +26,11 @@ export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;
 export const generationParamsSchema = z.object({
   prompt: z.string(),
   negativePrompt: z.string().optional(),
-  cfgScale: z.number(),
+  cfgScale: z.number().min(1).max(30),
   sampler: z.string(),
-  steps: z.number(),
-  seed: z.number(),
-  clipSkip: z.number(),
+  steps: z.number().min(1).max(150),
+  seed: z.number().optional(),
+  clipSkip: z.number().default(1),
   quantity: z.number(),
 });
 
