@@ -12,7 +12,8 @@ export const systemNotifications = createNotificationProcessor({
     displayName: 'Terms of Service Violation',
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your ${details.entity} at ${details.modelName} has been removed due to a Terms of Service violation.`,
+      message: `Your ${details.entity} on "${details.modelName}" has been removed due to a Terms of Service violation.`,
+      url: details.url,
     }),
   },
   'system-announcement': {
