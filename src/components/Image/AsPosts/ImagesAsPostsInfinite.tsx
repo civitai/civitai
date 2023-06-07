@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Button,
   Center,
-  Divider,
   Group,
   Loader,
   LoadingOverlay,
@@ -30,7 +29,6 @@ import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerati
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useSetFilters } from '~/providers/FiltersProvider';
-import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -178,7 +176,9 @@ export default function ImagesAsPostsInfinite({
                 <MasonryColumns
                   data={items}
                   staticItem={
-                    withGenerationCard ? (props) => <ModelGenerationCard {...props} /> : undefined
+                    withGenerationCard && selectedVersionId
+                      ? (props) => <ModelGenerationCard {...props} versionId={selectedVersionId} />
+                      : undefined
                   }
                   imageDimensions={(data) => {
                     const tallestImage = data.images.sort((a, b) => {

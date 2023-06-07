@@ -183,7 +183,7 @@ export function usePicFinder({
 
   useEffect(() => {
     const currentCount = images[promptText]?.length ?? 0;
-    if (initialFetchCount > 0 && currentCount === 0) getImages(initialFetchCount);
+    if (initialFetchCount > 0 && currentCount === 0 && promptText) getImages(initialFetchCount);
   }, [promptText]);
 
   const getImages = async (numberResults = 3) => {
