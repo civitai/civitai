@@ -425,20 +425,21 @@ model ModelVersion {
   meta                 Json        @default("{}")
   earlyAccessTimeFrame Int         @default(0)
 
-  reviews          Review[]
-  images           ImagesOnModels[]
-  metrics          ModelVersionMetric[]
-  files            ModelFile[]
-  runStrategies    RunStrategy[]
-  engagements      ModelVersionEngagement[]
-  rank             ModelVersionRank?
-  downloads        DownloadHistory[]
-  imageConnections ImageConnection[]
-  imageResources   ImageResource[]
-  posts            Post[]
-  resourceReviews  ResourceReview[]
-  hashes           ModelHash[]
-  metricsDaily     ModelMetricDaily[]
+  reviews                 Review[]
+  images                  ImagesOnModels[]
+  metrics                 ModelVersionMetric[]
+  files                   ModelFile[]
+  runStrategies           RunStrategy[]
+  engagements             ModelVersionEngagement[]
+  rank                    ModelVersionRank?
+  downloads               DownloadHistory[]
+  imageConnections        ImageConnection[]
+  imageResources          ImageResource[]
+  posts                   Post[]
+  resourceReviews         ResourceReview[]
+  hashes                  ModelHash[]
+  metricsDaily            ModelMetricDaily[]
+  ModelVersionExploration ModelVersionExploration[]
 
   @@index([modelId], type: Hash)
 }
@@ -1681,7 +1682,16 @@ model LeaderboardResult {
   @@index([userId], type: Hash)
 }
 
-/// @view
+model ModelVersionExploration {
+  index          Int
+  name           String
+  prompt         String
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+
+  @@id([modelVersionId, name])
+}
+
 model QuestionRank {
   questionId              Int      @id
   question                Question @relation(fields: [questionId], references: [id], onDelete: NoAction)

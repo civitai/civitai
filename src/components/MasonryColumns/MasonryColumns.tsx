@@ -18,6 +18,7 @@ type Props<TData> = {
   adjustHeight?: MasonryAdjustHeightFn<TData>;
   maxItemHeight?: number;
   itemId?: (data: TData) => string | number;
+  staticItem?: (props: { columnWidth: number; height: number }) => React.ReactNode;
 };
 
 export function MasonryColumns<TData>({
@@ -27,6 +28,7 @@ export function MasonryColumns<TData>({
   adjustHeight,
   maxItemHeight,
   itemId,
+  staticItem,
 }: Props<TData>) {
   const { columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
   const { columnCount } = useMasonryContainerContext();
@@ -54,6 +56,17 @@ export function MasonryColumns<TData>({
         <div key={colIndex} className={classes.column}>
           {items.map(({ height, data }, index) => {
             const key = itemId?.(data) ?? index;
+            if (colIndex === 0 && index === 0 && staticItem) {
+              return (
+                <React.Fragment key={key}>
+                  {staticItem({ columnWidth, height })}
+                  <div id={key.toString()}>
+                    {createRenderElement(RenderComponent, index, data, columnWidth, height)}
+                  </div>
+                </React.Fragment>
+              );
+            }
+
             return (
               <div key={key} id={key.toString()}>
                 {createRenderElement(RenderComponent, index, data, columnWidth, height)}
