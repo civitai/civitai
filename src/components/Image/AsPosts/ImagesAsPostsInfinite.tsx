@@ -26,7 +26,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ModelGenerationCard } from '~/components/Model/ModelGenerationCard/ModelGenerationCard';
+import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useSetFilters } from '~/providers/FiltersProvider';
@@ -54,6 +54,7 @@ type ImagesAsPostsInfiniteProps = {
   modelId: number;
   username?: string;
   modelVersions?: ModelVersionsProps[];
+  withGenerationCard?: boolean;
 };
 
 const LIMIT = 50;
@@ -62,6 +63,7 @@ export default function ImagesAsPostsInfinite({
   username,
   modelVersions,
   selectedVersionId,
+  withGenerationCard,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -173,9 +175,11 @@ export default function ImagesAsPostsInfinite({
             ) : !!items.length ? (
               <div style={{ position: 'relative' }}>
                 <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-                <ModelGenerationCard />
                 <MasonryColumns
                   data={items}
+                  staticItem={
+                    withGenerationCard ? (props) => <ModelGenerationCard {...props} /> : undefined
+                  }
                   imageDimensions={(data) => {
                     const tallestImage = data.images.sort((a, b) => {
                       const aHeight = a.height ?? 0;

@@ -194,13 +194,13 @@ export function usePicFinder({
       [promptText]: true,
     }));
 
-    const onImageReady = (url: string, isComplete: boolean) => {
+    const onImageReady = (url: string | undefined, isComplete: boolean) => {
       if (isComplete) setLoading((x) => ({ ...x, [promptText]: false }));
       if (!url) return;
 
       setImages((x) => ({
         ...x,
-        [promptText]: [url, ...(x[promptText] ?? [])],
+        [promptText]: [...(x[promptText] ?? []), url],
       }));
     };
     requestImages({ promptText, modelId, numberResults }, onImageReady);
