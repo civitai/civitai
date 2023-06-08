@@ -6,7 +6,6 @@ import {
   Group,
   Loader,
   ScrollArea,
-  SimpleGrid,
   Stack,
   Text,
   Tooltip,
@@ -862,81 +861,45 @@ export function Feed() {
         </Group>
       </Group>
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 139px)' : 'calc(100vh - 139px)'}>
-        <Stack>
-          <div className={classes.grid}>
-            {images.map((image) => {
-              const selected = state.selectedItems.includes(image.id);
+        <div className={classes.grid}>
+          {images.map((image) => {
+            const selected = state.selectedItems.includes(image.id);
 
-              return (
-                <FeedItem
-                  key={image.id}
-                  image={image}
-                  request={requestData[image.requestId]}
-                  selected={selected}
-                  onCheckboxClick={({ image, checked }) => {
-                    if (checked) {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: [...current.selectedItems, image.id],
-                      }));
-                    } else {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                      }));
-                    }
-                  }}
-                  onCreateVariantClick={(image) =>
+            return (
+              <FeedItem
+                key={image.id}
+                image={image}
+                request={requestData[image.requestId]}
+                selected={selected}
+                onCheckboxClick={({ image, checked }) => {
+                  if (checked) {
                     setState((current) => ({
                       ...current,
-                      variantModalOpened: true,
-                      selectedItems: [image.id],
-                    }))
-                  }
-                />
-              );
-            })}
-          </div>
-          {/* <SimpleGrid cols={2} spacing="md">
-            {images.map((image) => {
-              const selected = state.selectedItems.includes(image.id);
-
-              return (
-                <FeedItem
-                  key={image.id}
-                  image={image}
-                  request={requestData[image.requestId]}
-                  selected={selected}
-                  onCheckboxClick={({ image, checked }) => {
-                    if (checked) {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: [...current.selectedItems, image.id],
-                      }));
-                    } else {
-                      setState((current) => ({
-                        ...current,
-                        selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                      }));
-                    }
-                  }}
-                  onCreateVariantClick={(image) =>
+                      selectedItems: [...current.selectedItems, image.id],
+                    }));
+                  } else {
                     setState((current) => ({
                       ...current,
-                      variantModalOpened: true,
-                      selectedItems: [image.id],
-                    }))
+                      selectedItems: current.selectedItems.filter((id) => id !== image.id),
+                    }));
                   }
-                />
-              );
-            })}
-          </SimpleGrid> */}
+                }}
+                onCreateVariantClick={(image) =>
+                  setState((current) => ({
+                    ...current,
+                    variantModalOpened: true,
+                    selectedItems: [image.id],
+                  }))
+                }
+              />
+            );
+          })}
           {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
+            <Center p="xl" ref={ref} sx={{ height: 36, gridColumn: '1/-1' }} mt="md">
               {inView && <Loader />}
             </Center>
           )}
-        </Stack>
+        </div>
       </ScrollArea.Autosize>
       <FloatingActions
         selectCount={state.selectedItems.length}
@@ -1017,7 +980,7 @@ const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: theme.spacing.xs,
+    gap: theme.spacing.md,
 
     [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
       gridTemplateColumns: '1fr 1fr',

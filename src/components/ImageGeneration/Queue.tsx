@@ -304,7 +304,11 @@ export function Queue() {
     if (inView && !isFetching && !isError) fetchNextPage?.();
   }, [fetchNextPage, inView, isFetching, isError]);
 
-  return requests.length > 0 ? (
+  return isLoading ? (
+    <Center p="xl">
+      <Loader />
+    </Center>
+  ) : requests.length > 0 ? (
     <>
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
         <Stack>
@@ -318,7 +322,7 @@ export function Queue() {
             />
           ))}
           {hasNextPage && !isLoading && !isRefetching && (
-            <Center ref={ref} sx={{ height: 36 }} mt="md">
+            <Center p="xl" ref={ref} sx={{ height: 36 }} mt="md">
               {inView && <Loader />}
             </Center>
           )}
