@@ -15,7 +15,8 @@ import {
   Text,
   createStyles,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
+import { ModelVersionExploration } from '@prisma/client';
 import { IconChevronRight, IconDotsVertical, IconEdit, IconTrash } from '@tabler/icons-react';
 import { IconInfoCircle, IconPlus } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
@@ -23,6 +24,7 @@ import { useEffect, useRef, useState } from 'react';
 import { GenerationPromptModal } from '~/components/Model/Generation/GenerationPromptModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usePicFinder } from '~/libs/picfinder';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme, _params, getRef) => ({
@@ -62,39 +64,81 @@ const useStyles = createStyles((theme, _params, getRef) => ({
   },
 }));
 
-type Props = { columnWidth: number; height: number; versionId: number };
+type Props = { columnWidth: number; height: number; versionId: number; modelId?: number };
+type State = { modalOpened: boolean; editingPrompt: ModelVersionExploration | undefined };
 
-export function ModelGenerationCard({ columnWidth, height, versionId }: Props) {
+export function ModelGenerationCard({ columnWidth, height, versionId, modelId }: Props) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
+  const queryUtils = trpc.useContext();
 
-  const { data = [], isLoading: loadingPrompts } =
-    trpc.modelVersion.getExplorationPromptsById.useQuery({ id: versionId });
+  const { data = [] } = trpc.modelVersion.getExplorationPromptsById.useQuery({ id: versionId });
 
-  const [selectedPrompt, setSelectedPrompt] = useState(data[0]);
-  const [state, setState] = useState(
+  const [state, setState] = useState<State>({
+    modalOpened: false,
+    editingPrompt: data[0],
+  });
+  const [availablePrompts, setAvailablePrompts] = useState(
     data.reduce((acc, prompt) => {
       acc[prompt.name] = { imageIndex: 0 };
 
       return acc;
     }, {} as Record<string, { imageIndex: number }>)
   );
-  const [opened, { toggle }] = useDisclosure();
-
   const viewportRef = useRef<HTMLDivElement>(null);
+
+  const initialPrompt = data[0]?.prompt;
   const { images, loading, getImages, prompt, setPrompt } = usePicFinder({
-    initialPrompt: selectedPrompt?.prompt ?? data[0]?.prompt,
+    initialPrompt,
     initialFetchCount: 3,
   });
 
+  const deletePromptMutation = trpc.modelVersion.deleteExplorationPrompt.useMutation({
+    async onMutate({ name }) {
+      await queryUtils.modelVersion.getExplorationPromptsById.cancel();
+      const previousData = queryUtils.modelVersion.getExplorationPromptsById.getData({
+        id: versionId,
+      });
+
+      if (previousData) {
+        queryUtils.modelVersion.getExplorationPromptsById.setData(
+          { id: versionId },
+          previousData.filter((p) => p.name !== name)
+        );
+      }
+
+      return { previousData };
+    },
+    onError(error, _, context) {
+      showErrorNotification({
+        title: 'Failed to delete prompt',
+        error: new Error(error.message),
+        reason: 'Unable to delete prompt. Please try again',
+      });
+      queryUtils.modelVersion.getExplorationPromptsById.setData(
+        { id: versionId },
+        context?.previousData
+      );
+    },
+  });
+  const handleDeletePrompt = (promptName: string) => {
+    openConfirmModal({
+      title: 'Delete Prompt',
+      children: `Are you sure you want to delete this prompt?`,
+      labels: { confirm: 'Delete', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        deletePromptMutation.mutate({ id: versionId, name: promptName, modelId });
+      },
+    });
+  };
+
   const isModerator = currentUser?.isModerator ?? false;
-  const currentIndex = state[selectedPrompt?.name]?.imageIndex;
+  const selectedPrompt = data.find((p) => p.name === prompt);
+  const currentIndex = selectedPrompt ? availablePrompts[selectedPrompt.name]?.imageIndex : 0;
 
   useEffect(() => {
-    if (data.length > 0 && !prompt) {
-      setPrompt(data[0].prompt);
-      setSelectedPrompt(data[0]);
-    }
+    if (data.length > 0 && !prompt) setPrompt(data[0].prompt);
   }, [data, prompt, setPrompt]);
 
   return (
@@ -198,13 +242,14 @@ export function ModelGenerationCard({ columnWidth, height, versionId }: Props) {
                     sx={{ position: 'absolute', top: '50%', right: 10 }}
                     onClick={() => {
                       viewportRef.current?.scrollBy({ left: columnWidth, behavior: 'smooth' });
-                      setState((current) => ({
-                        ...current,
-                        [selectedPrompt?.name]: {
-                          imageIndex: current[selectedPrompt?.name]?.imageIndex + 1,
-                        },
-                      }));
                       getImages(2);
+                      if (selectedPrompt)
+                        setAvailablePrompts((current) => ({
+                          ...current,
+                          [selectedPrompt.name]: {
+                            imageIndex: current[selectedPrompt.name]?.imageIndex + 1,
+                          },
+                        }));
                     }}
                   >
                     <IconChevronRight />
@@ -216,7 +261,17 @@ export function ModelGenerationCard({ columnWidth, height, versionId }: Props) {
           <Card.Section py="xs" inheritPadding withBorder>
             <Group spacing={8} noWrap>
               {isModerator && (
-                <ActionIcon variant="outline" size="sm" onClick={toggle}>
+                <ActionIcon
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setState((current) => ({
+                      ...current,
+                      modalOpened: true,
+                      editingPrompt: undefined,
+                    }))
+                  }
+                >
                   <IconPlus />
                 </ActionIcon>
               )}
@@ -229,8 +284,8 @@ export function ModelGenerationCard({ columnWidth, height, versionId }: Props) {
                     const selected = data.find((p) => p.prompt === prompt);
 
                     if (selected) {
-                      setSelectedPrompt(selected);
-                      const imageIndex = state[selected.name]?.imageIndex;
+                      // setSelectedPrompt(selected);
+                      const imageIndex = availablePrompts[selected.name]?.imageIndex;
                       viewportRef.current?.scrollTo({ left: columnWidth * imageIndex });
                     }
                   }}
@@ -257,12 +312,24 @@ export function ModelGenerationCard({ columnWidth, height, versionId }: Props) {
                               </ActionIcon>
                             </Menu.Target>
                             <Menu.Dropdown>
-                              <Menu.Item color="red" icon={<IconTrash size={14} stroke={1.5} />}>
+                              <Menu.Item
+                                color="red"
+                                icon={<IconTrash size={14} stroke={1.5} />}
+                                onClick={() => handleDeletePrompt(prompt.name)}
+                              >
                                 Delete
                               </Menu.Item>
                               <Menu.Item
                                 icon={<IconEdit size={14} stroke={1.5} />}
-                                onClick={toggle}
+                                onClick={() => {
+                                  const selected = data.find((p) => p.prompt === prompt.prompt);
+                                  if (selected)
+                                    setState((current) => ({
+                                      ...current,
+                                      modalOpened: true,
+                                      editingPrompt: selected,
+                                    }));
+                                }}
                               >
                                 Edit
                               </Menu.Item>
@@ -279,7 +346,16 @@ export function ModelGenerationCard({ columnWidth, height, versionId }: Props) {
         </Card>
       </Indicator>
       {isModerator && (
-        <GenerationPromptModal prompt={selectedPrompt} opened={opened} onClose={toggle} />
+        <GenerationPromptModal
+          prompt={state.editingPrompt}
+          opened={state.modalOpened}
+          onClose={() => {
+            setState((current) => ({ ...current, modalOpened: false, editingPrompt: undefined }));
+          }}
+          modelId={modelId}
+          versionId={versionId}
+          nextIndex={data.length}
+        />
       )}
     </>
   );

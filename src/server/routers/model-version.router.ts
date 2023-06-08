@@ -8,10 +8,17 @@ import {
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  deleteExplorationPromptSchema,
   getModelVersionSchema,
   modelVersionUpsertSchema2,
+  upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
-import { getExplorationPromptsById, getVersionById } from '~/server/services/model-version.service';
+import {
+  deleteExplorationPrompt,
+  getExplorationPromptsById,
+  getVersionById,
+  upsertExplorationPrompt,
+} from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
   isFlagProtected,
@@ -61,4 +68,12 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(publishModelVersionHandler),
+  upsertExplorationPrompt: protectedProcedure
+    .input(upsertExplorationPromptSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => upsertExplorationPrompt(input)),
+  deleteExplorationPrompt: protectedProcedure
+    .input(deleteExplorationPromptSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => deleteExplorationPrompt(input)),
 });

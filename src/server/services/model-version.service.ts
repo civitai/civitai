@@ -2,9 +2,14 @@ import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client'
 
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
+import {
+  DeleteExplorationPromptInput,
+  ModelVersionUpsertInput,
+  UpsertExplorationPromptInput,
+} from '~/server/schema/model-version.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { playfab } from '~/server/playfab/client';
+import { TRPCError } from '@trpc/server';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -180,13 +185,51 @@ export const getExplorationPromptsById = async ({ id }: GetByIdInput) => {
   try {
     const prompts = await dbRead.modelVersionExploration.findMany({
       where: { modelVersionId: id },
-      select: { name: true, prompt: true, index: true },
+      select: { name: true, prompt: true, index: true, modelVersionId: true },
     });
-
-    console.log({ prompts });
 
     return prompts;
   } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const upsertExplorationPrompt = async ({
+  id: modelVersionId,
+  name,
+  index,
+  prompt,
+}: UpsertExplorationPromptInput) => {
+  try {
+    const explorationPrompt = await dbWrite.modelVersionExploration.upsert({
+      where: { modelVersionId_name: { modelVersionId, name } },
+      create: { modelVersionId, name, prompt, index: index ?? 0 },
+      update: { index, prompt },
+    });
+    if (!explorationPrompt)
+      throw throwNotFoundError(`No prompt with name ${name} belongs to version ${modelVersionId}`);
+
+    return explorationPrompt;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const deleteExplorationPrompt = async ({
+  name,
+  id: modelVersionId,
+}: DeleteExplorationPromptInput) => {
+  try {
+    const deleted = await dbWrite.modelVersionExploration.delete({
+      where: { modelVersionId_name: { modelVersionId, name } },
+    });
+    if (!deleted)
+      throw throwNotFoundError(`No prompt with name ${name} belongs to version ${modelVersionId}`);
+
+    return deleted;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };

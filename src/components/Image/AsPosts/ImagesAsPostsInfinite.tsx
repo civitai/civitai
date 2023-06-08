@@ -177,7 +177,13 @@ export default function ImagesAsPostsInfinite({
                   data={items}
                   staticItem={
                     withGenerationCard && selectedVersionId
-                      ? (props) => <ModelGenerationCard {...props} versionId={selectedVersionId} />
+                      ? (props) => (
+                          <ModelGenerationCard
+                            {...props}
+                            versionId={selectedVersionId}
+                            modelId={modelId}
+                          />
+                        )
                       : undefined
                   }
                   imageDimensions={(data) => {
