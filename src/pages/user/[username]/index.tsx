@@ -67,11 +67,12 @@ import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { showErrorNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { abbreviateNumber, formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -493,7 +494,14 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           {stats && (
                             <>
                               <IconBadge
-                                tooltip="Average Rating"
+                                tooltip={
+                                  <StatTooltip
+                                    label="Average Rating"
+                                    value={`${formatToLeastDecimals(stats.ratingAllTime)} (${
+                                      stats.ratingCountAllTime
+                                    })`}
+                                  />
+                                }
                                 sx={{ userSelect: 'none' }}
                                 size="lg"
                                 icon={
@@ -525,29 +533,41 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                   {abbreviateNumber(stats.ratingCountAllTime)}
                                 </Text>
                               </IconBadge>
+                              {uploads === 0 ? null : (
+                                <IconBadge
+                                  icon={<IconUpload size={16} />}
+                                  color="gray"
+                                  size="lg"
+                                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                  tooltip={<StatTooltip label="Uploads" value={uploads} />}
+                                >
+                                  <Text size="sm">{abbreviateNumber(uploads)}</Text>
+                                </IconBadge>
+                              )}
                               <IconBadge
-                                tooltip="Uploads"
-                                icon={<IconUpload size={16} />}
-                                color="gray"
-                                size="lg"
-                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                              >
-                                <Text size="sm">{abbreviateNumber(uploads)}</Text>
-                              </IconBadge>
-                              <IconBadge
-                                tooltip="Followers"
                                 icon={<IconUsers size={16} />}
                                 href={`/user/${user.username}/followers`}
                                 color="gray"
                                 size="lg"
                                 variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                tooltip={
+                                  <StatTooltip
+                                    label="Followers"
+                                    value={stats.followerCountAllTime}
+                                  />
+                                }
                               >
                                 <Text size="sm">
                                   {abbreviateNumber(stats.followerCountAllTime)}
                                 </Text>
                               </IconBadge>
                               <IconBadge
-                                tooltip="Favorites"
+                                tooltip={
+                                  <StatTooltip
+                                    label="Favorites"
+                                    value={stats.favoriteCountAllTime}
+                                  />
+                                }
                                 icon={<IconHeart size={16} />}
                                 color="gray"
                                 variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -558,7 +578,12 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                 </Text>
                               </IconBadge>
                               <IconBadge
-                                tooltip="Downloads"
+                                tooltip={
+                                  <StatTooltip
+                                    label="Downloads"
+                                    value={stats.downloadCountAllTime}
+                                  />
+                                }
                                 icon={<IconDownload size={16} />}
                                 variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                                 size="lg"
