@@ -3,9 +3,8 @@ import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client'
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { playfab } from '~/server/playfab/client';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -175,4 +174,19 @@ export const publishModelVersionById = async ({ id }: GetByIdInput) => {
   });
 
   return version;
+};
+
+export const getExplorationPromptsById = async ({ id }: GetByIdInput) => {
+  try {
+    const prompts = await dbRead.modelVersionExploration.findMany({
+      where: { modelVersionId: id },
+      select: { name: true, prompt: true, index: true },
+    });
+
+    console.log({ prompts });
+
+    return prompts;
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

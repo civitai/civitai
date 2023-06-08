@@ -11,7 +11,7 @@ import {
   getModelVersionSchema,
   modelVersionUpsertSchema2,
 } from '~/server/schema/model-version.schema';
-import { getVersionById } from '~/server/services/model-version.service';
+import { getExplorationPromptsById, getVersionById } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
   isFlagProtected,
@@ -45,6 +45,9 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 export const modelVersionRouter = router({
   getById: publicProcedure.input(getModelVersionSchema).query(getModelVersionHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
+  getExplorationPromptsById: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getExplorationPromptsById(input)),
   toggleNotifyEarlyAccess: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('earlyAccessModel'))
