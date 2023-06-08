@@ -29,6 +29,7 @@ import {
   IconBox,
   IconDotsVertical,
   IconDownload,
+  IconFlag,
   IconHeart,
   IconMicrophone,
   IconMicrophoneOff,
@@ -50,19 +51,24 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -72,8 +78,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { StatTooltip } from '~/components/Tooltips/StatTooltip';
-import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -484,6 +488,19 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                     </Menu.Item>
                                   )}
                                   <HideUserButton as="menu-item" userId={user.id} />
+                                  <LoginRedirect reason="report-user">
+                                    <Menu.Item
+                                      icon={<IconFlag size={14} stroke={1.5} />}
+                                      onClick={() =>
+                                        openContext('report', {
+                                          entityType: ReportEntity.User,
+                                          entityId: user.id,
+                                        })
+                                      }
+                                    >
+                                      Report
+                                    </Menu.Item>
+                                  </LoginRedirect>
                                 </>
                               </Menu.Dropdown>
                             </Menu>

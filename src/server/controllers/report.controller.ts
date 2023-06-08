@@ -253,6 +253,11 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        reportedUser: {
+          select: {
+            user: { select: { ...simpleUserSelect, email: true } },
+          },
+        },
       },
     });
     return {
@@ -271,6 +276,7 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
           },
           article: item.article?.article,
           post: item.post?.post,
+          reportedUser: item.reportedUser?.user,
         };
       }),
       ...result,

@@ -60,6 +60,7 @@ const reports = [
       ReportEntity.ResourceReview,
       ReportEntity.Article,
       ReportEntity.Post,
+      ReportEntity.User,
     ],
   },
   {
@@ -74,6 +75,7 @@ const reports = [
       ReportEntity.ResourceReview,
       ReportEntity.Article,
       ReportEntity.Post,
+      ReportEntity.User,
     ],
   },
   {

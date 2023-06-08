@@ -127,6 +127,7 @@ model User {
   articles                Article[]
   articleEngagements      ArticleEngagement[]
   leaderboardResults      LeaderboardResult[]
+  receivedReports         UserReport[]
 }
 
 model CustomerSubscription {
@@ -657,6 +658,7 @@ model Report {
   resourceReview ResourceReviewReport?
   article        ArticleReport?
   post           PostReport?
+  reportedUser   UserReport?
 }
 
 model ResourceReviewReport {
@@ -729,6 +731,15 @@ model PostReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, postId])
+}
+
+model UserReport {
+  userId   Int
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, userId])
 }
 
 model Review {

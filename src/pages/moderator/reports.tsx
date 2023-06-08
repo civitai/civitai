@@ -487,7 +487,9 @@ const getReportLink = (report: ReportDetail) => {
     return `/images/${report.image.id}/?${parts.join('&')}`;
   } else if (report.article) {
     return `/articles/${report.article.id}`;
-  } else if (report.post) return `/posts/${report.post.id}`;
+  } else if (report.post) {
+    return `/posts/${report.post.id}`;
+  } else if (report.reportedUser) return `/user/${report.reportedUser.username}`;
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {

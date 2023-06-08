@@ -31,10 +31,12 @@ const validateReportCreation = async ({
   reason: ReportReason;
 }): Promise<Report | null> => {
   // Look if there's already a report for this type with the same reason
+  const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
   const existingReport = await dbWrite.report.findFirst({
-    where: { reason, [reportType]: { [`${reportType}Id`]: entityReportId } },
+    where: { reason, [reportType]: { [entityIdField]: entityReportId } },
     orderBy: { id: 'desc' },
   });
+
   if (!existingReport) return null;
 
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
@@ -182,6 +184,13 @@ export const createReport = async ({
         await tx.postReport.create({
           data: {
             post: { connect: { id } },
+            report,
+          },
+        });
+      case ReportEntity.User:
+        await tx.userReport.create({
+          data: {
+            user: { connect: { id } },
             report,
           },
         });
