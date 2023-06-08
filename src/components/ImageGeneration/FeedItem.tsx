@@ -9,13 +9,20 @@ import {
 } from '@tabler/icons-react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { Generation } from '~/server/services/generation/generation.types';
 
 /**
  * TODO.generation:
  * - add action to generate image with the same prompt (play icon)
  * - correctly type the image object
  */
-export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClick }: Props) {
+export function FeedItem({
+  image,
+  request,
+  selected,
+  onCheckboxClick,
+  onCreateVariantClick,
+}: Props) {
   const [opened, { toggle, close }] = useDisclosure();
 
   return (
@@ -39,7 +46,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
       })}
     >
       <AspectRatio ratio={1}>
-        <EdgeImage src={image.url} width={image.width} />
+        <EdgeImage src={image.url} width={request.params.width} />
       </AspectRatio>
       <Checkbox
         sx={(theme) => ({
@@ -94,8 +101,8 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
           </Card>
 
           <ImageMetaPopover
-            meta={image.meta as any}
-            generationProcess={image.generationProcess ?? undefined}
+            meta={request.params}
+            // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
           >
             <ActionIcon variant="transparent" size="md">
               <IconInfoCircle
@@ -114,7 +121,8 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
 }
 
 type Props = {
-  image: any;
+  image: Generation.Image;
+  request: Generation.Client.ImageRequest;
   selected: boolean;
   onCheckboxClick: (data: { image: any; checked: boolean }) => void;
   onCreateVariantClick: (image: any) => void;

@@ -1,21 +1,13 @@
 import {
-  AspectRatio,
-  Box,
-  Card,
   Center,
   Group,
   Input,
   Paper,
-  SegmentedControl,
   Stack,
-  Textarea,
-  createStyles,
   Text,
   Accordion,
   Divider,
   Grid,
-  NumberInput,
-  Select,
   Button,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
@@ -33,12 +25,8 @@ import {
   useForm,
 } from '~/libs/form';
 import { generationParamsSchema } from '~/server/schema/generation.schema';
-import { GenerationRequestModel, GenerationResourceModel } from '~/server/services/generation';
+import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
-
-const prompt =
-  '1girl, coils, head, food, burger, hamburger steak, masterpiece, best quality, highly detailed <lora:coils_v1:0.8> <lora:bbox_v1:0.5>chibi, open mouth, (smile, looking at viewer:1.3), warmcolor,';
-const negativePrompt = 'blurry';
 
 const resourceSchema = z
   .object({
@@ -50,7 +38,7 @@ const resourceSchema = z
 
 const schema = generationParamsSchema.extend({
   model: resourceSchema.array().max(1),
-  additionalResources: resourceSchema.array().optional(),
+  additionalResources: resourceSchema.array().default([]),
   aspectRatio: z.string(),
 });
 
@@ -58,7 +46,7 @@ export function Generate({
   request,
   onSuccess,
 }: {
-  request?: GenerationRequestModel;
+  request?: Generation.Client.Request;
   onSuccess?: () => void;
 }) {
   const defaultValues = {
@@ -125,8 +113,8 @@ export function Generate({
             </Group>
           }
         >
-          <InputTextArea name="prompt" autosize value={prompt} />
-          <InputTextArea name="negativePrompt" autosize value={negativePrompt} />
+          <InputTextArea name="prompt" autosize />
+          <InputTextArea name="negativePrompt" autosize />
           {/* <MentionExample value={prompt} /> */}
         </Input.Wrapper>
         <Stack spacing={0}>

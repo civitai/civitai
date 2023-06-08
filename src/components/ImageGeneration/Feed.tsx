@@ -2,13 +2,16 @@ import {
   ActionIcon,
   Autocomplete,
   Card,
+  Center,
   Group,
+  Loader,
   ScrollArea,
   SimpleGrid,
   Stack,
   Text,
   Tooltip,
   Transition,
+  createStyles,
 } from '@mantine/core';
 import {
   IconCloudUpload,
@@ -21,10 +24,12 @@ import {
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useInView } from 'react-intersection-observer';
 import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
+import { useGetGenerationImages } from '~/components/ImageGeneration/hooks/useGetGenerationImages';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 // TODO.generation: remove mock data
@@ -795,12 +800,30 @@ type State = {
  * - handle post images
  */
 export function Feed() {
+  const { ref, inView } = useInView();
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [state, setState] = useState<State>({
     layout: 'grid',
     selectedItems: [],
     variantModalOpened: false,
   });
+
+  const {
+    images,
+    requestData,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isFetching,
+    isError,
+  } = useGetGenerationImages({ take: 6 });
+
+  useEffect(() => {
+    if (inView && !isFetching && !isError) fetchNextPage?.();
+  }, [fetchNextPage, inView, isFetching, isError]);
+
+  const { classes } = useStyles();
 
   return (
     <Stack sx={{ position: 'relative' }}>
@@ -839,39 +862,81 @@ export function Feed() {
         </Group>
       </Group>
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 139px)' : 'calc(100vh - 139px)'}>
-        <SimpleGrid cols={2} spacing="md">
-          {images.map((image) => {
-            const selected = state.selectedItems.includes(image.id);
+        <Stack>
+          <div className={classes.grid}>
+            {images.map((image) => {
+              const selected = state.selectedItems.includes(image.id);
 
-            return (
-              <FeedItem
-                key={image.id}
-                image={image}
-                selected={selected}
-                onCheckboxClick={({ image, checked }) => {
-                  if (checked) {
+              return (
+                <FeedItem
+                  key={image.id}
+                  image={image}
+                  request={requestData[image.requestId]}
+                  selected={selected}
+                  onCheckboxClick={({ image, checked }) => {
+                    if (checked) {
+                      setState((current) => ({
+                        ...current,
+                        selectedItems: [...current.selectedItems, image.id],
+                      }));
+                    } else {
+                      setState((current) => ({
+                        ...current,
+                        selectedItems: current.selectedItems.filter((id) => id !== image.id),
+                      }));
+                    }
+                  }}
+                  onCreateVariantClick={(image) =>
                     setState((current) => ({
                       ...current,
-                      selectedItems: [...current.selectedItems, image.id],
-                    }));
-                  } else {
-                    setState((current) => ({
-                      ...current,
-                      selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                    }));
+                      variantModalOpened: true,
+                      selectedItems: [image.id],
+                    }))
                   }
-                }}
-                onCreateVariantClick={(image) =>
-                  setState((current) => ({
-                    ...current,
-                    variantModalOpened: true,
-                    selectedItems: [image.id],
-                  }))
-                }
-              />
-            );
-          })}
-        </SimpleGrid>
+                />
+              );
+            })}
+          </div>
+          {/* <SimpleGrid cols={2} spacing="md">
+            {images.map((image) => {
+              const selected = state.selectedItems.includes(image.id);
+
+              return (
+                <FeedItem
+                  key={image.id}
+                  image={image}
+                  request={requestData[image.requestId]}
+                  selected={selected}
+                  onCheckboxClick={({ image, checked }) => {
+                    if (checked) {
+                      setState((current) => ({
+                        ...current,
+                        selectedItems: [...current.selectedItems, image.id],
+                      }));
+                    } else {
+                      setState((current) => ({
+                        ...current,
+                        selectedItems: current.selectedItems.filter((id) => id !== image.id),
+                      }));
+                    }
+                  }}
+                  onCreateVariantClick={(image) =>
+                    setState((current) => ({
+                      ...current,
+                      variantModalOpened: true,
+                      selectedItems: [image.id],
+                    }))
+                  }
+                />
+              );
+            })}
+          </SimpleGrid> */}
+          {hasNextPage && !isLoading && !isRefetching && (
+            <Center ref={ref} sx={{ height: 36 }} mt="md">
+              {inView && <Loader />}
+            </Center>
+          )}
+        </Stack>
       </ScrollArea.Autosize>
       <FloatingActions
         selectCount={state.selectedItems.length}
@@ -947,3 +1012,15 @@ type FloatingActionsProps = {
   onUpscaleClick: () => void;
   onDeleteClick: () => void;
 };
+
+const useStyles = createStyles((theme) => ({
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+    gap: theme.spacing.xs,
+
+    [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
+      gridTemplateColumns: '1fr 1fr',
+    },
+  },
+}));

@@ -19,6 +19,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { Generation } from '~/server/services/generation/generation.types';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 
 export function QueueItem({ item, onBoostClick }: Props) {
@@ -35,16 +36,24 @@ export function QueueItem({ item, onBoostClick }: Props) {
       <Card.Section py="xs" inheritPadding withBorder>
         <Group position="apart">
           <Group spacing={8}>
-            <ThemeIcon variant="outline" w="auto" h="auto" size="sm" color="gray" px={8} py={2}>
-              <Group spacing={8}>
-                <IconPhoto size={16} />
-                <Text size="sm" inline>
-                  {item.images.length}
-                </Text>
-              </Group>
-            </ThemeIcon>
+            {!!item.images?.length && (
+              <ThemeIcon variant="outline" w="auto" h="auto" size="sm" color="gray" px={8} py={2}>
+                <Group spacing={8}>
+                  <IconPhoto size={16} />
+                  <Text size="sm" inline>
+                    {item.images.length}
+                  </Text>
+                </Group>
+              </ThemeIcon>
+            )}
             <Button.Group>
-              <Button size="xs" variant="outline" color="gray" sx={{ pointerEvents: 'none' }} compact>
+              <Button
+                size="xs"
+                variant="outline"
+                color="gray"
+                sx={{ pointerEvents: 'none' }}
+                compact
+              >
                 ETA <Countdown endTime={item.estimatedCompletionDate} />
               </Button>
               <Button
@@ -55,13 +64,25 @@ export function QueueItem({ item, onBoostClick }: Props) {
                 compact
               >
                 Boost
+                {/* TODO.generations - probably need to confirm boost since buzz = money */}
               </Button>
-              {!showBoostModal && <Button size="xs" variant="white" color="gray" px={4} sx={{ pointerEvents: 'none' }} compact>
-                <Group spacing={2}>
-                  <IconBolt size={16} />
-                  <Text size="xs" inline>10</Text>
-                </Group>
-              </Button>}
+              {!showBoostModal && (
+                <Button
+                  size="xs"
+                  variant="white"
+                  color="gray"
+                  px={4}
+                  sx={{ pointerEvents: 'none' }}
+                  compact
+                >
+                  <Group spacing={2}>
+                    <IconBolt size={16} />
+                    <Text size="xs" inline>
+                      10
+                    </Text>
+                  </Group>
+                </Button>
+              )}
             </Button.Group>
           </Group>
           <ActionIcon color="red" size="md">
@@ -90,7 +111,7 @@ export function QueueItem({ item, onBoostClick }: Props) {
           </Accordion.Item>
         </Accordion>
       </Card.Section>
-      <Card.Section py="xs" inheritPadding>
+      {/* <Card.Section py="xs" inheritPadding>
         <Group position="apart" spacing={8}>
           <Text color="dimmed" size="xs">
             Fulfillment by {item.provider.name}
@@ -99,12 +120,12 @@ export function QueueItem({ item, onBoostClick }: Props) {
             Started <DaysFromNow date={item.createdAt} />
           </Text>
         </Group>
-      </Card.Section>
+      </Card.Section> */}
     </Card>
   );
 }
 
 type Props = {
-  item: any;
-  onBoostClick: (item: any) => void;
+  item: Generation.Client.Request;
+  onBoostClick: (item: Generation.Client.Request) => void;
 };

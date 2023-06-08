@@ -12,13 +12,13 @@ import {
   Badge,
   ActionIcon,
 } from '@mantine/core';
-import { GenerationResourceModel } from '~/server/services/generation';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { withController } from '~/libs/form/hoc/withController';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useFormContext } from 'react-hook-form';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
+import { Generation } from '~/server/services/generation/generation.types';
 
 function GenerationResourceSelect({
   value: initialValue = [],
@@ -28,8 +28,8 @@ function GenerationResourceSelect({
   notTypes,
   ...inputWrapperProps
 }: {
-  value?: GenerationResourceModel[];
-  onChange?: (value: GenerationResourceModel[]) => void;
+  value?: Generation.Client.Resource[];
+  onChange?: (value: Generation.Client.Resource[]) => void;
   limit?: number;
   types?: ModelType[];
   notTypes?: ModelType[];
@@ -125,7 +125,7 @@ function GenerationResourceSelect({
   );
 }
 
-type SearchItemProps = { value: string; resource: GenerationResourceModel };
+type SearchItemProps = { value: string; resource: Generation.Client.Resource };
 const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
   ({ value, resource, ...props }, ref) => {
     console.log({ props });

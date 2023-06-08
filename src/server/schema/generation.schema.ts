@@ -1,5 +1,6 @@
 import { ModelType } from '@prisma/client';
 import { z } from 'zod';
+import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -19,8 +20,8 @@ export const getGenerationResourcesSchema = z.object({
 export type GetGenerationRequestsInput = z.infer<typeof getGenerationRequestsSchema>;
 export const getGenerationRequestsSchema = z.object({
   take: z.number().default(10),
-  cursor: z.string().optional(),
-  status: z.enum(['Pending', 'Succeeded', 'Failed', 'Canceled']),
+  cursor: z.number().optional(),
+  status: z.nativeEnum(GenerationRequestStatus).optional(),
 });
 
 export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;
@@ -46,4 +47,10 @@ export const createGenerationRequestSchema = generationParamsSchema.extend({
     .array(),
   height: z.number(),
   width: z.number(),
+});
+
+export type GetGenerationImagesInput = z.infer<typeof getGenerationImagesSchema>;
+export const getGenerationImagesSchema = z.object({
+  take: z.number().default(10),
+  cursor: z.number().optional(),
 });

@@ -1,31 +1,19 @@
 import { ModelType } from '@prisma/client';
 
-export type GenerationResourceModel = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  modelId: number;
-  modelName: string;
-  modelType: ModelType;
-  strength?: number;
-};
+export namespace Generation {
+  export type AdditionalNetwork = Partial<{
+    strength: number;
+  }>;
 
-type ImageProps = {
-  hash: string;
-  url: string;
-  available: boolean;
-  requestId: number;
-};
-
-type JobProps = {
-  quantity: number;
-  priority: number;
-  additionalNetworks: {
-    [key: string]: {
-      strength?: number;
-    };
+  export type Image = {
+    id: number;
+    hash: string;
+    url: string;
+    available: boolean;
+    requestId: number;
   };
-  params: {
+
+  export type Params = {
     prompt: string;
     negativePrompt?: string;
     width: number;
@@ -35,22 +23,71 @@ type JobProps = {
     cfgScale: number;
     seed: number;
   };
-};
 
-type AssetProps = {
-  type: ModelType;
-  hash: string;
-  url: string; // Not sure if this prop is still required
-  modelVersionId: number;
-};
+  export type Asset = {
+    type: ModelType;
+    hash: string;
+    url: string;
+    modelVersionId: number;
+  };
 
-export type GenerationRequestProps = {
-  id: number;
-  createdAt: Date;
-  estimatedCompletionDate: Date;
-  userId: number;
-  status: number;
-  assets: AssetProps[];
-  job: JobProps;
-  images: ImageProps[];
-};
+  export type Job = {
+    quantity: number;
+    priority: number;
+    params: Params;
+    additionalNetworks: Record<string, AdditionalNetwork>;
+  };
+
+  export namespace Client {
+    export type Resource = AdditionalNetwork & {
+      id: number;
+      name: string;
+      trainedWords: string[];
+      modelId: number;
+      modelName: string;
+      modelType: ModelType;
+    };
+    export type Request = {
+      id: number;
+      createdAt: Date;
+      estimatedCompletionDate: Date;
+      status: GenerationRequestStatus;
+      quantity: number;
+      priority: number;
+      params: Params;
+      resources: Resource[];
+      images?: Image[];
+    };
+    export type ImageRequest = { params: Params };
+    export type ImageRequestDictionary = Record<string, ImageRequest>;
+    export type Images = {
+      images: Image[];
+      requests: ImageRequestDictionary;
+    };
+  }
+
+  export namespace Api {
+    export type Request = {
+      id: number;
+      createdAt: Date;
+      estimatedCompletionDate: Date;
+      userId: number;
+      status: GenerationRequestStatus;
+      assets: Asset[];
+      job: Job;
+      images?: Image[];
+    };
+    export type Images = {
+      images: Image[];
+      requests: Request[];
+    };
+  }
+}
+
+export enum GenerationRequestStatus {
+  Pending = 0,
+  Processing = 1,
+  Cancelled = 2,
+  Error = 3,
+  Succeeded = 4,
+}

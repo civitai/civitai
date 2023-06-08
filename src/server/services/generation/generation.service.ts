@@ -1,6 +1,7 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CreateGenerationRequestInput,
+  GetGenerationImagesInput,
   GetGenerationRequestsInput,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
@@ -10,17 +11,21 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
 import { ModelType, Prisma } from '@prisma/client';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import {
-  GenerationRequestProps,
-  GenerationResourceModel,
+  // GenerationRequestProps,
+  // GenerationResourceModel,
+  // ImageRequestProps,
+  // JobProps,
+  Generation,
 } from '~/server/services/generation/generation.types';
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
+import { isDev } from '~/env/other';
 
 const imageGenerationApi = 'https://image-generation-scheduler.civitai.com';
 
 export const getGenerationResource = async ({
   id,
-}: GetByIdInput): Promise<GenerationResourceModel> => {
+}: GetByIdInput): Promise<Generation.Client.Resource> => {
   const resource = await dbRead.modelVersion.findUnique({
     where: { id },
     select: generationResourceSelect,
@@ -44,7 +49,7 @@ export const getGenerationResources = async ({
   notTypes,
   ids, // used for getting initial values of resources
   user,
-}: GetGenerationResourcesInput & { user?: SessionUser }): Promise<GenerationResourceModel[]> => {
+}: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
   // TODO - apply user preferences - but do we really need this? Maybe a direct search should yield all results since their browsing experience is already set to their browsing preferences
   // TODO.Justin - sql query for selecting resources
   const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [{ publishedAt: { not: null } }];
@@ -84,28 +89,37 @@ export const getGenerationResources = async ({
     }));
 };
 
-export type GenerationRequestModel = AsyncReturnType<typeof getGenerationRequests>[number];
-export const getGenerationRequests = async (
-  props: GetGenerationRequestsInput & { userId: number }
-) => {
-  const params = QS.stringify(props);
+export const getGenerationRequests = async ({
+  cursor,
+  ...props
+}: GetGenerationRequestsInput & { userId: number }) => {
+  if (isDev) props.userId = 1; // TODO.remove after generation is working properly
+  const params = QS.stringify({ ...props, after: cursor, take: props.take + 1 });
   const response = await fetch(`${imageGenerationApi}/requests?${params}`);
   if (!response.ok) throw new Error(response.statusText);
-  const requests: GenerationRequestProps[] = await response.json();
+  const requests: Generation.Api.Request[] = await response.json();
   const modelVersionIds = requests.flatMap((x) => x.assets.map((x) => x.modelVersionId));
   const modelVersions = await dbRead.modelVersion.findMany({
     where: { id: { in: modelVersionIds } },
     select: generationResourceSelect,
   });
 
-  return requests.map((x) => {
+  // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
+  let nextCursor: number | undefined;
+  if (requests.length > props.take) {
+    const nextItem = requests.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  const items = requests.map((x): Generation.Client.Request => {
     const { additionalNetworks, ...job } = x.job;
     return {
-      requestId: x.id,
+      id: x.id,
       createdAt: x.createdAt,
+      estimatedCompletionDate: x.estimatedCompletionDate,
       status: x.status,
       resources: x.assets
-        .map((asset): GenerationResourceModel | undefined => {
+        .map((asset): Generation.Client.Resource | undefined => {
           const modelVersion = modelVersions.find((x) => x.id === asset.modelVersionId);
           const network = additionalNetworks[asset.hash] ?? {};
           if (!modelVersion) return undefined;
@@ -122,8 +136,11 @@ export const getGenerationRequests = async (
         })
         .filter(isDefined),
       ...job,
+      images: x.images,
     };
   });
+
+  return { items, nextCursor };
 };
 
 export const createGenerationRequest = async (
@@ -133,4 +150,36 @@ export const createGenerationRequest = async (
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
   //TODO.Justin - get model files/hashes and any associated config files
+};
+
+export const getGenerationImages = async ({
+  cursor,
+  ...props
+}: GetGenerationImagesInput & { userId: number }) => {
+  if (isDev) props.userId = 1; // TODO.remove after generation is working properly
+  const params = QS.stringify({ ...props, after: cursor, take: props.take + 1 });
+  const response = await fetch(`${imageGenerationApi}/images?${params}`);
+  if (!response.ok) throw new Error(response.statusText);
+  const { images, requests }: Generation.Api.Images = await response.json();
+
+  // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
+  let nextCursor: number | undefined;
+  if (images.length > props.take) {
+    const nextItem = images.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    images,
+    requests: requests.reduce<Generation.Client.ImageRequestDictionary>((acc, request) => {
+      if (!images.find((x) => x.requestId === request.id)) return acc;
+      return {
+        ...acc,
+        [request.id]: {
+          params: request.job.params,
+        },
+      };
+    }, {}),
+  };
 };

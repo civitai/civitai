@@ -1,12 +1,14 @@
 import { getByIdSchema } from './../schema/base.schema';
 import {
   createGenerationRequestSchema,
+  getGenerationImagesSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
 
 import {
   createGenerationRequest,
+  getGenerationImages,
   getGenerationRequests,
   getGenerationResource,
   getGenerationResources,
@@ -32,4 +34,7 @@ export const generationRouter = router({
   createRequest: protectedProcedure
     .input(createGenerationRequestSchema)
     .mutation(({ input, ctx }) => createGenerationRequest({ ...input, userId: ctx.user.id })),
+  getImages: protectedProcedure
+    .input(getGenerationImagesSchema)
+    .query(({ input, ctx }) => getGenerationImages({ ...input, userId: ctx.user.id })),
 });

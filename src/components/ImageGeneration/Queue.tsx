@@ -1,11 +1,14 @@
-import { Center, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Center, Loader, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
 import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
 
 import { BoostModal } from '~/components/ImageGeneration/BoostModal';
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
+import { useGetGenerationRequests } from '~/components/ImageGeneration/hooks/useGetGenerationRequests';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { Generation } from '~/server/services/generation/generation.types';
 
 const items = [
   {
@@ -283,32 +286,50 @@ const items = [
 type QueueItem = (typeof items)[0];
 
 type State = {
-  selectedItem: QueueItem | null;
+  selectedItem: Generation.Client.Request | null;
   opened: boolean;
 };
 
 export function Queue() {
+  const { ref, inView } = useInView();
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [state, setState] = useState<State>({ selectedItem: null, opened: false });
   const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
 
-  return items.length > 0 ? (
+  //TODO.generation - determin how we are going to get progress updates on pending/processing items
+  const { requests, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
+    useGetGenerationRequests({ take: 2 });
+
+  useEffect(() => {
+    if (inView && !isFetching && !isError) fetchNextPage?.();
+  }, [fetchNextPage, inView, isFetching, isError]);
+
+  return requests.length > 0 ? (
     <>
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
-        <SimpleGrid cols={1} spacing="md">
-          {items.map((item) => (
+        <Stack>
+          {requests.map((item) => (
             <QueueItem
               key={item.id}
               item={item}
-              onBoostClick={(item) => showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined}
+              onBoostClick={(item) =>
+                showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined
+              }
             />
           ))}
-        </SimpleGrid>
+          {hasNextPage && !isLoading && !isRefetching && (
+            <Center ref={ref} sx={{ height: 36 }} mt="md">
+              {inView && <Loader />}
+            </Center>
+          )}
+        </Stack>
       </ScrollArea.Autosize>
-      {showBoostModal && <BoostModal
-        opened={state.opened}
-        onClose={() => setState({ selectedItem: null, opened: false })}
-      />}
+      {showBoostModal && (
+        <BoostModal
+          opened={state.opened}
+          onClose={() => setState({ selectedItem: null, opened: false })}
+        />
+      )}
     </>
   ) : (
     <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
