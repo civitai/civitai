@@ -67,12 +67,13 @@ import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { showErrorNotification } from '~/utils/notifications';
-import { abbreviateNumber, formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
+import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -430,63 +431,62 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           <Group spacing={4} noWrap>
                             <FollowUserButton userId={user.id} size="md" compact />
 
-                            {(isMod || isSameUser) && (
-                              <Menu position="left" withinPortal>
-                                <Menu.Target>
-                                  <ActionIcon loading={removeContentMutation.isLoading}>
-                                    <IconDotsVertical />
-                                  </ActionIcon>
-                                </Menu.Target>
-                                <Menu.Dropdown>
-                                  <>
-                                    {isMod && (
-                                      <>
-                                        <Menu.Item
-                                          color={user.bannedAt ? 'green' : 'red'}
-                                          icon={
-                                            !user.bannedAt ? (
-                                              <IconBan size={14} stroke={1.5} />
-                                            ) : (
-                                              <IconArrowBackUp size={14} stroke={1.5} />
-                                            )
-                                          }
-                                          onClick={handleToggleBan}
-                                        >
-                                          {user.bannedAt ? 'Restore user' : 'Ban user'}
-                                        </Menu.Item>
-                                        <Menu.Item
-                                          color="red"
-                                          icon={<IconTrash size={14} stroke={1.5} />}
-                                          onClick={handleRemoveContent}
-                                        >
-                                          Remove all content
-                                        </Menu.Item>
-                                        <Menu.Item
-                                          icon={
-                                            user.muted ? (
-                                              <IconMicrophone size={14} stroke={1.5} />
-                                            ) : (
-                                              <IconMicrophoneOff size={14} stroke={1.5} />
-                                            )
-                                          }
-                                          onClick={handleToggleMute}
-                                        >
-                                          {user.muted ? 'Unmute user' : 'Mute user'}
-                                        </Menu.Item>
-                                      </>
-                                    )}
-                                    {isSameUser && (
+                            <Menu position="left" withinPortal>
+                              <Menu.Target>
+                                <ActionIcon loading={removeContentMutation.isLoading}>
+                                  <IconDotsVertical />
+                                </ActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <>
+                                  {isMod && (
+                                    <>
                                       <Menu.Item
-                                        component={NextLink}
-                                        href={`/user/${user.username}/manage-categories`}
+                                        color={user.bannedAt ? 'green' : 'red'}
+                                        icon={
+                                          !user.bannedAt ? (
+                                            <IconBan size={14} stroke={1.5} />
+                                          ) : (
+                                            <IconArrowBackUp size={14} stroke={1.5} />
+                                          )
+                                        }
+                                        onClick={handleToggleBan}
                                       >
-                                        Manage model categories
+                                        {user.bannedAt ? 'Restore user' : 'Ban user'}
                                       </Menu.Item>
-                                    )}
-                                  </>
-                                </Menu.Dropdown>
-                              </Menu>
-                            )}
+                                      <Menu.Item
+                                        color="red"
+                                        icon={<IconTrash size={14} stroke={1.5} />}
+                                        onClick={handleRemoveContent}
+                                      >
+                                        Remove all content
+                                      </Menu.Item>
+                                      <Menu.Item
+                                        icon={
+                                          user.muted ? (
+                                            <IconMicrophone size={14} stroke={1.5} />
+                                          ) : (
+                                            <IconMicrophoneOff size={14} stroke={1.5} />
+                                          )
+                                        }
+                                        onClick={handleToggleMute}
+                                      >
+                                        {user.muted ? 'Unmute user' : 'Mute user'}
+                                      </Menu.Item>
+                                    </>
+                                  )}
+                                  {isSameUser && (
+                                    <Menu.Item
+                                      component={NextLink}
+                                      href={`/user/${user.username}/manage-categories`}
+                                    >
+                                      Manage model categories
+                                    </Menu.Item>
+                                  )}
+                                  <HideUserButton as="menu-item" userId={user.id} />
+                                </>
+                              </Menu.Dropdown>
+                            </Menu>
                           </Group>
                         </Group>
                         <Group spacing="xs">

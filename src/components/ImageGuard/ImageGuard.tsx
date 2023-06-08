@@ -31,6 +31,7 @@ import React, { cloneElement, createContext, useCallback, useContext, useState }
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwLevelUI } from '~/libs/moderation';
@@ -38,6 +39,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { isNsfwImage } from '~/server/common/model-helpers';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { SimpleUser } from '~/server/selectors/user.selector';
 import { useImageStore } from '~/store/images.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -113,6 +115,8 @@ type ImageProps = {
   width?: number | null;
   height?: number | null;
   needsReview?: boolean;
+  userId?: number;
+  user?: SimpleUser;
 };
 
 type ImageGuardProps<T extends ImageProps> = {
@@ -323,6 +327,9 @@ ImageGuard.Report = function ReportImage({
         <Menu.Item icon={<IconEye size={14} stroke={1.5} />}>View Post</Menu.Item>
       </RoutedContextLink>
     );
+
+  const userId = image.userId ?? image.user?.id;
+  if (userId) menuItems.push(<HideUserButton key="hide-button" as="menu-item" userId={userId} />);
 
   if (!menuItems) return null;
 
