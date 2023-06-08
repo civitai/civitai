@@ -25,7 +25,7 @@ const usernameValidationSchema = z
 
 export const usernameInputSchema = usernameValidationSchema
   .min(3, 'Your username must be at least 3 characters long')
-  .max(20, 'Your username must be at most 20 characters long')
+  .max(25, 'Your username must be at most 25 characters long')
   .transform((v) => v.trim());
 
 export const usernameSchema = usernameValidationSchema.transform((v) => v.trim());
