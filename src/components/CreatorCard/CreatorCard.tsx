@@ -18,8 +18,9 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { formatDate } from '~/utils/date-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { abbreviateNumber, formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 
 const iconBadgeSize: MantineSize = 'sm';
 
@@ -88,32 +89,44 @@ export function CreatorCard({ user }: Props) {
                 variant={
                   theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0 ? 'filled' : 'light'
                 }
+                tooltip={
+                  <StatTooltip
+                    value={`${formatToLeastDecimals(stats.ratingAllTime)} (${
+                      stats.ratingCountAllTime
+                    })`}
+                    label="Average Rating"
+                  />
+                }
               >
                 <Text size="xs" color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}>
                   {abbreviateNumber(stats.ratingCountAllTime)}
                 </Text>
               </IconBadge>
               <Group spacing={4} noWrap>
-                <IconBadge
-                  icon={<IconUpload size={14} />}
-                  href={`/user/${creator.username}`}
-                  color="gray"
-                  size={iconBadgeSize}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  sx={(theme) => ({
-                    [theme.fn.smallerThan('xs')]: {
-                      display: 'none',
-                    },
-                  })}
-                >
-                  <Text size="xs">{abbreviateNumber(uploads)}</Text>
-                </IconBadge>
+                {uploads === 0 ? null : (
+                  <IconBadge
+                    icon={<IconUpload size={14} />}
+                    href={`/user/${creator.username}`}
+                    color="gray"
+                    size={iconBadgeSize}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    tooltip={<StatTooltip value={uploads} label="Uploads" />}
+                    sx={(theme) => ({
+                      [theme.fn.smallerThan('xs')]: {
+                        display: 'none',
+                      },
+                    })}
+                  >
+                    <Text size="xs">{abbreviateNumber(uploads)}</Text>
+                  </IconBadge>
+                )}
                 <IconBadge
                   icon={<IconUsers size={14} />}
                   href={`/user/${creator.username}/followers`}
                   color="gray"
                   size={iconBadgeSize}
                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                  tooltip={<StatTooltip value={stats.followerCountAllTime} label="Followers" />}
                 >
                   <Text size="xs">{abbreviateNumber(stats.followerCountAllTime)}</Text>
                 </IconBadge>
@@ -122,16 +135,22 @@ export function CreatorCard({ user }: Props) {
                   color="gray"
                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                   size={iconBadgeSize}
+                  tooltip={<StatTooltip value={stats.favoriteCountAllTime} label="Favorites" />}
                 >
                   <Text size="xs">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
                 </IconBadge>
-                <IconBadge
-                  icon={<IconDownload size={14} />}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  size={iconBadgeSize}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
-                </IconBadge>
+                {uploads === 0 ? null : (
+                  <IconBadge
+                    icon={<IconDownload size={14} />}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    size={iconBadgeSize}
+                    tooltip={
+                      <StatTooltip value={stats.downloadCountAllTime} label="Total Downloads" />
+                    }
+                  >
+                    <Text size="xs">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
+                  </IconBadge>
+                )}
               </Group>
             </Group>
           )}

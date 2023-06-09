@@ -31,7 +31,7 @@ import {
 } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
-import { getTypeCategories } from '~/server/services/tag.service';
+import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -78,6 +78,8 @@ export const getPostsInfinite = async ({
     }
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
+    if (!user?.isModerator)
+      AND.push({ OR: [{ modelVersion: { status: 'Published' } }, { modelVersionId: null }] });
   }
 
   // sorting
@@ -159,7 +161,15 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   const post = await dbRead.post.findFirst({
     where: {
       id,
-      OR: user?.isModerator ? undefined : [{ publishedAt: { not: null } }, { userId: user?.id }],
+      OR: user?.isModerator
+        ? undefined
+        : [
+            { publishedAt: { not: null } },
+            { userId: user?.id },
+            { modelVersionId: null },
+            { modelVersion: { status: 'Published' } },
+          ],
+      // modelVersion: user?.isModerator ? undefined : { status: 'Published' },
     },
     select: {
       id: true,
@@ -180,15 +190,25 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 };
 
 export const getPostEditDetail = async ({ id }: GetByIdInput) => {
-  const post = await dbWrite.post.findUnique({
+  const postRaw = await dbWrite.post.findUnique({
     where: { id },
     select: editPostSelect,
   });
-  if (!post) throw throwNotFoundError();
+  if (!postRaw) throw throwNotFoundError();
+  const imageIds = postRaw.images.map((x) => x.id);
+  const imageTagCounts = await getTagCountForImages(imageIds);
+  const images = postRaw.images.map((x) => ({
+    ...x,
+    _count: { tags: imageTagCounts[x.id] },
+  }));
+  const post = {
+    ...postRaw,
+    images,
+  };
+
   return {
     ...post,
     tags: post.tags.flatMap((x) => x.tag),
-    images: post.images,
   };
 };
 
@@ -197,14 +217,24 @@ export const createPost = async ({
   tag,
   ...data
 }: PostCreateInput & { userId: number }) => {
-  const result = await dbWrite.post.create({
+  const rawResult = await dbWrite.post.create({
     data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
     select: editPostSelect,
   });
+  const imageIds = rawResult.images.map((x) => x.id);
+  const imageTagCounts = await getTagCountForImages(imageIds);
+  const images = rawResult.images.map((x) => ({
+    ...x,
+    _count: { tags: imageTagCounts[x.id] },
+  }));
+
+  const result = {
+    ...rawResult,
+    images,
+  };
   return {
     ...result,
     tags: result.tags.flatMap((x) => x.tag),
-    images: result.images,
   };
 };
 
@@ -318,10 +348,16 @@ export const addPostImage = async ({
 
   await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
 
-  const result = await dbWrite.image.findUnique({
+  const rawResult = await dbWrite.image.findUnique({
     where: { id: partialResult.id },
     select: editPostImageSelect,
   });
+  const imageTagCounts = await getTagCountForImages([partialResult.id]);
+
+  const result = {
+    ...rawResult,
+    _count: { tags: imageTagCounts[partialResult.id] },
+  };
 
   if (!result) throw throwNotFoundError(`Image ${partialResult.id} not found`);
   return result;
@@ -331,7 +367,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   // const updateResources = image.resources.filter(isImageResource);
   // const createResources = image.resources.filter(isNotImageResource);
 
-  const result = await dbWrite.image.update({
+  const rawResult = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
@@ -345,8 +381,12 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: editPostImageSelect,
   });
+  const imageTags = await getTagCountForImages([image.id]);
 
-  return result;
+  return {
+    ...rawResult,
+    _count: { tags: imageTags[image.id] },
+  };
 };
 
 export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {

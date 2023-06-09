@@ -43,6 +43,7 @@ import {
   toggleLockModel,
   unpublishModelById,
   updateModelById,
+  updateModelEarlyAccessDeadline,
   upsertModel,
 } from '~/server/services/model.service';
 import {
@@ -152,6 +153,8 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
           baseModel: version.baseModel as BaseModel,
+          // TODO.manuel: explicit casting for now, should be fixed in the future
+          meta: version.meta as { picFinderModelId: number },
         };
       }),
     };
@@ -339,6 +342,22 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
+    // Check tags for multiple categories
+    const { tagsOnModels } = input;
+    if (tagsOnModels?.length) {
+      const modelCategories = await getCategoryTags('model');
+      const matchedTags = tagsOnModels.filter((tag) =>
+        modelCategories.some((categoryTag) => categoryTag.name === tag.name)
+      );
+
+      if (matchedTags.length > 1)
+        throw throwBadRequestError(
+          `Model cannot have multiple categories. Please include only one from: ${matchedTags
+            .map((tag) => tag.name)
+            .join(', ')} `
+        );
+    }
+
     const model = await upsertModel({ ...input, userId });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
@@ -377,6 +396,11 @@ export const publishModelHandler = async ({
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
       (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
+
+    await updateModelEarlyAccessDeadline({ id: updatedModel.id }).catch((e) => {
+      console.error('Unable to update model early access deadline');
+      console.error(e);
+    });
 
     await ctx.track.modelEvent({
       type: 'Publish',

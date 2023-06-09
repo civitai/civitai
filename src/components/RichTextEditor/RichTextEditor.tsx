@@ -38,7 +38,7 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { slugit, validateThirdPartyUrl } from '~/utils/string-helpers';
+import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -212,7 +212,7 @@ export function RichTextEditor({
             renderHTML({ node }) {
               const hasLevel = this.options.levels.includes(node.attrs.level);
               const level = hasLevel ? node.attrs.level : this.options.levels[0];
-              const id = node.attrs.id || slugit(node.textContent) || uniqueId('heading-');
+              const id = node.attrs.id || uniqueId('heading-');
 
               return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
             },
@@ -238,6 +238,8 @@ export function RichTextEditor({
     ...(addMedia
       ? [
           CustomImage.configure({
+            // To allow links on images
+            inline: true,
             uploadImage: uploadToCF,
             onUploadStart: () => {
               showNotification({
@@ -433,7 +435,11 @@ export function RichTextEditor({
         )}
 
         {editor && (
-          <BubbleMenu editor={editor}>
+          // Don't show the bubble menu for images, to prevent setting images as headings, etc.
+          <BubbleMenu
+            editor={editor}
+            shouldShow={({ editor }) => !editor.state.selection.empty && !editor.isActive('image')}
+          >
             <RTE.ControlsGroup>
               {addHeading ? (
                 <>

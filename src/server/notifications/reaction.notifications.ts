@@ -203,7 +203,7 @@ export const reactionNotifications = createNotificationProcessor({
   'article-reaction-milestone': {
     displayName: 'Article reaction milestones',
     prepareMessage: ({ details }) => {
-      const message = `Your article, "${details.name}" has received ${details.reactionCount} reactions`;
+      const message = `Your article, "${details.articleTitle}" has received ${details.reactionCount} reactions`;
 
       return { message, url: `/articles/${details.articleId}` };
     },

@@ -482,6 +482,7 @@ export const removeAllContent = ({ id }: { id: number }) => {
     dbWrite.resourceReview.deleteMany({ where: { userId: id } }),
     dbWrite.post.deleteMany({ where: { userId: id } }),
     dbWrite.image.deleteMany({ where: { userId: id } }),
+    dbWrite.article.deleteMany({ where: { userId: id } }),
   ]);
 };
 

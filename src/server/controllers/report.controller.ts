@@ -239,6 +239,25 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        post: {
+          select: {
+            post: {
+              select: {
+                id: true,
+                nsfw: true,
+                title: true,
+                publishedAt: true,
+                tosViolation: true,
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
+        reportedUser: {
+          select: {
+            user: { select: { ...simpleUserSelect, email: true } },
+          },
+        },
       },
     });
     return {
@@ -256,6 +275,8 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             reviewId: item.image.image.connections?.reviewId,
           },
           article: item.article?.article,
+          post: item.post?.post,
+          reportedUser: item.reportedUser?.user,
         };
       }),
       ...result,

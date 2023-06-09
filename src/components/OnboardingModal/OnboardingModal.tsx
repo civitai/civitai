@@ -33,12 +33,10 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { ModerationCard } from '~/components/Account/ModerationCard';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { usernameInputSchema } from '~/server/schema/user.schema';
 
 const schema = z.object({
-  username: z
-    .string()
-    .min(3, 'Your username must be at least 3 characters long')
-    .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.'),
+  username: usernameInputSchema,
   email: z
     .string({
       invalid_type_error: 'Please provide an email',

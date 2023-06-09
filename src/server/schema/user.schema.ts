@@ -19,11 +19,16 @@ export const userPageQuerySchema = z
     return removeEmpty({ ...props, username });
   });
 
-export const usernameSchema = z
+const usernameValidationSchema = z
   .string()
-  // .min(3, 'Your username must be at least 3 characters long')
-  .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.')
+  .regex(/^[A-Za-z0-9_]*$/, 'The "username" field can only contain letters, numbers, and _.');
+
+export const usernameInputSchema = usernameValidationSchema
+  .min(3, 'Your username must be at least 3 characters long')
+  .max(25, 'Your username must be at most 25 characters long')
   .transform((v) => v.trim());
+
+export const usernameSchema = usernameValidationSchema.transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({
   username: usernameSchema.optional(),
@@ -40,7 +45,7 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
 export const userUpdateSchema = z.object({
   id: z.number(),
-  username: usernameSchema.optional(),
+  username: usernameInputSchema.optional(),
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
   tos: z.boolean().optional(),

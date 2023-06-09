@@ -69,3 +69,21 @@ export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
 });
+
+export type UpsertExplorationPromptInput = z.infer<typeof upsertExplorationPromptSchema>;
+export const upsertExplorationPromptSchema = z.object({
+  // This is the modelVersionId
+  id: z.number(),
+  // Including modelId to confirm ownership
+  modelId: z.number().optional(),
+  name: z.string().trim().min(1, 'Name cannot be empty.'),
+  prompt: z.string().trim().min(1, 'Prompt cannot be empty.'),
+  index: z.number().optional(),
+});
+
+export type DeleteExplorationPromptInput = z.infer<typeof deleteExplorationPromptSchema>;
+export const deleteExplorationPromptSchema = z.object({
+  id: z.number(),
+  modelId: z.number().optional(),
+  name: z.string().trim().min(1, 'Name cannot be empty.'),
+});

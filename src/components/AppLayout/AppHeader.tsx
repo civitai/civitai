@@ -36,6 +36,7 @@ import {
   IconUser,
   IconUserCircle,
   IconUsers,
+  IconWriting,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -56,6 +57,7 @@ import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
+import { IconPhotoUp } from '@tabler/icons-react';
 
 const HEADER_HEIGHT = 70;
 
@@ -182,19 +184,46 @@ export function AppHeader() {
 
   const isMuted = currentUser?.muted ?? false;
 
-  const links: MenuLink[] = useMemo(
+  const mainActions = useMemo<MenuLink[]>(
     () => [
       {
         href: '/models/create',
         visible: !isMuted,
-        loginRedirect: 'upload-model',
+        redirectReason: 'upload-model',
         label: (
           <Group align="center" spacing="xs">
-            <IconUpload stroke={1.5} />
+            <IconUpload stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Upload a model
           </Group>
         ),
       },
+      {
+        href: '/posts/create',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPhotoUp stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Posts images
+          </Group>
+        ),
+      },
+      {
+        href: '/articles/create',
+        visible: !isMuted,
+        redirectReason: 'create-article',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconWriting stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Write an article
+          </Group>
+        ),
+      },
+    ],
+    [isMuted, theme]
+  );
+  const links = useMemo<MenuLink[]>(
+    () => [
       {
         href: `/user/${currentUser?.username}`,
         visible: !!currentUser,
@@ -226,25 +255,21 @@ export function AppHeader() {
         ),
       },
       {
+        href: '/leaderboard/overall',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCrown stroke={1.5} />
+            Leaderboard
+          </Group>
+        ),
+      },
+      {
         href: '/?hidden=true',
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
             <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Hidden models
-          </Group>
-        ),
-      },
-      {
-        href: '/questions',
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconInfoSquareRounded stroke={1.5} />
-            Questions{' '}
-            <Badge color="yellow" size="xs">
-              Beta
-            </Badge>
           </Group>
         ),
       },
@@ -279,21 +304,26 @@ export function AppHeader() {
         ),
       },
       {
-        href: '/leaderboard/overall',
+        href: '/questions',
+        visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconCrown stroke={1.5} />
-            Leaderboard
+            <IconInfoSquareRounded stroke={1.5} />
+            Questions{' '}
+            <Badge color="yellow" size="xs">
+              Beta
+            </Badge>
           </Group>
         ),
       },
     ],
-    [currentUser, isMuted, router.asPath, theme]
+    [currentUser, router.asPath, theme]
   );
 
   const burgerMenuItems = useMemo(
     () =>
-      links
+      mainActions
+        .concat(links)
         .filter(({ visible }) => visible !== false)
         .map((link) => {
           const item = (
@@ -316,12 +346,12 @@ export function AppHeader() {
             item
           );
         }),
-    [classes, closeBurger, cx, links, router.asPath]
+    [classes, closeBurger, cx, links, mainActions, router.asPath]
   );
   const userMenuItems = useMemo(
     () =>
       links
-        .filter(({ href, visible }) => visible !== false && href !== '/models/create')
+        .filter(({ visible }) => visible !== false)
         .map((link) => (
           <Menu.Item key={link.href} component={NextLink} href={link.href}>
             {link.label}
@@ -341,19 +371,49 @@ export function AppHeader() {
               </Anchor>
             </Link>
             {!isMuted && (
-              <LoginRedirect reason="upload-model" returnUrl="/models/create">
-                <Button
-                  className={classes.links}
-                  component={NextLink}
-                  href="/models/create"
-                  variant="filled"
-                  size="xs"
-                  pl={5}
-                >
-                  <IconPlus size={16} />
-                  Upload a model
-                </Button>
-              </LoginRedirect>
+              <Menu position="bottom-start" withArrow>
+                <Menu.Target>
+                  <ActionIcon
+                    className={classes.links}
+                    size="md"
+                    variant="filled"
+                    color="green"
+                    radius="xl"
+                  >
+                    <IconPlus size={24} stroke={2.5} />
+                  </ActionIcon>
+                  {/* <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
+                    <IconPlus size={16} /> New
+                  </Button> */}
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {mainActions
+                    .filter(({ visible }) => visible !== false)
+                    .map((link, index) => {
+                      const menuItem = (
+                        <Menu.Item
+                          key={!link.redirectReason ? index : undefined}
+                          component={NextLink}
+                          href={link.href}
+                        >
+                          {link.label}
+                        </Menu.Item>
+                      );
+
+                      return link.redirectReason ? (
+                        <LoginRedirect
+                          key={index}
+                          reason={link.redirectReason}
+                          returnUrl={link.href}
+                        >
+                          {menuItem}
+                        </LoginRedirect>
+                      ) : (
+                        menuItem
+                      );
+                    })}
+                </Menu.Dropdown>
+              </Menu>
             )}
             <SupportButton />
           </Group>
