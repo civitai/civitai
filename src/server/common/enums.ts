@@ -86,6 +86,7 @@ export enum CommentV2Sort {
 }
 
 export enum ArticleSort {
+  MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
   Newest = 'Newest',

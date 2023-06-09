@@ -74,7 +74,9 @@ export const getArticles = async ({
     const orderBy: Prisma.ArticleFindManyArgs['orderBy'] = [
       { publishedAt: { sort: 'desc', nulls: 'last' } },
     ];
-    if (sort === ArticleSort.MostComments)
+    if (sort === ArticleSort.MostBookmarks)
+      orderBy.unshift({ rank: { [`favoriteCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostComments)
       orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
     else if (sort === ArticleSort.MostReactions)
       orderBy.unshift({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
@@ -92,6 +94,7 @@ export const getArticles = async ({
         tags: { select: { tag: { select: simpleTagSelect } } },
         stats: {
           select: {
+            [`favoriteCount${period}`]: true,
             [`commentCount${period}`]: true,
             [`likeCount${period}`]: true,
             [`dislikeCount${period}`]: true,
@@ -120,6 +123,7 @@ export const getArticles = async ({
       })),
       stats: stats
         ? {
+            favoriteCount: stats[`favoriteCount${period}`],
             commentCount: stats[`commentCount${period}`],
             likeCount: stats[`likeCount${period}`],
             dislikeCount: stats[`dislikeCount${period}`],

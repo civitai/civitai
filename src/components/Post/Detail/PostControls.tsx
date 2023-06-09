@@ -1,9 +1,13 @@
-import { ActionIcon, Menu, useMantineTheme } from '@mantine/core';
-import { IconDotsVertical, IconTrash, IconEdit } from '@tabler/icons-react';
+import { Menu, useMantineTheme } from '@mantine/core';
+import { IconEdit, IconFlag, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
+
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
 
 export function PostControls({
   postId,
@@ -20,8 +24,6 @@ export function PostControls({
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const isOwnerOrModerator = isOwner || isModerator;
-  // TODO.posts - add ability to report a post
-  if (!isOwnerOrModerator) return null;
 
   return (
     <Menu position="bottom-end" transition="pop-top-right">
@@ -30,12 +32,6 @@ export function PostControls({
         {/* TODO.posts - reports */}
         {isOwnerOrModerator && (
           <>
-            <Menu.Item
-              icon={<IconEdit size={14} stroke={1.5} />}
-              onClick={() => router.push(`/posts/${postId}/edit`)}
-            >
-              Edit Post
-            </Menu.Item>
             <DeletePostButton postId={postId}>
               {({ onClick }) => (
                 <Menu.Item
@@ -47,7 +43,25 @@ export function PostControls({
                 </Menu.Item>
               )}
             </DeletePostButton>
+            <Menu.Item
+              icon={<IconEdit size={14} stroke={1.5} />}
+              onClick={() => router.push(`/posts/${postId}/edit`)}
+            >
+              Edit Post
+            </Menu.Item>
           </>
+        )}
+        {(!isOwner || !currentUser) && (
+          <LoginRedirect reason="report-content">
+            <Menu.Item
+              icon={<IconFlag size={14} stroke={1.5} />}
+              onClick={() =>
+                openContext('report', { entityType: ReportEntity.Post, entityId: postId })
+              }
+            >
+              Report
+            </Menu.Item>
+          </LoginRedirect>
         )}
       </Menu.Dropdown>
     </Menu>

@@ -27,7 +27,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
-import { usernameSchema } from '~/server/schema/user.schema';
+import { usernameInputSchema } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
@@ -36,7 +36,7 @@ import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
   id: z.number(),
-  username: usernameSchema,
+  username: usernameInputSchema,
   image: z.string().nullable(),
   nameplateId: z.number().nullish(),
   badgeId: z.number().nullish(),

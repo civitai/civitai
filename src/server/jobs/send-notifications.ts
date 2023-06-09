@@ -29,7 +29,8 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
     log('sent notifications');
 
     await setLastRun();
-  } catch {
+  } catch (e) {
     log('failed to send notifications');
+    throw e;
   }
 });

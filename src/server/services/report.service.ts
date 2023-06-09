@@ -3,7 +3,6 @@ import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
-  BulkUpdateReportStatusInput,
   CreateReportInput,
   GetReportCountInput,
   GetReportsInput,
@@ -32,10 +31,12 @@ const validateReportCreation = async ({
   reason: ReportReason;
 }): Promise<Report | null> => {
   // Look if there's already a report for this type with the same reason
+  const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
   const existingReport = await dbWrite.report.findFirst({
-    where: { reason, [reportType]: { [`${reportType}Id`]: entityReportId } },
+    where: { reason, [reportType]: { [entityIdField]: entityReportId } },
     orderBy: { id: 'desc' },
   });
+
   if (!existingReport) return null;
 
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
@@ -172,6 +173,24 @@ export const createReport = async ({
         await tx.articleReport.create({
           data: {
             article: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Post:
+        if (data.reason === ReportReason.NSFW)
+          await tx.post.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.postReport.create({
+          data: {
+            post: { connect: { id } },
+            report,
+          },
+        });
+      case ReportEntity.User:
+        await tx.userReport.create({
+          data: {
+            user: { connect: { id } },
             report,
           },
         });

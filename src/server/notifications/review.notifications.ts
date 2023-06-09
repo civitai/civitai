@@ -5,8 +5,10 @@ export const reviewNotifications = createNotificationProcessor({
     displayName: 'New reviews',
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
+        let message = `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`;
+        if (details.rating) message += ` (${details.rating}/5)`;
         return {
-          message: `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`,
+          message,
           url: `/reviews/${details.reviewId}`,
         };
       }
@@ -25,7 +27,8 @@ export const reviewNotifications = createNotificationProcessor({
             'reviewId', r.id,
             'modelName', m.name,
             'modelVersionName', mv.name,
-            'username', u.username
+            'username', u.username,
+            'rating', r.rating
           ) "details"
         FROM "ResourceReview" r
         JOIN "User" u ON r."userId" = u.id

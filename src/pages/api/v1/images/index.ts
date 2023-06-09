@@ -27,6 +27,7 @@ const imagesEndpointSchema = z.object({
   postId: numericString().optional(),
   modelId: numericString().optional(),
   modelVersionId: numericString().optional(),
+  imageId: numericString().optional(),
   username: usernameSchema.optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),

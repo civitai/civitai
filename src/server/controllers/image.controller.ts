@@ -261,9 +261,12 @@ export const setTosViolationHandler = async ({
             },
           },
         },
-        user: { select: { id: true } },
-        imagesOnModels: {
-          select: { modelVersion: { select: { model: { select: { name: true } } } } },
+        userId: true,
+        postId: true,
+        post: {
+          select: {
+            title: true,
+          },
         },
       },
     });
@@ -278,11 +281,12 @@ export const setTosViolationHandler = async ({
 
     // Create notifications in the background
     createNotification({
-      userId: image.user.id,
+      userId: image.userId,
       type: 'tos-violation',
       details: {
-        modelName: image.imagesOnModels?.modelVersion.model.name,
+        modelName: image.post?.title ?? `post #${image.postId}`,
         entity: 'image',
+        url: `/posts/${image.postId}`,
       },
     }).catch((error) => {
       // Print out any errors

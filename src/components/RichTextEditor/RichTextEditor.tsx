@@ -38,7 +38,7 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { slugit, validateThirdPartyUrl } from '~/utils/string-helpers';
+import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -238,6 +238,8 @@ export function RichTextEditor({
     ...(addMedia
       ? [
           CustomImage.configure({
+            // To allow links on images
+            inline: true,
             uploadImage: uploadToCF,
             onUploadStart: () => {
               showNotification({
@@ -433,7 +435,11 @@ export function RichTextEditor({
         )}
 
         {editor && (
-          <BubbleMenu editor={editor}>
+          // Don't show the bubble menu for images, to prevent setting images as headings, etc.
+          <BubbleMenu
+            editor={editor}
+            shouldShow={({ editor }) => !editor.state.selection.empty && !editor.isActive('image')}
+          >
             <RTE.ControlsGroup>
               {addHeading ? (
                 <>

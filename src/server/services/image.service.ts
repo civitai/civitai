@@ -628,6 +628,7 @@ type GetAllImagesRaw = {
   postId: number;
   postTitle: string;
   modelVersionId: number | null;
+  imageId: number | null;
   publishedAt: Date | null;
   username: string | null;
   userImage: string | null;
@@ -649,6 +650,7 @@ export const getAllImages = async ({
   postId,
   modelId,
   modelVersionId,
+  imageId,
   username,
   excludedTagIds,
   excludedUserIds,
@@ -748,6 +750,9 @@ export const getAllImages = async ({
   // Filter to a specific post
   if (postId) AND.push(Prisma.sql`i."postId" = ${postId}`);
 
+  // Filter to a specific image
+  if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
+
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;
@@ -795,7 +800,7 @@ export const getAllImages = async ({
     else {
       // For everyone else, only show their images.
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prioritizedUserIds)})`);
-      orderBy = `i."postId" + i."index"`; // Order by oldest post first
+      orderBy = `(i."postId" * 100) + i."index"`; // Order by oldest post first
     }
   }
 
@@ -1196,23 +1201,25 @@ export const getImagesForPosts = async ({
   isOwnerRequest?: boolean;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
-  const imageWhere = [`i."postId" IN (${postIds.join(',')})`];
+  const imageWhere: Prisma.Sql[] = [Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`];
   if (!isOwnerRequest) {
     if (!!excludedTagIds?.length) {
-      imageWhere.push(`i."scannedAt" IS NOT NULL`);
-      const excludedTags = excludedTagIds.join(',');
-      imageWhere.push(
-        `NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${excludedTags}) )`
-      );
+      const excludedTagsOr: Prisma.Sql[] = [
+        Prisma.sql`i."scannedAt" IS NOT NULL`,
+        Prisma.sql`NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
+          excludedTagIds
+        )}) )`,
+      ];
+      imageWhere.push(Prisma.sql`(${Prisma.join(excludedTagsOr, ' OR ')})`);
     }
     if (!!excludedIds?.length) {
-      imageWhere.push(`i."id" NOT IN (${excludedIds.join(',')})`);
+      imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
     }
     if (!!excludedUserIds?.length) {
-      imageWhere.push(`i."userId" NOT IN (${excludedUserIds.join(',')})`);
+      imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
     }
   }
-  const images = await dbRead.$queryRawUnsafe<
+  const images = await dbRead.$queryRaw<
     {
       id: number;
       userId: number;
@@ -1232,14 +1239,14 @@ export const getImagesForPosts = async ({
       commentCount: number;
       reactions?: ReviewReactions[];
     }[]
-  >(`
+  >`
     WITH targets AS (
       SELECT
         i."postId",
         MIN(i.index) "index",
         COUNT(*) "count"
       FROM "Image" i
-      WHERE ${imageWhere.join(' AND ')}
+      WHERE ${Prisma.join(imageWhere, ' AND ')}
       GROUP BY i."postId"
     )
     SELECT
@@ -1268,7 +1275,7 @@ export const getImagesForPosts = async ({
     FROM targets t
     JOIN "Image" i ON i."postId" = t."postId" AND i.index = t.index
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
-  `);
+  `;
 
   return images.map(({ reactions, ...i }) => ({
     ...i,

@@ -1,5 +1,5 @@
 import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
-import { IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
+import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import Link from 'next/link';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -14,9 +14,10 @@ import { ArticleContextMenu } from '../ArticleContextMenu';
 export function ArticleCard({ data, height = 450 }: Props) {
   const { id, title, cover, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
-  const { commentCount, viewCount, ...reactionStats } = stats || {
+  const { commentCount, viewCount, favoriteCount, ...reactionStats } = stats || {
     commentCount: 0,
     viewCount: 0,
+    favoriteCount: 0,
     likeCount: 0,
   };
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
@@ -68,6 +69,9 @@ export function ArticleCard({ data, height = 450 }: Props) {
             <Text lineClamp={2}>{title}</Text>
             <Group position="apart">
               <Group spacing={4}>
+                <IconBadge icon={<IconBookmark size={14} />} color="dark">
+                  <Text size="xs">{abbreviateNumber(favoriteCount)}</Text>
+                </IconBadge>
                 <IconBadge icon={<IconMoodSmile size={14} />} color="dark">
                   <Text size="xs">{abbreviateNumber(reactionCount)}</Text>
                 </IconBadge>
