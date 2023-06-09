@@ -30,8 +30,10 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -66,10 +68,47 @@ import { trpc } from '~/utils/trpc';
 // const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
 // const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
 
+type StoreState = {
+  selected: Record<number, boolean>;
+  getSelected: () => number[];
+  toggleSelected: (value: number) => void;
+  selectMany: (values: number[]) => void;
+  deselectAll: () => void;
+};
+
+const useStore = create<StoreState>()(
+  immer((set, get) => ({
+    selected: {},
+    getSelected: () => {
+      const dict = get().selected;
+      return Object.keys(dict).map(Number);
+    },
+    toggleSelected: (value) => {
+      set((state) => {
+        if (state.selected[value]) delete state.selected[value];
+        else state.selected[value] = true;
+      });
+    },
+    selectMany: (values) => {
+      set((state) => {
+        values.map((value) => {
+          state.selected[value] = true;
+        });
+      });
+    },
+    deselectAll: () => {
+      set((state) => {
+        state.selected = {};
+      });
+    },
+  }))
+);
+
 export default function Images() {
   const { ref, inView } = useInView();
-  const queryUtils = trpc.useContext();
-  const [selected, selectedHandlers] = useListState([] as number[]);
+  // const queryUtils = trpc.useContext();
+  // const selectMany = useStore((state) => state.selectMany);
+  const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<'Flagged' | 'Reported'>('Flagged');
 
   const viewingReported = type === 'Reported';
@@ -83,11 +122,100 @@ export default function Images() {
     }),
     [viewingReported]
   );
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching, refetch } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getInfinite.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
+
+  const handleTypeChange = (value: 'Flagged' | 'Reported') => {
+    setType(value);
+  };
+
+  useEffect(deselectAll, [type, deselectAll]);
+
+  useEffect(() => {
+    if (inView) fetchNextPage();
+  }, [fetchNextPage, inView]);
+
+  return (
+    <Container size="xl" py="xl">
+      <Stack>
+        <Paper
+          withBorder
+          shadow="lg"
+          p="xs"
+          sx={{
+            display: 'inline-flex',
+            float: 'right',
+            alignSelf: 'flex-end',
+            marginRight: 6,
+            position: 'sticky',
+            top: 'calc(var(--mantine-header-height,0) + 16px)',
+            marginBottom: -80,
+            zIndex: 10,
+          }}
+        >
+          <ModerationControls images={images} filters={filters} view={type} />
+        </Paper>
+
+        <Stack spacing={0} mb="lg">
+          <Group>
+            <Title order={1}>Images Needing Review</Title>
+            <SegmentedControl
+              size="sm"
+              data={['Flagged', 'Reported']}
+              onChange={handleTypeChange}
+              value={type}
+            />
+          </Group>
+          <Text color="dimmed">
+            These are images that have been{' '}
+            {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
+            attention from the mods
+          </Text>
+        </Stack>
+
+        {isLoading ? (
+          <Center py="xl">
+            <Loader size="xl" />
+          </Center>
+        ) : images.length ? (
+          <MasonryGrid2
+            data={images}
+            isRefetching={isRefetching}
+            isFetchingNextPage={isFetchingNextPage}
+            hasNextPage={hasNextPage}
+            fetchNextPage={fetchNextPage}
+            columnWidth={300}
+            filters={filters}
+            render={(props) => <ImageGridItem {...props} />}
+          />
+        ) : (
+          <NoContent mt="lg" message="There are no images that need review" />
+        )}
+        {!isLoading && hasNextPage && (
+          <Group position="center" ref={ref}>
+            <Loader />
+          </Group>
+        )}
+      </Stack>
+    </Container>
+  );
+}
+
+function ModerationControls({ images, filters, view }) {
+  const queryUtils = trpc.useContext();
+  const viewingReported = view === 'Reported';
+  const selected = useStore((state) => Object.keys(state.selected).map(Number));
+  const selectMany = useStore((state) => state.selectMany);
+  const deselectAll = useStore((state) => state.deselectAll);
+
+  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
+    position: 'bottom',
+    withArrow: true,
+    withinPortal: true,
+  };
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
     async onMutate({ ids, needsReview, delete: deleted }) {
@@ -145,13 +273,8 @@ export default function Images() {
     },
   });
 
-  const handleSelect = (id: number, checked: boolean) => {
-    const idIndex = selected.indexOf(id);
-    if (checked && idIndex == -1) selectedHandlers.append(id);
-    else if (!checked && idIndex != -1) selectedHandlers.remove(idIndex);
-  };
-
   const handleDeleteSelected = () => {
+    deselectAll();
     moderateImagesMutation.mutate(
       {
         ids: selected,
@@ -170,20 +293,18 @@ export default function Images() {
         },
       }
     );
-    selectedHandlers.setState([]);
   };
 
   const handleSelectAll = () => {
-    if (selected.length === images.length) handleClearAll();
-    else selectedHandlers.setState(images.map((x) => x.id));
+    selectMany(images.map((x) => x.id));
+    // if (selected.length === images.length) handleClearAll();
+    // else selectedHandlers.setState(images.map((x) => x.id));
   };
 
-  const handleClearAll = () => {
-    selectedHandlers.setState([]);
-  };
+  const handleClearAll = () => deselectAll();
 
   const handleApproveSelected = () => {
-    selectedHandlers.setState([]);
+    deselectAll();
     if (viewingReported) {
       const selectedReports = images
         .filter((x) => selected.includes(x.id) && !!x.report)
@@ -201,7 +322,7 @@ export default function Images() {
 
   const handleRefresh = () => {
     handleClearAll();
-    refetch();
+    queryUtils.image.getInfinite.invalidate(filters);
     showNotification({
       id: 'refreshing',
       title: 'Refreshing',
@@ -210,134 +331,59 @@ export default function Images() {
     });
   };
 
-  const handleTypeChange = (value: 'Flagged' | 'Reported') => {
-    setType(value);
-    selectedHandlers.setState([]);
-  };
-
-  useEffect(() => {
-    if (inView) fetchNextPage();
-  }, [fetchNextPage, inView]);
-
-  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
-    position: 'bottom',
-    withArrow: true,
-    withinPortal: true,
-  };
-
   return (
-    <Container size="xl" py="xl">
-      <Stack>
-        <Paper
-          withBorder
-          shadow="lg"
-          p="xs"
-          sx={{
-            display: 'inline-flex',
-            float: 'right',
-            alignSelf: 'flex-end',
-            marginRight: 6,
-            position: 'sticky',
-            top: 'calc(var(--mantine-header-height,0) + 16px)',
-            marginBottom: -80,
-            zIndex: 10,
-          }}
+    <Group noWrap spacing="xs">
+      <ButtonTooltip label="Select all" {...tooltipProps}>
+        <ActionIcon
+          variant="outline"
+          onClick={handleSelectAll}
+          disabled={selected.length === images.length}
         >
-          <Group noWrap spacing="xs">
-            <ButtonTooltip label="Select all" {...tooltipProps}>
-              <ActionIcon variant="outline" onClick={handleSelectAll}>
-                <IconSquareCheck size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-            <ButtonTooltip label="Clear selection" {...tooltipProps}>
-              <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
-                <IconSquareOff size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-            <PopConfirm
-              message={`Are you sure you want to approve ${selected.length} image(s)?`}
-              position="bottom-end"
-              onConfirm={handleApproveSelected}
-              withArrow
-            >
-              <ButtonTooltip label="Accept" {...tooltipProps}>
-                <ActionIcon variant="outline" disabled={!selected.length} color="green">
-                  <IconCheck size="1.25rem" />
-                </ActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-            <PopConfirm
-              message={`Are you sure you want to delete ${selected.length} image(s)?`}
-              position="bottom-end"
-              onConfirm={handleDeleteSelected}
-              withArrow
-            >
-              <ButtonTooltip label="Delete" {...tooltipProps}>
-                <ActionIcon variant="outline" disabled={!selected.length} color="red">
-                  <IconTrash size="1.25rem" />
-                </ActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-            <ButtonTooltip label="Refresh" {...tooltipProps}>
-              <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
-                <IconReload size="1.25rem" />
-              </ActionIcon>
-            </ButtonTooltip>
-          </Group>
-        </Paper>
-
-        <Stack spacing={0} mb="lg">
-          <Group>
-            <Title order={1}>Images Needing Review</Title>
-            <SegmentedControl
-              size="sm"
-              data={['Flagged', 'Reported']}
-              onChange={handleTypeChange}
-              value={type}
-            />
-          </Group>
-          <Text color="dimmed">
-            These are images that have been{' '}
-            {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
-            attention from the mods
-          </Text>
-        </Stack>
-
-        {isLoading ? (
-          <Center py="xl">
-            <Loader size="xl" />
-          </Center>
-        ) : images.length ? (
-          <MasonryGrid2
-            data={images}
-            isRefetching={isRefetching}
-            isFetchingNextPage={isFetchingNextPage}
-            hasNextPage={hasNextPage}
-            fetchNextPage={fetchNextPage}
-            columnWidth={300}
-            filters={filters}
-            render={(props) => (
-              <ImageGridItem
-                {...props}
-                selected={selected.includes(props.data.id)}
-                onSelect={handleSelect}
-              />
-            )}
-          />
-        ) : (
-          <NoContent mt="lg" message="There are no images that need review" />
-        )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
-        )}
-      </Stack>
-    </Container>
+          <IconSquareCheck size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+      <ButtonTooltip label="Clear selection" {...tooltipProps}>
+        <ActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
+          <IconSquareOff size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+      <PopConfirm
+        message={`Are you sure you want to approve ${selected.length} image(s)?`}
+        position="bottom-end"
+        onConfirm={handleApproveSelected}
+        withArrow
+      >
+        <ButtonTooltip label="Accept" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+            <IconCheck size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <PopConfirm
+        message={`Are you sure you want to delete ${selected.length} image(s)?`}
+        position="bottom-end"
+        onConfirm={handleDeleteSelected}
+        withArrow
+      >
+        <ButtonTooltip label="Delete" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+            <IconTrash size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <ButtonTooltip label="Refresh" {...tooltipProps}>
+        <ActionIcon variant="outline" onClick={handleRefresh} color="blue">
+          <IconReload size="1.25rem" />
+        </ActionIcon>
+      </ButtonTooltip>
+    </Group>
   );
 }
 
-function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: ImageGridItemProps) {
+function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
+  const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
+  const toggleSelected = useStore((state) => state.toggleSelected);
+
   const height = useMemo(() => {
     if (!image.width || !image.height) return 300;
     const width = itemWidth > 0 ? itemWidth : 300;
@@ -359,7 +405,7 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
       <Card.Section sx={{ height: `${height}px` }}>
         <Checkbox
           checked={selected}
-          onChange={(e) => onSelect(image.id, e.target.checked)}
+          onChange={() => toggleSelected(image.id)}
           size="lg"
           sx={{
             position: 'absolute',
@@ -371,7 +417,10 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
         <ImageGuard
           images={[image]}
           render={(image) => (
-            <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
+            <Box
+              sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}
+              onClick={() => toggleSelected(image.id)}
+            >
               <ImageGuard.ToggleImage
                 sx={(theme) => ({
                   position: 'absolute',
@@ -402,6 +451,9 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                       style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                       size="lg"
                       target="_blank"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
                     >
                       <IconExternalLink
                         color="white"
@@ -480,6 +532,4 @@ type ImageGridItemProps = {
   data: ImageGetInfinite[number];
   index: number;
   width: number;
-  selected: boolean;
-  onSelect: (id: number, checked: boolean) => void;
 };
