@@ -54,26 +54,27 @@ model SessionInvalidation {
 }
 
 model User {
-  id              Int                   @id @default(autoincrement())
-  name            String?
-  username        String?               @unique @db.Citext
-  email           String?               @unique
-  emailVerified   DateTime?
-  image           String?
-  showNsfw        Boolean?              @default(false)
-  blurNsfw        Boolean?              @default(true)
-  isModerator     Boolean?              @default(false)
-  tos             Boolean?              @default(false)
-  onboarded       Boolean?              @default(false)
-  createdAt       DateTime              @default(now())
-  deletedAt       DateTime?
-  customerId      String?               @unique
-  subscriptionId  String?
-  subscription    CustomerSubscription?
-  muted           Boolean?              @default(false)
-  bannedAt        DateTime?
-  autoplayGifs    Boolean?              @default(true)
-  filePreferences Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  id                  Int                   @id @default(autoincrement())
+  name                String?
+  username            String?               @unique @db.Citext
+  email               String?               @unique
+  emailVerified       DateTime?
+  image               String?
+  showNsfw            Boolean?              @default(false)
+  blurNsfw            Boolean?              @default(true)
+  isModerator         Boolean?              @default(false)
+  tos                 Boolean?              @default(false)
+  onboarded           Boolean?              @default(false)
+  createdAt           DateTime              @default(now())
+  deletedAt           DateTime?
+  customerId          String?               @unique
+  subscriptionId      String?
+  subscription        CustomerSubscription?
+  muted               Boolean?              @default(false)
+  bannedAt            DateTime?
+  autoplayGifs        Boolean?              @default(true)
+  filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  leaderboardShowcase String?
 
   accounts             Account[]
   sessions             Session[]
@@ -2114,6 +2115,7 @@ model UserRank {
   leaderboardRank              Int?
   leaderboardId                String?
   leaderboardTitle             String?
+  leaderboardCosmetic          String?
 }
 
 /// @view

@@ -20,6 +20,7 @@ import {
   completeOnboarding,
   isUsernamePermitted,
   toggleUserArticleEngagement,
+  updateLeaderboardRank,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -72,13 +73,19 @@ export const getAllUsersHandler = async ({
 };
 
 export const getUserCreatorHandler = async ({
-  input: { username, id },
+  input: { username, id, leaderboardId },
 }: {
   input: GetUserByUsernameSchema;
 }) => {
+  if (!username && !id) throw throwBadRequestError('Must provide username or id');
+
   try {
-    return await getUserCreator({ username, id });
+    const user = await getUserCreator({ username, id, leaderboardId });
+    if (!user) throw throwNotFoundError('Could not find user');
+
+    return user;
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
@@ -225,6 +232,8 @@ export const updateUserHandler = async ({
             },
       },
     });
+
+    if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
