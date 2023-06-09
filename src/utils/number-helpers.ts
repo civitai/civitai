@@ -76,6 +76,6 @@ export function numberWithCommas(value: number | string | undefined) {
     : '';
 }
 
-export function isNumeric(value?: string | string[]) {
+export function isNumeric(value?: unknown) {
   return !isNaN(Number(value));
 }
