@@ -21,7 +21,7 @@ export type GetGenerationRequestsInput = z.infer<typeof getGenerationRequestsSch
 export const getGenerationRequestsSchema = z.object({
   take: z.number().default(10),
   cursor: z.number().optional(),
-  status: z.nativeEnum(GenerationRequestStatus).optional(),
+  status: z.nativeEnum(GenerationRequestStatus).array().optional(),
 });
 
 export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;

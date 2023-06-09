@@ -1,5 +1,5 @@
 import { Center, Loader, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
-import { useDisclosure, useLocalStorage } from '@mantine/hooks';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
