@@ -46,6 +46,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ImageSort } from '~/server/common/enums';
 import { ImageInclude, ImageMetaProps } from '~/server/schema/image.schema';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
@@ -204,7 +205,15 @@ export default function Images() {
   );
 }
 
-function ModerationControls({ images, filters, view }) {
+function ModerationControls({
+  images,
+  filters,
+  view,
+}: {
+  images: ImagesInfiniteModel[];
+  filters: any;
+  view: 'Flagged' | 'Reported';
+}) {
   const queryUtils = trpc.useContext();
   const viewingReported = view === 'Reported';
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
