@@ -2115,6 +2115,7 @@ model UserRank {
   leaderboardRank              Int?
   leaderboardId                String?
   leaderboardTitle             String?
+  leaderboardCosmetic          String?
 }
 
 /// @view

@@ -20,6 +20,7 @@ import {
   completeOnboarding,
   isUsernamePermitted,
   toggleUserArticleEngagement,
+  updateLeaderboardRank,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -82,17 +83,7 @@ export const getUserCreatorHandler = async ({
     const user = await getUserCreator({ username, id, leaderboardId });
     if (!user) throw throwNotFoundError('Could not find user');
 
-    const { leaderboardResults, ...creator } = user;
-    const [topLeaderboard] = leaderboardResults;
-
-    return {
-      ...creator,
-      rank: {
-        leaderboardRank: topLeaderboard.position,
-        leaderboardTitle: topLeaderboard.leaderboard.title,
-        leaderboardId: topLeaderboard.leaderboard.id,
-      },
-    };
+    return user;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -241,6 +232,8 @@ export const updateUserHandler = async ({
             },
       },
     });
+
+    if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 

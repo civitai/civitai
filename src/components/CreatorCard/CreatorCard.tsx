@@ -18,7 +18,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { formatDate } from '~/utils/date-helpers';
-import { abbreviateNumber, formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
+import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 

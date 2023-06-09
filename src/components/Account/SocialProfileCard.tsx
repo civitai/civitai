@@ -42,13 +42,8 @@ export function SocialProfileCard() {
       },
     }
   );
-  const { data: leaderboardPositions = [], isLoading: loadingLeaderboardPositions } =
-    trpc.leaderboard.getLeaderboardPositions.useQuery(
-      { userId: user?.id },
-      {
-        enabled: !!user,
-      }
-    );
+  const { data: leaderboards = [], isLoading: loadingLeaderboards } =
+    trpc.leaderboard.getLeaderboards.useQuery();
 
   const updateUserMutation = trpc.user.update.useMutation({
     onSuccess() {
@@ -92,10 +87,12 @@ export function SocialProfileCard() {
     );
   };
 
-  const leaderboardOptions = leaderboardPositions.map(({ leaderboardId }) => ({
-    label: titleCase(leaderboardId),
-    value: leaderboardId,
-  }));
+  const leaderboardOptions = leaderboards
+    .filter((board) => board.public)
+    .map(({ title, id }) => ({
+      label: titleCase(title),
+      value: id,
+    }));
 
   return (
     <>
@@ -105,8 +102,8 @@ export function SocialProfileCard() {
           {renderLinks(LinkType.Social)}
           {renderLinks(LinkType.Sponsorship)}
 
+          <Divider label="Leaderboard Showcase" />
           <Select
-            label="Leaderboard Showcase"
             placeholder="Select a leaderboard"
             description="Choose which leaderboard badge to display on your profile card"
             name="leaderboardShowcase"
@@ -118,8 +115,9 @@ export function SocialProfileCard() {
                 leaderboardShowcase: value,
               })
             }
-            disabled={loadingLeaderboardPositions}
-            searchable={leaderboardPositions.length > 10}
+            rightSection={updateUserMutation.isLoading ? <Loader size="xs" /> : null}
+            disabled={loadingLeaderboards || updateUserMutation.isLoading}
+            searchable={leaderboards.length > 10}
             clearable
           />
         </Stack>

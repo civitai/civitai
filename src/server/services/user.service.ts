@@ -72,15 +72,14 @@ export const getUserCreator = async ({
           followerCountAllTime: true,
         },
       },
-      leaderboardResults: {
-        where: { date: new Date(), leaderboardId },
-        orderBy: { position: 'asc' },
+      rank: {
         select: {
-          position: true,
-          leaderboard: { select: { title: true, id: true } },
+          leaderboardRank: true,
+          leaderboardId: true,
+          leaderboardTitle: true,
+          leaderboardCosmetic: true,
         },
       },
-      // rank: { select: { leaderboardRank: true, leaderboardId: true, leaderboardTitle: true } },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
@@ -523,6 +522,31 @@ export const getUserArticleEngagements = async ({ userId }: { userId: number }) 
     (acc, { articleId, type }) => ({ ...acc, [type]: [...(acc[type] ?? []), articleId] }),
     {}
   );
+};
+
+export const updateLeaderboardRank = async (userId?: number) => {
+  await dbWrite.$transaction([
+    dbWrite.$executeRaw`
+      UPDATE "UserRank" SET "leaderboardRank" = null, "leaderboardId" = null, "leaderboardTitle" = null, "leaderboardCosmetic" = null
+      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+    `,
+    dbWrite.$executeRaw`
+      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+      SELECT
+        "userId",
+        "leaderboardRank",
+        "leaderboardId",
+        "leaderboardTitle",
+        "leaderboardCosmetic"
+      FROM "UserRank_Live"
+      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+      ON CONFLICT ("userId") DO UPDATE SET
+        "leaderboardId" = excluded."leaderboardId",
+        "leaderboardRank" = excluded."leaderboardRank",
+        "leaderboardTitle" = excluded."leaderboardTitle",
+        "leaderboardCosmetic" = excluded."leaderboardCosmetic";
+    `,
+  ]);
 };
 
 export const toggleUserArticleEngagement = async ({
