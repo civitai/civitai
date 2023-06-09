@@ -39,6 +39,39 @@ export const deliverLeaderboardCosmetics = createJob(
       ON CONFLICT ("userId", "cosmeticId") DO NOTHING;
     `;
 
+    // equip next best
+    // --------------------------------------------
+    await dbWrite.$executeRaw`
+      -- Equip next best leaderboard cosmetic
+      WITH equipped AS (
+        SELECT
+          uc."userId",
+          c."leaderboardId",
+          c."leaderboardPosition" cosmetic_position,
+          lr.position current_position
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON uc."cosmeticId" = c.id
+        LEFT JOIN "LeaderboardResult" lr ON lr."userId" = uc."userId"
+          AND lr."leaderboardId" = c."leaderboardId"
+          AND lr.date = current_date
+        WHERE uc."equippedAt" IS NOT NULL
+          AND lr.position > c."leaderboardPosition"
+      ), next_best AS (
+        SELECT
+          uc."userId",
+          uc."cosmeticId",
+          ROW_NUMBER() OVER (PARTITION BY uc."userId" ORDER BY c."leaderboardPosition") AS rn
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        JOIN equipped e ON e."leaderboardId" = c."leaderboardId" AND e."userId" = uc."userId"
+        WHERE e.current_position <= c."leaderboardPosition"
+          AND c."leaderboardPosition" > e.cosmetic_position
+      )
+      UPDATE "UserCosmetic" uc SET "equippedAt" = now()
+      FROM next_best nb
+      WHERE nb.rn = 1 AND nb."userId" = uc."userId" AND nb."cosmeticId" = uc."cosmeticId";
+    `;
+
     // revoke
     // --------------------------------------------
     await dbWrite.$executeRaw`
