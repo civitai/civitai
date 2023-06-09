@@ -1,4 +1,4 @@
-import { ArticleEngagementType, Prisma, TagTarget } from '@prisma/client';
+import { ArticleEngagementType, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -19,6 +19,8 @@ import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { isDefined } from '~/utils/type-guards';
+import { decreaseDate } from '~/utils/date-helpers';
+import { ManipulateType } from 'dayjs';
 
 export const getArticles = async ({
   limit,
@@ -26,6 +28,7 @@ export const getArticles = async ({
   query,
   tags,
   period,
+  periodMode,
   sort,
   sessionUser,
   excludedIds,
@@ -67,7 +70,12 @@ export const getArticles = async ({
     }
 
     const where: Prisma.ArticleFindManyArgs['where'] = {
-      publishedAt: isMod && includeDrafts ? undefined : { not: null },
+      publishedAt:
+        isMod && includeDrafts
+          ? undefined
+          : period !== MetricTimeframe.AllTime && periodMode !== 'stats'
+          ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
+          : { not: null },
       AND: AND.length ? AND : undefined,
     };
 
