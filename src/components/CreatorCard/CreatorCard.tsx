@@ -18,7 +18,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { formatDate } from '~/utils/date-helpers';
-import { abbreviateNumber, formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
+import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 
@@ -28,7 +28,11 @@ export function CreatorCard({ user }: Props) {
   const theme = useMantineTheme();
 
   const { data: creator } = trpc.user.getCreator.useQuery(
-    { id: user.id },
+    {
+      id: user.id,
+      // TODO.leaderboard: uncomment when migration is done
+      // leaderboardId: user.leaderboardShowcase !== null ? user.leaderboardShowcase : undefined,
+    },
     {
       placeholderData: {
         ...user,

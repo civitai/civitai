@@ -15,6 +15,8 @@ export type SimpleUser = Prisma.UserGetPayload<typeof simpleUser>;
 
 export const userWithCosmeticsSelect = Prisma.validator<Prisma.UserSelect>()({
   ...simpleUserSelect,
+  // TODO.leaderboard: uncomment when migration is done
+  // leaderboardShowcase: true,
   cosmetics: {
     where: { equippedAt: { not: null } },
     select: {

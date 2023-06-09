@@ -33,6 +33,7 @@ export const usernameSchema = usernameValidationSchema.transform((v) => v.trim()
 export const getUserByUsernameSchema = z.object({
   username: usernameSchema.optional(),
   id: z.number().optional(),
+  leaderboardId: z.string().optional(),
 });
 
 export type GetUserByUsernameSchema = z.infer<typeof getUserByUsernameSchema>;
@@ -62,6 +63,7 @@ export const userUpdateSchema = z.object({
       imageFormat: z.enum(constants.imageFormats).optional(),
     })
     .optional(),
+  leaderboardShowcase: z.string().nullish(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
