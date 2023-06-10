@@ -531,14 +531,46 @@ export const updateLeaderboardRank = async (userId?: number) => {
       ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
     `,
     dbWrite.$executeRaw`
+      WITH user_positions AS (
+        SELECT
+          lr."userId",
+          lr."leaderboardId",
+          l."title",
+          lr.position,
+          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
+        FROM "User" u
+        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+        WHERE lr.date = current_date
+          AND (
+            u."leaderboardShowcase" IS NULL
+            OR lr."leaderboardId" = u."leaderboardShowcase"
+          )
+      ), lowest_position AS (
+        SELECT
+          up."userId",
+          up.position,
+          up."leaderboardId",
+          up."title" "leaderboardTitle",
+          (
+            SELECT data->>'url'
+            FROM "Cosmetic" c
+            WHERE c."leaderboardId" = up."leaderboardId"
+              AND up.position <= c."leaderboardPosition"
+            ORDER BY c."leaderboardPosition"
+            LIMIT 1
+          ) as "leaderboardCosmetic"
+        FROM user_positions up
+        WHERE row_num = 1
+      )
       INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
       SELECT
-        "userId",
-        "leaderboardRank",
-        "leaderboardId",
-        "leaderboardTitle",
-        "leaderboardCosmetic"
-      FROM "UserRank_Live"
+      "userId",
+      position,
+      "leaderboardId",
+      "leaderboardTitle",
+      "leaderboardCosmetic"
+      FROM lowest_position
       ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
       ON CONFLICT ("userId") DO UPDATE SET
         "leaderboardId" = excluded."leaderboardId",
