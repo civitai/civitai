@@ -5,6 +5,7 @@ import { createLogger } from '~/utils/logging';
 import { purgeCache } from '~/server/cloudflare/client';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { updateLeaderboardRank } from '~/server/services/user.service';
+import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 
 const log = createLogger('leaderboard', 'blue');
 
@@ -56,6 +57,8 @@ const updateUserLeaderboardRank = createJob(
   'update-user-leaderboard-rank',
   '1 0 * * *',
   async () => {
+    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
+
     await updateLeaderboardRank();
     await applyDiscordLeaderboardRoles();
   }

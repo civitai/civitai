@@ -1,18 +1,12 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
+import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 
 export const deliverLeaderboardCosmetics = createJob(
   'deliver-leaderboard-cosmetics',
   '1 0 * * *',
   async () => {
-    const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
-      SELECT
-        COUNT(DISTINCT "leaderboardId") = (SELECT COUNT(*) FROM "Leaderboard") as "populated"
-      FROM "LeaderboardResult"
-      WHERE date = current_date
-    `;
-
-    if (!populated) throw new Error('Leaderboard not populated');
+    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
 
     // deliver
     // --------------------------------------------

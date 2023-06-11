@@ -1,6 +1,6 @@
 import { CosmeticSource, CosmeticType, Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { isModerator } from '~/server/routers/base.router';
 import {
   GetLeaderboardInput,
@@ -8,6 +8,17 @@ import {
 } from '~/server/schema/leaderboard.schema';
 
 type IsMod = { isModerator: boolean };
+
+export async function isLeaderboardPopulated() {
+  const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
+      SELECT
+        COUNT(DISTINCT "leaderboardId") = (SELECT COUNT(*) FROM "Leaderboard") as "populated"
+      FROM "LeaderboardResult"
+      WHERE date = current_date
+    `;
+
+  return populated;
+}
 
 export async function getLeaderboards(input: IsMod) {
   const leaderboards = await dbRead.leaderboard.findMany({
