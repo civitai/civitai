@@ -124,7 +124,7 @@ export function VotableTag({
 
   const canVote = tagId;
   return (
-    <Link href={`/images?tags=${tagId}`} passHref>
+    <Link href={`/images?tags=${tagId}&view=feed`} passHref>
       <Badge
         component="a"
         radius="xs"

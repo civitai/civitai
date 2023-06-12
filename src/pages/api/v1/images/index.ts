@@ -13,7 +13,7 @@ import {
   getPaginationLinks,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { booleanString, numericString } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
 
 export const config = {
   api: {
@@ -39,6 +39,7 @@ const imagesEndpointSchema = z.object({
       if (typeof value === 'boolean') return value ? NsfwLevel.X : NsfwLevel.None;
       return value;
     }),
+  tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {

@@ -30,12 +30,11 @@ export function CreatorCard({ user }: Props) {
   const { data: creator } = trpc.user.getCreator.useQuery(
     {
       id: user.id,
-      // TODO.leaderboard: uncomment when migration is done
-      // leaderboardId: user.leaderboardShowcase !== null ? user.leaderboardShowcase : undefined,
     },
     {
       placeholderData: {
         ...user,
+        rank: null,
         stats: {
           downloadCountAllTime: 0,
           favoriteCountAllTime: 0,

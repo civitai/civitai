@@ -10,11 +10,9 @@ import {
   Stack,
   Text,
   Title,
-  ThemeIcon,
   HoverCard,
   ScrollArea,
   LoadingOverlay,
-  Tooltip,
   Box,
   Popover,
 } from '@mantine/core';
@@ -23,7 +21,6 @@ import { useEffect } from 'react';
 import { z } from 'zod';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
@@ -32,6 +29,7 @@ import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.se
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
@@ -40,6 +38,7 @@ const schema = z.object({
   image: z.string().nullable(),
   nameplateId: z.number().nullish(),
   badgeId: z.number().nullish(),
+  leaderboardShowcase: z.string().nullable(),
 });
 
 export function ProfileCard() {
@@ -54,6 +53,8 @@ export function ProfileCard() {
     { equipped: true },
     { enabled: !!currentUser }
   );
+  const { data: leaderboards = [], isLoading: loadingLeaderboards } =
+    trpc.leaderboard.getLeaderboards.useQuery();
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation({
     async onSuccess(user, { badgeId, nameplateId }) {
@@ -101,13 +102,30 @@ export function ProfileCard() {
   const selectedBadge = badges.find((badge) => badge.id === formUser.badgeId);
   const selectedNameplate = nameplates.find((nameplate) => nameplate.id === formUser.nameplateId);
 
+  const leaderboardOptions = leaderboards
+    .filter((board) => board.public)
+    .map(({ title, id }) => ({
+      label: titleCase(title),
+      value: id,
+    }));
+
   return (
     <Card withBorder>
       <Form
         form={form}
         onSubmit={(data) => {
-          const { id, username, nameplateId, badgeId, image } = data;
-          mutate({ id, username, nameplateId, image, badgeId });
+          const { id, username, nameplateId, badgeId, image, leaderboardShowcase } = data;
+          mutate({
+            id,
+            username,
+            nameplateId,
+            image,
+            badgeId,
+            leaderboardShowcase:
+              leaderboardShowcase !== currentUser?.leaderboardShowcase
+                ? leaderboardShowcase
+                : undefined,
+          });
         }}
       >
         <Stack>
@@ -292,6 +310,18 @@ export function ProfileCard() {
                   </Paper>
                 </Group>
               </Stack>
+            </Grid.Col>
+            <Grid.Col span={12}>
+              <InputSelect
+                label="Showcase Leaderboard"
+                placeholder="Select a leaderboard"
+                description="Choose which leaderboard badge to display on your profile card"
+                name="leaderboardShowcase"
+                data={leaderboardOptions}
+                disabled={loadingLeaderboards}
+                searchable
+                clearable
+              />
             </Grid.Col>
             <Grid.Col span={12}>
               <Button

@@ -17,6 +17,7 @@ import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -82,10 +83,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   ),
   needsReview: z.boolean().optional(),
   earlyAccess: z.boolean().optional(),
-  ids: z
-    .union([z.coerce.number(), z.coerce.number().array()])
-    .optional()
-    .transform((val) => (!val ? undefined : Array.isArray(val) ? val : [val])),
+  ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
