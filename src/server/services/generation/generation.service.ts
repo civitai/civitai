@@ -89,27 +89,26 @@ export const getGenerationResources = async ({
     }));
 };
 
-export const getGenerationRequests = async ({
-  cursor,
-  ...props
-}: GetGenerationRequestsInput & { userId: number }) => {
+export const getGenerationRequests = async (
+  props: GetGenerationRequestsInput & { userId: number }
+) => {
   if (isDev) props.userId = 1; // TODO.remove after generation is working properly
-  const params = QS.stringify({ ...props, after: cursor, take: props.take + 1 });
+  const params = QS.stringify(props);
   const response = await fetch(`${imageGenerationApi}/requests?${params}`);
   if (!response.ok) throw new Error(response.statusText);
-  const requests: Generation.Api.Request[] = await response.json();
+  const { cursor, requests }: Generation.Api.Request = await response.json();
   const modelVersionIds = requests.flatMap((x) => x.assets.map((x) => x.modelVersionId));
   const modelVersions = await dbRead.modelVersion.findMany({
     where: { id: { in: modelVersionIds } },
     select: generationResourceSelect,
   });
 
-  // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
-  let nextCursor: number | undefined;
-  if (requests.length > props.take) {
-    const nextItem = requests.pop();
-    nextCursor = nextItem?.id;
-  }
+  // // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
+  // let nextCursor: number | undefined;
+  // if (requests.length > props.take) {
+  //   const nextItem = requests.pop();
+  //   nextCursor = nextItem?.id;
+  // }
 
   const items = requests.map((x): Generation.Client.Request => {
     const { additionalNetworks, ...job } = x.job;
@@ -140,7 +139,7 @@ export const getGenerationRequests = async ({
     };
   });
 
-  return { items, nextCursor };
+  return { items, nextCursor: cursor };
 };
 
 export const createGenerationRequest = async (
@@ -152,25 +151,22 @@ export const createGenerationRequest = async (
   //TODO.Justin - get model files/hashes and any associated config files
 };
 
-export const getGenerationImages = async ({
-  cursor,
-  ...props
-}: GetGenerationImagesInput & { userId: number }) => {
+export const getGenerationImages = async (props: GetGenerationImagesInput & { userId: number }) => {
   if (isDev) props.userId = 1; // TODO.remove after generation is working properly
-  const params = QS.stringify({ ...props, after: cursor, take: props.take + 1 });
+  const params = QS.stringify(props);
   const response = await fetch(`${imageGenerationApi}/images?${params}`);
   if (!response.ok) throw new Error(response.statusText);
-  const { images, requests }: Generation.Api.Images = await response.json();
+  const { cursor, images, requests }: Generation.Api.Images = await response.json();
 
-  // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
-  let nextCursor: number | undefined;
-  if (images.length > props.take) {
-    const nextItem = images.pop();
-    nextCursor = nextItem?.id;
-  }
+  // // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
+  // let nextCursor: number | undefined;
+  // if (images.length > props.take) {
+  //   const nextItem = images.pop();
+  //   nextCursor = nextItem?.id;
+  // }
 
   return {
-    nextCursor,
+    nextCursor: cursor,
     images,
     requests: requests.reduce<Generation.Client.ImageRequestDictionary>((acc, request) => {
       if (!images.find((x) => x.requestId === request.id)) return acc;

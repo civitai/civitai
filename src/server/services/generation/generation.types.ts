@@ -67,7 +67,7 @@ export namespace Generation {
   }
 
   export namespace Api {
-    export type Request = {
+    type RequestProps = {
       id: number;
       createdAt: Date;
       estimatedCompletionDate: Date;
@@ -77,9 +77,14 @@ export namespace Generation {
       job: Job;
       images?: Image[];
     };
+    export type Request = {
+      cursor: number;
+      requests: RequestProps[];
+    };
     export type Images = {
+      cursor: number;
       images: Image[];
-      requests: Request[];
+      requests: RequestProps[];
     };
   }
 }
