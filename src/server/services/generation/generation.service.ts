@@ -139,7 +139,7 @@ export const getGenerationRequests = async (
     };
   });
 
-  return { items, nextCursor: cursor };
+  return { items, nextCursor: cursor === 0 ? undefined : cursor ?? undefined };
 };
 
 export const createGenerationRequest = async (
@@ -166,7 +166,7 @@ export const getGenerationImages = async (props: GetGenerationImagesInput & { us
   // }
 
   return {
-    nextCursor: cursor,
+    nextCursor: cursor ?? undefined,
     images,
     requests: requests.reduce<Generation.Client.ImageRequestDictionary>((acc, request) => {
       if (!images.find((x) => x.requestId === request.id)) return acc;

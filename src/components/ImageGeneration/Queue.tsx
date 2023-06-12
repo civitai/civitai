@@ -298,7 +298,14 @@ export function Queue() {
 
   //TODO.generation - determin how we are going to get progress updates on pending/processing items
   const { requests, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
-    useGetGenerationRequests({ take: 2 });
+    useGetGenerationRequests({
+      take: 2,
+      // status: [
+      //   GenerationRequestStatus.Pending,
+      //   GenerationRequestStatus.Processing,
+      //   GenerationRequestStatus.Succeeded,
+      // ],
+    });
 
   useEffect(() => {
     if (inView && !isFetching && !isError) fetchNextPage?.();
