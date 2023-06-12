@@ -212,7 +212,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
   if (needsReview && sessionUser?.isModerator) {
-    AND.push({ meta: { path: ['needsReview'], equals: true } });
+    AND.push({
+      OR: [
+        { meta: { path: ['needsReview'], equals: true } },
+        { modelVersions: { some: { meta: { path: ['needsReview'], equals: true } } } },
+      ],
+    });
   }
   if (earlyAccess) {
     AND.push({ earlyAccessDeadline: { gte: new Date() } });

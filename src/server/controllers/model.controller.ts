@@ -67,6 +67,7 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { ModelSort } from '~/server/common/enums';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -153,8 +154,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
           baseModel: version.baseModel as BaseModel,
-          // TODO.manuel: explicit casting for now, should be fixed in the future
-          meta: version.meta as { picFinderModelId: number },
+          meta: version.meta as ModelVersionMeta,
         };
       }),
     };
@@ -287,15 +287,29 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
+      modelVersions: input.needsReview
+        ? {
+            select: { id: true, name: true, meta: true },
+            where: { meta: { path: ['needsReview'], equals: true } },
+            take: 1,
+          }
+        : false,
     },
   });
 
   const parsedResults = {
     ...results,
-    items: results.items.map((model) => ({
-      ...model,
-      meta: model.meta as ModelMeta | null,
-    })),
+    items: results.items.map(({ modelVersions = [], ...model }) => {
+      const [version] = modelVersions;
+
+      return {
+        ...model,
+        meta: model.meta as ModelMeta | null,
+        modelVersion: version
+          ? { ...version, meta: version.meta as ModelVersionMeta | null }
+          : undefined,
+      };
+    }),
   };
   return getPagingData(parsedResults, take, page);
 };
