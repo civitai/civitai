@@ -117,7 +117,6 @@ function MyApp(props: CustomAppProps) {
 
     const handleChangeStart = () => {
       cachedPageHeight.push(document.documentElement.offsetHeight);
-      console.log({ cachedPageHeight });
     };
     const handleChangeComplete = () => (html.style.height = 'initial');
 
