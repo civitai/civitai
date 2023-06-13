@@ -28,4 +28,4 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-ImagePage.getLayout = (page: any) => <>{page}</>;
+ImagePage.getLayout = (page: React.ReactElement) => <>{page}</>;

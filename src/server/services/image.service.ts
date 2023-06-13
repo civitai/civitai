@@ -1058,10 +1058,15 @@ export const getImage = async ({
   isModerator,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
   const image = await dbRead.image.findFirst({
-    where: { id, OR: isModerator ? undefined : [{ needsReview: false }, { userId }] },
+    where: {
+      id,
+      OR: isModerator
+        ? undefined
+        : [{ needsReview: false, post: { publishedAt: { not: null } } }, { userId }],
+    },
     select: getImageV2Select({ userId }),
   });
-  if (!image) throw throwAuthorizationError();
+  if (!image) throw throwNotFoundError();
   return image;
 };
 
