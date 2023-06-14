@@ -50,21 +50,21 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { deleteObject } from '~/utils/s3-utils';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 
-export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
-  const result = await dbRead.imagesOnModels.findMany({
-    where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
-    select: { image: { select: imageSelect } },
-  });
-  return result.map((x) => x.image);
-};
+// export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
+//   const result = await dbRead.imagesOnModels.findMany({
+//     where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
+//     select: { image: { select: imageSelect } },
+//   });
+//   return result.map((x) => x.image);
+// };
 
-export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
-  const result = await dbRead.imagesOnReviews.findMany({
-    where: { reviewId, image: { tosViolation: false, needsReview: false } },
-    select: { image: { select: imageSelect } },
-  });
-  return result.map((x) => x.image);
-};
+// export const getReviewImages = async ({ reviewId }: { reviewId: number }) => {
+//   const result = await dbRead.imagesOnReviews.findMany({
+//     where: { reviewId, image: { tosViolation: false, needsReview: false } },
+//     select: { image: { select: imageSelect } },
+//   });
+//   return result.map((x) => x.image);
+// };
 
 type GetGalleryImagesRaw = {
   id: number;
