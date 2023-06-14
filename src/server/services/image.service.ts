@@ -822,7 +822,11 @@ export const getAllImages = async ({
   const queryFrom = Prisma.sql`
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    JOIN "Post" p ON p.id = i."postId"
+    JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
+      !isModerator
+        ? `AND (p."publishedAt" IS NOT NULL ${userId ? `OR p."userId" = ${userId}` : ''})`
+        : ''
+    )}
     ${Prisma.raw(
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
@@ -1057,16 +1061,109 @@ export const getImage = async ({
   userId,
   isModerator,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const image = await dbRead.image.findFirst({
-    where: {
-      id,
-      OR: isModerator
-        ? undefined
-        : [{ needsReview: false, post: { publishedAt: { not: null } } }, { userId }],
+  const AND = [Prisma.sql`i.id = ${id}`];
+  if (!isModerator)
+    AND.push(
+      Prisma.sql`(${Prisma.join(
+        [Prisma.sql`i."needsReview" = false`, Prisma.sql`i."userId" = ${userId}`],
+        ' OR '
+      )})`
+    );
+
+  const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.height,
+      i.width,
+      i.index,
+      i.hash,
+      i.meta,
+      i."hideMeta",
+      i."generationProcess",
+      i."createdAt",
+      i."mimeType",
+      i."scannedAt",
+      i."needsReview",
+      i."postId",
+      COALESCE(im."cryCount", 0) "cryCount",
+      COALESCE(im."laughCount", 0) "laughCount",
+      COALESCE(im."likeCount", 0) "likeCount",
+      COALESCE(im."dislikeCount", 0) "dislikeCount",
+      COALESCE(im."heartCount", 0) "heartCount",
+      COALESCE(im."commentCount", 0) "commentCount",
+      u.id "userId",
+      u.username,
+      u.image "userImage",
+      u."deletedAt",
+      (
+        SELECT jsonb_agg(reaction)
+        FROM "ImageReaction"
+        WHERE "imageId" = i.id
+        AND "userId" = ${userId}
+      ) reactions
+    FROM "Image" i
+    JOIN "User" u ON u.id = i."userId"
+    JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
+      !isModerator ? 'AND p."publishedAt" IS NOT NULL' : ''
+    )}
+    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+  if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
+
+  const [
+    {
+      userId: creatorId,
+      username,
+      userImage,
+      deletedAt,
+      reactions,
+      cryCount,
+      laughCount,
+      likeCount,
+      dislikeCount,
+      heartCount,
+      commentCount,
+      ...firstRawImage
     },
-    select: getImageV2Select({ userId }),
+  ] = rawImages;
+
+  const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
+    where: { userId: creatorId, equippedAt: { not: null } },
+    select: {
+      userId: true,
+      cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
+    },
   });
-  if (!image) throw throwNotFoundError();
+  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
+    acc[userId] = acc[userId] ?? [];
+    acc[userId].push(cosmetic);
+    return acc;
+  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+
+  const image = {
+    ...firstRawImage,
+    user: {
+      id: creatorId,
+      username,
+      image: userImage,
+      deletedAt,
+      cosmetics: userCosmetics?.[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
+    },
+    stats: {
+      cryCountAllTime: cryCount,
+      laughCountAllTime: laughCount,
+      likeCountAllTime: likeCount,
+      dislikeCountAllTime: dislikeCount,
+      heartCountAllTime: heartCount,
+      commentCountAllTime: commentCount,
+    },
+    reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+  };
+
   return image;
 };
 
