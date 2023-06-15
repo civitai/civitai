@@ -6,6 +6,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { ModelStatus } from '@prisma/client';
+import { ModelMeta } from '~/server/schema/model.schema';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -87,3 +88,5 @@ export const deleteExplorationPromptSchema = z.object({
   modelId: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
 });
+
+export type ModelVersionMeta = ModelMeta & { picFinderModelId?: number };

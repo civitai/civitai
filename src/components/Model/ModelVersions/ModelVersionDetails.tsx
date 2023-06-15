@@ -1,6 +1,5 @@
 import {
   Accordion,
-  ActionIcon,
   Anchor,
   Badge,
   Box,
@@ -20,6 +19,7 @@ import { NextLink } from '@mantine/next';
 import { ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconDownload,
+  IconExclamationMark,
   IconHeart,
   IconLicense,
   IconMessageCircle2,
@@ -61,12 +61,13 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
 
 export function ModelVersionDetails({
   model,
@@ -94,11 +95,8 @@ export function ModelVersionDetails({
 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
-  const requestReviewMutation = trpc.model.requestReview.useMutation({
-    async onSuccess() {
-      await queryUtils.model.getById.invalidate({ id: model.id });
-    },
-  });
+  const requestReviewMutation = trpc.model.requestReview.useMutation();
+  const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
 
   const handlePublishClick = async () => {
     try {
@@ -125,6 +123,32 @@ export function ModelVersionDetails({
     await queryUtils.model.getById.invalidate({ id: model.id });
     await queryUtils.modelVersion.getById.invalidate({ id: version.id });
     await queryUtils.image.getInfinite.invalidate();
+  };
+
+  const handleRequestReviewClick = async () => {
+    try {
+      if (model.status === ModelStatus.UnpublishedViolation) {
+        await requestReviewMutation.mutateAsync({ id: model.id });
+      } else {
+        await requestVersionReviewMutation.mutateAsync({ id: version.id });
+      }
+
+      showSuccessNotification({
+        title: 'Request sent',
+        message:
+          'Your request has been sent to the moderators. We will review it as soon as possible.',
+      });
+
+      await queryUtils.model.getById.invalidate({ id: model.id });
+      await queryUtils.modelVersion.getById.invalidate({ id: version.id });
+    } catch (e) {
+      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Error requesting review',
+        reason: 'Something went wrong while requesting a review. Please try again later.',
+      });
+    }
   };
 
   const archived = model.mode === ModelModifier.Archived;
@@ -278,9 +302,17 @@ export function ModelVersionDetails({
     hasPosts;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
   const showRequestReview =
-    isOwner && !user?.isModerator && model.status === ModelStatus.UnpublishedViolation;
+    isOwner &&
+    !user?.isModerator &&
+    (model.status === ModelStatus.UnpublishedViolation ||
+      version.status === ModelStatus.UnpublishedViolation);
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
+  const unpublishedReason = version.meta?.unpublishedReason ?? 'other';
+  const unpublishedMessage =
+    unpublishedReason !== 'other'
+      ? unpublishReasons[unpublishedReason]?.notificationMessage
+      : `Removal reason: ${version.meta?.customMessage}.` ?? '';
 
   return (
     <Grid gutter="xl">
@@ -300,8 +332,9 @@ export function ModelVersionDetails({
           {showRequestReview ? (
             <Button
               color="yellow"
-              onClick={() => requestReviewMutation.mutate({ id: model.id })}
-              loading={requestReviewMutation.isLoading}
+              onClick={handleRequestReviewClick}
+              loading={requestReviewMutation.isLoading || requestVersionReviewMutation.isLoading}
+              disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
               fullWidth
             >
               Request a Review
@@ -423,6 +456,32 @@ export function ModelVersionDetails({
               </Group>
               {primaryFileDetails}
             </Stack>
+          )}
+          {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
+            <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationMark />}>
+              <Text>
+                This model has been unpublished due to a violation of our{' '}
+                <Text component="a" variant="link" href="/content/tos" target="_blank">
+                  guidelines
+                </Text>{' '}
+                and is not visible to the community.{' '}
+                {unpublishedReason && unpublishedMessage ? unpublishedMessage : null}
+              </Text>
+              <Text>
+                If you adjust your model to comply with our guidelines, you can request a review
+                from one of our moderators. If you believe this was done in error, you can{' '}
+                <Text component="a" variant="link" href="/appeal" target="_blank">
+                  submit an appeal
+                </Text>
+                .
+              </Text>
+            </AlertWithIcon>
+          )}
+          {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (
+            <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationMark />}>
+              This version is currently being reviewed by our moderators. It will be visible to the
+              community once it has been approved.
+            </AlertWithIcon>
           )}
           <EarlyAccessAlert
             versionId={version.id}

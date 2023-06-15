@@ -14,9 +14,9 @@ export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
 
 type FileMetaKey = keyof FileMetadata;
 const preferenceWeight: Record<FileMetaKey, number> = {
-  format: 1000,
-  size: 100,
-  fp: 10,
+  format: 100,
+  size: 10,
+  fp: 1,
 };
 
 export function getPrimaryFile<T extends FileFormatType>(
@@ -28,12 +28,16 @@ export function getPrimaryFile<T extends FileFormatType>(
   const preferredMetadata = { ...defaultFilePreferences.metadata, ...preferences.metadata };
 
   const getScore = (file: FileFormatType) => {
-    let score = 0;
+    let score = 1000;
     for (const [key, value] of Object.entries(file.metadata)) {
       const weight = preferenceWeight[key as FileMetaKey];
       if (value === preferredMetadata[key as FileMetaKey]) score += weight;
-      else if (value === defaultFilePreferences.metadata[key as FileMetaKey]) score -= weight;
+      else score -= weight;
     }
+
+    // Give priority to model files
+    if (file.type === 'Model' || file.type === 'Pruned Model') score += 1000;
+
     return score;
   };
 
