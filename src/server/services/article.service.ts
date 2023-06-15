@@ -98,6 +98,7 @@ export const getArticles = async ({
         cover: true,
         title: true,
         publishedAt: true,
+        nsfw: true,
         user: { select: userWithCosmeticsSelect },
         tags: { select: { tag: { select: simpleTagSelect } } },
         stats: {

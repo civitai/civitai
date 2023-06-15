@@ -25,7 +25,7 @@ import {
 import { AssociationType } from '@prisma/client';
 import { IconGripVertical, IconSearch, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { forwardRef, useState } from 'react';
+import { forwardRef, useMemo, useState } from 'react';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { AssociatedResourceModel } from '~/server/selectors/model.selector';
@@ -48,24 +48,18 @@ export function AssociateModels({
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [query, setQuery] = useState('');
 
-  const { data: models = [], refetch } = trpc.model.findModelsToAssociate.useQuery(
-    { query },
-    { enabled: false }
-  );
-  const { data = [], isLoading } = trpc.model.getAssociatedModelsSimple.useQuery(
-    { fromId, type },
-    {
-      // initialData: demoData, // TODO.remove once db is ready
-      onSuccess: (data) => {
-        setAssociatedModels(data);
-      },
-    }
-  );
-  const [associatedModels, setAssociatedModels] = useState(data);
+  const { data: { models, articles } = { models: [], articles: [] }, refetch } =
+    trpc.model.findResourcesToAssociate.useQuery({ query }, { enabled: false });
+  const { data = { articles: [], models: [] }, isLoading } =
+    trpc.model.getAssociatedResourcesSimple.useQuery({ fromId, type });
+  const [associatedModels, setAssociatedModels] = useState(data.models);
 
   const { mutate, isLoading: isSaving } = trpc.model.setAssociatedModels.useMutation({
     onSuccess: () => {
-      queryUtils.model.getAssociatedModelsSimple.setData({ fromId, type }, () => associatedModels);
+      queryUtils.model.getAssociatedResourcesSimple.setData({ fromId, type }, () => ({
+        articles: [],
+        models: associatedModels,
+      }));
       queryUtils.model.getAssociatedModelsCardData.invalidate({ fromId, type });
       setChanged(false);
       onSave?.();
@@ -81,12 +75,9 @@ export function AssociateModels({
     });
   };
 
-  const handleItemSubmit = (item: { value: string; model: AssociatedResourceModel }) => {
-    const model = models.find((x) => x.id === item.model.id);
-    if (model) {
-      setChanged(true);
-      setAssociatedModels((models) => [...models, model]);
-    }
+  const handleItemSubmit = ({ item }: { value: string; item: AssociatedResourceModel }) => {
+    setChanged(true);
+    setAssociatedModels((models) => [...models, item]);
     setQuery('');
   };
 
@@ -112,12 +103,26 @@ export function AssociateModels({
 
   const handleReset = () => {
     setChanged(false);
-    setAssociatedModels(data);
+    setAssociatedModels(data.models);
   };
   const handleSave = () => {
-    // console.log({ associatedModels });
     mutate({ fromId, type, associatedIds: associatedModels.map((x) => x.id) });
   };
+
+  const autocompleteData = useMemo(
+    () => [
+      ...models
+        .filter((x) => !associatedModels.map((x) => x.id).includes(x.id) && x.id !== fromId)
+        .map((model) => ({ value: model.name, nsfw: model.nsfw, item: model, group: 'Models' })),
+      ...articles.map((article) => ({
+        value: article.title,
+        nsfw: article.nsfw,
+        item: article,
+        group: 'Articles',
+      })),
+    ],
+    [articles, associatedModels, fromId, models]
+  );
 
   return (
     <Stack>
@@ -126,9 +131,7 @@ export function AssociateModels({
           // label={`Add up to ${limit} models`}
           placeholder="Search..."
           icon={<IconSearch />}
-          data={models
-            .filter((x) => !associatedModels.map((x) => x.id).includes(x.id) && x.id !== fromId)
-            .map((model) => ({ value: model.name, model }))}
+          data={autocompleteData}
           value={query}
           onChange={handleSearchChange}
           onItemSubmit={handleItemSubmit}
@@ -209,17 +212,15 @@ export function AssociateModels({
   );
 }
 
-type SearchItemProps = SelectItemProps & { model: AssociatedResourceModel };
-const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
-  ({ value, model, ...props }, ref) => {
-    return (
-      <Box ref={ref} {...props} key={model.id}>
-        <Group noWrap spacing="xs">
-          <Text lineClamp={1}>{model.name}</Text>
-          {model.nsfw && <Badge color="red">NSFW</Badge>}
-        </Group>
-      </Box>
-    );
-  }
-);
+type SearchItemProps = SelectItemProps & { item: AssociatedResourceModel; nsfw: boolean };
+const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(({ value, nsfw, ...props }, ref) => {
+  return (
+    <Box ref={ref} {...props}>
+      <Group noWrap spacing="xs">
+        <Text lineClamp={1}>{value}</Text>
+        {nsfw && <Badge color="red">NSFW</Badge>}
+      </Group>
+    </Box>
+  );
+});
 SearchItem.displayName = 'SearchItem';

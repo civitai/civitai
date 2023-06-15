@@ -124,6 +124,7 @@ function LinkDropdown() {
   const { instance, instances, status, error } = useCivitaiLink();
   const features = useFeatureFlags();
   const notAllowed = !features.civitaiLink;
+  console.log({ features, notAllowed });
 
   const handleManageClick = () => {
     setManage((o) => !o);

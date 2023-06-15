@@ -575,17 +575,21 @@ enum AssociationType {
 }
 
 model ModelAssociations {
+  id             Int             @id @default(autoincrement())
   fromModelId    Int
   fromModel      Model           @relation("FromModelAssociation", fields: [fromModelId], references: [id])
-  toModelId      Int
-  toModel        Model           @relation("ToModelAssociation", fields: [toModelId], references: [id])
+  toModelId      Int?
+  toModel        Model?          @relation("ToModelAssociation", fields: [toModelId], references: [id])
+  toArticleId    Int?
+  toArticle      Article?        @relation(fields: [toArticleId], references: [id])
   associatedById Int?
   createdAt      DateTime        @default(now())
   type           AssociationType
   index          Int?
 
-  @@id([fromModelId, toModelId, type])
   @@index([toModelId], type: Hash)
+  @@index([fromModelId], type: Hash)
+  @@index([toArticleId], type: Hash)
 }
 
 enum UserActivityType {
@@ -1620,15 +1624,16 @@ model Article {
   userId       Int
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  thread      Thread?
-  reactions   ArticleReaction[]
-  tags        TagsOnArticle[]
-  reports     ArticleReport[]
-  metrics     ArticleMetric[]
-  rank        ArticleRank?
-  stats       ArticleStat?
-  attachments File[]
-  engagements ArticleEngagement[]
+  thread       Thread?
+  reactions    ArticleReaction[]
+  tags         TagsOnArticle[]
+  reports      ArticleReport[]
+  metrics      ArticleMetric[]
+  rank         ArticleRank?
+  stats        ArticleStat?
+  attachments  File[]
+  engagements  ArticleEngagement[]
+  associations ModelAssociations[]
 }
 
 enum ArticleEngagementType {

@@ -1,25 +1,14 @@
+import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { AssociationType } from '@prisma/client';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
-import {
-  LoadingOverlay,
-  Stack,
-  Title,
-  Container,
-  Group,
-  Button,
-  Center,
-  Text,
-  Box,
-  Paper,
-  ThemeIcon,
-} from '@mantine/core';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
-import { ModelCategoryCard } from '~/components/Model/Categories/ModelCategoryCard';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { IconRocketOff } from '@tabler/icons-react';
+
+import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { ModelCategoryCard } from '~/components/Model/Categories/ModelCategoryCard';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { trpc } from '~/utils/trpc';
 
 export function AssociatedModels({
   fromId,

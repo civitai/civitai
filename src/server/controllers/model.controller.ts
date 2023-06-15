@@ -15,6 +15,7 @@ import {
   ChangeModelModifierSchema,
   DeclineReviewSchema,
   DeleteModelSchema,
+  FindResourcesToAssociateSchema,
   GetAllModelsOutput,
   GetDownloadSchema,
   ModelInput,
@@ -24,8 +25,10 @@ import {
   ReorderModelVersionsSchema,
   ToggleModelLockInput,
   UnpublishModelSchema,
+  getAllModelsSchema,
 } from '~/server/schema/model.schema';
 import {
+  associatedResourceSelect,
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
@@ -68,6 +71,8 @@ import { ModelSort } from '~/server/common/enums';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import { getArticles } from '~/server/services/article.service';
+import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -965,5 +970,30 @@ export const changeModelModifierHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) error;
     else throw throwDbError(error);
+  }
+};
+
+export const findResourcesToAssociateHandler = async ({
+  input,
+}: {
+  input: FindResourcesToAssociateSchema;
+  ctx: Context;
+}) => {
+  try {
+    const modelInput = getAllModelsSchema.parse(input);
+    const articleInput = getInfiniteArticlesSchema.parse(input);
+
+    const [{ items: models }, { items: articles }] = await Promise.all([
+      getModels({
+        input: { ...modelInput, take: modelInput.limit },
+        select: associatedResourceSelect,
+      }),
+      getArticles({ ...articleInput }),
+    ]);
+
+    return { models, articles };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
   }
 };

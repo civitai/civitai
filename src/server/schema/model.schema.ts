@@ -250,8 +250,8 @@ export const setModelsCategorySchema = z.object({
 });
 
 // #region [Associated Models]
-export type FindModelsToAssociateSchema = z.infer<typeof findModelsToAssociateSchema>;
-export const findModelsToAssociateSchema = z.object({
+export type FindResourcesToAssociateSchema = z.infer<typeof findResourcesToAssociateSchema>;
+export const findResourcesToAssociateSchema = z.object({
   query: z.string(),
   limit: z.number().default(5),
 });
@@ -264,8 +264,10 @@ export const getAssociatedModelsSchema = z.object({
 
 export type SetAssociatedModelsInput = z.infer<typeof setAssociatedModelsSchema>;
 export const setAssociatedModelsSchema = z.object({
+  id: z.number().optional(),
   fromId: z.number(),
   type: z.nativeEnum(AssociationType),
   associatedIds: z.number().array(),
+  associatedArticleIds: z.number().array().optional(),
 });
 // #endregion

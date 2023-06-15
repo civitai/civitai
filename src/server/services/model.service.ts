@@ -1,5 +1,5 @@
 import {
-  FindModelsToAssociateSchema,
+  FindResourcesToAssociateSchema,
   GetAssociatedModelsInput,
   GetModelsWithCategoriesSchema,
   SetAssociatedModelsInput,
@@ -944,7 +944,7 @@ export const getAssociatedModelsCardData = async (
   const associatedModels = await dbRead.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
-    select: { toModelId: true },
+    select: { toModelId: true, toArticleId: true },
   });
   const ids = associatedModels.map((x) => x.toModelId);
   if (!ids.length) return [];
@@ -1037,7 +1037,7 @@ export const getAssociatedModelsCardData = async (
     .filter(isDefined);
 };
 
-export const findModelsToAssociate = async (args: FindModelsToAssociateSchema) => {
+export const findResourcesToAssociate = async (args: FindResourcesToAssociateSchema) => {
   const validated = getAllModelsSchema.parse(args);
   const { items } = await getModels({
     input: { ...validated, take: validated.limit },
@@ -1046,7 +1046,7 @@ export const findModelsToAssociate = async (args: FindModelsToAssociateSchema) =
   return items;
 };
 
-export const getAssociatedModelsSimple = async ({ fromId, type }: GetAssociatedModelsInput) => {
+export const getAssociatedResourcesSimple = async ({ fromId, type }: GetAssociatedModelsInput) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
@@ -1054,14 +1054,29 @@ export const getAssociatedModelsSimple = async ({ fromId, type }: GetAssociatedM
       toModel: {
         select: associatedResourceSelect,
       },
+      toArticle: {
+        select: { id: true, title: true, nsfw: true, user: { select: simpleUserSelect } },
+      },
     },
   });
 
-  return associations.map(({ toModel }) => toModel);
+  type AssociatedModel = NonNullable<(typeof associations)[number]['toModel']>;
+  type AssociatedArticle = NonNullable<(typeof associations)[number]['toArticle']>;
+  const items = associations.reduce(
+    (acc, current) => {
+      if (current.toModel) acc.models.push(current.toModel);
+      if (current.toArticle) acc.articles.push(current.toArticle);
+
+      return acc;
+    },
+    { articles: [] as AssociatedArticle[], models: [] as AssociatedModel[] }
+  );
+
+  return items;
 };
 
 export const setAssociatedModels = async (
-  { fromId, type, associatedIds }: SetAssociatedModelsInput,
+  { id, fromId, type, associatedIds, associatedArticleIds = [] }: SetAssociatedModelsInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -1070,7 +1085,7 @@ export const setAssociatedModels = async (
       userId: true,
       associations: {
         where: { type },
-        select: { toModelId: true },
+        select: { toModelId: true, toArticleId: true },
         orderBy: { index: 'asc' },
       },
     },
@@ -1079,7 +1094,9 @@ export const setAssociatedModels = async (
   if (!fromModel) throw throwNotFoundError();
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
-  const existingAssociatedModelIds = fromModel.associations.map((x) => x.toModelId);
+  const existingAssociatedModelIds = fromModel.associations
+    .map((x) => x.toModelId)
+    .filter(isDefined);
   const associationsToRemove = existingAssociatedModelIds.filter(
     (existingToId) => !associatedIds.includes(existingToId)
   );
@@ -1093,7 +1110,15 @@ export const setAssociatedModels = async (
     ...associatedIds.map((toId, index) => {
       const data = { fromModelId: fromId, toModelId: toId, type };
       return dbWrite.modelAssociations.upsert({
-        where: { fromModelId_toModelId_type: { ...data } },
+        where: { id },
+        update: { index },
+        create: { ...data, associatedById: user?.id, index },
+      });
+    }),
+    ...associatedArticleIds.map((toArticleId, index) => {
+      const data = { fromModelId: fromId, toArticleId, type };
+      return dbWrite.modelAssociations.upsert({
+        where: { id },
         update: { index },
         create: { ...data, associatedById: user?.id, index },
       });
