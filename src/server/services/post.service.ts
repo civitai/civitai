@@ -87,6 +87,16 @@ export const getPostsInfinite = async ({
     orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
   else if (sort === PostSort.MostReactions)
     orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostLikes)
+    orderBy.push({ rank: { [`likeCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostDislikes)
+    orderBy.push({ rank: { [`dislikeCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostHearts)
+    orderBy.push({ rank: { [`heartCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostLaughs)
+    orderBy.push({ rank: { [`laughCount${period}Rank`]: 'asc' } });
+  else if (sort === PostSort.MostCries)
+    orderBy.push({ rank: { [`cryCount${period}Rank`]: 'asc' } });
   orderBy.push({ publishedAt: 'desc' });
 
   const posts = await dbRead.post.findMany({
@@ -497,6 +507,16 @@ export const getPostsByCategory = async ({
     orderBy = `pm."likeCount"+pm."heartCount"+pm."laughCount"+pm."cryCount" DESC NULLS LAST, ${orderBy}`;
   else if (input.sort === PostSort.MostComments)
     orderBy = `pm."commentCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === PostSort.MostLikes)
+    orderBy = `pm."likeCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === PostSort.MostDislikes)
+    orderBy = `pm."dislikeCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === PostSort.MostHearts)
+    orderBy = `pm."heartCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === PostSort.MostLaughs)
+    orderBy = `pm."laughCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === PostSort.MostCries)
+    orderBy = `pm."cryCount" DESC NULLS LAST, ${orderBy}`;
 
   const targets = categories.map((c) => {
     return Prisma.sql`(

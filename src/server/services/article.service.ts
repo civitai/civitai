@@ -88,6 +88,16 @@ export const getArticles = async ({
       orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
     else if (sort === ArticleSort.MostReactions)
       orderBy.unshift({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostLikes)
+      orderBy.push({ rank: { [`likeCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostDislikes)
+      orderBy.push({ rank: { [`dislikeCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostHearts)
+      orderBy.push({ rank: { [`heartCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostLaughs)
+      orderBy.push({ rank: { [`laughCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostCries)
+      orderBy.push({ rank: { [`cryCount${period}Rank`]: 'asc' } });
 
     const articles = await dbRead.article.findMany({
       take,

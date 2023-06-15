@@ -42,12 +42,22 @@ export enum ImageSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
   Newest = 'Newest',
+  MostLikes = '👍',
+  MostDislikes = '👎',
+  MostHearts = '❤️',
+  MostLaughs = '😂',
+  MostCries = '😢',
 }
 
 export enum PostSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
   Newest = 'Newest',
+  MostLikes = '👍',
+  MostDislikes = '👎',
+  MostHearts = '❤️',
+  MostLaughs = '😂',
+  MostCries = '😢',
 }
 
 export enum BrowsingMode {
@@ -90,4 +100,9 @@ export enum ArticleSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
   Newest = 'Newest',
+  MostLikes = '👍',
+  MostDislikes = '👎',
+  MostHearts = '❤️',
+  MostLaughs = '😂',
+  MostCries = '😢',
 }

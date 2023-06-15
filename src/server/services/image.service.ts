@@ -191,6 +191,11 @@ export const getGalleryImages = async ({
   if (!infinite) orderBy = 'COALESCE(ior."index",iom."index",0)';
   else if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
   else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+  else if (sort === ImageSort.MostLikes) orderBy = `r."likeCount${period}Rank"`;
+  else if (sort === ImageSort.MostDislikes) orderBy = `r."dislikeCount${period}Rank"`;
+  else if (sort === ImageSort.MostHearts) orderBy = `r."heartCount${period}Rank"`;
+  else if (sort === ImageSort.MostLaughs) orderBy = `r."laughCount${period}Rank"`;
+  else if (sort === ImageSort.MostCries) orderBy = `r."cryCount${period}Rank"`;
 
   if (needsReview) {
     AND.length = 0;
@@ -760,6 +765,11 @@ export const getAllImages = async ({
     // Sort by selected sort
     if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
     else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+    else if (sort === ImageSort.MostLikes) orderBy = `r."likeCount${period}Rank"`;
+    else if (sort === ImageSort.MostDislikes) orderBy = `r."dislikeCount${period}Rank"`;
+    else if (sort === ImageSort.MostHearts) orderBy = `r."heartCount${period}Rank"`;
+    else if (sort === ImageSort.MostLaughs) orderBy = `r."laughCount${period}Rank"`;
+    else if (sort === ImageSort.MostCries) orderBy = `r."cryCount${period}Rank"`;
     else orderBy = `i."id" DESC`;
   }
 
@@ -1537,6 +1547,16 @@ export const getImagesByCategory = async ({
     orderBy = `im."likeCount"+im."heartCount"+im."laughCount"+im."cryCount" DESC NULLS LAST, ${orderBy}`;
   else if (input.sort === ImageSort.MostComments)
     orderBy = `im."commentCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === ImageSort.MostLikes)
+    orderBy = `pm."likeCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === ImageSort.MostDislikes)
+    orderBy = `pm."dislikeCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === ImageSort.MostHearts)
+    orderBy = `pm."heartCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === ImageSort.MostLaughs)
+    orderBy = `pm."laughCount" DESC NULLS LAST, ${orderBy}`;
+  else if (input.sort === ImageSort.MostCries)
+    orderBy = `pm."cryCount" DESC NULLS LAST, ${orderBy}`;
 
   const targets = categories.map((c) => {
     return Prisma.sql`(

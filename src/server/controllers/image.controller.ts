@@ -465,6 +465,46 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (aComments > bComments) return -1;
         return 0;
       });
+    else if (input.sort === ImageSort.MostLikes)
+      results.sort((a, b) => {
+        const aLikes = a.images[0].stats?.likeCountAllTime ?? 0;
+        const bLikes = b.images[0].stats?.likeCountAllTime ?? 0;
+        if (aLikes < bLikes) return 1;
+        if (aLikes > bLikes) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostDislikes)
+      results.sort((a, b) => {
+        const aDislikes = a.images[0].stats?.dislikeCountAllTime ?? 0;
+        const bDislikes = b.images[0].stats?.dislikeCountAllTime ?? 0;
+        if (aDislikes < bDislikes) return 1;
+        if (aDislikes > bDislikes) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostHearts)
+      results.sort((a, b) => {
+        const aHearts = a.images[0].stats?.heartCountAllTime ?? 0;
+        const bHearts = b.images[0].stats?.heartCountAllTime ?? 0;
+        if (aHearts < bHearts) return 1;
+        if (aHearts > bHearts) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostLaughs)
+      results.sort((a, b) => {
+        const aLaughs = a.images[0].stats?.laughCountAllTime ?? 0;
+        const bLaughs = b.images[0].stats?.laughCountAllTime ?? 0;
+        if (aLaughs < bLaughs) return 1;
+        if (aLaughs > bLaughs) return -1;
+        return 0;
+      });
+    else if (input.sort === ImageSort.MostCries)
+      results.sort((a, b) => {
+        const aCries = a.images[0].stats?.cryCountAllTime ?? 0;
+        const bCries = b.images[0].stats?.cryCountAllTime ?? 0;
+        if (aCries < bCries) return 1;
+        if (aCries > bCries) return -1;
+        return 0;
+      });
 
     return {
       nextCursor: cursor,
