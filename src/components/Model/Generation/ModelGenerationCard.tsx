@@ -135,7 +135,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
   };
 
   const isModerator = currentUser?.isModerator ?? false;
-  const selectedPrompt = data.find((p) => p.name === prompt);
+  const selectedPrompt = data.find((p) => p.prompt === prompt);
   const currentIndex = selectedPrompt ? availablePrompts[selectedPrompt.name]?.imageIndex : 0;
 
   useEffect(() => {
@@ -248,7 +248,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                         setAvailablePrompts((current) => ({
                           ...current,
                           [selectedPrompt.name]: {
-                            imageIndex: current[selectedPrompt.name]?.imageIndex + 1,
+                            imageIndex: (current[selectedPrompt.name]?.imageIndex ?? 0) + 1,
                           },
                         }));
                     }}
