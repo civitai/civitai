@@ -90,6 +90,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
   const initialPrompt = data[0]?.prompt;
   const { images, loading, getImages, prompt, setPrompt } = usePicFinder({
     initialPrompt,
+    modelId,
     initialFetchCount: 3,
   });
 
