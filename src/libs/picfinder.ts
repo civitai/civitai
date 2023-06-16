@@ -125,7 +125,7 @@ type GetImageRequest = {
 };
 
 function requestImages(
-  { includeNsfw, ...imageRequest }: GetImageRequest,
+  { includeNsfw = true, ...imageRequest }: GetImageRequest,
   cb: (url: string | undefined, isComplete: boolean) => void
 ) {
   if (Object.keys(imageRequests).length > REQUEST_LIMIT) throw new Error('Too many requests');
