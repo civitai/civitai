@@ -11,6 +11,7 @@ export function NotificationList({
   items,
   textSize = 'sm',
   withDivider = false,
+  truncate = true,
   onItemClick,
 }: Props) {
   const router = useRouter();
@@ -89,7 +90,7 @@ export function NotificationList({
               })}
             >
               <Stack spacing={0}>
-                <Text size={textSize} weight="bold" lineClamp={3}>
+                <Text size={textSize} weight="bold" lineClamp={truncate ? 3 : undefined}>
                   {details.message}
                 </Text>
                 <Text size="xs" color="dimmed">
@@ -109,4 +110,5 @@ type Props = {
   onItemClick: (notification: NotificationGetAll['items'][number]) => void;
   textSize?: MantineSize;
   withDivider?: boolean;
+  truncate?: boolean;
 };
