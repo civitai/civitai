@@ -27,6 +27,7 @@ import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
+import { ingestImages } from '~/server/jobs/ingest-images';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -49,6 +50,7 @@ const jobs: Job[] = [
   ...applyDiscordRoles,
   applyNsfwBaseline,
   ...leaderboardJobs,
+  ingestImages,
 ];
 
 const log = createLogger('jobs', 'green');
