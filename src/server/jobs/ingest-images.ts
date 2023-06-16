@@ -4,7 +4,7 @@ import { createJob } from '~/server/jobs/job';
 import { ingestImage } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
-export const ingestImages = createJob('ingest-images', '*/4 * * * *', async () => {
+export const ingestImages = createJob('ingest-images', '0 23 * * *', async () => {
   if (!isProd) return;
   const images = await dbRead.image.findMany({
     where: { OR: [{ scanRequestedAt: { not: null }, scannedAt: null }, { scanRequestedAt: null }] },
