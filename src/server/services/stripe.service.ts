@@ -241,11 +241,14 @@ export const upsertSubscription = async (
     currentPeriodEnd: toDateTime(subscription.current_period_end),
     createdAt: toDateTime(subscription.created),
     endedAt: subscription.ended_at ? toDateTime(subscription.ended_at) : null,
-    updatedAt: eventDate,
   };
 
   await dbWrite.$transaction([
-    dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    dbWrite.customerSubscription.upsert({
+      where: { id: data.id },
+      update: { ...data, updatedAt: eventDate },
+      create: data,
+    }),
     dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
 
