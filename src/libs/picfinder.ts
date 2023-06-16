@@ -106,7 +106,7 @@ const requestImage = (taskUUID: string, imageRequest: GetImageRequest) => {
       taskType: 1,
       numberResults,
       sizeId: 2,
-      steps: 20,
+      steps: 30,
       modelId: 3,
       gScale: 7.5,
       offset: getRequestOffset(imageRequest),
