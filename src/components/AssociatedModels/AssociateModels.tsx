@@ -29,8 +29,14 @@ import { forwardRef, useMemo, useState } from 'react';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { AssociatedResourceModel } from '~/server/selectors/model.selector';
+import { ModelFindResourceToAssociate } from '~/types/router';
 import { useDebouncer } from '~/utils/debouncer';
 import { trpc } from '~/utils/trpc';
+
+type State = Array<
+  | { resourceType: 'models'; item: ModelFindResourceToAssociate['models'][number] }
+  | { resourceType: 'articles'; item: ModelFindResourceToAssociate['articles'][number] }
+>;
 
 export function AssociateModels({
   fromId,
@@ -52,14 +58,24 @@ export function AssociateModels({
     trpc.model.findResourcesToAssociate.useQuery({ query }, { enabled: false });
   const { data = { articles: [], models: [] }, isLoading } =
     trpc.model.getAssociatedResourcesSimple.useQuery({ fromId, type });
-  const [associatedModels, setAssociatedModels] = useState(data.models);
+  const [associatedResources, setAssociatedResources] = useState<State>(() => [
+    ...data.models.map((item) => ({ resourceType: 'models' as const, item })),
+    ...data.articles.map((item) => ({ resourceType: 'articles' as const, item })),
+  ]);
 
   const { mutate, isLoading: isSaving } = trpc.model.setAssociatedModels.useMutation({
     onSuccess: () => {
-      queryUtils.model.getAssociatedResourcesSimple.setData({ fromId, type }, () => ({
-        articles: [],
-        models: associatedModels,
-      }));
+      queryUtils.model.getAssociatedResourcesSimple.setData({ fromId, type }, () =>
+        associatedResources.reduce(
+          (acc, current) => {
+            if (current.resourceType === 'articles') {
+              return { ...acc, articles: [...acc.articles, current.item] };
+            }
+            return { ...acc, models: [...acc.models, current.item] };
+          },
+          { articles: [], models: [] } as ModelFindResourceToAssociate
+        )
+      );
       queryUtils.model.getAssociatedModelsCardData.invalidate({ fromId, type });
       setChanged(false);
       onSave?.();
@@ -75,9 +91,21 @@ export function AssociateModels({
     });
   };
 
-  const handleItemSubmit = ({ item }: { value: string; item: AssociatedResourceModel }) => {
+  const handleItemSubmit = ({
+    item,
+    group,
+  }: {
+    value: string;
+    item: AssociatedResourceModel;
+    group: 'Models' | 'Articles';
+  }) => {
     setChanged(true);
-    setAssociatedModels((models) => [...models, item]);
+    setAssociatedResources((resources) => [
+      ...resources,
+      ...(group === 'Models'
+        ? [{ resourceType: 'models' as const, item }]
+        : [{ resourceType: 'articles' as const, item: item as any }]), // TODO.manuel: type item correctyly
+    ]);
     setQuery('');
   };
 
@@ -85,48 +113,58 @@ export function AssociateModels({
     const { active, over } = event;
     if (!over) return;
     if (active.id !== over.id) {
-      const models = [...associatedModels];
-      const ids = models.map(({ id }): UniqueIdentifier => id);
+      const resources = [...associatedResources];
+      const ids = resources.map(({ item }): UniqueIdentifier => item.id);
       const oldIndex = ids.indexOf(active.id);
       const newIndex = ids.indexOf(over.id);
-      const sorted = arrayMove(models, oldIndex, newIndex);
-      setAssociatedModels(sorted);
+      const sorted = arrayMove(resources, oldIndex, newIndex);
+      setAssociatedResources(sorted);
       setChanged(!isEqual(data, sorted));
     }
   };
 
   const handleRemove = (id: number) => {
-    const models = [...associatedModels.filter((x) => x.id !== id)];
-    setAssociatedModels(models);
+    const models = [...associatedResources.filter(({ item }) => item.id !== id)];
+    setAssociatedResources(models);
     setChanged(!isEqual(data, models));
   };
 
   const handleReset = () => {
     setChanged(false);
-    setAssociatedModels(data.models);
+    setAssociatedResources([
+      ...data.models.map((item) => ({ resourceType: 'models' as const, item })),
+      ...data.articles.map((item) => ({ resourceType: 'articles' as const, item })),
+    ]);
   };
   const handleSave = () => {
-    mutate({ fromId, type, associatedIds: associatedModels.map((x) => x.id) });
+    // TODO.manuel: send ids correctly
+    mutate({ fromId, type, associatedIds: associatedResources.map(({ item }) => item.id) });
   };
 
   const autocompleteData = useMemo(
     () => [
       ...models
-        .filter((x) => !associatedModels.map((x) => x.id).includes(x.id) && x.id !== fromId)
+        .filter(
+          (x) => !associatedResources.map(({ item }) => item.id).includes(x.id) && x.id !== fromId
+        )
         .map((model) => ({ value: model.name, nsfw: model.nsfw, item: model, group: 'Models' })),
-      ...articles.map((article) => ({
-        value: article.title,
-        nsfw: article.nsfw,
-        item: article,
-        group: 'Articles',
-      })),
+      ...articles
+        .filter(
+          (x) => !associatedResources.map(({ item }) => item.id).includes(x.id) && x.id !== fromId
+        )
+        .map((article) => ({
+          value: article.title,
+          nsfw: article.nsfw,
+          item: article,
+          group: 'Articles',
+        })),
     ],
-    [articles, associatedModels, fromId, models]
+    [articles, associatedResources, fromId, models]
   );
 
   return (
     <Stack>
-      {associatedModels.length < limit && (
+      {associatedResources.length < limit && (
         <ClearableAutoComplete
           // label={`Add up to ${limit} models`}
           placeholder="Search..."
@@ -136,6 +174,7 @@ export function AssociateModels({
           onChange={handleSearchChange}
           onItemSubmit={handleItemSubmit}
           itemComponent={SearchItem}
+          limit={20}
           clearable
         />
       )}
@@ -147,42 +186,42 @@ export function AssociateModels({
       ) : (
         <Stack spacing={0}>
           <Text align="right">
-            {associatedModels.length}/{limit}
+            {associatedResources.length}/{limit}
           </Text>
-          {!!associatedModels.length ? (
+          {!!associatedResources.length ? (
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
               onDragEnd={handleDragEnd}
             >
               <SortableContext
-                items={associatedModels.map((x) => x.id)}
+                items={associatedResources.map(({ item }) => item.id)}
                 strategy={verticalListSortingStrategy}
               >
                 <Stack spacing="xs">
-                  {associatedModels.map((model) => (
-                    <SortableItem key={model.id} id={model.id}>
+                  {associatedResources.map(({ resourceType, item }) => (
+                    <SortableItem key={item.id} id={item.id}>
                       <Card withBorder p="xs">
                         <Group position="apart">
                           <Group align="center">
                             <IconGripVertical />
                             <Stack spacing="xs">
                               <Text size="md" lineClamp={2}>
-                                {model.name}
+                                {resourceType === 'models' ? item.name : item.title}
                               </Text>
                               <Group spacing="xs">
-                                <Badge>{model.type}</Badge>
+                                <Badge>{resourceType === 'models' ? item.type : 'Article'}</Badge>
                                 <Badge leftSection={<IconUser size={12} />}>
-                                  {model.user.username}
+                                  {item.user.username}
                                 </Badge>
-                                {model.nsfw && <Badge color="red">NSFW</Badge>}
+                                {item.nsfw && <Badge color="red">NSFW</Badge>}
                               </Group>
                             </Stack>
                           </Group>
                           <ActionIcon
                             variant="filled"
                             color="red"
-                            onClick={() => handleRemove(model.id)}
+                            onClick={() => handleRemove(item.id)}
                           >
                             <IconTrash />
                           </ActionIcon>
