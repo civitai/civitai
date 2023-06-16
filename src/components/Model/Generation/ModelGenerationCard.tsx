@@ -86,12 +86,13 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
     }, {} as Record<string, { imageIndex: number }>)
   );
   const viewportRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const initialPrompt = data[0]?.prompt;
   const { images, loading, getImages, prompt, setPrompt } = usePicFinder({
     initialPrompt,
     modelId,
-    initialFetchCount: 6,
+    initialFetchCount: 9,
   });
 
   const deletePromptMutation = trpc.modelVersion.deleteExplorationPrompt.useMutation({
@@ -137,7 +138,8 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
   const isModerator = currentUser?.isModerator ?? false;
   const selectedPrompt = data.find((p) => p.prompt === prompt);
   const currentIndex = selectedPrompt ? availablePrompts[selectedPrompt.name]?.imageIndex : 0;
-  const imageContainerWidth = viewportRef.current?.getBoundingClientRect().width ?? 0;
+  // get viewport width
+  const imageContainerWidth = cardRef.current?.clientWidth ?? 0;
 
   useEffect(() => {
     if (data.length > 0 && !prompt) setPrompt(data[0].prompt);
@@ -154,6 +156,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
         withBorder
       >
         <Card
+          ref={cardRef}
           sx={{
             backgroundColor: theme.colors.dark[7],
             boxShadow: `0 0 8px 0 ${theme.colors.yellow[7]}`,
@@ -223,7 +226,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                       key={index}
                       src={url}
                       height={height}
-                      width={imageContainerWidth || '100%'}
+                      width={imageContainerWidth}
                       alt={`AI generated image with prompt: ${prompt}`}
                       styles={{
                         image: { objectPosition: 'top' },
@@ -246,7 +249,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                         left: imageContainerWidth,
                         behavior: 'smooth',
                       });
-                      getImages(6);
+                      getImages(9);
                       if (selectedPrompt)
                         setAvailablePrompts((current) => ({
                           ...current,
