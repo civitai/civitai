@@ -13,7 +13,6 @@ export const ingestImages = createJob('ingest-images', '*/4 * * * *', async () =
       url: true,
       scanRequestedAt: true,
     },
-    take: 500,
   });
 
   const buffer = decreaseDate(new Date(), 5, 'minute');
