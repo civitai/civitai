@@ -91,7 +91,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
   const { images, loading, getImages, prompt, setPrompt } = usePicFinder({
     initialPrompt,
     modelId,
-    initialFetchCount: 3,
+    initialFetchCount: 6,
   });
 
   const deletePromptMutation = trpc.modelVersion.deleteExplorationPrompt.useMutation({
@@ -137,7 +137,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
   const isModerator = currentUser?.isModerator ?? false;
   const selectedPrompt = data.find((p) => p.prompt === prompt);
   const currentIndex = selectedPrompt ? availablePrompts[selectedPrompt.name]?.imageIndex : 0;
-  const imageContainerWidth = viewportRef.current?.getBoundingClientRect().width ?? 0;
+  const imageContainerWidth = viewportRef.current?.getBoundingClientRect().width ?? columnWidth;
 
   useEffect(() => {
     if (data.length > 0 && !prompt) setPrompt(data[0].prompt);
@@ -246,7 +246,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                         left: imageContainerWidth,
                         behavior: 'smooth',
                       });
-                      getImages(2);
+                      getImages(6);
                       if (selectedPrompt)
                         setAvailablePrompts((current) => ({
                           ...current,
