@@ -59,7 +59,7 @@ export function MasonryColumns<TData>({
             if (colIndex === 0 && index === 0 && staticItem) {
               return (
                 <React.Fragment key={key}>
-                  {staticItem({ columnWidth, height })}
+                  {staticItem({ columnWidth, height: 450 })}
                   <div id={key.toString()}>
                     {createRenderElement(RenderComponent, index, data, columnWidth, height)}
                   </div>

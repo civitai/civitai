@@ -137,6 +137,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
   const isModerator = currentUser?.isModerator ?? false;
   const selectedPrompt = data.find((p) => p.prompt === prompt);
   const currentIndex = selectedPrompt ? availablePrompts[selectedPrompt.name]?.imageIndex : 0;
+  const imageContainerWidth = viewportRef.current?.getBoundingClientRect().width ?? 0;
 
   useEffect(() => {
     if (data.length > 0 && !prompt) setPrompt(data[0].prompt);
@@ -154,7 +155,6 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
       >
         <Card
           sx={{
-            maxWidth: columnWidth,
             backgroundColor: theme.colors.dark[7],
             boxShadow: `0 0 8px 0 ${theme.colors.yellow[7]}`,
           }}
@@ -223,7 +223,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                       key={index}
                       src={url}
                       height={height}
-                      width={columnWidth}
+                      width={imageContainerWidth}
                       alt={`AI generated image with prompt: ${prompt}`}
                       styles={{
                         image: { objectPosition: 'top' },
@@ -239,10 +239,13 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                     size="md"
                     color="gray"
                     p={4}
-                    loading={loading && currentIndex >= images.length - 1}
+                    loading={loading && currentIndex >= images.length}
                     sx={{ position: 'absolute', top: '50%', right: 10 }}
                     onClick={() => {
-                      viewportRef.current?.scrollBy({ left: columnWidth, behavior: 'smooth' });
+                      viewportRef.current?.scrollBy({
+                        left: imageContainerWidth,
+                        behavior: 'smooth',
+                      });
                       getImages(2);
                       if (selectedPrompt)
                         setAvailablePrompts((current) => ({
