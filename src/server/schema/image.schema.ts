@@ -195,6 +195,7 @@ export const getInfiniteImagesSchema = z
     postId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
+    imageId: z.number().optional(),
     reviewId: z.number().optional(),
     username: usernameSchema.optional(),
     excludedTagIds: z.array(z.number()).optional(),

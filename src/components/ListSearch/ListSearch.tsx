@@ -48,7 +48,7 @@ export function ListSearch({ onSearch }: Props) {
   const parseUserQuery = (query: string) =>
     query.startsWith('@') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
-  const { data: users } = trpc.user.getAll.useQuery(
+  const { data: users, isFetching: fetchingUsers } = trpc.user.getAll.useQuery(
     { query: parseUserQuery(value), limit: 10 },
     { enabled: !!value.length && canQueryUsers }
   );
@@ -57,13 +57,13 @@ export function ListSearch({ onSearch }: Props) {
   const parseTagQuery = (query: string) =>
     query.startsWith('#') ? query.substring(1).toLowerCase().trim() : query.toLowerCase();
 
-  const { data: tags } = trpc.tag.getAll.useQuery(
+  const { data: tags, isFetching: fetchingTags } = trpc.tag.getAll.useQuery(
     { query: parseTagQuery(value), limit, entityType: [TagTarget.Model], withModels: true },
     { enabled: !!value.length && canQueryTags }
   );
 
   const canQueryModels = !value.startsWith('#') && !value.startsWith('@');
-  const { data: models } = trpc.model.getAllPagedSimple.useQuery(
+  const { data: models, isFetching: fetchingModels } = trpc.model.getAllPagedSimple.useQuery(
     { query: parseTagQuery(value), limit },
     { enabled: !!value.length && canQueryModels }
   );
@@ -89,7 +89,7 @@ export function ListSearch({ onSearch }: Props) {
   };
 
   const handleSetQuery = (query: string) => {
-    set({ tag: undefined, query, username: undefined }, '/');
+    set({ tag: undefined, query, username: undefined, view: 'feed' }, '/');
   };
 
   const handleClear = () => {
@@ -114,6 +114,8 @@ export function ListSearch({ onSearch }: Props) {
         .concat(tags?.items.map((tag) => ({ value: tag.name, group: 'Tags' })) ?? []),
     [models?.items, queryingUsers, tags?.items, users]
   );
+
+  const searching = fetchingModels || fetchingTags || fetchingUsers;
 
   return (
     <form
@@ -144,6 +146,7 @@ export function ListSearch({ onSearch }: Props) {
           else if (group === 'Users') handleSetUser(value);
           else if (group === 'Tags') handleSetTag(value);
         }}
+        nothingFound={searching ? 'Searching...' : 'Nothing found. Try changing your query'}
         filter={(value) => {
           if (value.startsWith('@')) {
             const parsed = parseUserQuery(value.toLowerCase().trim());

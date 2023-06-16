@@ -433,7 +433,7 @@ type DropzoneOptions = {
 
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml', '.onnx'],
     acceptedModelFiles: ['Model', 'Config', 'VAE', 'Training Data'],
     maxFiles: 11,
   },

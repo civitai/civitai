@@ -1,6 +1,7 @@
 import { z, ZodNumber, ZodArray } from 'zod';
 import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 import { sanitizeHtml, santizeHtmlOptions } from '~/utils/html-helpers';
+import { isNumeric } from '~/utils/number-helpers';
 
 /** Converts a string to a number */
 export function numericString<I extends ZodNumber>(schema?: I) {
@@ -25,6 +26,16 @@ export function commaDelimitedStringArray() {
     const str = String(value);
     return str.split(',');
   }, z.array(z.string()));
+}
+
+/** Converts a comma delimited string to an array of numbers */
+export function commaDelimitedNumberArray(options?: { message?: string }) {
+  return commaDelimitedStringArray()
+    .transform((val) => parseNumericStringArray(val))
+    .refine(
+      (val) => (val ? val?.every((v) => isNumeric(v)) : true),
+      options?.message ?? 'Value should be a number array'
+    );
 }
 
 export function stringDate() {

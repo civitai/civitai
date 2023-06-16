@@ -25,8 +25,8 @@ import {
 } from '~/server/schema/image.schema';
 import { imageGallerySelect } from '~/server/selectors/image.selector';
 import {
-  getModelVersionImages,
-  getReviewImages,
+  // getModelVersionImages,
+  // getReviewImages,
   getGalleryImages,
   deleteImageById,
   updateImageById,
@@ -43,29 +43,29 @@ import {
 import { ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 
-export const getModelVersionImagesHandler = ({
-  input: { modelVersionId },
-}: {
-  input: GetModelVersionImagesSchema;
-}) => {
-  try {
-    return getModelVersionImages({ modelVersionId });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
+// export const getModelVersionImagesHandler = ({
+//   input: { modelVersionId },
+// }: {
+//   input: GetModelVersionImagesSchema;
+// }) => {
+//   try {
+//     return getModelVersionImages({ modelVersionId });
+//   } catch (error) {
+//     throw throwDbError(error);
+//   }
+// };
 
-export const getReviewImagesHandler = ({
-  input: { reviewId },
-}: {
-  input: GetReviewImagesSchema;
-}) => {
-  try {
-    return getReviewImages({ reviewId });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
+// export const getReviewImagesHandler = ({
+//   input: { reviewId },
+// }: {
+//   input: GetReviewImagesSchema;
+// }) => {
+//   try {
+//     return getReviewImages({ reviewId });
+//   } catch (error) {
+//     throw throwDbError(error);
+//   }
+// };
 
 export type GalleryImageDetail = AsyncReturnType<typeof getGalleryImageDetailHandler>;
 export const getGalleryImageDetailHandler = async ({
@@ -261,9 +261,12 @@ export const setTosViolationHandler = async ({
             },
           },
         },
-        user: { select: { id: true } },
-        imagesOnModels: {
-          select: { modelVersion: { select: { model: { select: { name: true } } } } },
+        userId: true,
+        postId: true,
+        post: {
+          select: {
+            title: true,
+          },
         },
       },
     });
@@ -278,11 +281,12 @@ export const setTosViolationHandler = async ({
 
     // Create notifications in the background
     createNotification({
-      userId: image.user.id,
+      userId: image.userId,
       type: 'tos-violation',
       details: {
-        modelName: image.imagesOnModels?.modelVersion.model.name,
+        modelName: image.post?.title ?? `post #${image.postId}`,
         entity: 'image',
+        url: `/posts/${image.postId}`,
       },
     }).catch((error) => {
       // Print out any errors

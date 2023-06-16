@@ -44,11 +44,14 @@ import { getSystemPermissions } from '~/server/services/system-cache';
 //   }
 // })
 
-export const getUserCreator = async (where: { username?: string; id?: number }) => {
-  if (!where.username && !where.id) {
-    throw new Error('Must provide username or id');
-  }
-
+export const getUserCreator = async ({
+  leaderboardId,
+  ...where
+}: {
+  username?: string;
+  id?: number;
+  leaderboardId?: string;
+}) => {
   return dbRead.user.findFirst({
     where: {
       ...where,
@@ -77,7 +80,14 @@ export const getUserCreator = async (where: { username?: string; id?: number }) 
           followerCountAllTime: true,
         },
       },
-      rank: { select: { leaderboardRank: true, leaderboardId: true, leaderboardTitle: true } },
+      rank: {
+        select: {
+          leaderboardRank: true,
+          leaderboardId: true,
+          leaderboardTitle: true,
+          leaderboardCosmetic: true,
+        },
+      },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {
@@ -483,6 +493,7 @@ export const removeAllContent = ({ id }: { id: number }) => {
     dbWrite.resourceReview.deleteMany({ where: { userId: id } }),
     dbWrite.post.deleteMany({ where: { userId: id } }),
     dbWrite.image.deleteMany({ where: { userId: id } }),
+    dbWrite.article.deleteMany({ where: { userId: id } }),
   ]);
 };
 
@@ -523,6 +534,63 @@ export const getUserArticleEngagements = async ({ userId }: { userId: number }) 
     (acc, { articleId, type }) => ({ ...acc, [type]: [...(acc[type] ?? []), articleId] }),
     {}
   );
+};
+
+export const updateLeaderboardRank = async (userId?: number) => {
+  await dbWrite.$transaction([
+    dbWrite.$executeRaw`
+      UPDATE "UserRank" SET "leaderboardRank" = null, "leaderboardId" = null, "leaderboardTitle" = null, "leaderboardCosmetic" = null
+      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+    `,
+    dbWrite.$executeRaw`
+      WITH user_positions AS (
+        SELECT
+          lr."userId",
+          lr."leaderboardId",
+          l."title",
+          lr.position,
+          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
+        FROM "User" u
+        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+        WHERE lr.date = current_date
+          AND (
+            u."leaderboardShowcase" IS NULL
+            OR lr."leaderboardId" = u."leaderboardShowcase"
+          )
+      ), lowest_position AS (
+        SELECT
+          up."userId",
+          up.position,
+          up."leaderboardId",
+          up."title" "leaderboardTitle",
+          (
+            SELECT data->>'url'
+            FROM "Cosmetic" c
+            WHERE c."leaderboardId" = up."leaderboardId"
+              AND up.position <= c."leaderboardPosition"
+            ORDER BY c."leaderboardPosition"
+            LIMIT 1
+          ) as "leaderboardCosmetic"
+        FROM user_positions up
+        WHERE row_num = 1
+      )
+      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+      SELECT
+      "userId",
+      position,
+      "leaderboardId",
+      "leaderboardTitle",
+      "leaderboardCosmetic"
+      FROM lowest_position
+      ${Prisma.raw(userId ? `WHERE "userId" = ${userId}` : '')}
+      ON CONFLICT ("userId") DO UPDATE SET
+        "leaderboardId" = excluded."leaderboardId",
+        "leaderboardRank" = excluded."leaderboardRank",
+        "leaderboardTitle" = excluded."leaderboardTitle",
+        "leaderboardCosmetic" = excluded."leaderboardCosmetic";
+    `,
+  ]);
 };
 
 export const toggleUserArticleEngagement = async ({

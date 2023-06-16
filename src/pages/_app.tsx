@@ -15,7 +15,15 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { Session } from 'next-auth';
 import { SessionProvider, getSession } from 'next-auth/react';
-import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import React, {
+  ReactElement,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { trpc } from '~/utils/trpc';
@@ -34,16 +42,12 @@ import { isDev, isMaintenanceMode } from '~/env/other';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
-import {
-  FiltersProviderOld,
-  FiltersInput,
-  parseFiltersCookieOld,
-} from '~/providers/FiltersProviderOld';
 import PlausibleProvider from 'next-plausible';
 import { CivitaiSessionProvider } from '~/providers/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { CannyIdentityProvider } from '~/components/Canny/CannyProvider';
+import Router from 'next/router';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -61,7 +65,6 @@ type CustomAppProps = {
   session: Session | null;
   colorScheme: ColorScheme;
   cookies: CookiesContext;
-  filtersOld: FiltersInput;
   filters: CookiesState;
   flags: FeatureFlags;
   isMaintenanceMode: boolean | undefined;
@@ -74,7 +77,6 @@ function MyApp(props: CustomAppProps) {
       session,
       colorScheme: initialColorScheme,
       cookies,
-      filtersOld,
       filters,
       flags,
       isMaintenanceMode,
@@ -105,6 +107,33 @@ function MyApp(props: CustomAppProps) {
     [Component.getLayout]
   );
 
+  // fixes an issue where clicking the browser back button will cause the scroll position to change before the it should
+  // https://github.com/vercel/next.js/issues/3303#issuecomment-507255105
+  const pageHeightRef = useRef<number[]>([]);
+  useEffect(() => {
+    const cachedPageHeight = pageHeightRef.current;
+    const html = document.querySelector('html');
+    if (!html) return;
+
+    const handleChangeStart = () => {
+      cachedPageHeight.push(document.documentElement.offsetHeight);
+    };
+    const handleChangeComplete = () => (html.style.height = 'initial');
+
+    Router.events.on('routeChangeStart', handleChangeStart);
+    Router.events.on('routeChangeComplete', handleChangeComplete);
+    Router.beforePopState(() => {
+      html.style.height = `${cachedPageHeight.pop()}px`;
+      return true;
+    });
+
+    return () => {
+      Router.events.off('routeChangeStart', handleChangeStart);
+      Router.events.off('routeChangeComplete', handleChangeComplete);
+      Router.beforePopState(() => true);
+    };
+  }, []);
+
   const content = isMaintenanceMode ? (
     <MaintenanceMode />
   ) : (
@@ -114,25 +143,23 @@ function MyApp(props: CustomAppProps) {
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
         <CivitaiSessionProvider>
-          <FiltersProvider value={filters}>
-            <CookiesProvider value={cookies}>
-              <FiltersProviderOld value={filtersOld}>
-                <FeatureFlagsProvider flags={flags}>
-                  <CivitaiLinkProvider>
-                    <CustomModalsProvider>
-                      <NotificationsProvider>
-                        <FreezeProvider>
-                          <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                        </FreezeProvider>
-                        <CannyIdentityProvider />
-                        <RoutedContextProvider2 />
-                      </NotificationsProvider>
-                    </CustomModalsProvider>
-                  </CivitaiLinkProvider>
-                </FeatureFlagsProvider>
-              </FiltersProviderOld>
-            </CookiesProvider>
-          </FiltersProvider>
+          <CookiesProvider value={cookies}>
+            <FiltersProvider value={filters}>
+              <FeatureFlagsProvider flags={flags}>
+                <CivitaiLinkProvider>
+                  <CustomModalsProvider>
+                    <NotificationsProvider>
+                      <FreezeProvider>
+                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                      </FreezeProvider>
+                      <CannyIdentityProvider />
+                      <RoutedContextProvider2 />
+                    </NotificationsProvider>
+                  </CustomModalsProvider>
+                </CivitaiLinkProvider>
+              </FeatureFlagsProvider>
+            </FiltersProvider>
+          </CookiesProvider>
         </CivitaiSessionProvider>
       </SessionProvider>
     </>
@@ -207,7 +234,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
-  const filtersOld = parseFiltersCookieOld(cookies);
   const filters = parseFilterCookies(cookies);
 
   if (isMaintenanceMode) {
@@ -217,7 +243,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         colorScheme,
         cookies: parsedCookies,
         isMaintenanceMode,
-        filtersOld,
         filters,
       },
       ...appProps,
@@ -239,7 +264,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
         cookies: parsedCookies,
         session,
         flags,
-        filtersOld,
         filters,
       },
       ...appProps,

@@ -108,7 +108,7 @@ export const constants = {
       '#82c91e',
       '#fab005',
       '#fd7e14',
-    ],
+    ] as string[],
   },
 } as const;
 

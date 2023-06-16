@@ -29,6 +29,7 @@ import {
   IconBox,
   IconDotsVertical,
   IconDownload,
+  IconFlag,
   IconHeart,
   IconMicrophone,
   IconMicrophoneOff,
@@ -50,24 +51,29 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { showErrorNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -429,63 +435,75 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           <Group spacing={4} noWrap>
                             <FollowUserButton userId={user.id} size="md" compact />
 
-                            {(isMod || isSameUser) && (
-                              <Menu position="left" withinPortal>
-                                <Menu.Target>
-                                  <ActionIcon loading={removeContentMutation.isLoading}>
-                                    <IconDotsVertical />
-                                  </ActionIcon>
-                                </Menu.Target>
-                                <Menu.Dropdown>
-                                  <>
-                                    {isMod && (
-                                      <>
-                                        <Menu.Item
-                                          color={user.bannedAt ? 'green' : 'red'}
-                                          icon={
-                                            !user.bannedAt ? (
-                                              <IconBan size={14} stroke={1.5} />
-                                            ) : (
-                                              <IconArrowBackUp size={14} stroke={1.5} />
-                                            )
-                                          }
-                                          onClick={handleToggleBan}
-                                        >
-                                          {user.bannedAt ? 'Restore user' : 'Ban user'}
-                                        </Menu.Item>
-                                        <Menu.Item
-                                          color="red"
-                                          icon={<IconTrash size={14} stroke={1.5} />}
-                                          onClick={handleRemoveContent}
-                                        >
-                                          Remove all content
-                                        </Menu.Item>
-                                        <Menu.Item
-                                          icon={
-                                            user.muted ? (
-                                              <IconMicrophone size={14} stroke={1.5} />
-                                            ) : (
-                                              <IconMicrophoneOff size={14} stroke={1.5} />
-                                            )
-                                          }
-                                          onClick={handleToggleMute}
-                                        >
-                                          {user.muted ? 'Unmute user' : 'Mute user'}
-                                        </Menu.Item>
-                                      </>
-                                    )}
-                                    {isSameUser && (
+                            <Menu position="left" withinPortal>
+                              <Menu.Target>
+                                <ActionIcon loading={removeContentMutation.isLoading}>
+                                  <IconDotsVertical />
+                                </ActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                <>
+                                  {isMod && (
+                                    <>
                                       <Menu.Item
-                                        component={NextLink}
-                                        href={`/user/${user.username}/manage-categories`}
+                                        color={user.bannedAt ? 'green' : 'red'}
+                                        icon={
+                                          !user.bannedAt ? (
+                                            <IconBan size={14} stroke={1.5} />
+                                          ) : (
+                                            <IconArrowBackUp size={14} stroke={1.5} />
+                                          )
+                                        }
+                                        onClick={handleToggleBan}
                                       >
-                                        Manage model categories
+                                        {user.bannedAt ? 'Restore user' : 'Ban user'}
                                       </Menu.Item>
-                                    )}
-                                  </>
-                                </Menu.Dropdown>
-                              </Menu>
-                            )}
+                                      <Menu.Item
+                                        color="red"
+                                        icon={<IconTrash size={14} stroke={1.5} />}
+                                        onClick={handleRemoveContent}
+                                      >
+                                        Remove all content
+                                      </Menu.Item>
+                                      <Menu.Item
+                                        icon={
+                                          user.muted ? (
+                                            <IconMicrophone size={14} stroke={1.5} />
+                                          ) : (
+                                            <IconMicrophoneOff size={14} stroke={1.5} />
+                                          )
+                                        }
+                                        onClick={handleToggleMute}
+                                      >
+                                        {user.muted ? 'Unmute user' : 'Mute user'}
+                                      </Menu.Item>
+                                    </>
+                                  )}
+                                  {isSameUser && (
+                                    <Menu.Item
+                                      component={NextLink}
+                                      href={`/user/${user.username}/manage-categories`}
+                                    >
+                                      Manage model categories
+                                    </Menu.Item>
+                                  )}
+                                  <HideUserButton as="menu-item" userId={user.id} />
+                                  <LoginRedirect reason="report-user">
+                                    <Menu.Item
+                                      icon={<IconFlag size={14} stroke={1.5} />}
+                                      onClick={() =>
+                                        openContext('report', {
+                                          entityType: ReportEntity.User,
+                                          entityId: user.id,
+                                        })
+                                      }
+                                    >
+                                      Report
+                                    </Menu.Item>
+                                  </LoginRedirect>
+                                </>
+                              </Menu.Dropdown>
+                            </Menu>
                           </Group>
                         </Group>
                         <Group spacing="xs">
@@ -493,7 +511,14 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           {stats && (
                             <>
                               <IconBadge
-                                tooltip="Average Rating"
+                                tooltip={
+                                  <StatTooltip
+                                    label="Average Rating"
+                                    value={`${formatToLeastDecimals(stats.ratingAllTime)} (${
+                                      stats.ratingCountAllTime
+                                    })`}
+                                  />
+                                }
                                 sx={{ userSelect: 'none' }}
                                 size="lg"
                                 icon={
@@ -525,29 +550,41 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                   {abbreviateNumber(stats.ratingCountAllTime)}
                                 </Text>
                               </IconBadge>
+                              {uploads === 0 ? null : (
+                                <IconBadge
+                                  icon={<IconUpload size={16} />}
+                                  color="gray"
+                                  size="lg"
+                                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                  tooltip={<StatTooltip label="Uploads" value={uploads} />}
+                                >
+                                  <Text size="sm">{abbreviateNumber(uploads)}</Text>
+                                </IconBadge>
+                              )}
                               <IconBadge
-                                tooltip="Uploads"
-                                icon={<IconUpload size={16} />}
-                                color="gray"
-                                size="lg"
-                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                              >
-                                <Text size="sm">{abbreviateNumber(uploads)}</Text>
-                              </IconBadge>
-                              <IconBadge
-                                tooltip="Followers"
                                 icon={<IconUsers size={16} />}
                                 href={`/user/${user.username}/followers`}
                                 color="gray"
                                 size="lg"
                                 variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                tooltip={
+                                  <StatTooltip
+                                    label="Followers"
+                                    value={stats.followerCountAllTime}
+                                  />
+                                }
                               >
                                 <Text size="sm">
                                   {abbreviateNumber(stats.followerCountAllTime)}
                                 </Text>
                               </IconBadge>
                               <IconBadge
-                                tooltip="Favorites"
+                                tooltip={
+                                  <StatTooltip
+                                    label="Favorites"
+                                    value={stats.favoriteCountAllTime}
+                                  />
+                                }
                                 icon={<IconHeart size={16} />}
                                 color="gray"
                                 variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -558,7 +595,12 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                 </Text>
                               </IconBadge>
                               <IconBadge
-                                tooltip="Downloads"
+                                tooltip={
+                                  <StatTooltip
+                                    label="Downloads"
+                                    value={stats.downloadCountAllTime}
+                                  />
+                                }
                                 icon={<IconDownload size={16} />}
                                 variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                                 size="lg"

@@ -48,6 +48,7 @@ export function sanitizeHtml(
       ],
       div: ['data-youtube-video', 'data-type'],
       span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
+      '*': ['id'],
     },
     exclusiveFilter: stripEmpty
       ? (frame) => {

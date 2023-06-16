@@ -13,8 +13,9 @@ import { getDisplayName } from '~/utils/string-helpers';
 const fileFormats = constants.modelFileFormats.filter((type) => type !== 'Other');
 const fileFormatCount = fileFormats.length;
 
+// This is deprecated
 const mapFileTypeAcceptedFileType: Record<ModelFileType, string> = {
-  Model: '.ckpt,.pt,.safetensors,.bin',
+  Model: '.ckpt,.pt,.safetensors,.bin,.onnx',
   'Pruned Model': '.ckpt,.pt,.safetensors',
   Negative: '.pt,.bin',
   'Training Data': '.zip',
@@ -34,7 +35,7 @@ const fileTypesByModelType: Record<ModelType, ModelFileType[]> = {
   Controlnet: ['Model', 'Config'],
   Poses: ['Archive'],
   Wildcards: ['Archive'],
-  Other: ['Archive'],
+  Other: ['Archive', 'Model'],
   Upscaler: ['Model'],
   VAE: ['Model'],
 };

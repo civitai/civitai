@@ -6,6 +6,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { ModelStatus } from '@prisma/client';
+import { ModelMeta } from '~/server/schema/model.schema';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -69,3 +70,23 @@ export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
 });
+
+export type UpsertExplorationPromptInput = z.infer<typeof upsertExplorationPromptSchema>;
+export const upsertExplorationPromptSchema = z.object({
+  // This is the modelVersionId
+  id: z.number(),
+  // Including modelId to confirm ownership
+  modelId: z.number().optional(),
+  name: z.string().trim().min(1, 'Name cannot be empty.'),
+  prompt: z.string().trim().min(1, 'Prompt cannot be empty.'),
+  index: z.number().optional(),
+});
+
+export type DeleteExplorationPromptInput = z.infer<typeof deleteExplorationPromptSchema>;
+export const deleteExplorationPromptSchema = z.object({
+  id: z.number(),
+  modelId: z.number().optional(),
+  name: z.string().trim().min(1, 'Name cannot be empty.'),
+});
+
+export type ModelVersionMeta = ModelMeta & { picFinderModelId?: number };

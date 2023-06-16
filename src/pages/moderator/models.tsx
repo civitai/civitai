@@ -1,5 +1,6 @@
 import {
   Anchor,
+  Badge,
   Button,
   Center,
   Container,
@@ -16,6 +17,8 @@ import {
 } from '@mantine/core';
 import { ModelStatus } from '@prisma/client';
 import { IconExternalLink } from '@tabler/icons-react';
+import { TRPCClientErrorBase } from '@trpc/client';
+import { DefaultErrorShape } from '@trpc/server';
 import Link from 'next/link';
 import { useState } from 'react';
 
@@ -44,7 +47,7 @@ export default function ModeratorModels() {
 
   const { data, isLoading } = trpc.model.getAllPagedSimple.useQuery({
     needsReview: true,
-    status: [ModelStatus.UnpublishedViolation],
+    status: [ModelStatus.UnpublishedViolation, ModelStatus.Published],
     page: state.page,
     limit: 20,
   });
@@ -58,24 +61,31 @@ export default function ModeratorModels() {
   };
 
   const declineReviewMutation = trpc.model.declineReview.useMutation();
-  const handleDeclineRequest = () => {
+  const declineVersionReviewMutation = trpc.modelVersion.declineReview.useMutation();
+  const handleDeclineRequest = async () => {
     if (!state.selectedModel) return;
 
-    declineReviewMutation.mutate(
-      { id: state.selectedModel.id, reason: state.declineReason },
-      {
-        async onSuccess() {
-          setState((s) => ({ ...s, opened: false, selectedModel: null }));
-          await queryUtils.model.getAllPagedSimple.invalidate();
-        },
-        onError(error) {
-          showErrorNotification({
-            title: 'Error declining request',
-            error: new Error(error.message),
-          });
-        },
-      }
-    );
+    const declineMutation = state.selectedModel.modelVersion
+      ? declineVersionReviewMutation
+      : declineReviewMutation;
+
+    try {
+      await declineMutation.mutateAsync({
+        id: state.selectedModel.modelVersion
+          ? state.selectedModel.modelVersion.id
+          : state.selectedModel.id,
+        reason: state.declineReason,
+      });
+
+      setState((s) => ({ ...s, opened: false, selectedModel: null }));
+      await queryUtils.model.getAllPagedSimple.invalidate();
+    } catch (e) {
+      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      showErrorNotification({
+        title: 'Error declining request',
+        error: new Error(error.message),
+      });
+    }
   };
 
   const toggleModal = (partialState?: Partial<State>) =>
@@ -86,7 +96,7 @@ export default function ModeratorModels() {
       <Stack spacing={0} mb="xl">
         <Title order={1}>Models Needing Review</Title>
         <Text size="sm" color="dimmed">
-          Unpublished models for violating ToS which their owners have request a review
+          Unpublished models for violating ToS which their owners have requested a review
         </Text>
       </Stack>
       {isLoading ? (
@@ -97,8 +107,18 @@ export default function ModeratorModels() {
         <Stack>
           <List listStyleType="none" spacing="md">
             {data?.items.map((model) => {
+              const hasVersion = !!model.modelVersion;
               const unpublishedAt =
-                model.meta && model.meta.unpublishedAt ? new Date(model.meta.unpublishedAt) : null;
+                hasVersion && model.modelVersion?.meta && model.modelVersion?.meta?.unpublishedAt
+                  ? new Date(model.modelVersion.meta.unpublishedAt)
+                  : model.meta && model.meta.unpublishedAt
+                  ? new Date(model.meta.unpublishedAt)
+                  : null;
+              const unpublishedReason =
+                model.meta?.unpublishedReason ?? model.modelVersion?.meta?.unpublishedReason;
+              const customMessage =
+                model.meta?.customMessage ?? model.modelVersion?.meta?.customMessage;
+
               return (
                 <List.Item
                   key={model.id}
@@ -112,23 +132,40 @@ export default function ModeratorModels() {
                 >
                   <Group position="apart" align="flex-start" noWrap>
                     <Stack spacing={0}>
-                      <Link href={`/models/${model.id}/${slugit(model.name)}`} passHref>
-                        <Anchor size="md" target="_blank" lineClamp={1}>
-                          <IconExternalLink size={16} stroke={1.5} /> {model.name}
-                        </Anchor>
-                      </Link>
+                      <Group spacing={8} noWrap>
+                        {hasVersion ? (
+                          <Badge color="violet" radius="xl">
+                            Model Version
+                          </Badge>
+                        ) : (
+                          <Badge radius="xl">Model</Badge>
+                        )}
+                        <Link
+                          href={`/models/${model.id}/${slugit(model.name)}${
+                            model.modelVersion ? `?modelVersionId=${model.modelVersion.id}` : ''
+                          }`}
+                          passHref
+                        >
+                          <Anchor size="md" target="_blank" lineClamp={2}>
+                            {`${model.name}${
+                              model.modelVersion ? ` - ${model.modelVersion.name}` : ''
+                            }`}{' '}
+                            <IconExternalLink size={16} stroke={1.5} />
+                          </Anchor>
+                        </Link>
+                      </Group>
                       {unpublishedAt && (
                         <Text size="xs" color="dimmed">
                           Unpublished at: {formatDate(unpublishedAt)}
                         </Text>
                       )}
-                      {model.meta && model.meta.unpublishedReason && (
+                      {unpublishedReason && (
                         <Text size="sm">
                           <Text weight={500} size="sm" span>
                             Reason initially unpublished:
                           </Text>{' '}
-                          {`${unpublishReasons[model.meta.unpublishedReason].optionLabel}${
-                            model.meta.customMessage ? ` - ${model.meta.customMessage}` : ''
+                          {`${unpublishReasons[unpublishedReason].optionLabel}${
+                            customMessage ? ` - ${customMessage}` : ''
                           }`}
                         </Text>
                       )}

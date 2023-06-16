@@ -19,8 +19,8 @@ import {
   getGalleryImagesHandler,
   getGalleryImagesInfiniteHandler,
   getImageConnectionDataHandler,
-  getModelVersionImagesHandler,
-  getReviewImagesHandler,
+  // getModelVersionImagesHandler,
+  // getReviewImagesHandler,
   setTosViolationHandler,
   moderateImageHandler,
   updateImageHandler,
@@ -68,11 +68,12 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
+// TODO.cleanup - remove unused router methods
 export const imageRouter = router({
-  getModelVersionImages: publicProcedure
-    .input(getModelVersionImageSchema)
-    .query(getModelVersionImagesHandler),
-  getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
+  // getModelVersionImages: publicProcedure
+  //   .input(getModelVersionImageSchema)
+  //   .query(getModelVersionImagesHandler),
+  // getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
   getGalleryImagesInfinite: publicProcedure
     .input(getGalleryImageSchema)
     .use(applyUserPreferences())

@@ -4,6 +4,8 @@ import dayjs from 'dayjs';
 import { createLogger } from '~/utils/logging';
 import { purgeCache } from '~/server/cloudflare/client';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
+import { updateLeaderboardRank } from '~/server/services/user.service';
+import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 
 const log = createLogger('leaderboard', 'blue');
 
@@ -55,25 +57,9 @@ const updateUserLeaderboardRank = createJob(
   'update-user-leaderboard-rank',
   '1 0 * * *',
   async () => {
-    await dbWrite.$transaction([
-      dbWrite.$executeRaw`
-      UPDATE "UserRank" SET "leaderboardRank" = null, "leaderboardId" = null, "leaderboardTitle" = null;
-    `,
-      dbWrite.$executeRaw`
-      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle")
-      SELECT
-        "userId",
-        "leaderboardRank",
-        "leaderboardId",
-        "leaderboardTitle"
-      FROM "UserRank_Live"
-      ON CONFLICT ("userId") DO UPDATE SET
-        "leaderboardId" = excluded."leaderboardId",
-        "leaderboardRank" = excluded."leaderboardRank",
-        "leaderboardTitle" = excluded."leaderboardTitle";
-    `,
-    ]);
+    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
 
+    await updateLeaderboardRank();
     await applyDiscordLeaderboardRoles();
   }
 );

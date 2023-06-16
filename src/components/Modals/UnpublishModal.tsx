@@ -11,16 +11,16 @@ const reasonOptions = Object.entries(unpublishReasons).map(([key, { optionLabel 
   label: optionLabel,
 }));
 
-const { openModal, Modal } = createContextModal<{ modelId: number }>({
+const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: number }>({
   name: 'unpublishModel',
   title: 'Unpublish as Violation',
-  Element: ({ context, props: { modelId } }) => {
+  Element: ({ context, props: { modelId, versionId } }) => {
     const queryUtils = trpc.useContext();
     const [reason, setReason] = useState<UnpublishReason | undefined>();
     const [customMessage, setCustomMessage] = useState<string>('');
     const [error, setError] = useState<string>('');
 
-    const unpublishMutation = trpc.model.unpublish.useMutation({
+    const unpublishModelMutation = trpc.model.unpublish.useMutation({
       onSuccess: async () => {
         await queryUtils.model.getById.invalidate({ id: modelId });
         await queryUtils.model.getAll.invalidate();
@@ -34,15 +34,36 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
         });
       },
     });
+    const unpublishVersionMutation = trpc.modelVersion.unpublish.useMutation({
+      onSuccess: async () => {
+        await queryUtils.model.getById.invalidate({ id: modelId });
+        context.close();
+      },
+      onError: (error) => {
+        showErrorNotification({
+          title: 'Failed to unpublish',
+          error: new Error(error.message),
+          reason: 'An unexpected error occurred. Please try again later.',
+        });
+      },
+    });
     const handleUnpublish = () => {
       setError('');
+
       if (reason === 'other') {
         if (!customMessage) return setError('Required');
-        return unpublishMutation.mutate({ id: modelId, reason, customMessage });
+
+        return versionId
+          ? unpublishVersionMutation.mutate({ id: versionId, reason, customMessage })
+          : unpublishModelMutation.mutate({ id: modelId, reason, customMessage });
       }
 
-      return unpublishMutation.mutate({ id: modelId, reason });
+      return versionId
+        ? unpublishVersionMutation.mutate({ id: versionId, reason })
+        : unpublishModelMutation.mutate({ id: modelId, reason });
     };
+
+    const loading = unpublishModelMutation.isLoading || unpublishVersionMutation.isLoading;
 
     return (
       <Stack>
@@ -70,7 +91,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
               />
             )}
             <Group position="right">
-              <Button onClick={handleUnpublish} loading={unpublishMutation.isLoading}>
+              <Button onClick={handleUnpublish} loading={loading}>
                 Unpublish
               </Button>
             </Group>

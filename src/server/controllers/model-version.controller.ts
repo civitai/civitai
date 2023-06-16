@@ -3,27 +3,30 @@ import { TRPCError } from '@trpc/server';
 import { BaseModel } from '~/server/common/constants';
 
 import { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetModelVersionSchema,
+  ModelVersionMeta,
   ModelVersionUpsertInput,
 } from '~/server/schema/model-version.schema';
+import { DeclineReviewSchema, ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
-  toggleNotifyModelVersion,
+  deleteVersionById,
   getModelVersionRunStrategies,
   getVersionById,
-  upsertModelVersion,
-  deleteVersionById,
   publishModelVersionById,
+  toggleNotifyModelVersion,
+  unpublishModelVersionById,
+  upsertModelVersion,
 } from '~/server/services/model-version.service';
+import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import {
-  updateModelEarlyAccessDeadline,
-  updateModelById,
-  getModel,
-} from '~/server/services/model.service';
-import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -48,12 +51,15 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         trainedWords: true,
         epochs: true,
         steps: true,
+        status: true,
+        createdAt: true,
         model: {
           select: {
             id: true,
             name: true,
             type: true,
             status: true,
+            publishedAt: true,
             user: { select: { id: true } },
           },
         },
@@ -183,32 +189,146 @@ export const publishModelVersionHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const version = await publishModelVersionById(input);
+    const version = await getVersionById({ id: input.id, select: { meta: true } });
+    if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
-    await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+      (version.meta as ModelMeta | null) || {};
+    const updatedVersion = await publishModelVersionById({ ...input, meta });
+
+    await updateModelEarlyAccessDeadline({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
 
-    const model = await getModel({
-      id: version.modelId,
-      select: {
-        nsfw: true,
-      },
+    // Send event in background
+    ctx.track.modelVersionEvent({
+      type: 'Publish',
+      modelId: updatedVersion.modelId,
+      modelVersionId: updatedVersion.id,
+      nsfw: updatedVersion.model.nsfw,
     });
 
-    if (model) {
-      ctx.track.modelVersionEvent({
-        type: 'Publish',
-        modelId: version.modelId,
-        modelVersionId: version.id,
-        nsfw: model.nsfw,
-      });
-    }
-
-    return version;
+    return updatedVersion;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
+  }
+};
+
+export const unpublishModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UnpublishModelSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = input;
+    const modelVersion = await getVersionById({ id, select: { meta: true } });
+    if (!modelVersion) throw throwNotFoundError(`No model version with id ${input.id}`);
+
+    const meta = (modelVersion.meta as ModelVersionMeta | null) || {};
+    const updatedVersion = await unpublishModelVersionById({ ...input, meta, user: ctx.user });
+
+    // Send event in background
+    ctx.track.modelVersionEvent({
+      type: 'Unpublish',
+      modelVersionId: id,
+      modelId: updatedVersion.model.id,
+      nsfw: updatedVersion.model.nsfw,
+    });
+
+    return updatedVersion;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throwDbError(error);
+  }
+};
+
+export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    const version = await getVersionById({
+      id: input.id,
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        meta: true,
+        modelId: true,
+        baseModel: true,
+        trainedWords: true,
+      },
+    });
+    if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
+    if (version.status !== ModelStatus.UnpublishedViolation)
+      throw throwBadRequestError(
+        'Cannot request a review for this version because it is not in the correct status'
+      );
+
+    const meta = (version.meta as ModelVersionMeta | null) || {};
+    const updatedModel = await upsertModelVersion({
+      ...version,
+      baseModel: version.baseModel as BaseModel,
+      meta: { ...meta, needsReview: true },
+    });
+
+    return updatedModel;
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const declineReviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DeclineReviewSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+    const version = await getVersionById({
+      id: input.id,
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        meta: true,
+        modelId: true,
+        baseModel: true,
+        trainedWords: true,
+      },
+    });
+    if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
+
+    const meta = (version.meta as ModelVersionMeta | null) || {};
+    if (version.status !== ModelStatus.UnpublishedViolation && !meta?.needsReview)
+      throw throwBadRequestError(
+        'Cannot decline a review for this version because it is not in the correct status'
+      );
+
+    const updatedModel = await upsertModelVersion({
+      ...version,
+      baseModel: version.baseModel as BaseModel,
+      meta: {
+        ...meta,
+        declinedReason: input.reason,
+        decliendAt: new Date().toISOString(),
+        needsReview: false,
+      },
+    });
+    await trackModActivity(ctx.user.id, {
+      entityType: 'modelVersion',
+      entityId: version.id,
+      activity: 'review',
+    });
+
+    return updatedModel;
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
   }
 };

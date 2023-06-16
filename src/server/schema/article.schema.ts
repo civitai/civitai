@@ -3,7 +3,11 @@ import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';
 import { ArticleSort, BrowsingMode } from '~/server/common/enums';
-import { getAllQuerySchema, infiniteQuerySchema } from '~/server/schema/base.schema';
+import {
+  getAllQuerySchema,
+  infiniteQuerySchema,
+  periodModeSchema,
+} from '~/server/schema/base.schema';
 import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -23,6 +27,7 @@ export const articleWhereSchema = z.object({
   username: z.string().optional(),
   userIds: z.array(z.number()).optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
+  periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
   includeDrafts: z.boolean().optional(),
 });

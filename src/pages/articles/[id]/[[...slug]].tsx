@@ -1,32 +1,30 @@
 import {
   Badge,
   Box,
-  Card,
+  Button,
   Container,
   Divider,
+  Grid,
   Group,
-  SimpleGrid,
   Stack,
   Text,
-  ThemeIcon,
   Title,
   createStyles,
-  useMantineTheme,
 } from '@mantine/core';
 import { ArticleEngagementType } from '@prisma/client';
-import { IconHeart, IconBookmark, IconFile } from '@tabler/icons-react';
+import { IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
 import { z } from 'zod';
 
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
-import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
+import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import { Collection } from '~/components/Collection/Collection';
-import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -35,15 +33,18 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
+import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const querySchema = z.object({
@@ -71,13 +72,22 @@ export default function ArticleDetailsPage({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
-  const theme = useMantineTheme();
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
+  const mobile = useIsMobile();
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
 
   // TODO.articles: add meta description
-  const meta = <Meta title={`Civitai | ${article?.title}`} />;
+  const meta = (
+    <Meta
+      title={`Civitai | ${article?.title}`}
+      image={
+        article?.nsfw || article?.cover == null
+          ? undefined
+          : getEdgeUrl(article.cover, { width: 1200 })
+      }
+    />
+  );
 
   if (isLoading) return <PageLoader />;
   if (!article) return <NotFound />;
@@ -93,143 +103,147 @@ export default function ArticleDetailsPage({
   const category = article.tags.find((tag) => tag.isCategory);
   const tags = article.tags.filter((tag) => !tag.isCategory);
 
+  const actionButtons = (
+    <Group spacing={4} noWrap>
+      <LoginRedirect reason="favorite-model">
+        <ToggleArticleEngagement articleId={article.id}>
+          {({ toggle, isToggled }) => {
+            const isFavorite = isToggled?.Favorite;
+            return (
+              <IconBadge
+                radius="sm"
+                color="gray"
+                size="lg"
+                icon={
+                  <IconBookmark
+                    color={isFavorite ? theme.colors.gray[2] : undefined}
+                    style={{ fill: isFavorite ? theme.colors.gray[2] : undefined }}
+                  />
+                }
+                sx={{ cursor: 'pointer' }}
+                onClick={() => toggle(ArticleEngagementType.Favorite)}
+              >
+                <Text className={classes.badgeText}>
+                  {abbreviateNumber(article.stats?.favoriteCountAllTime ?? 0)}
+                </Text>
+              </IconBadge>
+            );
+          }}
+        </ToggleArticleEngagement>
+      </LoginRedirect>
+      <ShareButton url={`/articles/${article.id}/${slugit(article.title)}`} title={article.title}>
+        <Button
+          variant="subtle"
+          color="gray"
+          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+        >
+          <IconShare3 />
+        </Button>
+      </ShareButton>
+    </Group>
+  );
+
   return (
     <>
       {meta}
       <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
-      <Container size="md">
-        <Stack spacing="xl">
-          <Stack spacing={0}>
-            <Group position="apart" noWrap>
-              <Title weight="bold" className={classes.title}>
-                {article.title}
-              </Title>
-              <Group align="center" className={classes.titleWrapper} noWrap>
-                <LoginRedirect reason="favorite-model">
-                  <ToggleArticleEngagement articleId={article.id}>
-                    {({ toggle, isToggled }) => {
-                      const isFavorite = isToggled?.Favorite;
-                      return (
-                        <IconBadge
-                          radius="sm"
-                          color="gray"
-                          size="lg"
-                          icon={
-                            <IconBookmark
-                              // size={18}
-                              color={isFavorite ? theme.colors.gray[2] : undefined}
-                              style={{ fill: isFavorite ? theme.colors.gray[2] : undefined }}
-                            />
-                          }
-                          sx={{ cursor: 'pointer' }}
-                          onClick={() => toggle(ArticleEngagementType.Favorite)}
-                        >
-                          <Text className={classes.badgeText}>
-                            {abbreviateNumber(article.stats?.favoriteCountAllTime ?? 0)}
-                          </Text>
-                        </IconBadge>
-                      );
-                    }}
-                  </ToggleArticleEngagement>
-                </LoginRedirect>
-                {article.user && <ArticleContextMenu article={article} />}
-              </Group>
+      <Container size="xl">
+        <Stack spacing={0} mb="xl">
+          <Group position="apart" noWrap>
+            <Title weight="bold" className={classes.title}>
+              {article.title}
+            </Title>
+            <Group align="center" className={classes.titleWrapper} noWrap>
+              {!mobile && actionButtons}
+              <ArticleContextMenu article={article} />
             </Group>
-            <Group spacing={8}>
-              <UserAvatar user={article.user} withUsername linkToProfile />
-              <Divider orientation="vertical" />
-              <Text color="dimmed" size="sm">
-                {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
-              </Text>
-              {category && (
-                <>
-                  <Divider orientation="vertical" />
-                  <Link href={`/articles?view=feed&tags=${category.id}`} passHref>
-                    <Badge
-                      component="a"
-                      size="sm"
-                      variant="gradient"
-                      gradient={{ from: 'cyan', to: 'blue' }}
-                      sx={{ cursor: 'pointer' }}
-                    >
-                      {category.name}
-                    </Badge>
-                  </Link>
-                </>
-              )}
-              {!!tags.length && (
-                <>
-                  <Divider orientation="vertical" />
-                  <Collection
-                    items={tags}
-                    renderItem={(tag) => (
-                      <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
-                        <Badge
-                          component="a"
-                          color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
-                          sx={{ cursor: 'pointer' }}
-                        >
-                          {tag.name}
-                        </Badge>
-                      </Link>
-                    )}
-                    grouped
-                  />
-                </>
-              )}
-            </Group>
-          </Stack>
-
-          <Box
-            sx={(theme) => ({
-              height: 'calc(100vh / 3)',
-              '& > img': { height: '100%', objectFit: 'cover', borderRadius: theme.radius.md },
-            })}
-          >
-            <EdgeImage src={article.cover} width={1320} />
-          </Box>
-          <RenderHtml html={article.content} />
-          {article.attachments.length > 0 && (
-            <>
-              <Divider />
-              <Title order={2}>Attachments</Title>
-              <SimpleGrid
-                cols={4}
-                breakpoints={[
-                  { maxWidth: 'md', cols: 2 },
-                  { maxWidth: 'sm', cols: 1 },
-                ]}
-              >
-                {article.attachments.map((attachment) => (
-                  <AttachmentCard key={attachment.id} {...attachment} />
-                ))}
-              </SimpleGrid>
-            </>
-          )}
-          <Divider />
-          <Group position="apart" align="flex-start">
-            <Reactions
-              entityType="article"
-              reactions={article.reactions}
-              entityId={article.id}
-              metrics={{
-                likeCount: article.stats?.likeCountAllTime,
-                dislikeCount: article.stats?.dislikeCountAllTime,
-                heartCount: article.stats?.heartCountAllTime,
-                laughCount: article.stats?.laughCountAllTime,
-                cryCount: article.stats?.cryCountAllTime,
-              }}
-            />
-            <CreatorCard user={article.user} />
           </Group>
-          <Title order={2} id="comments">
-            Comments
-          </Title>
-          {article.user && (
-            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-          )}
+          <Group spacing={8}>
+            <UserAvatar user={article.user} withUsername linkToProfile />
+            <Divider orientation="vertical" />
+            <Text color="dimmed" size="sm">
+              {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
+            </Text>
+            {category && (
+              <>
+                <Divider orientation="vertical" />
+                <Link href={`/articles?view=feed&tags=${category.id}`} passHref>
+                  <Badge
+                    component="a"
+                    size="sm"
+                    variant="gradient"
+                    gradient={{ from: 'cyan', to: 'blue' }}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    {category.name}
+                  </Badge>
+                </Link>
+              </>
+            )}
+            {!!tags.length && (
+              <>
+                <Divider orientation="vertical" />
+                <Collection
+                  items={tags}
+                  renderItem={(tag) => (
+                    <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
+                      <Badge
+                        component="a"
+                        color="gray"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                        sx={{ cursor: 'pointer' }}
+                      >
+                        {tag.name}
+                      </Badge>
+                    </Link>
+                  )}
+                  grouped
+                />
+              </>
+            )}
+          </Group>
         </Stack>
+        <Grid>
+          <Grid.Col xs={12} md={8}>
+            <Stack spacing="xs">
+              <Box
+                sx={(theme) => ({
+                  height: 'calc(100vh / 3)',
+                  '& > img': { height: '100%', objectFit: 'cover', borderRadius: theme.radius.md },
+                })}
+              >
+                <EdgeImage src={article.cover} width={1320} />
+              </Box>
+              <article>
+                <RenderHtml html={article.content} />
+              </article>
+              <Divider />
+              <Group position="apart">
+                <Reactions
+                  entityType="article"
+                  reactions={article.reactions}
+                  entityId={article.id}
+                  metrics={{
+                    likeCount: article.stats?.likeCountAllTime,
+                    dislikeCount: article.stats?.dislikeCountAllTime,
+                    heartCount: article.stats?.heartCountAllTime,
+                    laughCount: article.stats?.laughCountAllTime,
+                    cryCount: article.stats?.cryCountAllTime,
+                  }}
+                />
+                {actionButtons}
+              </Group>
+            </Stack>
+          </Grid.Col>
+          <Grid.Col xs={12} md={3} offsetMd={1}>
+            <Sidebar creator={article.user} attachments={article.attachments} />
+          </Grid.Col>
+        </Grid>
+
+        <Title order={2} id="comments" my="xl">
+          Comments
+        </Title>
+        {article.user && <ArticleDetailComments articleId={article.id} userId={article.user.id} />}
       </Container>
     </>
   );

@@ -20,6 +20,7 @@ export function ArticleContextMenu({ article }: Props) {
   const isOwner = currentUser?.id === article.user?.id;
 
   const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
+  const showUnpublish = atDetailsPage && article.publishedAt !== null;
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
   const handleDeleteArticle = () => {
@@ -109,7 +110,7 @@ export function ArticleContextMenu({ article }: Props) {
             >
               Delete
             </Menu.Item>
-            {atDetailsPage && (
+            {showUnpublish && (
               <Menu.Item
                 color="yellow"
                 icon={<IconBan size={14} stroke={1.5} />}

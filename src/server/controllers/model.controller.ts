@@ -43,6 +43,7 @@ import {
   toggleLockModel,
   unpublishModelById,
   updateModelById,
+  updateModelEarlyAccessDeadline,
   upsertModel,
 } from '~/server/services/model.service';
 import {
@@ -66,6 +67,7 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { ModelSort } from '~/server/common/enums';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -152,6 +154,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
           baseModel: version.baseModel as BaseModel,
+          meta: version.meta as ModelVersionMeta,
         };
       }),
     };
@@ -284,15 +287,29 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
+      modelVersions: input.needsReview
+        ? {
+            select: { id: true, name: true, meta: true },
+            where: { meta: { path: ['needsReview'], equals: true } },
+            take: 1,
+          }
+        : false,
     },
   });
 
   const parsedResults = {
     ...results,
-    items: results.items.map((model) => ({
-      ...model,
-      meta: model.meta as ModelMeta | null,
-    })),
+    items: results.items.map(({ modelVersions = [], ...model }) => {
+      const [version] = modelVersions;
+
+      return {
+        ...model,
+        meta: model.meta as ModelMeta | null,
+        modelVersion: version
+          ? { ...version, meta: version.meta as ModelVersionMeta | null }
+          : undefined,
+      };
+    }),
   };
   return getPagingData(parsedResults, take, page);
 };
@@ -339,6 +356,22 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
+    // Check tags for multiple categories
+    const { tagsOnModels } = input;
+    if (tagsOnModels?.length) {
+      const modelCategories = await getCategoryTags('model');
+      const matchedTags = tagsOnModels.filter((tag) =>
+        modelCategories.some((categoryTag) => categoryTag.name === tag.name)
+      );
+
+      if (matchedTags.length > 1)
+        throw throwBadRequestError(
+          `Model cannot have multiple categories. Please include only one from: ${matchedTags
+            .map((tag) => tag.name)
+            .join(', ')} `
+        );
+    }
+
     const model = await upsertModel({ ...input, userId });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
@@ -377,6 +410,11 @@ export const publishModelHandler = async ({
     const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
       (model.meta as ModelMeta | null) || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
+
+    await updateModelEarlyAccessDeadline({ id: updatedModel.id }).catch((e) => {
+      console.error('Unable to update model early access deadline');
+      console.error(e);
+    });
 
     await ctx.track.modelEvent({
       type: 'Publish',

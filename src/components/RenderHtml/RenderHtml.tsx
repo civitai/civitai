@@ -61,6 +61,17 @@ const useStyles = createStyles((theme) => ({
         flexGrow: 1,
       },
     },
+    // Prevent heading to be hidden by the fixed navbar
+    'h1, h2, h3': {
+      '&:before': {
+        display: 'block',
+        content: '""',
+        // Navbar height + margin
+        marginTop: theme.spacing.xs * -7,
+        height: theme.spacing.xs * 7 + theme.spacing.xs,
+        visibility: 'hidden',
+      },
+    },
   },
 }));
 

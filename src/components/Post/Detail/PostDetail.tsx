@@ -6,7 +6,6 @@ import {
   Container,
   Group,
   Stack,
-  Text,
   Title,
 } from '@mantine/core';
 import { IconDotsVertical, IconShare3 } from '@tabler/icons-react';
@@ -24,21 +23,43 @@ import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { daysFromNow } from '~/utils/date-helpers';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
 
 export function PostDetail({ postId }: { postId: number }) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
   const { images, isLoading: imagesLoading } = useQueryImages({ postId });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
 
+  const meta = (
+    <Meta
+      title={post?.title ?? `Image post by ${post?.user.username}`}
+      description={truncate(removeTags(post?.detail ?? ''), { length: 150 })}
+      image={
+        post?.nsfw || images[0]?.url == null
+          ? undefined
+          : getEdgeUrl(images[0].url, { width: 1200 })
+      }
+    />
+  );
+
   if (postLoading) return <PageLoader />;
   if (!post) return <NotFound />;
+
+  if (post.nsfw && !currentUser)
+    return (
+      <>
+        {meta}
+        <SensitiveShield />
+      </>
+    );
 
   const relatedResource = postResources.find(
     (resource) => resource.modelVersionId === post.modelVersionId
@@ -46,11 +67,7 @@ export function PostDetail({ postId }: { postId: number }) {
 
   return (
     <>
-      <Meta
-        title={post.title ?? `Image post by ${post.user.username}`}
-        description={truncate(removeTags(post.detail ?? ''), { length: 150 })}
-        image={images[0]?.url == null ? undefined : getEdgeUrl(images[0].url, { width: 1200 })}
-      />
+      {meta}
       <TrackView entityId={post.id} entityType="Post" type="PostView" />
       <Container size="sm">
         <Stack>
