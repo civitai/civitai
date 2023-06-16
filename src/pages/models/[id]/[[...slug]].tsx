@@ -903,7 +903,10 @@ export default function ModelDetailsV2({
             modelId={model.id}
             selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
-            generationModelId={selectedVersion?.meta.picFinderModelId}
+            generationOptions={{
+              generationModelId: selectedVersion?.meta.picFinderModelId,
+              includeEditingActions: isOwner,
+            }}
           />
         </Box>
       )}

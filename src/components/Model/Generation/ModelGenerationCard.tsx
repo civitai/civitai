@@ -27,10 +27,9 @@ import {
 } from '@tabler/icons-react';
 import { IconInfoCircle, IconPlus } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { GenerationPromptModal } from '~/components/Model/Generation/GenerationPromptModal';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usePicFinder } from '~/libs/picfinder';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -74,11 +73,22 @@ const useStyles = createStyles((theme, _params, getRef) => ({
   },
 }));
 
-type Props = { columnWidth: number; height: number; versionId: number; modelId?: number };
+type Props = {
+  columnWidth: number;
+  height: number;
+  versionId: number;
+  modelId?: number;
+  withEditingActions?: boolean;
+};
 type State = { modalOpened: boolean; editingPrompt: ModelVersionExploration | undefined };
 
-export function ModelGenerationCard({ columnWidth, height, versionId, modelId }: Props) {
-  const currentUser = useCurrentUser();
+export function ModelGenerationCard({
+  columnWidth,
+  height,
+  versionId,
+  modelId,
+  withEditingActions,
+}: Props) {
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
 
@@ -113,10 +123,10 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
       });
 
       if (previousData) {
-        queryUtils.modelVersion.getExplorationPromptsById.setData(
-          { id: versionId },
-          previousData.filter((p) => p.name !== name)
-        );
+        const updated = previousData.filter((p) => p.name !== name);
+        queryUtils.modelVersion.getExplorationPromptsById.setData({ id: versionId }, updated);
+
+        if (updated.length > 0) setPrompt(updated[0].prompt);
       }
 
       return { previousData };
@@ -145,7 +155,6 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
     });
   };
 
-  const isModerator = currentUser?.isModerator ?? false;
   const selectedPrompt = data.find((p) => p.prompt === prompt);
   const currentIndex = selectedPrompt ? availablePrompts[selectedPrompt.name]?.imageIndex : 0;
   // get viewport width
@@ -316,7 +325,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
           </Card.Section>
           <Card.Section pt="xs" inheritPadding withBorder>
             <Group spacing={8} align="flex-start" noWrap>
-              {isModerator && (
+              {withEditingActions && (
                 <ActionIcon
                   variant="outline"
                   size="sm"
@@ -359,7 +368,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                         <Text inherit inline>
                           {prompt.name}
                         </Text>
-                        {isModerator && (
+                        {withEditingActions && (
                           <Menu position="top-end" withinPortal>
                             <Menu.Target>
                               <ActionIcon size="xs" variant="transparent">
@@ -400,7 +409,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
           </Card.Section>
         </Card>
       </Indicator>
-      {isModerator && (
+      {withEditingActions && (
         <GenerationPromptModal
           prompt={state.editingPrompt}
           opened={state.modalOpened}
