@@ -137,7 +137,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
   const isModerator = currentUser?.isModerator ?? false;
   const selectedPrompt = data.find((p) => p.prompt === prompt);
   const currentIndex = selectedPrompt ? availablePrompts[selectedPrompt.name]?.imageIndex : 0;
-  const imageContainerWidth = viewportRef.current?.getBoundingClientRect().width ?? columnWidth;
+  const imageContainerWidth = viewportRef.current?.getBoundingClientRect().width ?? 0;
 
   useEffect(() => {
     if (data.length > 0 && !prompt) setPrompt(data[0].prompt);
@@ -223,7 +223,7 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                       key={index}
                       src={url}
                       height={height}
-                      width={imageContainerWidth}
+                      width={imageContainerWidth || '100%'}
                       alt={`AI generated image with prompt: ${prompt}`}
                       styles={{
                         image: { objectPosition: 'top' },
@@ -288,7 +288,6 @@ export function ModelGenerationCard({ columnWidth, height, versionId, modelId }:
                     const selected = data.find((p) => p.prompt === prompt);
 
                     if (selected) {
-                      // setSelectedPrompt(selected);
                       const imageIndex = availablePrompts[selected.name]?.imageIndex;
                       viewportRef.current?.scrollTo({ left: columnWidth * imageIndex });
                     }
