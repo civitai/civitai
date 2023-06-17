@@ -307,7 +307,9 @@ export function ModelGenerationCard({
                         left: imageContainerWidth,
                         behavior: 'smooth',
                       });
-                      getImages(9);
+                      const shouldGetMoreImages = currentIndex > images.length - 3;
+                      if (shouldGetMoreImages) getImages(9);
+
                       if (selectedPrompt)
                         setAvailablePrompts((current) => ({
                           ...current,
