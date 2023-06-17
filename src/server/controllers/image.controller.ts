@@ -364,6 +364,19 @@ export const getInfiniteImagesHandler = async ({
   }
 };
 
+const getReactionTotals = (post: ImagesAsPostModel) => {
+  const stats = post.images[0]?.stats;
+  if (!stats) return 0;
+
+  return (
+    stats.likeCountAllTime +
+    stats.laughCountAllTime +
+    stats.heartCountAllTime +
+    stats.cryCountAllTime -
+    stats.dislikeCountAllTime
+  );
+};
+
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, ...input },
@@ -451,8 +464,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       });
     else if (input.sort === ImageSort.MostReactions)
       results.sort((a, b) => {
-        const aReactions = Object.values(a.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
-        const bReactions = Object.values(b.images[0].stats ?? {}).reduce((a, b) => a + b, 0);
+        const aReactions = getReactionTotals(a);
+        const bReactions = getReactionTotals(b);
         if (aReactions < bReactions) return 1;
         if (aReactions > bReactions) return -1;
         return 0;
