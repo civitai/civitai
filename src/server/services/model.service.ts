@@ -67,12 +67,12 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   select: TSelect;
 }) => {
   const OR: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ status: ModelStatus.Published }];
-  if (user?.id) OR.push({ userId: user.id, deletedAt: null });
+  // if (user?.id) OR.push({ userId: user.id, deletedAt: null });
 
   return dbRead.model.findFirst({
     where: {
       id,
-      OR: !user?.isModerator ? OR : undefined,
+      // OR: !user?.isModerator ? OR : undefined,
     },
     select,
   });

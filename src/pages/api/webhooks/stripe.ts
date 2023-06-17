@@ -83,7 +83,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             await upsertSubscription(
               subscription,
               subscription.customer as string,
-              toDateTime(event.created)
+              toDateTime(event.created),
+              event.type
             );
             break;
           case 'checkout.session.completed':
