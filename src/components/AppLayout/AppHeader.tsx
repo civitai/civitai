@@ -204,7 +204,7 @@ export function AppHeader() {
         label: (
           <Group align="center" spacing="xs">
             <IconPhotoUp stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            Posts images
+            Post images
           </Group>
         ),
       },
