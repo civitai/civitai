@@ -163,15 +163,6 @@ export function ResourceReviewCarousel({
           />
           {viewMore && (
             <Carousel.Slide style={{ display: 'flex', alignItems: 'center' }}>
-              {/* <Button
-            component={NextLink}
-            href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
-            variant="outline"
-            fullWidth
-            className={classes.viewMore}
-          >
-            View more
-          </Button> */}
               <AspectRatio
                 ratio={1}
                 sx={(theme) => ({
@@ -182,7 +173,7 @@ export function ResourceReviewCarousel({
               >
                 <Button
                   component={NextLink}
-                  href={`/images?modelVersionId=${modelVersionId}&username=${username}`}
+                  href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&username=${username}`}
                   variant="outline"
                   fullWidth
                   className={classes.viewMore}
