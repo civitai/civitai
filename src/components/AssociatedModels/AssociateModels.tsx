@@ -25,18 +25,15 @@ import {
 import { AssociationType } from '@prisma/client';
 import { IconGripVertical, IconSearch, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { forwardRef, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useState } from 'react';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { AssociatedResourceModel } from '~/server/selectors/model.selector';
-import { ModelFindResourceToAssociate } from '~/types/router';
+import { ModelGetAssociatedResourcesSimple } from '~/types/router';
 import { useDebouncer } from '~/utils/debouncer';
 import { trpc } from '~/utils/trpc';
 
-type State = Array<
-  | { resourceType: 'models'; item: ModelFindResourceToAssociate['models'][number] }
-  | { resourceType: 'articles'; item: ModelFindResourceToAssociate['articles'][number] }
->;
+type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
 
 export function AssociateModels({
   fromId,
@@ -56,27 +53,19 @@ export function AssociateModels({
 
   const { data: { models, articles } = { models: [], articles: [] }, refetch } =
     trpc.model.findResourcesToAssociate.useQuery({ query }, { enabled: false });
-  const { data = { articles: [], models: [] }, isLoading } =
-    trpc.model.getAssociatedResourcesSimple.useQuery({ fromId, type });
-  const [associatedResources, setAssociatedResources] = useState<State>(() => [
-    ...data.models.map((item) => ({ resourceType: 'models' as const, item })),
-    ...data.articles.map((item) => ({ resourceType: 'articles' as const, item })),
-  ]);
+  const { data = [], isLoading } = trpc.model.getAssociatedResourcesSimple.useQuery({
+    fromId,
+    type,
+  });
+  const [associatedResources, setAssociatedResources] = useState<State>(data);
 
   const { mutate, isLoading: isSaving } = trpc.model.setAssociatedModels.useMutation({
-    onSuccess: () => {
-      queryUtils.model.getAssociatedResourcesSimple.setData({ fromId, type }, () =>
-        associatedResources.reduce(
-          (acc, current) => {
-            if (current.resourceType === 'articles') {
-              return { ...acc, articles: [...acc.articles, current.item] };
-            }
-            return { ...acc, models: [...acc.models, current.item] };
-          },
-          { articles: [], models: [] } as ModelFindResourceToAssociate
-        )
+    onSuccess: async () => {
+      queryUtils.model.getAssociatedResourcesSimple.setData(
+        { fromId, type },
+        () => associatedResources as ModelGetAssociatedResourcesSimple
       );
-      queryUtils.model.getAssociatedModelsCardData.invalidate({ fromId, type });
+      await queryUtils.model.getAssociatedModelsCardData.invalidate({ fromId, type });
       setChanged(false);
       onSave?.();
     },
@@ -96,15 +85,15 @@ export function AssociateModels({
     group,
   }: {
     value: string;
-    item: AssociatedResourceModel;
+    item: (typeof models)[number] | (typeof articles)[number];
     group: 'Models' | 'Articles';
   }) => {
     setChanged(true);
     setAssociatedResources((resources) => [
       ...resources,
       ...(group === 'Models'
-        ? [{ resourceType: 'models' as const, item }]
-        : [{ resourceType: 'articles' as const, item: item as any }]), // TODO.manuel: type item correctyly
+        ? [{ resourceType: 'model' as const, item }]
+        : [{ resourceType: 'article' as const, item }]),
     ]);
     setQuery('');
   };
@@ -114,7 +103,7 @@ export function AssociateModels({
     if (!over) return;
     if (active.id !== over.id) {
       const resources = [...associatedResources];
-      const ids = resources.map(({ item }): UniqueIdentifier => item.id);
+      const ids: UniqueIdentifier[] = resources.map(({ item }) => item.id);
       const oldIndex = ids.indexOf(active.id);
       const newIndex = ids.indexOf(over.id);
       const sorted = arrayMove(resources, oldIndex, newIndex);
@@ -131,26 +120,30 @@ export function AssociateModels({
 
   const handleReset = () => {
     setChanged(false);
-    setAssociatedResources([
-      ...data.models.map((item) => ({ resourceType: 'models' as const, item })),
-      ...data.articles.map((item) => ({ resourceType: 'articles' as const, item })),
-    ]);
+    setAssociatedResources(data);
   };
   const handleSave = () => {
-    // TODO.manuel: send ids correctly
-    mutate({ fromId, type, associatedIds: associatedResources.map(({ item }) => item.id) });
+    mutate({
+      fromId,
+      type,
+      associations: associatedResources.map(({ id, resourceType, item }) => ({
+        id,
+        resourceType,
+        resourceId: item.id,
+      })),
+    });
   };
 
   const autocompleteData = useMemo(
     () => [
       ...models
         .filter(
-          (x) => !associatedResources.map(({ item }) => item.id).includes(x.id) && x.id !== fromId
+          (x) => !associatedResources.map(({ item }) => item?.id).includes(x.id) && x.id !== fromId
         )
         .map((model) => ({ value: model.name, nsfw: model.nsfw, item: model, group: 'Models' })),
       ...articles
         .filter(
-          (x) => !associatedResources.map(({ item }) => item.id).includes(x.id) && x.id !== fromId
+          (x) => !associatedResources.map(({ item }) => item?.id).includes(x.id) && x.id !== fromId
         )
         .map((article) => ({
           value: article.title,
@@ -161,6 +154,12 @@ export function AssociateModels({
     ],
     [articles, associatedResources, fromId, models]
   );
+
+  useEffect(() => {
+    if (!associatedResources.length && data.length) {
+      setAssociatedResources(data);
+    }
+  }, [associatedResources.length, data]);
 
   return (
     <Stack>
@@ -199,29 +198,33 @@ export function AssociateModels({
                 strategy={verticalListSortingStrategy}
               >
                 <Stack spacing="xs">
-                  {associatedResources.map(({ resourceType, item }) => (
-                    <SortableItem key={item.id} id={item.id}>
+                  {associatedResources.map((association) => (
+                    <SortableItem key={association.item.id} id={association.item.id}>
                       <Card withBorder p="xs">
                         <Group position="apart">
                           <Group align="center">
                             <IconGripVertical />
                             <Stack spacing="xs">
                               <Text size="md" lineClamp={2}>
-                                {resourceType === 'models' ? item.name : item.title}
+                                {'name' in association.item
+                                  ? association.item.name
+                                  : association.item.title}
                               </Text>
                               <Group spacing="xs">
-                                <Badge>{resourceType === 'models' ? item.type : 'Article'}</Badge>
-                                <Badge leftSection={<IconUser size={12} />}>
-                                  {item.user.username}
+                                <Badge>
+                                  {'type' in association.item ? association.item.type : 'Article'}
                                 </Badge>
-                                {item.nsfw && <Badge color="red">NSFW</Badge>}
+                                <Badge leftSection={<IconUser size={12} />}>
+                                  {association.item.user.username}
+                                </Badge>
+                                {association.item.nsfw && <Badge color="red">NSFW</Badge>}
                               </Group>
                             </Stack>
                           </Group>
                           <ActionIcon
                             variant="filled"
                             color="red"
-                            onClick={() => handleRemove(item.id)}
+                            onClick={() => handleRemove(association.item.id)}
                           >
                             <IconTrash />
                           </ActionIcon>
@@ -233,7 +236,7 @@ export function AssociateModels({
               </SortableContext>
             </DndContext>
           ) : (
-            <Alert>There are no {type.toLowerCase()} models associated with this model</Alert>
+            <Alert>There are no {type.toLowerCase()} resources associated with this model</Alert>
           )}
         </Stack>
       )}

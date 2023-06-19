@@ -264,10 +264,16 @@ export const getAssociatedModelsSchema = z.object({
 
 export type SetAssociatedModelsInput = z.infer<typeof setAssociatedModelsSchema>;
 export const setAssociatedModelsSchema = z.object({
-  id: z.number().optional(),
   fromId: z.number(),
   type: z.nativeEnum(AssociationType),
-  associatedIds: z.number().array(),
-  associatedArticleIds: z.number().array().optional(),
+  associations: z
+    .object({
+      // Association Id
+      id: z.number().optional(),
+      // Model | Article Id
+      resourceId: z.number(),
+      resourceType: z.enum(['model', 'article']),
+    })
+    .array(),
 });
 // #endregion

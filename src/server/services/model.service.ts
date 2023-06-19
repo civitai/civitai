@@ -977,6 +977,7 @@ export const getAssociatedModelsCardData = async (
       modelVersions: {
         orderBy: { index: 'asc' },
         take: 1,
+        where: { status: ModelStatus.Published },
         select: {
           id: true,
           earlyAccessTimeFrame: true,
@@ -1051,6 +1052,7 @@ export const getAssociatedResourcesSimple = async ({ fromId, type }: GetAssociat
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
     select: {
+      id: true,
       toModel: {
         select: associatedResourceSelect,
       },
@@ -1060,23 +1062,21 @@ export const getAssociatedResourcesSimple = async ({ fromId, type }: GetAssociat
     },
   });
 
-  type AssociatedModel = NonNullable<(typeof associations)[number]['toModel']>;
-  type AssociatedArticle = NonNullable<(typeof associations)[number]['toArticle']>;
-  const items = associations.reduce(
-    (acc, current) => {
-      if (current.toModel) acc.models.push(current.toModel);
-      if (current.toArticle) acc.articles.push(current.toArticle);
-
-      return acc;
-    },
-    { articles: [] as AssociatedArticle[], models: [] as AssociatedModel[] }
-  );
+  const items = associations
+    .map(({ id, toModel, toArticle }) =>
+      toModel
+        ? { id, item: toModel, resourceType: 'model' as const }
+        : toArticle
+        ? { id, item: toArticle, resourceType: 'article' as const }
+        : null
+    )
+    .filter(isDefined);
 
   return items;
 };
 
 export const setAssociatedModels = async (
-  { id, fromId, type, associatedIds, associatedArticleIds = [] }: SetAssociatedModelsInput,
+  { fromId, type, associations }: SetAssociatedModelsInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -1085,7 +1085,7 @@ export const setAssociatedModels = async (
       userId: true,
       associations: {
         where: { type },
-        select: { toModelId: true, toArticleId: true },
+        select: { id: true },
         orderBy: { index: 'asc' },
       },
     },
@@ -1094,31 +1094,30 @@ export const setAssociatedModels = async (
   if (!fromModel) throw throwNotFoundError();
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
-  const existingAssociatedModelIds = fromModel.associations
-    .map((x) => x.toModelId)
-    .filter(isDefined);
-  const associationsToRemove = existingAssociatedModelIds.filter(
-    (existingToId) => !associatedIds.includes(existingToId)
+
+  const existingAssociations = fromModel.associations.map((x) => x.id);
+  const associationsToRemove = existingAssociations.filter(
+    (existingToId) => !associations.find((item) => item.id === existingToId)
   );
 
   return await dbWrite.$transaction([
-    // remove associated models not included in payload
+    // remove associated resources not included in payload
     dbWrite.modelAssociations.deleteMany({
-      where: { fromModelId: fromId, type, toModelId: { in: associationsToRemove } },
+      where: {
+        fromModelId: fromId,
+        type,
+        id: { in: associationsToRemove },
+      },
     }),
     // add or update associated models
-    ...associatedIds.map((toId, index) => {
-      const data = { fromModelId: fromId, toModelId: toId, type };
+    ...associations.map((association, index) => {
+      const data =
+        association.resourceType === 'model'
+          ? { fromModelId: fromId, toModelId: association.resourceId, type }
+          : { fromModelId: fromId, toArticleId: association.resourceId, type };
+
       return dbWrite.modelAssociations.upsert({
-        where: { id },
-        update: { index },
-        create: { ...data, associatedById: user?.id, index },
-      });
-    }),
-    ...associatedArticleIds.map((toArticleId, index) => {
-      const data = { fromModelId: fromId, toArticleId, type };
-      return dbWrite.modelAssociations.upsert({
-        where: { id },
+        where: { id: association.id ?? -1 },
         update: { index },
         create: { ...data, associatedById: user?.id, index },
       });
