@@ -18,6 +18,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelModifier, ModelStatus } from '@prisma/client';
 import {
+  IconClock,
   IconDownload,
   IconExclamationMark,
   IconHeart,
@@ -340,9 +341,17 @@ export function ModelVersionDetails({
               Request a Review
             </Button>
           ) : showPublishButton ? (
-            <Button color="green" onClick={handlePublishClick} loading={publishing} fullWidth>
-              Publish this version
-            </Button>
+            <Button.Group>
+              <Button color="green" onClick={handlePublishClick} loading={publishing} fullWidth>
+                Publish this version
+              </Button>
+              {/* TODO: Manuel - Display scheduled modal then call publish and set date */}
+              <Tooltip label="Schedule Publish" withArrow>
+                <Button color="green" variant="outline" loading={publishing}>
+                  <IconClock size={20} />
+                </Button>
+              </Tooltip>
+            </Button.Group>
           ) : (
             <Stack spacing={4}>
               <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>

@@ -30,6 +30,7 @@ import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-c
 import { ingestImages } from '~/server/jobs/ingest-images';
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
 import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
+import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -55,6 +56,7 @@ const jobs: Job[] = [
   ingestImages,
   tempRecomputePostMetrics,
   tempScanFilesMissingHashes,
+  processScheduledPublishing,
 ];
 
 const log = createLogger('jobs', 'green');
