@@ -29,6 +29,7 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { ingestImages } from '~/server/jobs/ingest-images';
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
+import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -53,6 +54,7 @@ const jobs: Job[] = [
   ...leaderboardJobs,
   ingestImages,
   tempRecomputePostMetrics,
+  tempScanFilesMissingHashes,
 ];
 
 const log = createLogger('jobs', 'green');
