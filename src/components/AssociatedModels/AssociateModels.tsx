@@ -51,8 +51,11 @@ export function AssociateModels({
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [query, setQuery] = useState('');
 
-  const { data: { models, articles } = { models: [], articles: [] }, refetch } =
-    trpc.model.findResourcesToAssociate.useQuery({ query }, { enabled: false });
+  const {
+    data: { models, articles } = { models: [], articles: [] },
+    refetch,
+    isFetching,
+  } = trpc.model.findResourcesToAssociate.useQuery({ query }, { enabled: false });
   const { data = [], isLoading } = trpc.model.getAssociatedResourcesSimple.useQuery({
     fromId,
     type,
@@ -159,7 +162,8 @@ export function AssociateModels({
     if (!associatedResources.length && data.length) {
       setAssociatedResources(data);
     }
-  }, [associatedResources.length, data]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   return (
     <Stack>
@@ -173,6 +177,7 @@ export function AssociateModels({
           onChange={handleSearchChange}
           onItemSubmit={handleItemSubmit}
           itemComponent={SearchItem}
+          nothingFound={isFetching ? 'Searching...' : 'Nothing found'}
           limit={20}
           clearable
         />

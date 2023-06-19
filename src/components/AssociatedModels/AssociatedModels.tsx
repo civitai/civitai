@@ -1,8 +1,8 @@
 import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { AssociationType } from '@prisma/client';
 import { IconRocketOff } from '@tabler/icons-react';
-import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
 
+import { ArticleAltCard } from '~/components/Article/Infinite/ArticleAltCard';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -68,7 +68,7 @@ export function AssociatedModels({
                   'hashes' in data ? (
                     <ModelCategoryCard data={data} {...props} />
                   ) : (
-                    <ArticleCard data={data} {...props} />
+                    <ArticleAltCard data={data} {...props} />
                   )
                 }
                 height={columnWidth}
