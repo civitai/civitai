@@ -894,6 +894,13 @@ enum NsfwLevel {
   X
 }
 
+enum ImageIngestionStatus {
+  Pending
+  Scanned
+  Error
+  Blocked
+}
+
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -920,6 +927,8 @@ model Image {
   scanRequestedAt   DateTime?
   mimeType          String?
   sizeKB            Int?
+  ingestion         ImageIngestionStatus    @default(Pending)
+  blockedFor        String?
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?

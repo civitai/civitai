@@ -50,6 +50,9 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { deleteObject } from '~/utils/s3-utils';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 
+// TODO.ingestion - make sure we only return images that have the `ingestion` set to 'scanned' for ALL users
+// no user should have to see images on the site that haven't been scanned or are queued for removal
+
 // export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
 //   const result = await dbRead.imagesOnModels.findMany({
 //     where: { modelVersionId, image: { tosViolation: false, needsReview: false } },
@@ -471,6 +474,18 @@ export type ImageScanResultResponse = {
   tags?: { type: string; name: string }[];
 };
 
+type ImageScanResponse = {
+  status:
+    | 'error' // generic error
+    | 'notFound' // image not found at url
+    | 'pending' // image ingestion service queue is backed up
+    | 'deleted' // image violated tos and was removed from s3 bucket
+    | 'success';
+  tags?: { type: string; name: string }[];
+  blockedFor?: string[];
+  message?: string;
+};
+
 export type IngestImageReturnType =
   | {
       type: 'error';
@@ -485,11 +500,7 @@ export type IngestImageReturnType =
       data: { count: number };
     };
 
-export const ingestImage = async ({
-  image,
-}: {
-  image: IngestImageInput;
-}): Promise<IngestImageReturnType> => {
+export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id } = ingestImageSchema.parse(image);
@@ -499,44 +510,29 @@ export const ingestImage = async ({
 
   if (!isProd && !callbackUrl) {
     console.log('skip ingest');
+    return true;
   } else {
-    const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+    const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         imageId: id,
         imageKey: url,
-        wait: true,
+        // wait: true,
         scans: [ImageScanType.Label, ImageScanType.Moderation],
         callbackUrl,
       }),
-    }).then((res) => res.json())) as ImageScanResultResponse;
-
-    await dbWrite.image.update({
-      where: { id },
-      data: { scanRequestedAt },
-      select: { id: true },
     });
-
-    if (deleted)
-      return {
-        type: 'blocked',
-        data: { tags, blockedFor },
-      };
-
-    if (error) {
-      return {
-        type: 'error',
-        data: { error },
-      };
+    if (response.status === 202) {
+      await dbWrite.image.update({
+        where: { id },
+        data: { scanRequestedAt },
+        select: { id: true },
+      });
+      return true;
     }
+    return false;
   }
-
-  const count = await dbWrite.tagsOnImage.count({ where: { imageId: id } });
-  return {
-    type: 'success',
-    data: { count },
-  };
 };
 
 // TODO.posts - remove when post implementation is fully ready
