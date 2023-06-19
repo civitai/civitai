@@ -977,6 +977,7 @@ export const changeModelModifierHandler = async ({
   }
 };
 
+// #region [associated models]
 export const findResourcesToAssociateHandler = async ({
   input,
 }: {
@@ -1002,7 +1003,6 @@ export const findResourcesToAssociateHandler = async ({
   }
 };
 
-// #region [associated models]
 // Used to get the associated resources for a model
 type GetModelsInfiniteResult = AsyncReturnType<typeof getModelsInfiniteHandler>;
 export const getAssociatedResourcesCardDataHandler = async ({

@@ -17,7 +17,6 @@ import {
   Button,
   Tooltip,
   StackProps,
-  Alert,
   CopyButton,
   ColorSwatch,
   useMantineTheme,
@@ -40,7 +39,6 @@ import {
   IconNetworkOff,
   IconScreenShare,
   IconHeart,
-  IconQuestionMark,
   IconVideo,
 } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
@@ -124,7 +122,6 @@ function LinkDropdown() {
   const { instance, instances, status, error } = useCivitaiLink();
   const features = useFeatureFlags();
   const notAllowed = !features.civitaiLink;
-  console.log({ features, notAllowed });
 
   const handleManageClick = () => {
     setManage((o) => !o);
