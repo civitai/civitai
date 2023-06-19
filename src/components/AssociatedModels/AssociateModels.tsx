@@ -59,13 +59,13 @@ export function AssociateModels({
   });
   const [associatedResources, setAssociatedResources] = useState<State>(data);
 
-  const { mutate, isLoading: isSaving } = trpc.model.setAssociatedModels.useMutation({
+  const { mutate, isLoading: isSaving } = trpc.model.setAssociatedResources.useMutation({
     onSuccess: async () => {
       queryUtils.model.getAssociatedResourcesSimple.setData(
         { fromId, type },
         () => associatedResources as ModelGetAssociatedResourcesSimple
       );
-      await queryUtils.model.getAssociatedModelsCardData.invalidate({ fromId, type });
+      await queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type });
       setChanged(false);
       onSave?.();
     },

@@ -8,6 +8,7 @@ import {
   declineReviewHandler,
   deleteModelHandler,
   findResourcesToAssociateHandler,
+  getAssociatedResourcesCardDataHandler,
   getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
@@ -36,27 +37,27 @@ import {
   findResourcesToAssociateSchema,
   GetAllModelsOutput,
   getAllModelsSchema,
-  getAssociatedModelsSchema,
+  getAssociatedResourcesSchema,
   getDownloadSchema,
   getModelsByCategorySchema,
   getModelsWithCategoriesSchema,
+  getModelVersionsSchema,
   ModelInput,
   modelSchema,
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
-  setAssociatedModelsSchema,
+  setAssociatedResourcesSchema,
   setModelsCategorySchema,
   toggleModelLockSchema,
   unpublishModelSchema,
 } from '~/server/schema/model.schema';
 import {
   getAllModelsWithCategories,
-  getAssociatedModelsCardData,
   getAssociatedResourcesSimple,
   getModelsByCategory,
   getSimpleModelWithVersions,
-  setAssociatedModels,
+  setAssociatedResources,
   setModelsCategory,
 } from '~/server/services/model.service';
 import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
@@ -158,7 +159,7 @@ export const modelRouter = router({
     .use(applyUserPreferences)
     .query(getModelsWithVersionsHandler),
   getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
-  getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
+  getVersions: publicProcedure.input(getModelVersionsSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
@@ -215,14 +216,14 @@ export const modelRouter = router({
   findResourcesToAssociate: publicProcedure
     .input(findResourcesToAssociateSchema)
     .query(findResourcesToAssociateHandler),
-  getAssociatedModelsCardData: publicProcedure
-    .input(getAssociatedModelsSchema)
+  getAssociatedResourcesCardData: publicProcedure
+    .input(getAssociatedResourcesSchema)
     .use(applyUserPreferences)
-    .query(({ input, ctx }) => getAssociatedModelsCardData(input, ctx.user)),
+    .query(getAssociatedResourcesCardDataHandler),
   getAssociatedResourcesSimple: publicProcedure
-    .input(getAssociatedModelsSchema)
+    .input(getAssociatedResourcesSchema)
     .query(({ input }) => getAssociatedResourcesSimple(input)),
-  setAssociatedModels: protectedProcedure
-    .input(setAssociatedModelsSchema)
-    .mutation(({ input, ctx }) => setAssociatedModels(input, ctx.user)),
+  setAssociatedResources: protectedProcedure
+    .input(setAssociatedResourcesSchema)
+    .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
 });

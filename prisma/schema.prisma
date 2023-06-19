@@ -577,11 +577,11 @@ enum AssociationType {
 model ModelAssociations {
   id             Int             @id @default(autoincrement())
   fromModelId    Int
-  fromModel      Model           @relation("FromModelAssociation", fields: [fromModelId], references: [id])
+  fromModel      Model           @relation("FromModelAssociation", fields: [fromModelId], references: [id], onDelete: Cascade)
   toModelId      Int?
-  toModel        Model?          @relation("ToModelAssociation", fields: [toModelId], references: [id])
+  toModel        Model?          @relation("ToModelAssociation", fields: [toModelId], references: [id], onDelete: Cascade)
   toArticleId    Int?
-  toArticle      Article?        @relation(fields: [toArticleId], references: [id])
+  toArticle      Article?        @relation(fields: [toArticleId], references: [id], onDelete: Cascade)
   associatedById Int?
   createdAt      DateTime        @default(now())
   type           AssociationType

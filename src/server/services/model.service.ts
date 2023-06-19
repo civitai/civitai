@@ -1,11 +1,8 @@
 import {
-  FindResourcesToAssociateSchema,
-  GetAssociatedModelsInput,
+  GetAssociatedResourcesInput,
   GetModelsWithCategoriesSchema,
-  SetAssociatedModelsInput,
+  SetAssociatedResourcesInput,
   SetModelsCategoryInput,
-  UserPreferencesForModelsInput,
-  getAllModelsSchema,
 } from './../schema/model.schema';
 import {
   CommercialUse,
@@ -32,6 +29,7 @@ import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
   GetModelsByCategoryInput,
+  GetModelVersionsSchema,
   ModelInput,
   ModelMeta,
   ModelUpsertInput,
@@ -275,9 +273,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   return { items };
 };
 
-export const getModelVersionsMicro = ({ id }: { id: number }) => {
+export const getModelVersionsMicro = ({
+  id,
+  excludeUnpublished: excludeDrafts,
+}: GetModelVersionsSchema) => {
   return dbRead.modelVersion.findMany({
-    where: { modelId: id },
+    where: { modelId: id, status: excludeDrafts ? ModelStatus.Published : undefined },
     orderBy: { index: 'asc' },
     select: { id: true, name: true, index: true },
   });
@@ -936,118 +937,10 @@ export const setModelsCategory = async ({
 };
 
 // #region [associated models]
-export const getAssociatedModelsCardData = async (
-  { fromId, type, ...userPreferences }: GetAssociatedModelsInput & UserPreferencesForModelsInput,
-  user?: SessionUser
-) => {
-  const period = MetricTimeframe.AllTime;
-  const associatedModels = await dbRead.modelAssociations.findMany({
-    where: { fromModelId: fromId, type },
-    orderBy: { index: 'asc' },
-    select: { toModelId: true, toArticleId: true },
-  });
-  const ids = associatedModels.map((x) => x.toModelId);
-  if (!ids.length) return [];
-  const input = getAllModelsSchema.parse({ ...userPreferences, ids });
-
-  const { items } = await getModels({
-    input,
-    user,
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      nsfw: true,
-      status: true,
-      createdAt: true,
-      lastVersionAt: true,
-      publishedAt: true,
-      locked: true,
-      earlyAccessDeadline: true,
-      mode: true,
-      rank: {
-        select: {
-          [`downloadCount${period}`]: true,
-          [`favoriteCount${period}`]: true,
-          [`commentCount${period}`]: true,
-          [`ratingCount${period}`]: true,
-          [`rating${period}`]: true,
-        },
-      },
-      modelVersions: {
-        orderBy: { index: 'asc' },
-        take: 1,
-        where: { status: ModelStatus.Published },
-        select: {
-          id: true,
-          earlyAccessTimeFrame: true,
-          createdAt: true,
-        },
-      },
-      user: { select: simpleUserSelect },
-      hashes: {
-        select: modelHashSelect,
-        where: {
-          hashType: ModelHashType.SHA256,
-          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-        },
-      },
-    },
-  });
-
-  // sort models
-  const models = ids.map((id) => items.find((x) => x.id === id)).filter(isDefined);
-
-  const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
-  const images = !!modelVersionIds.length
-    ? await getImagesForModelVersion({
-        modelVersionIds,
-        excludedTagIds: input.excludedImageTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
-        excludedUserIds: input.excludedUserIds,
-        currentUserId: user?.id,
-      })
-    : [];
-
-  return models
-    .map(({ hashes, modelVersions, rank, ...model }) => {
-      const [version] = modelVersions;
-      if (!version) return null;
-      const [image] = images.filter((i) => i.modelVersionId === version.id);
-      const showImageless =
-        (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
-      if (!image && !showImageless) return null;
-
-      return {
-        ...model,
-        hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        rank: {
-          downloadCount: rank?.downloadCountAllTime ?? 0,
-          favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
-          commentCount: rank?.[`commentCount${period}`] ?? 0,
-          ratingCount: rank?.[`ratingCount${period}`] ?? 0,
-          rating: rank?.[`rating${period}`] ?? 0,
-        },
-        image:
-          model.mode !== ModelModifier.TakenDown
-            ? (image as (typeof images)[0] | undefined)
-            : undefined,
-        // earlyAccess,
-      };
-    })
-    .filter(isDefined);
-};
-
-export const findResourcesToAssociate = async (args: FindResourcesToAssociateSchema) => {
-  const validated = getAllModelsSchema.parse(args);
-  const { items } = await getModels({
-    input: { ...validated, take: validated.limit },
-    select: associatedResourceSelect,
-  });
-  return items;
-};
-
-export const getAssociatedResourcesSimple = async ({ fromId, type }: GetAssociatedModelsInput) => {
+export const getAssociatedResourcesSimple = async ({
+  fromId,
+  type,
+}: GetAssociatedResourcesInput) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
@@ -1075,8 +968,8 @@ export const getAssociatedResourcesSimple = async ({ fromId, type }: GetAssociat
   return items;
 };
 
-export const setAssociatedModels = async (
-  { fromId, type, associations }: SetAssociatedModelsInput,
+export const setAssociatedResources = async (
+  { fromId, type, associations }: SetAssociatedResourcesInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({

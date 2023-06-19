@@ -1,6 +1,7 @@
 import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { AssociationType } from '@prisma/client';
 import { IconRocketOff } from '@tabler/icons-react';
+import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
 
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -24,7 +25,7 @@ export function AssociatedModels({
   const currentUser = useCurrentUser();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
-  const { data = [], isLoading } = trpc.model.getAssociatedModelsCardData.useQuery({
+  const { data = [], isLoading } = trpc.model.getAssociatedResourcesCardData.useQuery({
     fromId,
     type,
   });
@@ -63,7 +64,13 @@ export function AssociatedModels({
             ) : data.length ? (
               <MasonryCarousel
                 data={data}
-                render={ModelCategoryCard}
+                render={({ data, ...props }) =>
+                  'hashes' in data ? (
+                    <ModelCategoryCard data={data} {...props} />
+                  ) : (
+                    <ArticleCard data={data} {...props} />
+                  )
+                }
                 height={columnWidth}
                 itemId={(x) => x.id}
               />
