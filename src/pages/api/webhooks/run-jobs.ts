@@ -28,6 +28,7 @@ import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { ingestImages } from '~/server/jobs/ingest-images';
+import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
 
 const jobs: Job[] = [
   scanFilesJob,
@@ -51,6 +52,7 @@ const jobs: Job[] = [
   applyNsfwBaseline,
   ...leaderboardJobs,
   ingestImages,
+  tempRecomputePostMetrics,
 ];
 
 const log = createLogger('jobs', 'green');
