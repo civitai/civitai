@@ -108,7 +108,7 @@ export function CommentDiscussionMenu({
     openConfirmModal({
       modalId: 'confirm-tos-violation',
       title: 'Report ToS Violation',
-      children: `Are you sure you want to report this comment for a Terms of Service violation? Once marked, it won't show up for other people`,
+      children: `Are you sure you want to report this comment as a Terms of Service violation?`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
       confirmProps: { color: 'red', disabled: tosViolationMutation.isLoading },
