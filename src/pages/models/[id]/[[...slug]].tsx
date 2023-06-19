@@ -417,6 +417,19 @@ export default function ModelDetailsV2({
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
 
+  const deleted = !!model && !!model.deletedAt && model.status === ModelStatus.Deleted;
+  if (!!model.deletedAt && !isOwner && !isModerator) {
+    if (model.deletedBy !== model.user.id) return <NotFound />;
+    else
+      return (
+        <Center p="xl">
+          <Alert>
+            <Text size="lg">This resource has been removed by its owner</Text>
+          </Alert>
+        </Center>
+      );
+  }
+
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
 
@@ -443,7 +456,6 @@ export default function ModelDetailsV2({
     );
 
   const isFavorite = !!favoriteModels.find((modelId) => modelId === id);
-  const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const published = model.status === ModelStatus.Published;
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const isMuted = currentUser?.muted ?? false;
@@ -891,7 +903,10 @@ export default function ModelDetailsV2({
             modelId={model.id}
             selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
-            withGenerationCard={!!selectedVersion?.meta.picFinderModelId}
+            generationOptions={{
+              generationModelId: selectedVersion?.meta.picFinderModelId,
+              includeEditingActions: isOwner,
+            }}
           />
         </Box>
       )}

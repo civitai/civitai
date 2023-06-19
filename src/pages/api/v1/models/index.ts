@@ -85,6 +85,7 @@ export default MixedAuthEndpoint(async function handler(
                 : [],
               images: includeImages
                 ? images.map(({ url, id, ...image }) => ({
+                    id,
                     url: getEdgeUrl(url, { width: 450, name: id.toString() }),
                     ...image,
                   }))

@@ -1,6 +1,7 @@
 import { Theme } from 'next-auth';
 import { SendVerificationRequestParams } from 'next-auth/providers';
 import { createTransport } from 'nodemailer';
+import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 
 export async function sendVerificationRequest({
   identifier: to,
@@ -8,6 +9,11 @@ export async function sendVerificationRequest({
   provider: { server, from },
   theme,
 }: SendVerificationRequestParams) {
+  const emailDomain = to.split('@')[1];
+  if (blockedDomains.includes(emailDomain)) {
+    throw new Error(`Email domain ${emailDomain} is not allowed`);
+  }
+
   // NOTE: You are not required to use `nodemailer`, use whatever you want.
   const transport = createTransport(server);
   const result = await transport.sendMail({

@@ -69,6 +69,7 @@ export function GenerationPromptModal({
             label="Prompt"
             placeholder="e.g.: A kitten with a unicorn horn"
             rows={3}
+            autosize
             withAsterisk
           />
           <InputText name="id" type="hidden" clearable={false} hidden />

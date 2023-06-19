@@ -495,36 +495,28 @@ export const ingestImage = async ({
   const { url, id } = ingestImageSchema.parse(image);
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
-  const payload = {
-    imageId: id,
-    imageKey: url,
-    wait: true,
-    scans: [ImageScanType.Label, ImageScanType.Moderation],
-    callbackUrl,
-  };
-
-  await dbWrite.image.update({
-    where: { id },
-    data: { scanRequestedAt: new Date() },
-    select: { id: true },
-  });
+  const scanRequestedAt = new Date();
 
   if (!isProd && !callbackUrl) {
-    // await dbWrite.tagsOnImage.create({
-    //   data: {
-    //     imageId: id,
-    //     tagId: 7756,
-    //     automated: true,
-    //     confidence: 100,
-    //   },
-    // });
     console.log('skip ingest');
   } else {
     const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        imageId: id,
+        imageKey: url,
+        wait: true,
+        scans: [ImageScanType.Label, ImageScanType.Moderation],
+        callbackUrl,
+      }),
     }).then((res) => res.json())) as ImageScanResultResponse;
+
+    await dbWrite.image.update({
+      where: { id },
+      data: { scanRequestedAt },
+      select: { id: true },
+    });
 
     if (deleted)
       return {
