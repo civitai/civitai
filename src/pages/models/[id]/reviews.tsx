@@ -76,6 +76,7 @@ export default function ModelReviews() {
   });
   const { data: versions, isLoading: loadingVersions } = trpc.model.getVersions.useQuery({
     id: modelId,
+    excludeUnpublished: true,
   });
   const {
     data: resourceReviews,

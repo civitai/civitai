@@ -46,7 +46,7 @@ export default function PostCreate() {
   const queryUtils = trpc.useContext();
 
   const { data: versions, isLoading: versionsLoading } = trpc.model.getVersions.useQuery(
-    { id: modelId ?? 0 },
+    { id: modelId ?? 0, excludeUnpublished: true },
     { enabled: !!modelId && !reviewing }
   );
 

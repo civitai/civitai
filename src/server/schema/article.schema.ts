@@ -3,14 +3,11 @@ import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';
 import { ArticleSort, BrowsingMode } from '~/server/common/enums';
-import {
-  getAllQuerySchema,
-  infiniteQuerySchema,
-  periodModeSchema,
-} from '~/server/schema/base.schema';
+import { infiniteQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 export const userPreferencesForArticlesSchema = z.object({
   excludedIds: z.array(z.number()).optional(),
@@ -30,6 +27,7 @@ export const articleWhereSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
   includeDrafts: z.boolean().optional(),
+  ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
 });
 
 // export const articleSortSchema = z.object({

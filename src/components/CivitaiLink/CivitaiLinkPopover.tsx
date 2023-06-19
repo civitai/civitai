@@ -17,7 +17,6 @@ import {
   Button,
   Tooltip,
   StackProps,
-  Alert,
   CopyButton,
   ColorSwatch,
   useMantineTheme,
@@ -40,7 +39,6 @@ import {
   IconNetworkOff,
   IconScreenShare,
   IconHeart,
-  IconQuestionMark,
   IconVideo,
 } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
