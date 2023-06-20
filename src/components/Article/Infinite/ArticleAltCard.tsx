@@ -1,7 +1,7 @@
 import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -14,6 +14,7 @@ import { ArticleContextMenu } from '../ArticleContextMenu';
 
 export function ArticleAltCard({ data }: Props) {
   const { classes } = useStyles();
+  const router = useRouter();
 
   const { id, title, cover, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
@@ -86,9 +87,11 @@ export function ArticleAltCard({ data }: Props) {
               }
             >
               <Box
-                component={NextLink}
-                href={`/user/${data.user.username}`}
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  router.push(`/user/${data.user.username}`);
+                }}
                 sx={{ borderRadius: '50%' }}
                 ml="auto"
                 mr="xs"
