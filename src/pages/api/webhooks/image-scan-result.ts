@@ -161,6 +161,12 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
     }
   }
 
+  const image = await dbWrite.image.findUnique({
+    where: { id },
+    select: { id: true, meta: true },
+  });
+  if (!image) throw new Error('Image not found');
+
   try {
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled")
@@ -171,11 +177,6 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
     `);
   } catch (e: any) {
-    const image = await dbWrite.image.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-    if (!image) throw new Error('Image not found');
     throw new Error(e.message);
   }
 
@@ -202,36 +203,29 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
 
     // Set scannedAt and needsReview
     const shouldReview = hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw);
-    const image = await dbWrite.image.update({
-      where: { id },
-      data: {
-        scannedAt: new Date(),
-        needsReview: shouldReview ? true : undefined,
-        ingestion: ImageIngestionStatus.Scanned,
-      },
-      select: { id: true, meta: true },
-    });
-
-    // Set nsfw level
-    await dbWrite.$executeRaw`
-      SELECT update_nsfw_level(${id}::int);
-    `;
-
-    // Check metadata for blocklist if nsfw, if on blocklist, delete it...
     const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
+
+    const data: Prisma.ImageUpdateInput = {
+      scannedAt: new Date(),
+      needsReview: shouldReview ? true : undefined,
+      ingestion: ImageIngestionStatus.Scanned,
+    };
+
     if (nsfw && prompt) {
       const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
       if (!success) {
-        await dbWrite.image.update({
-          where: { id },
-          data: {
-            ingestion: ImageIngestionStatus.Blocked,
-            blockedFor: blockedFor.join(','),
-          },
-          select: { id: true },
-        });
+        data.ingestion = ImageIngestionStatus.Blocked;
+        data.blockedFor = blockedFor.join(',');
       }
     }
+
+    await dbWrite.image.updateMany({
+      where: { id },
+      data,
+    });
+
+    // Set nsfw level
+    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
   } catch (e: any) {
     throw new Error(e.message);
   }

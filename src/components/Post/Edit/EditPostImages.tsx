@@ -161,9 +161,15 @@ function ImageController({
         </Group>
       </>
       {data?.ingestion === ImageIngestionStatus.Blocked && (
-        <Card radius={0} p={0}>
-          <Alert color="red" radius={0}>
-            <Center>
+        <Card
+          radius={0}
+          p={0}
+          sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }}
+        >
+          <Alert
+            color="red"
+            radius={0}
+            title={
               <Group spacing={4}>
                 <Popover position="top" withinPortal withArrow>
                   <Popover.Target>
@@ -182,7 +188,9 @@ function ImageController({
                 </Popover>
                 <Text>TOS Violation</Text>
               </Group>
-            </Center>
+            }
+          >
+            <Text>This image has been flagged as a TOS violation.</Text>
           </Alert>
         </Card>
       )}
