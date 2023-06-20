@@ -30,9 +30,9 @@ export function VotableTags({
 }: GalleryTagProps) {
   const queryUtils = trpc.useContext();
   const setVote = useVotableTagStore((state) => state.setVote);
-  const { data: tags = initialTags, isLoading } = trpc.tag.getVotableTags.useQuery(
+  const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
-    { enabled: !initialTags }
+    { enabled: !initialTags, initialData: initialTags }
   );
   canAdd = canAdd && !initialTags;
   canAddModerated = canAddModerated && !initialTags;

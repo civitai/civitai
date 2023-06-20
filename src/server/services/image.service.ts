@@ -37,7 +37,7 @@ import {
 } from '~/server/schema/image.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getImageV2Select, ImageV2Model } from '~/server/selectors/imagev2.selector';
-import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getAllowedAnonymousTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
@@ -49,6 +49,7 @@ import {
 import { decreaseDate } from '~/utils/date-helpers';
 import { deleteObject } from '~/utils/s3-utils';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
+import { logToDb } from '~/utils/logging';
 
 // TODO.ingestion - make sure we only return images that have the `ingestion` set to 'scanned' for ALL users
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -466,40 +467,6 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   });
 };
 
-export type ImageScanResultResponse = {
-  ok: boolean;
-  error?: string;
-  deleted?: boolean;
-  blockedFor?: string[];
-  tags?: { type: string; name: string }[];
-};
-
-type ImageScanResponse = {
-  status:
-    | 'error' // generic error
-    | 'notFound' // image not found at url
-    | 'pending' // image ingestion service queue is backed up
-    | 'deleted' // image violated tos and was removed from s3 bucket
-    | 'success';
-  tags?: { type: string; name: string }[];
-  blockedFor?: string[];
-  message?: string;
-};
-
-export type IngestImageReturnType =
-  | {
-      type: 'error';
-      data: { error: string };
-    }
-  | {
-      type: 'blocked';
-      data: { blockedFor?: string[]; tags?: { type: string; name: string }[] };
-    }
-  | {
-      type: 'success';
-      data: { count: number };
-    };
-
 export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
@@ -511,26 +478,31 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
   if (!isProd && !callbackUrl) {
     console.log('skip ingest');
     return true;
-  } else {
-    const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        imageId: id,
-        imageKey: url,
-        // wait: true,
-        scans: [ImageScanType.Label, ImageScanType.Moderation],
-        callbackUrl,
-      }),
+  }
+
+  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageId: id,
+      imageKey: url,
+      // wait: true,
+      scans: [ImageScanType.Label, ImageScanType.Moderation],
+      callbackUrl,
+    }),
+  });
+  if (response.status === 202) {
+    await dbWrite.image.updateMany({
+      where: { id },
+      data: { scanRequestedAt },
     });
-    if (response.status === 202) {
-      await dbWrite.image.update({
-        where: { id },
-        data: { scanRequestedAt },
-        select: { id: true },
-      });
-      return true;
-    }
+    return true;
+  } else {
+    await logToDb('image-ingestion', {
+      type: 'error',
+      imageId: id,
+      url,
+    });
     return false;
   }
 };
@@ -1626,4 +1598,50 @@ export const getImagesByCategory = async ({
   });
 
   return { items, nextCursor };
+};
+
+export const getImageIngestionResults = async ({
+  id,
+  userId,
+}: GetByIdInput & { userId?: number }) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      ingestion: true,
+      blockedFor: true,
+      tagComposites: {
+        where: { OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
+        select: imageTagCompositeSelect,
+        orderBy: { score: 'desc' },
+      },
+    },
+  });
+  if (!image) throw throwNotFoundError();
+
+  const votableTags: VotableTagModel[] = image.tagComposites.map(
+    ({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      nsfw: tagNsfw,
+      name: tagName,
+    })
+  );
+  if (userId) {
+    const userVotes = await dbRead.tagsOnImageVote.findMany({
+      where: { imageId: id, userId },
+      select: { tagId: true, vote: true },
+    });
+
+    for (const tag of votableTags) {
+      const userVote = userVotes.find((vote) => vote.tagId === tag.id);
+      if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+    }
+  }
+
+  return {
+    ingestion: image.ingestion,
+    blockedFor: image.blockedFor,
+    tags: votableTags,
+  };
 };

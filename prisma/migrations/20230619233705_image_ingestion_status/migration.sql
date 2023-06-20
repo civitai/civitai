@@ -5,4 +5,6 @@ CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Bloc
 ALTER TABLE "Image" ADD COLUMN     "blockedFor" TEXT,
 ADD COLUMN     "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Pending';
 
--- TODO.ingestion - set image ingestion statuses for all previous images
+UPDATE "Image"
+SET "ingestion" = 'Scanned'
+WHERE "scannedAt" IS NOT NULL

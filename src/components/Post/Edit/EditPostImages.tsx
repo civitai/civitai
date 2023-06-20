@@ -33,6 +33,8 @@ import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { trpc } from '~/utils/trpc';
+import { useDebouncer } from '~/utils/debouncer';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
@@ -74,7 +76,7 @@ function ImageController({
     generationProcess,
     needsReview,
     resourceHelper,
-    _count,
+    blockedFor,
   },
 }: {
   image: PostEditImage;
@@ -85,6 +87,14 @@ function ImageController({
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
+  const { data, refetch } = trpc.image.getIngestionResults.useQuery({ id }, { enabled: false });
+  const debouncer = useDebouncer(1000);
+
+  useEffect(() => {
+    if (!id) return;
+    debouncer(refetch);
+  }, [id, refetch, debouncer]);
+
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
       <EdgeImage
@@ -93,8 +103,16 @@ function ImageController({
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
       />
-      {!!_count.tags && (
-        <VotableTags entityType="image" entityId={id} p="xs" canAdd canAddModerated />
+      {/* TODO - get tags for every image after a set time */}
+      {data?.tags && (
+        <VotableTags
+          entityType="image"
+          entityId={id}
+          p="xs"
+          canAdd
+          canAddModerated
+          tags={data.tags}
+        />
       )}
       <>
         <Group className={classes.actions}>
@@ -139,6 +157,30 @@ function ImageController({
           </Menu>
         </Group>
       </>
+      <Card className={classes.footer} radius={0} p={0}>
+        <Alert color="red" radius={0}>
+          <Center>
+            <Group spacing={4}>
+              <Popover position="top" withinPortal withArrow>
+                <Popover.Target>
+                  <ActionIcon>
+                    <IconInfoCircle />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Stack spacing={0}>
+                    <Text size="xs" weight={500}>
+                      Blocked for
+                    </Text>
+                    <Code color="red">{blockedFor}</Code>
+                  </Stack>
+                </Popover.Dropdown>
+              </Popover>
+              <Text>TOS Violation</Text>
+            </Group>
+          </Center>
+        </Alert>
+      </Card>
     </Card>
   );
 }
