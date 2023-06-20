@@ -8,6 +8,12 @@ import { tagsNeedingReview } from '~/libs/tags';
 
 const tagCache: Record<string, number> = {};
 
+enum Status {
+  Success = 0,
+  NotFound = 1, // image not found at url
+  Unscannable = 2,
+}
+
 type IncomingTag = z.infer<typeof tagSchema>;
 const tagSchema = z.object({
   tag: z.string().transform((x) => x.toLowerCase().trim()),
@@ -19,11 +25,7 @@ const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
   tags: tagSchema.array().optional(),
-  status: z.enum([
-    'notFound', // image not found at url
-    'unscannable',
-    'success',
-  ]),
+  status: z.nativeEnum(Status),
 });
 
 function isModerationCategory(tag: string) {
@@ -35,24 +37,26 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 
   const bodyResults = schema.safeParse(req.body);
+  if (!bodyResults.success) console.log(bodyResults.error);
   if (!bodyResults.success)
     return res
       .status(400)
       .json({ ok: false, error: `Invalid body: ${bodyResults.error.flatten().fieldErrors}` });
 
   const data = bodyResults.data;
+
   try {
     switch (bodyResults.data.status) {
-      case 'notFound':
+      case Status.NotFound:
         await dbWrite.image.delete({ where: { id: data.id } });
         break;
-      case 'unscannable':
+      case Status.Unscannable:
         await dbWrite.image.update({
           where: { id: data.id },
           data: { ingestion: ImageIngestionStatus.Error },
         });
         break;
-      case 'success':
+      case Status.Success:
         await handleSuccess(data);
         break;
       default: {

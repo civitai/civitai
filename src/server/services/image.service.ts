@@ -475,34 +475,50 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
 
-  if (!isProd && !callbackUrl) {
-    console.log('skip ingest');
-    return true;
-  }
-
-  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      imageId: id,
-      imageKey: url,
-      // wait: true,
-      scans: [ImageScanType.Label, ImageScanType.Moderation],
-      callbackUrl,
-    }),
-  });
-  if (response.status === 202) {
-    await dbWrite.image.updateMany({
-      where: { id },
-      data: { scanRequestedAt },
+  // if (!isProd && !callbackUrl) {
+  //   console.log('skip ingest');
+  //   return true;
+  // }
+  try {
+    console.log('___BEGIN INGEST___');
+    console.log({
+      body: {
+        imageId: id,
+        imageKey: url,
+        // wait: true,
+        scans: [ImageScanType.Label, ImageScanType.Moderation],
+        callbackUrl,
+      },
     });
-    return true;
-  } else {
-    await logToDb('image-ingestion', {
-      type: 'error',
-      imageId: id,
-      url,
+    const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imageId: id,
+        imageKey: url,
+        // wait: true,
+        scans: [ImageScanType.Label, ImageScanType.Moderation],
+        callbackUrl,
+      }),
     });
+    console.log('___END INGEST___');
+    if (response.status === 202) {
+      await dbWrite.image.updateMany({
+        where: { id },
+        data: { scanRequestedAt },
+      });
+      return true;
+    } else {
+      await logToDb('image-ingestion', {
+        type: 'error',
+        imageId: id,
+        url,
+      });
+      return false;
+    }
+  } catch (e: any) {
+    console.log('_____error_____');
+    console.log(e);
     return false;
   }
 };

@@ -35,6 +35,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
+import { ImageIngestionStatus } from '@prisma/client';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
@@ -94,6 +95,8 @@ function ImageController({
     if (!id) return;
     debouncer(refetch);
   }, [id, refetch, debouncer]);
+
+  useEffect(() => console.log({ data }), [data]);
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
@@ -157,30 +160,32 @@ function ImageController({
           </Menu>
         </Group>
       </>
-      <Card className={classes.footer} radius={0} p={0}>
-        <Alert color="red" radius={0}>
-          <Center>
-            <Group spacing={4}>
-              <Popover position="top" withinPortal withArrow>
-                <Popover.Target>
-                  <ActionIcon>
-                    <IconInfoCircle />
-                  </ActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
-                  <Stack spacing={0}>
-                    <Text size="xs" weight={500}>
-                      Blocked for
-                    </Text>
-                    <Code color="red">{blockedFor}</Code>
-                  </Stack>
-                </Popover.Dropdown>
-              </Popover>
-              <Text>TOS Violation</Text>
-            </Group>
-          </Center>
-        </Alert>
-      </Card>
+      {data?.ingestion === ImageIngestionStatus.Blocked && (
+        <Card radius={0} p={0}>
+          <Alert color="red" radius={0}>
+            <Center>
+              <Group spacing={4}>
+                <Popover position="top" withinPortal withArrow>
+                  <Popover.Target>
+                    <ActionIcon>
+                      <IconInfoCircle />
+                    </ActionIcon>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Stack spacing={0}>
+                      <Text size="xs" weight={500}>
+                        Blocked for
+                      </Text>
+                      <Code color="red">{blockedFor}</Code>
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
+                <Text>TOS Violation</Text>
+              </Group>
+            </Center>
+          </Alert>
+        </Card>
+      )}
     </Card>
   );
 }
