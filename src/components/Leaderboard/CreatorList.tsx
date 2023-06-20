@@ -9,6 +9,7 @@ import { LeaderboardGetModel } from '~/types/router';
 
 const schema = z.object({
   position: numericString().optional(),
+  id: z.string().default('overall'),
 });
 
 export function CreatorList({ data }: { data: LeaderboardGetModel[] }) {
@@ -16,10 +17,15 @@ export function CreatorList({ data }: { data: LeaderboardGetModel[] }) {
   const router = useRouter();
   const result = schema.safeParse(router.query);
   let position: number | undefined = undefined;
-  if (result.success) position = result.data.position;
+  let leaderboardId: string | undefined = undefined;
+  if (result.success) {
+    position = result.data.position;
+    leaderboardId = result.data.id;
+  }
 
   return (
     <List
+      key={leaderboardId}
       items={data}
       render={CreatorCard}
       scrollToIndex={

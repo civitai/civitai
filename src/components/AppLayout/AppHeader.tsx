@@ -204,7 +204,7 @@ export function AppHeader() {
         label: (
           <Group align="center" spacing="xs">
             <IconPhotoUp stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            Posts images
+            Post images
           </Group>
         ),
       },
@@ -250,7 +250,7 @@ export function AppHeader() {
         label: (
           <Group align="center" spacing="xs">
             <IconBookmark stroke={1.5} />
-            Bookmarked Articles
+            Bookmarked articles
           </Group>
         ),
       },
@@ -289,7 +289,7 @@ export function AppHeader() {
         label: (
           <Group align="center" spacing="xs">
             <IconHistory stroke={1.5} />
-            Download History
+            Download history
           </Group>
         ),
       },

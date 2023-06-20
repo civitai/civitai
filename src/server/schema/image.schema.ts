@@ -178,9 +178,6 @@ export type IngestImageInput = z.infer<typeof ingestImageSchema>;
 export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
-  name: z.string().optional().nullable(),
-  width: z.number().optional().nullable(),
-  mimeType: z.string().optional().nullable(),
 });
 
 // #region [new schemas]

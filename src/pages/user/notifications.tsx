@@ -92,6 +92,7 @@ export default function Notifications() {
                   onItemClick={(notification) => handleMarkAsRead(notification)}
                   textSize="md"
                   withDivider
+                  truncate={false}
                 />
                 {!isLoading && hasNextPage && (
                   <Group position="center" ref={ref}>

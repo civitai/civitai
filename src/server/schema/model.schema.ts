@@ -250,22 +250,36 @@ export const setModelsCategorySchema = z.object({
 });
 
 // #region [Associated Models]
-export type FindModelsToAssociateSchema = z.infer<typeof findModelsToAssociateSchema>;
-export const findModelsToAssociateSchema = z.object({
+export type FindResourcesToAssociateSchema = z.infer<typeof findResourcesToAssociateSchema>;
+export const findResourcesToAssociateSchema = z.object({
   query: z.string(),
   limit: z.number().default(5),
 });
 
-export type GetAssociatedModelsInput = z.infer<typeof getAssociatedModelsSchema>;
-export const getAssociatedModelsSchema = z.object({
+export type GetAssociatedResourcesInput = z.infer<typeof getAssociatedResourcesSchema>;
+export const getAssociatedResourcesSchema = z.object({
   fromId: z.number(),
   type: z.nativeEnum(AssociationType),
 });
 
-export type SetAssociatedModelsInput = z.infer<typeof setAssociatedModelsSchema>;
-export const setAssociatedModelsSchema = z.object({
+export type SetAssociatedResourcesInput = z.infer<typeof setAssociatedResourcesSchema>;
+export const setAssociatedResourcesSchema = z.object({
   fromId: z.number(),
   type: z.nativeEnum(AssociationType),
-  associatedIds: z.number().array(),
+  associations: z
+    .object({
+      // Association Id
+      id: z.number().optional(),
+      // Model | Article Id
+      resourceId: z.number(),
+      resourceType: z.enum(['model', 'article']),
+    })
+    .array(),
 });
 // #endregion
+
+export type GetModelVersionsSchema = z.infer<typeof getModelVersionsSchema>;
+export const getModelVersionsSchema = z.object({
+  id: z.number(),
+  excludeUnpublished: z.boolean().optional(),
+});

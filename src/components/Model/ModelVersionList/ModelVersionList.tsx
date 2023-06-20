@@ -11,6 +11,7 @@ import {
 import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
+  IconBan,
   IconChevronLeft,
   IconChevronRight,
   IconDotsVertical,
@@ -21,6 +22,8 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ModelById } from '~/types/router';
@@ -96,6 +99,7 @@ export function ModelVersionList({
 }: Props) {
   const { classes, cx, theme } = useStyles();
   const router = useRouter();
+  const currentUser = useCurrentUser();
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<State>({
@@ -153,6 +157,7 @@ export function ModelVersionList({
           const active = selected === version.id;
           const missingFiles = !version.files.length;
           const missingPosts = !version.posts.length;
+          const published = version.status === 'Published';
 
           const versionButton = (
             <Button
@@ -176,7 +181,7 @@ export function ModelVersionList({
                 return onVersionClick(version);
               }}
               leftIcon={
-                showExtraIcons && (missingFiles || missingPosts) ? (
+                showExtraIcons && (missingFiles || missingPosts || !published) ? (
                   <ThemeIcon
                     color="yellow"
                     variant="light"
@@ -226,6 +231,20 @@ export function ModelVersionList({
                       }}
                     >
                       Delete version
+                    </Menu.Item>
+                  )}
+                  {currentUser?.isModerator && published && (
+                    <Menu.Item
+                      color="yellow"
+                      icon={<IconBan size={14} stroke={1.5} />}
+                      onClick={() =>
+                        openContext('unpublishModel', {
+                          modelId: version.modelId,
+                          versionId: version.id,
+                        })
+                      }
+                    >
+                      Unpublish as Violation
                     </Menu.Item>
                   )}
                   <Menu.Item

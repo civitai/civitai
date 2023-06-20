@@ -53,6 +53,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   type: true,
   updatedAt: true,
   deletedAt: true,
+  deletedBy: true,
   status: true,
   checkpointType: true,
   allowNoCredit: true,

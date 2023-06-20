@@ -7,6 +7,11 @@ type ModelModActivity = {
   activity: TagActivities | 'review';
 };
 
+type ModelVersionModActivity = {
+  entityType: 'modelVersion';
+  activity: TagActivities | 'review';
+};
+
 type ImageTagModActivity = {
   entityType: 'tag';
   activity: TagActivities;
@@ -31,6 +36,7 @@ type ModActivity = {
   entityId?: number | number[];
 } & (
   | ModelModActivity
+  | ModelVersionModActivity
   | ImageTagModActivity
   | ImageModActivity
   | ReportModActivity

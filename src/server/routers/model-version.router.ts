@@ -1,9 +1,12 @@
 import {
+  declineReviewHandler,
   deleteModelVersionHandler,
   getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
   publishModelVersionHandler,
+  requestReviewHandler,
   toggleNotifyEarlyAccessHandler,
+  unpublishModelVersionHandler,
   upsertModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -13,6 +16,7 @@ import {
   modelVersionUpsertSchema2,
   upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
+import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
 import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
@@ -68,6 +72,10 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(publishModelVersionHandler),
+  unpublish: protectedProcedure
+    .input(unpublishModelSchema)
+    .use(isOwnerOrModerator)
+    .mutation(unpublishModelVersionHandler),
   upsertExplorationPrompt: protectedProcedure
     .input(upsertExplorationPromptSchema)
     .use(isOwnerOrModerator)
@@ -76,4 +84,9 @@ export const modelVersionRouter = router({
     .input(deleteExplorationPromptSchema)
     .use(isOwnerOrModerator)
     .mutation(({ input }) => deleteExplorationPrompt(input)),
+  requestReview: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(requestReviewHandler),
+  declineReview: protectedProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
 });

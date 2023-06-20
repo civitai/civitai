@@ -106,7 +106,7 @@ const requestImage = (taskUUID: string, imageRequest: GetImageRequest) => {
       taskType: 1,
       numberResults,
       sizeId: 2,
-      steps: 20,
+      steps: 30,
       modelId: 3,
       gScale: 7.5,
       offset: getRequestOffset(imageRequest),
@@ -125,7 +125,7 @@ type GetImageRequest = {
 };
 
 function requestImages(
-  { includeNsfw, ...imageRequest }: GetImageRequest,
+  { includeNsfw = true, ...imageRequest }: GetImageRequest,
   cb: (url: string | undefined, isComplete: boolean) => void
 ) {
   if (Object.keys(imageRequests).length > REQUEST_LIMIT) throw new Error('Too many requests');

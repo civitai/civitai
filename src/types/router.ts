@@ -12,6 +12,7 @@ export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
 export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 export type ModelGetByCategory = ModelRouter['getByCategory']['items'][number];
 export type ModelGetByCategoryModel = ModelGetByCategory['items'][number];
+export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResourcesSimple'];
 
 type ModelVersionRouter = RouterOutput['modelVersion'];
 export type ModelVersionById = ModelVersionRouter['getById'];

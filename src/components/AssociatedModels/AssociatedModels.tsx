@@ -1,25 +1,15 @@
+import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { AssociationType } from '@prisma/client';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
-import {
-  LoadingOverlay,
-  Stack,
-  Title,
-  Container,
-  Group,
-  Button,
-  Center,
-  Text,
-  Box,
-  Paper,
-  ThemeIcon,
-} from '@mantine/core';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
-import { ModelCategoryCard } from '~/components/Model/Categories/ModelCategoryCard';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { IconRocketOff } from '@tabler/icons-react';
+
+import { ArticleAltCard } from '~/components/Article/Infinite/ArticleAltCard';
+import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { ModelCategoryCard } from '~/components/Model/Categories/ModelCategoryCard';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { trpc } from '~/utils/trpc';
 
 export function AssociatedModels({
   fromId,
@@ -35,7 +25,7 @@ export function AssociatedModels({
   const currentUser = useCurrentUser();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
-  const { data = [], isLoading } = trpc.model.getAssociatedModelsCardData.useQuery({
+  const { data = [], isLoading } = trpc.model.getAssociatedResourcesCardData.useQuery({
     fromId,
     type,
   });
@@ -74,7 +64,13 @@ export function AssociatedModels({
             ) : data.length ? (
               <MasonryCarousel
                 data={data}
-                render={ModelCategoryCard}
+                render={({ data, ...props }) =>
+                  'hashes' in data ? (
+                    <ModelCategoryCard data={data} {...props} />
+                  ) : (
+                    <ArticleAltCard data={data} {...props} />
+                  )
+                }
                 height={columnWidth}
                 itemId={(x) => x.id}
               />

@@ -5,6 +5,7 @@ import {
   Prisma,
   UserActivityType,
   ModelModifier,
+  MetricTimeframe,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
@@ -15,8 +16,11 @@ import {
   ChangeModelModifierSchema,
   DeclineReviewSchema,
   DeleteModelSchema,
+  FindResourcesToAssociateSchema,
   GetAllModelsOutput,
+  GetAssociatedResourcesInput,
   GetDownloadSchema,
+  GetModelVersionsSchema,
   ModelInput,
   ModelMeta,
   ModelUpsertInput,
@@ -24,8 +28,11 @@ import {
   ReorderModelVersionsSchema,
   ToggleModelLockInput,
   UnpublishModelSchema,
+  UserPreferencesForModelsInput,
+  getAllModelsSchema,
 } from '~/server/schema/model.schema';
 import {
+  associatedResourceSelect,
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
@@ -67,6 +74,9 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { ModelSort } from '~/server/common/enums';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import { getArticles } from '~/server/services/article.service';
+import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -153,8 +163,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
           baseModel: version.baseModel as BaseModel,
-          // TODO.manuel: explicit casting for now, should be fixed in the future
-          meta: version.meta as { picFinderModelId: number },
+          meta: version.meta as ModelVersionMeta,
         };
       }),
     };
@@ -287,20 +296,34 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
+      modelVersions: input.needsReview
+        ? {
+            select: { id: true, name: true, meta: true },
+            where: { meta: { path: ['needsReview'], equals: true } },
+            take: 1,
+          }
+        : false,
     },
   });
 
   const parsedResults = {
     ...results,
-    items: results.items.map((model) => ({
-      ...model,
-      meta: model.meta as ModelMeta | null,
-    })),
+    items: results.items.map(({ modelVersions = [], ...model }) => {
+      const [version] = modelVersions;
+
+      return {
+        ...model,
+        meta: model.meta as ModelMeta | null,
+        modelVersion: version
+          ? { ...version, meta: version.meta as ModelVersionMeta | null }
+          : undefined,
+      };
+    }),
   };
   return getPagingData(parsedResults, take, page);
 };
 
-export const getModelVersionsHandler = async ({ input }: { input: GetByIdInput }) => {
+export const getModelVersionsHandler = async ({ input }: { input: GetModelVersionsSchema }) => {
   try {
     const modelVersions = await getModelVersionsMicro(input);
     return modelVersions;
@@ -953,3 +976,172 @@ export const changeModelModifierHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+// #region [associated models]
+export const findResourcesToAssociateHandler = async ({
+  input,
+}: {
+  input: FindResourcesToAssociateSchema;
+  ctx: Context;
+}) => {
+  try {
+    const modelInput = getAllModelsSchema.parse(input);
+    const articleInput = getInfiniteArticlesSchema.parse(input);
+
+    const [{ items: models }, { items: articles }] = await Promise.all([
+      getModels({
+        input: { ...modelInput, take: modelInput.limit },
+        select: associatedResourceSelect,
+      }),
+      getArticles({ ...articleInput }),
+    ]);
+
+    return { models, articles };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+// Used to get the associated resources for a model
+type GetModelsInfiniteResult = AsyncReturnType<typeof getModelsInfiniteHandler>;
+export const getAssociatedResourcesCardDataHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAssociatedResourcesInput & UserPreferencesForModelsInput;
+  ctx: Context;
+}) => {
+  try {
+    const { fromId, type, ...userPreferences } = input;
+    const { user } = ctx;
+    const associatedResources = await dbRead.modelAssociations.findMany({
+      where: { fromModelId: fromId, type },
+      select: { toModelId: true, toArticleId: true },
+      orderBy: { index: 'asc' },
+    });
+
+    const resourcesIds = associatedResources.map(({ toModelId, toArticleId }) =>
+      toModelId
+        ? { id: toModelId, resourceType: 'model' as const }
+        : { id: toArticleId, resourceType: 'article' as const }
+    );
+    if (!resourcesIds.length) return [];
+
+    const period = MetricTimeframe.AllTime;
+    const modelInput = getAllModelsSchema.parse({
+      ...userPreferences,
+      ids: resourcesIds.filter(({ resourceType }) => resourceType === 'model').map(({ id }) => id),
+      period,
+    });
+    const articleInput = getInfiniteArticlesSchema.parse({
+      ...userPreferences,
+      ids: resourcesIds
+        .filter(({ resourceType }) => resourceType === 'article')
+        .map(({ id }) => id),
+      period,
+    });
+
+    const [{ items: models }, { items: articles }] = await Promise.all([
+      getModels({
+        user,
+        input: modelInput,
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          nsfw: true,
+          status: true,
+          createdAt: true,
+          lastVersionAt: true,
+          publishedAt: true,
+          locked: true,
+          earlyAccessDeadline: true,
+          mode: true,
+          rank: {
+            select: {
+              [`downloadCount${period}`]: true,
+              [`favoriteCount${period}`]: true,
+              [`commentCount${period}`]: true,
+              [`ratingCount${period}`]: true,
+              [`rating${period}`]: true,
+            },
+          },
+          modelVersions: {
+            orderBy: { index: 'asc' },
+            take: 1,
+            where: { status: ModelStatus.Published },
+            select: {
+              id: true,
+              earlyAccessTimeFrame: true,
+              createdAt: true,
+            },
+          },
+          user: { select: simpleUserSelect },
+          hashes: {
+            select: modelHashSelect,
+            where: {
+              hashType: ModelHashType.SHA256,
+              fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+            },
+          },
+        },
+      }),
+      getArticles({ ...articleInput, sessionUser: user }),
+    ]);
+
+    let completeModels = [] as GetModelsInfiniteResult['items'];
+    if (models.length) {
+      const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+      const images = !!modelVersionIds.length
+        ? await getImagesForModelVersion({
+            modelVersionIds,
+            excludedTagIds: modelInput.excludedImageTagIds,
+            excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+            excludedUserIds: modelInput.excludedUserIds,
+            currentUserId: user?.id,
+          })
+        : [];
+
+      completeModels = models
+        .map(({ hashes, modelVersions, rank, ...model }) => {
+          const [version] = modelVersions;
+          if (!version) return null;
+          const [image] = images.filter((i) => i.modelVersionId === version.id);
+          const showImageless =
+            (user?.isModerator || model.user.id === user?.id) &&
+            (modelInput.user || modelInput.username);
+          if (!image && !showImageless) return null;
+
+          return {
+            ...model,
+            hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+            rank: {
+              downloadCount: rank?.downloadCountAllTime ?? 0,
+              favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
+              commentCount: rank?.[`commentCount${period}`] ?? 0,
+              ratingCount: rank?.[`ratingCount${period}`] ?? 0,
+              rating: rank?.[`rating${period}`] ?? 0,
+            },
+            image:
+              model.mode !== ModelModifier.TakenDown
+                ? (image as (typeof images)[0] | undefined)
+                : undefined,
+          };
+        })
+        .filter(isDefined);
+    }
+
+    return resourcesIds
+      .map(({ id, resourceType }) =>
+        resourceType === 'model'
+          ? completeModels.find((model) => model.id === id)
+          : articles.find((article) => article.id === id)
+      )
+      .filter(isDefined);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+// #endregion

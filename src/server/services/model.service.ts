@@ -1,11 +1,8 @@
 import {
-  FindModelsToAssociateSchema,
-  GetAssociatedModelsInput,
+  GetAssociatedResourcesInput,
   GetModelsWithCategoriesSchema,
-  SetAssociatedModelsInput,
+  SetAssociatedResourcesInput,
   SetModelsCategoryInput,
-  UserPreferencesForModelsInput,
-  getAllModelsSchema,
 } from './../schema/model.schema';
 import {
   CommercialUse,
@@ -32,6 +29,7 @@ import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
   GetModelsByCategoryInput,
+  GetModelVersionsSchema,
   ModelInput,
   ModelMeta,
   ModelUpsertInput,
@@ -67,12 +65,12 @@ export const getModel = <TSelect extends Prisma.ModelSelect>({
   select: TSelect;
 }) => {
   const OR: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ status: ModelStatus.Published }];
-  if (user?.id) OR.push({ userId: user.id, deletedAt: null });
+  // if (user?.id) OR.push({ userId: user.id, deletedAt: null });
 
   return dbRead.model.findFirst({
     where: {
       id,
-      OR: !user?.isModerator ? OR : undefined,
+      // OR: !user?.isModerator ? OR : undefined,
     },
     select,
   });
@@ -212,7 +210,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ OR: TypeOr });
   }
   if (needsReview && sessionUser?.isModerator) {
-    AND.push({ meta: { path: ['needsReview'], equals: true } });
+    AND.push({
+      OR: [
+        { meta: { path: ['needsReview'], equals: true } },
+        { modelVersions: { some: { meta: { path: ['needsReview'], equals: true } } } },
+      ],
+    });
   }
   if (earlyAccess) {
     AND.push({ earlyAccessDeadline: { gte: new Date() } });
@@ -270,9 +273,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   return { items };
 };
 
-export const getModelVersionsMicro = ({ id }: { id: number }) => {
+export const getModelVersionsMicro = ({
+  id,
+  excludeUnpublished: excludeDrafts,
+}: GetModelVersionsSchema) => {
   return dbRead.modelVersion.findMany({
-    where: { modelId: id },
+    where: { modelId: id, status: excludeDrafts ? ModelStatus.Published : undefined },
     orderBy: { index: 'asc' },
     select: { id: true, name: true, index: true },
   });
@@ -931,132 +937,39 @@ export const setModelsCategory = async ({
 };
 
 // #region [associated models]
-export const getAssociatedModelsCardData = async (
-  { fromId, type, ...userPreferences }: GetAssociatedModelsInput & UserPreferencesForModelsInput,
-  user?: SessionUser
-) => {
-  const period = MetricTimeframe.AllTime;
-  const associatedModels = await dbRead.modelAssociations.findMany({
-    where: { fromModelId: fromId, type },
-    orderBy: { index: 'asc' },
-    select: { toModelId: true },
-  });
-  const ids = associatedModels.map((x) => x.toModelId);
-  if (!ids.length) return [];
-  const input = getAllModelsSchema.parse({ ...userPreferences, ids });
-
-  const { items } = await getModels({
-    input,
-    user,
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      nsfw: true,
-      status: true,
-      createdAt: true,
-      lastVersionAt: true,
-      publishedAt: true,
-      locked: true,
-      earlyAccessDeadline: true,
-      mode: true,
-      rank: {
-        select: {
-          [`downloadCount${period}`]: true,
-          [`favoriteCount${period}`]: true,
-          [`commentCount${period}`]: true,
-          [`ratingCount${period}`]: true,
-          [`rating${period}`]: true,
-        },
-      },
-      modelVersions: {
-        orderBy: { index: 'asc' },
-        take: 1,
-        select: {
-          id: true,
-          earlyAccessTimeFrame: true,
-          createdAt: true,
-        },
-      },
-      user: { select: simpleUserSelect },
-      hashes: {
-        select: modelHashSelect,
-        where: {
-          hashType: ModelHashType.SHA256,
-          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-        },
-      },
-    },
-  });
-
-  // sort models
-  const models = ids.map((id) => items.find((x) => x.id === id)).filter(isDefined);
-
-  const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
-  const images = !!modelVersionIds.length
-    ? await getImagesForModelVersion({
-        modelVersionIds,
-        excludedTagIds: input.excludedImageTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
-        excludedUserIds: input.excludedUserIds,
-        currentUserId: user?.id,
-      })
-    : [];
-
-  return models
-    .map(({ hashes, modelVersions, rank, ...model }) => {
-      const [version] = modelVersions;
-      if (!version) return null;
-      const [image] = images.filter((i) => i.modelVersionId === version.id);
-      const showImageless =
-        (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
-      if (!image && !showImageless) return null;
-
-      return {
-        ...model,
-        hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        rank: {
-          downloadCount: rank?.downloadCountAllTime ?? 0,
-          favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
-          commentCount: rank?.[`commentCount${period}`] ?? 0,
-          ratingCount: rank?.[`ratingCount${period}`] ?? 0,
-          rating: rank?.[`rating${period}`] ?? 0,
-        },
-        image:
-          model.mode !== ModelModifier.TakenDown
-            ? (image as (typeof images)[0] | undefined)
-            : undefined,
-        // earlyAccess,
-      };
-    })
-    .filter(isDefined);
-};
-
-export const findModelsToAssociate = async (args: FindModelsToAssociateSchema) => {
-  const validated = getAllModelsSchema.parse(args);
-  const { items } = await getModels({
-    input: { ...validated, take: validated.limit },
-    select: associatedResourceSelect,
-  });
-  return items;
-};
-
-export const getAssociatedModelsSimple = async ({ fromId, type }: GetAssociatedModelsInput) => {
+export const getAssociatedResourcesSimple = async ({
+  fromId,
+  type,
+}: GetAssociatedResourcesInput) => {
   const associations = await dbWrite.modelAssociations.findMany({
     where: { fromModelId: fromId, type },
     orderBy: { index: 'asc' },
     select: {
+      id: true,
       toModel: {
         select: associatedResourceSelect,
+      },
+      toArticle: {
+        select: { id: true, title: true, nsfw: true, user: { select: simpleUserSelect } },
       },
     },
   });
 
-  return associations.map(({ toModel }) => toModel);
+  const items = associations
+    .map(({ id, toModel, toArticle }) =>
+      toModel
+        ? { id, item: toModel, resourceType: 'model' as const }
+        : toArticle
+        ? { id, item: toArticle, resourceType: 'article' as const }
+        : null
+    )
+    .filter(isDefined);
+
+  return items;
 };
 
-export const setAssociatedModels = async (
-  { fromId, type, associatedIds }: SetAssociatedModelsInput,
+export const setAssociatedResources = async (
+  { fromId, type, associations }: SetAssociatedResourcesInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -1065,7 +978,7 @@ export const setAssociatedModels = async (
       userId: true,
       associations: {
         where: { type },
-        select: { toModelId: true },
+        select: { id: true },
         orderBy: { index: 'asc' },
       },
     },
@@ -1074,21 +987,30 @@ export const setAssociatedModels = async (
   if (!fromModel) throw throwNotFoundError();
   // only allow moderators or model owners to add/remove associated models
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
-  const existingAssociatedModelIds = fromModel.associations.map((x) => x.toModelId);
-  const associationsToRemove = existingAssociatedModelIds.filter(
-    (existingToId) => !associatedIds.includes(existingToId)
+
+  const existingAssociations = fromModel.associations.map((x) => x.id);
+  const associationsToRemove = existingAssociations.filter(
+    (existingToId) => !associations.find((item) => item.id === existingToId)
   );
 
   return await dbWrite.$transaction([
-    // remove associated models not included in payload
+    // remove associated resources not included in payload
     dbWrite.modelAssociations.deleteMany({
-      where: { fromModelId: fromId, type, toModelId: { in: associationsToRemove } },
+      where: {
+        fromModelId: fromId,
+        type,
+        id: { in: associationsToRemove },
+      },
     }),
     // add or update associated models
-    ...associatedIds.map((toId, index) => {
-      const data = { fromModelId: fromId, toModelId: toId, type };
+    ...associations.map((association, index) => {
+      const data =
+        association.resourceType === 'model'
+          ? { fromModelId: fromId, toModelId: association.resourceId, type }
+          : { fromModelId: fromId, toArticleId: association.resourceId, type };
+
       return dbWrite.modelAssociations.upsert({
-        where: { fromModelId_toModelId_type: { ...data } },
+        where: { id: association.id ?? -1 },
         update: { index },
         create: { ...data, associatedById: user?.id, index },
       });

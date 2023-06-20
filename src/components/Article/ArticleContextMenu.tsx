@@ -1,4 +1,4 @@
-import { ActionIcon, Menu } from '@mantine/core';
+import { ActionIcon, ActionIconProps, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
@@ -12,7 +12,7 @@ import { ArticleGetAll } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function ArticleContextMenu({ article }: Props) {
+export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -20,6 +20,7 @@ export function ArticleContextMenu({ article }: Props) {
   const isOwner = currentUser?.id === article.user?.id;
 
   const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
+  const showUnpublish = atDetailsPage && article.publishedAt !== null;
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
   const handleDeleteArticle = () => {
@@ -84,6 +85,7 @@ export function ArticleContextMenu({ article }: Props) {
     <Menu position="left-start" withArrow offset={-5} withinPortal>
       <Menu.Target>
         <ActionIcon
+          {...props}
           variant="transparent"
           p={0}
           onClick={(e) => {
@@ -109,7 +111,7 @@ export function ArticleContextMenu({ article }: Props) {
             >
               Delete
             </Menu.Item>
-            {atDetailsPage && (
+            {showUnpublish && (
               <Menu.Item
                 color="yellow"
                 icon={<IconBan size={14} stroke={1.5} />}
@@ -151,4 +153,6 @@ export function ArticleContextMenu({ article }: Props) {
   );
 }
 
-type Props = { article: Omit<ArticleGetAll['items'][number], 'stats'> };
+type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
+  article: Omit<ArticleGetAll['items'][number], 'stats'>;
+};
