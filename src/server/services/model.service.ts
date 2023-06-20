@@ -553,8 +553,6 @@ export const publishModelById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
-  // TODO: Manuel - Do we need to do something to ensure that we aren't setting the status of a published model to "Scheduled"?
-
   const model = await dbWrite.$transaction(
     async (tx) => {
       const includeVersions = versionIds && versionIds.length > 0;
@@ -562,7 +560,7 @@ export const publishModelById = async ({
       const model = await tx.model.update({
         where: { id },
         data: {
-          status,
+          status: republishing ? ModelStatus.Published : status,
           publishedAt,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           lastVersionAt:

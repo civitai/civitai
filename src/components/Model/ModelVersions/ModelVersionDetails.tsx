@@ -31,7 +31,7 @@ import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -69,6 +69,7 @@ import { trpc } from '~/utils/trpc';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 
 export function ModelVersionDetails({
   model,
@@ -85,6 +86,7 @@ export function ModelVersionDetails({
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [opened, { toggle }] = useDisclosure(false);
+  const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -99,7 +101,7 @@ export function ModelVersionDetails({
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
 
-  const handlePublishClick = async () => {
+  const handlePublishClick = async (publishDate?: Date) => {
     try {
       if (model.status !== ModelStatus.Published) {
         // Publish model, version and all of its posts
@@ -107,10 +109,14 @@ export function ModelVersionDetails({
           model.status === ModelStatus.UnpublishedViolation && user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({ id: model.id, versionIds });
+        await publishModelMutation.mutateAsync({
+          id: model.id,
+          publishedAt: publishDate,
+          versionIds,
+        });
       } else {
         // Just publish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id });
+        await publishVersionMutation.mutateAsync({ id: version.id, publishedAt: publishDate });
       }
     } catch (e) {
       const error = e as TRPCClientErrorBase<DefaultErrorShape>;
@@ -342,12 +348,21 @@ export function ModelVersionDetails({
             </Button>
           ) : showPublishButton ? (
             <Button.Group>
-              <Button color="green" onClick={handlePublishClick} loading={publishing} fullWidth>
+              <Button
+                color="green"
+                onClick={() => handlePublishClick()}
+                loading={publishing}
+                fullWidth
+              >
                 Publish this version
               </Button>
-              {/* TODO: Manuel - Display scheduled modal then call publish and set date */}
               <Tooltip label="Schedule Publish" withArrow>
-                <Button color="green" variant="outline" loading={publishing}>
+                <Button
+                  color="green"
+                  variant="outline"
+                  loading={publishing}
+                  onClick={() => setScheduleModalOpened((current) => !current)}
+                >
                   <IconClock size={20} />
                 </Button>
               </Tooltip>
@@ -776,6 +791,11 @@ export function ModelVersionDetails({
           <RenderHtml html={version.description} />
         </Modal>
       )}
+      <ScheduleModal
+        opened={scheduleModalOpened}
+        onClose={() => setScheduleModalOpened((current) => !current)}
+        onSubmit={(date: Date) => handlePublishClick(date)}
+      />
     </Grid>
   );
 }
