@@ -9,6 +9,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
   GetAllCommentsSchema,
+  GetCommentCountByModelInput,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
@@ -17,7 +18,16 @@ import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
-  input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
+  input: {
+    limit = DEFAULT_PAGE_SIZE,
+    page,
+    cursor,
+    modelId,
+    userId,
+    filterBy,
+    sort,
+    hidden = false,
+  },
   select,
   user,
 }: {
@@ -43,6 +53,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
       reviewId: { equals: null },
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
+      hidden,
       // OR: [
       //   {
       //     userId: { not: user?.id },
@@ -164,4 +175,11 @@ export const updateCommentReportStatusByReason = ({
     where: { reason, comment: { commentId: id } },
     data: { status },
   });
+};
+
+export const getCommentCountByModel = ({
+  modelId,
+  hidden = false,
+}: GetCommentCountByModelInput) => {
+  return dbRead.comment.count({ where: { modelId, hidden } });
 };

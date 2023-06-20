@@ -43,6 +43,7 @@ import {
   IconCircleMinus,
   IconReload,
   IconShare3,
+  IconMessageCancel,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -97,7 +98,7 @@ import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { env } from '~/env/client.mjs';
+import { HiddenCommentsModal } from '~/components/Model/ModelDiscussion/HiddenCommentsModal';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -145,6 +146,8 @@ export default function ModelDetailsV2({
   const isClient = useIsClient();
 
   const [opened, { toggle }] = useDisclosure();
+  const [hiddenCommentsOpened, { open: openHiddenComments, close: closeHiddenComments }] =
+    useDisclosure(false);
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
   const gallerySectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -163,6 +166,11 @@ export default function ModelDetailsV2({
       cacheTime: Infinity,
       staleTime: Infinity,
     });
+
+  const { data: hiddenCommentsCount = 0 } = trpc.comment.getCommentCountByModel.useQuery(
+    { modelId: model?.id as number, hidden: true },
+    { enabled: !!model }
+  );
 
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
@@ -398,6 +406,12 @@ export default function ModelDetailsV2({
 
     return () => router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
+
+  // TODO.manuel: Figure out why modal is not closing when opening another modal
+  // console.log({ hiddenCommentsOpened });
+  // useEffect(() => {
+  //   if (hiddenCommentsOpened && !!router.query.modal) closeHiddenComments();
+  // }, [closeHiddenComments, hiddenCommentsOpened, router]);
 
   // useEffect(() => {
   //   function onConnect() {
@@ -878,6 +892,17 @@ export default function ModelDetailsV2({
                       </JoinPopover>
                     )
                   )}
+                  {hiddenCommentsCount > 0 && (
+                    <Button
+                      variant="subtle"
+                      color="dark"
+                      size="xs"
+                      leftIcon={<IconMessageCancel size={16} />}
+                      onClick={openHiddenComments}
+                    >
+                      See hidden comments
+                    </Button>
+                  )}
                 </Group>
               </Group>
               <ModelDiscussionV2 modelId={model.id} />
@@ -909,6 +934,9 @@ export default function ModelDetailsV2({
             }}
           />
         </Box>
+      )}
+      {hiddenCommentsCount > 0 && hiddenCommentsOpened && (
+        <HiddenCommentsModal modelId={model.id} onClose={closeHiddenComments} opened />
       )}
     </>
   );

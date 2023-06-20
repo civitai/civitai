@@ -8,7 +8,6 @@ import {
   GetAllCommentsSchema,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
-import { ToggleReactionInput } from '~/server/schema/review.schema';
 import { commentDetailSelect, getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import {
   createOrUpdateComment,
@@ -16,12 +15,10 @@ import {
   getCommentById,
   getCommentReactions,
   getComments,
-  getUserReactionByCommentId,
   updateCommentById,
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
-import { toggleReaction } from '~/server/services/reaction.service';
 import {
   throwAuthorizationError,
   throwDbError,

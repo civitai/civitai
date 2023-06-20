@@ -13,6 +13,7 @@ export const getAllCommentsSchema = z
     userId: z.number(),
     filterBy: z.array(z.nativeEnum(ReviewFilter)),
     sort: z.nativeEnum(ReviewSort).default(ReviewSort.Newest),
+    hidden: z.boolean().optional(),
   })
   .partial();
 
@@ -28,7 +29,14 @@ export const commentUpsertInput = z.object({
   }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
+  hidden: z.boolean().optional(),
 });
 
 export type GetCommentReactionsSchema = z.infer<typeof getCommentReactionsSchema>;
 export const getCommentReactionsSchema = z.object({ commentId: z.number() });
+
+export type GetCommentCountByModelInput = z.infer<typeof getCommentCountByModelSchema>;
+export const getCommentCountByModelSchema = z.object({
+  modelId: z.number(),
+  hidden: z.boolean().optional(),
+});

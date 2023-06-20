@@ -7,10 +7,10 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 
-export function ModelDiscussionV2({ modelId, limit: initialLimit = 8 }: Props) {
+export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden }: Props) {
   const isMobile = useIsMobile();
   const limit = isMobile ? initialLimit / 2 : initialLimit;
-  const filters = { modelId, limit, sort: ReviewSort.Newest };
+  const filters = { modelId, limit, sort: ReviewSort.Newest, hidden: onlyHidden };
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, isRefetching } =
     trpc.comment.getAll.useInfiniteQuery(filters, {
@@ -57,5 +57,6 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8 }: Props) {
 type Props = {
   modelId: number;
   limit?: number;
+  onlyHidden?: boolean;
   // filters: { filterBy: ReviewFilter[]; sort: ReviewSort };
 };
