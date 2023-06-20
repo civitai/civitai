@@ -31,7 +31,7 @@ import { ingestImages } from '~/server/jobs/ingest-images';
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
 import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
 
-const jobs: Job[] = [
+export const jobs: Job[] = [
   scanFilesJob,
   updateMetricsJob,
   updateMetricsModelJob,
@@ -60,7 +60,7 @@ const jobs: Job[] = [
 const log = createLogger('jobs', 'green');
 
 export default WebhookEndpoint(async (req, res) => {
-  const { run: runJob } = querySchema.parse(req.query);
+  const { run: runJob, wait } = querySchema.parse(req.query);
   const ran = [];
   const toRun = [];
   const alreadyRunning = [];
@@ -85,9 +85,10 @@ export default WebhookEndpoint(async (req, res) => {
         log(`${name} starting`);
         axiom.info(`starting`);
         lock(name, options.lockExpiration);
-        await run();
+        const result = await run();
         log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
         axiom.info('success', { duration: Date.now() - jobStart });
+        return result;
       } catch (e) {
         log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
         axiom.error(`failed`, { duration: Date.now() - jobStart, error: e });
@@ -96,8 +97,13 @@ export default WebhookEndpoint(async (req, res) => {
       }
     };
 
-    if (options.shouldWait) {
-      await processJob();
+    if (options.shouldWait || wait) {
+      const result = await processJob();
+      // If this was the only job that got requested and we waited for the outcome, return the status
+      if (runJob) {
+        res.status(200).json(result);
+        return;
+      }
       ran.push(name);
     } else {
       afterResponse.push(processJob);
@@ -136,6 +142,7 @@ function isCronMatch(
 
 const querySchema = z.object({
   run: z.string().optional(),
+  wait: z.coerce.boolean().optional(),
 });
 
 async function isLocked(name: string) {
