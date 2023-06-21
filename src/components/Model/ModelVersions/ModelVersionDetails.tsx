@@ -12,6 +12,7 @@ import {
   Modal,
   Stack,
   Text,
+  ThemeIcon,
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -70,6 +71,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
+import dayjs from 'dayjs';
 
 export function ModelVersionDetails({
   model,
@@ -307,6 +309,8 @@ export function ModelVersionDetails({
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
     hasPosts;
+  const scheduledPublishDate =
+    version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
   const showRequestReview =
     isOwner &&
@@ -347,26 +351,38 @@ export function ModelVersionDetails({
               Request a Review
             </Button>
           ) : showPublishButton ? (
-            <Button.Group>
-              <Button
-                color="green"
-                onClick={() => handlePublishClick()}
-                loading={publishing}
-                fullWidth
-              >
-                Publish this version
-              </Button>
-              <Tooltip label="Schedule Publish" withArrow>
+            <Stack spacing={4}>
+              <Button.Group>
                 <Button
                   color="green"
-                  variant="outline"
+                  onClick={() => handlePublishClick()}
                   loading={publishing}
-                  onClick={() => setScheduleModalOpened((current) => !current)}
+                  fullWidth
                 >
-                  <IconClock size={20} />
+                  Publish this version
                 </Button>
-              </Tooltip>
-            </Button.Group>
+                <Tooltip label="Schedule Publish" withArrow>
+                  <Button
+                    color="green"
+                    variant="outline"
+                    loading={publishing}
+                    onClick={() => setScheduleModalOpened((current) => !current)}
+                  >
+                    <IconClock size={20} />
+                  </Button>
+                </Tooltip>
+              </Button.Group>
+              {scheduledPublishDate && isOwnerOrMod && (
+                <Group spacing={4}>
+                  <ThemeIcon color="gray" variant="filled" radius="xl">
+                    <IconClock size={20} />
+                  </ThemeIcon>
+                  <Text size="xs" color="dimmed">
+                    Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
+                  </Text>
+                </Group>
+              )}
+            </Stack>
           ) : (
             <Stack spacing={4}>
               <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>

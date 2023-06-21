@@ -1,19 +1,32 @@
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import dayjs from 'dayjs';
+import { useMemo } from 'react';
 import { z } from 'zod';
 
 import { Form, InputDatePicker, InputTime, useForm } from '~/libs/form';
 
-const schema = z.object({ date: z.date(), time: z.date() });
-
-export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
-  const form = useForm({ schema });
-
-  const handleSubmit = async (data: z.infer<typeof schema>) => {
+const schema = z
+  .object({ date: z.date(), time: z.date() })
+  .transform((data) => {
     const time = dayjs(data.time);
     const date = dayjs(data.date).set('hour', time.hour()).set('minute', time.minute());
 
-    onSubmit(date.toDate());
+    return { date: date.toDate() };
+  })
+  .refine((data) => data.date > new Date(), {
+    message: 'Must be in the future',
+    path: ['time'],
+  });
+
+export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
+  const form = useForm({ schema });
+  const { minDate, maxDate } = useMemo(
+    () => ({ minDate: new Date(), maxDate: dayjs().add(1, 'month').toDate() }),
+    []
+  );
+
+  const handleSubmit = async ({ date }: z.infer<typeof schema>) => {
+    onSubmit(date);
     onClose();
   };
 
@@ -31,6 +44,8 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
                 label="Publish Date"
                 placeholder="Select a date"
                 withAsterisk
+                minDate={minDate}
+                maxDate={maxDate}
               />
               <InputTime name="time" label="Publish Time" format="12" withAsterisk />
             </Group>

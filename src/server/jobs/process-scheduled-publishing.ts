@@ -24,6 +24,15 @@ export const processScheduledPublishing = createJob(
         WHERE status = 'Scheduled' AND "publishedAt" < ${now}
       );`,
       dbWrite.$executeRaw`
+      -- Update scheduled versions posts
+      UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE
+        p."publishedAt" IS NULL
+      AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
+      AND mv.status = 'Scheduled' AND mv."publishedAt" <  ${now};`,
+      dbWrite.$executeRaw`
       -- Update scheduled versions published
       UPDATE "ModelVersion" SET status = 'Published'
       WHERE status = 'Scheduled' AND "publishedAt" < ${now};`,
