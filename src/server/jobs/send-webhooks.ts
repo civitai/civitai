@@ -1,27 +1,19 @@
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { webhookProcessors } from '~/server/webhooks/utils.webhooks';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('jobs', 'green');
 
-const WEBHOOKS_LAST_SENT_KEY = 'last-sent-webhooks';
 export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async () => {
-  // Get the last run time from keyValue
-  const lastSent = new Date(
-    ((
-      await dbWrite.keyValue.findUnique({
-        where: { key: WEBHOOKS_LAST_SENT_KEY },
-      })
-    )?.value as number) ?? 0
-  ).toISOString();
+  const [lastSent, setLastSent] = await getJobDate('last-sent-webhooks');
 
   const registeredWebhooks = await dbWrite.webhook.findMany({
     where: { active: true },
     select: { notifyOn: true, url: true },
   });
 
-  const promises: Promise<unknown>[] = [];
+  const promises: Array<() => Promise<Response>> = [];
   if (registeredWebhooks.length > 0) {
     // Enqueue webhook requests
     for (const [type, { getData }] of Object.entries(webhookProcessors)) {
@@ -29,17 +21,28 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
       if (!data) continue;
       for (const webhook of registeredWebhooks) {
         if (!webhook.notifyOn.includes(type)) continue;
+
+        let requestUrl = webhook.url;
+        const headers: HeadersInit = { 'Content-Type': 'application/json' };
+
+        const url = new URL(webhook.url);
+        const { username, password } = url;
+        if (username || password) {
+          requestUrl = requestUrl.replace(`${username}:${password}@`, '');
+          headers['Authorization'] = `Basic ${Buffer.from(`${username}:${password}`).toString(
+            'base64'
+          )}`;
+        }
+
         for (const item of data) {
-          promises.push(
-            new Promise((res) => {
-              fetch(webhook.url, {
-                method: 'POST',
-                body: JSON.stringify({
-                  event: type,
-                  data: item,
-                }),
-                headers: { 'Content-Type': 'application/json' },
-              }).then(res);
+          promises.push(() =>
+            fetch(requestUrl, {
+              method: 'POST',
+              body: JSON.stringify({
+                event: type,
+                data: item,
+              }),
+              headers,
             })
           );
         }
@@ -49,11 +52,7 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
 
   // Update the last sent time
   // --------------------------------------------
-  await dbWrite?.keyValue.upsert({
-    where: { key: WEBHOOKS_LAST_SENT_KEY },
-    create: { key: WEBHOOKS_LAST_SENT_KEY, value: new Date().getTime() },
-    update: { value: new Date().getTime() },
-  });
+  await setLastSent();
 
   // Send webhooks
   // --------------------------------------------
@@ -63,8 +62,13 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
   for (let i = 0; i < promises.length; i += batchSize) {
     const batch = promises.slice(i, i + batchSize);
     log(`webhooks: sending batch ${i} to ${i + batchSize}`);
-    await Promise.all(batch);
-    await new Promise((res) => setTimeout(res, 500));
+    try {
+      await Promise.all(batch.map((fn) => fn()));
+      await new Promise((res) => setTimeout(res, 500));
+    } catch (err) {
+      log(`webhooks: error sending batch ${i} to ${i + batchSize}`);
+      console.error(err);
+    }
   }
   log(`webhooks: sent ${promises.length} webhooks`);
 });
