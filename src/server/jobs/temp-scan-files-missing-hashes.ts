@@ -17,7 +17,7 @@ export const tempScanFilesMissingHashes = createJob(
         mf.url
       FROM "ModelFile" mf
       WHERE NOT EXISTS (SELECT 1 FROM "ModelFileHash" mfh WHERE mfh."fileId" = mf.id)
-      AND mf.exists;
+      AND (mf.exists IS NULL OR mf.exists);
     `;
 
     console.log(`Found ${modelFiles.length} files missing hashes`);
