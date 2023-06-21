@@ -29,7 +29,7 @@ export const commentUpsertInput = z.object({
   }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  hidden: z.boolean().optional(),
+  hidden: z.boolean().nullish(),
 });
 
 export type GetCommentReactionsSchema = z.infer<typeof getCommentReactionsSchema>;
