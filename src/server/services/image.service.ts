@@ -53,7 +53,6 @@ import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { logToDb } from '~/utils/logging';
 // TODO.ingestion - logToDb something something 'axiom'
 
-// TODO.ingestion - make sure we only return images that have the `ingestion` set to 'scanned' for ALL users
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 // export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
@@ -1032,7 +1031,6 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          // TODO.ingestion - fix this, make sure any calls to images don't get images that aren't scanned unless the request comes from the owner
           Prisma.sql`i."needsReview" = false AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
           Prisma.sql`i."userId" = ${userId}`,
         ],
