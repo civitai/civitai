@@ -13,7 +13,7 @@ export const processScheduledPublishing = createJob(
       dbWrite.$executeRaw`
       -- Make scheduled models published
       UPDATE "Model" SET status = 'Published'
-      WHERE status = 'Scheduled' AND "publishedAt" < ${now};`,
+      WHERE status = 'Scheduled' AND "publishedAt" <= ${now};`,
       dbWrite.$executeRaw`
       -- Update last version of scheduled models
       UPDATE "Model" SET "lastVersionAt" = ${now}
@@ -21,7 +21,7 @@ export const processScheduledPublishing = createJob(
         SELECT
           mv."modelId"
         FROM "ModelVersion" mv
-        WHERE status = 'Scheduled' AND "publishedAt" < ${now}
+        WHERE status = 'Scheduled' AND "publishedAt" <= ${now}
       );`,
       dbWrite.$executeRaw`
       -- Update scheduled versions posts
@@ -31,11 +31,11 @@ export const processScheduledPublishing = createJob(
       WHERE
         p."publishedAt" IS NULL
       AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
-      AND mv.status = 'Scheduled' AND mv."publishedAt" <  ${now};`,
+      AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};`,
       dbWrite.$executeRaw`
       -- Update scheduled versions published
       UPDATE "ModelVersion" SET status = 'Published'
-      WHERE status = 'Scheduled' AND "publishedAt" < ${now};`,
+      WHERE status = 'Scheduled' AND "publishedAt" <= ${now};`,
     ]);
 
     await setLastRun();
