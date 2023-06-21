@@ -9,15 +9,26 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
   GetAllCommentsSchema,
+  GetCommentCountByModelInput,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
-  input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, userId, filterBy, sort },
+  input: {
+    limit = DEFAULT_PAGE_SIZE,
+    page,
+    cursor,
+    modelId,
+    userId,
+    filterBy,
+    sort,
+    hidden = false,
+  },
   select,
   user,
 }: {
@@ -43,6 +54,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
       reviewId: { equals: null },
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
+      hidden,
       // OR: [
       //   {
       //     userId: { not: user?.id },
@@ -136,9 +148,13 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  await dbWrite.comment.delete({ where: { id } });
+  const deleted = await dbWrite.comment.delete({ where: { id } });
+  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+
   if (modelId) await queueMetricUpdate('Model', modelId);
   if (model?.userId) await queueMetricUpdate('User', model.userId);
+
+  return deleted;
 };
 
 export const updateCommentById = ({
@@ -164,4 +180,11 @@ export const updateCommentReportStatusByReason = ({
     where: { reason, comment: { commentId: id } },
     data: { status },
   });
+};
+
+export const getCommentCountByModel = ({
+  modelId,
+  hidden = false,
+}: GetCommentCountByModelInput) => {
+  return dbRead.comment.count({ where: { modelId, hidden } });
 };

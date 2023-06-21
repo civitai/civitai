@@ -204,7 +204,7 @@ export const upsertSubscription = async (
   subscription: Stripe.Subscription,
   customerId: string,
   eventDate: Date,
-  type: string
+  eventType: string
 ) => {
   const user = await dbWrite.user.findFirst({
     where: { customerId: customerId },
@@ -217,14 +217,16 @@ export const upsertSubscription = async (
   });
 
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
-  if (user.subscription && type === 'customer.subscription.created') {
+
+  const userHasSubscription = !!user.subscriptionId;
+  const startingNewSubscription = userHasSubscription && user.subscriptionId !== subscription.id;
+  const isCreatingSubscription = eventType === 'customer.subscription.created';
+  if (startingNewSubscription) {
+    log('Subscription id changed, deleting old subscription');
+    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+  } else if (userHasSubscription && isCreatingSubscription) {
     log('Subscription already up to date');
     return;
-  }
-
-  if (user.subscriptionId && user.subscriptionId !== subscription.id) {
-    log('Subscription id changed, deleting old subscription');
-    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId } });
   }
 
   const data = {
@@ -246,7 +248,9 @@ export const upsertSubscription = async (
   };
 
   await dbWrite.$transaction([
-    dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    isCreatingSubscription
+      ? dbWrite.customerSubscription.create({ data })
+      : dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
     dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
 
