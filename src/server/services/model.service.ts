@@ -297,10 +297,13 @@ export const deleteModelById = async ({ id, userId }: GetByIdInput & { userId: n
       where: { id },
       data: {
         deletedAt: new Date(),
-        status: 'Deleted',
+        status: ModelStatus.Deleted,
         deletedBy: userId,
         modelVersions: {
-          updateMany: { where: { status: 'Published' }, data: { status: 'Deleted' } },
+          updateMany: {
+            where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
+            data: { status: ModelStatus.Deleted },
+          },
         },
       },
       select: { id: true, userId: true, nsfw: true, modelVersions: { select: { id: true } } },
@@ -621,7 +624,7 @@ export const unpublishModelById = async ({
           },
           modelVersions: {
             updateMany: {
-              where: { status: ModelStatus.Published },
+              where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
               data: { status: ModelStatus.Unpublished, publishedAt: null },
             },
           },
