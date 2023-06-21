@@ -85,18 +85,35 @@ export const upsertCommentHandler = async ({
         entityId: comment.modelId,
         nsfw: comment.nsfw,
       });
+      await ctx.track.commentEvent({ type: 'Create', commentId: comment.id });
 
       return comment;
+    } else {
+      await ctx.track.commentEvent({ type: 'Update', commentId: comment.id });
+
+      // Explicitly check for boolean value to track hide/unhide events
+      if (input.hidden === true)
+        await ctx.track.commentEvent({ type: 'Hide', commentId: comment.id });
+      else if (input.hidden === false)
+        await ctx.track.commentEvent({ type: 'Unhide', commentId: comment.id });
     }
   } catch (error) {
     throw throwDbError(error);
   }
 };
 
-export const deleteUserCommentHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteUserCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    await deleteCommentById({ ...input });
+    const deleted = await deleteCommentById({ ...input });
     // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    await ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id });
 
     // return deleted;
   } catch (error) {

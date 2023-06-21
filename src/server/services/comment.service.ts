@@ -15,6 +15,7 @@ import {
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
@@ -147,9 +148,13 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  await dbWrite.comment.delete({ where: { id } });
+  const deleted = await dbWrite.comment.delete({ where: { id } });
+  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+
   if (modelId) await queueMetricUpdate('Model', modelId);
   if (model?.userId) await queueMetricUpdate('User', model.userId);
+
+  return deleted;
 };
 
 export const updateCommentById = ({
