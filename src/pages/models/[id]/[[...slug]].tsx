@@ -398,27 +398,6 @@ export default function ModelDetailsV2({
     return () => router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
 
-  // TODO.manuel: Figure out why modal is not closing when opening another modal
-  // console.log({ hiddenCommentsOpened });
-  // useEffect(() => {
-  //   if (hiddenCommentsOpened && !!router.query.modal) closeHiddenComments();
-  // }, [closeHiddenComments, hiddenCommentsOpened, router]);
-
-  // useEffect(() => {
-  //   function onConnect() {
-  //     console.log('connected');
-  //     picFinderSocket.send(
-  //       JSON.stringify({ newConnection: { apiKey: env.NEXT_PUBLIC_PICFINDER_API_KEY } })
-  //     );
-  //   }
-
-  //   picFinderSocket.on('connect', onConnect);
-
-  //   return () => {
-  //     picFinderSocket.off('connect', onConnect);
-  //   };
-  // }, []);
-
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
 
