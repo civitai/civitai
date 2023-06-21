@@ -17,7 +17,14 @@ import {
   GetPostsByCategoryInput,
 } from './../schema/post.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { TagType, TagTarget, Prisma, ImageGenerationProcess, NsfwLevel } from '@prisma/client';
+import {
+  TagType,
+  TagTarget,
+  Prisma,
+  ImageGenerationProcess,
+  NsfwLevel,
+  ImageIngestionStatus,
+} from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -551,6 +558,12 @@ export const getPostsByCategory = async ({
   const postIds = postsRaw.map((p) => p.id);
   if (postIds.length) {
     const imageAND = [Prisma.sql`"postId" IN (${Prisma.join(postIds)})`];
+
+    // ensure that only scanned images make it to the main feed
+    imageAND.push(
+      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
+
     applyUserPreferencesSql(imageAND, { ...input, userId });
     applyModRulesSql(imageAND, { userId });
     images = await dbRead.$queryRaw<PostImageRaw[]>`

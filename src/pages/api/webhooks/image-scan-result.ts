@@ -37,7 +37,6 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 
   const bodyResults = schema.safeParse(req.body);
-  if (!bodyResults.success) console.log(bodyResults.error);
   if (!bodyResults.success)
     return res
       .status(400)
@@ -48,7 +47,10 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   try {
     switch (bodyResults.data.status) {
       case Status.NotFound:
-        await dbWrite.image.delete({ where: { id: data.id } });
+        await dbWrite.image.update({
+          where: { id: data.id },
+          data: { ingestion: ImageIngestionStatus.NotFound },
+        });
         break;
       case Status.Unscannable:
         await dbWrite.image.update({

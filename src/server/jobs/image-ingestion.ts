@@ -1,4 +1,5 @@
 import { ImageIngestionStatus } from '@prisma/client';
+import { chunk } from 'lodash';
 import { isProd } from '~/env/other';
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
@@ -6,12 +7,12 @@ import { deleteImageById, ingestImage } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
-  if (!isProd) return;
+  // if (!isProd) return;
   const images = await dbRead.image.findMany({
     where: {
       OR: [
         {
-          scanRequestedAt: { not: null },
+          scanRequestedAt: { lte: decreaseDate(new Date(), 5, 'minute') },
           scannedAt: null,
           ingestion: ImageIngestionStatus.Pending,
         },
@@ -21,26 +22,36 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     select: {
       id: true,
       url: true,
-      scanRequestedAt: true,
     },
   });
 
-  const buffer = decreaseDate(new Date(), 5, 'minute');
-  const toIngest = images.filter(
-    (x) => !x.scanRequestedAt || x.scanRequestedAt.getTime() <= buffer.getTime()
-  );
+  if (!isProd) {
+    console.log(images.length);
+    return;
+  }
 
-  await Promise.all(toIngest.map((image) => ingestImage({ image })));
+  const batches = chunk(images, 50);
+  for (const batch of batches) {
+    await Promise.all(batch.map((image) => ingestImage({ image })));
+  }
 });
 
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
-  if (!isProd) return;
+  // if (!isProd) return;
   const images = await dbRead.image.findMany({
     where: { ingestion: ImageIngestionStatus.Blocked },
     select: { id: true },
   });
   if (!images.length) return;
 
+  if (!isProd) {
+    console.log(images.length);
+    return;
+  }
+
   const toRemove = images.map((x) => x.id);
-  await Promise.all(toRemove.map((id) => deleteImageById({ id })));
+  const batches = chunk(toRemove, 3);
+  for (const batch of batches) {
+    await Promise.all(batch.map((id) => deleteImageById({ id })));
+  }
 });

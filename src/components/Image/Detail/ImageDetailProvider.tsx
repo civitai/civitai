@@ -59,7 +59,7 @@ export function ImageDetailProvider({
 
   // #region [data fetching]
   const shouldFetchMany = Object.keys(filters).length > 0;
-  const { images, isLoading: imagesLoading } = useQueryImages(
+  const { images, isInitialLoading: imagesLoading } = useQueryImages(
     { ...filters },
     {
       enabled: shouldFetchMany,
@@ -68,7 +68,7 @@ export function ImageDetailProvider({
 
   const shouldFetchImage =
     !imagesLoading && !!images?.length && !images.find((x) => x.id === imageId);
-  const { data: prefetchedImage, isLoading: imageLoading } = trpc.image.get.useQuery(
+  const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
     { id: imageId },
     { enabled: shouldFetchImage }
   );

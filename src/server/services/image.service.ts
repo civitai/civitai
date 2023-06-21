@@ -2,6 +2,7 @@ import {
   CosmeticSource,
   CosmeticType,
   ImageGenerationProcess,
+  ImageIngestionStatus,
   NsfwLevel,
   Prisma,
   ReportReason,
@@ -50,6 +51,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { deleteObject } from '~/utils/s3-utils';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { logToDb } from '~/utils/logging';
+// TODO.ingestion - logToDb something something 'axiom'
 
 // TODO.ingestion - make sure we only return images that have the `ingestion` set to 'scanned' for ALL users
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -125,6 +127,8 @@ export const getGalleryImages = async ({
   const AND: Prisma.Sql[] = [];
   // Exclude TOS violations
   if (!isMod) AND.push(Prisma.sql`i."tosViolation" = false`);
+  // ensure that only scanned images make it to the main feed
+  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
 
   // Exclude images that need review
   if (!isMod) {
@@ -479,46 +483,29 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
   //   console.log('skip ingest');
   //   return true;
   // }
-  try {
-    console.log('___BEGIN INGEST___');
-    console.log({
-      body: {
-        imageId: id,
-        imageKey: url,
-        // wait: true,
-        scans: [ImageScanType.Label, ImageScanType.Moderation],
-        callbackUrl,
-      },
+  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageId: id,
+      imageKey: url,
+      // wait: true,
+      scans: [ImageScanType.Label, ImageScanType.Moderation],
+      callbackUrl,
+    }),
+  });
+  if (response.status === 202) {
+    await dbWrite.image.updateMany({
+      where: { id },
+      data: { scanRequestedAt },
     });
-    const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        imageId: id,
-        imageKey: url,
-        // wait: true,
-        scans: [ImageScanType.Label, ImageScanType.Moderation],
-        callbackUrl,
-      }),
+    return true;
+  } else {
+    await logToDb('image-ingestion', {
+      type: 'error',
+      imageId: id,
+      url,
     });
-    console.log('___END INGEST___');
-    if (response.status === 202) {
-      await dbWrite.image.updateMany({
-        where: { id },
-        data: { scanRequestedAt },
-      });
-      return true;
-    } else {
-      await logToDb('image-ingestion', {
-        type: 'error',
-        imageId: id,
-        url,
-      });
-      return false;
-    }
-  } catch (e: any) {
-    console.log('_____error_____');
-    console.log(e);
     return false;
   }
 };
@@ -650,6 +637,9 @@ export const getAllImages = async ({
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: NsfwLevel }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
+
+  // ensure that only scanned images make it to the main feed
+  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
 
   // If User Isn't mod
   if (!isModerator) {
@@ -1041,7 +1031,11 @@ export const getImage = async ({
   if (!isModerator)
     AND.push(
       Prisma.sql`(${Prisma.join(
-        [Prisma.sql`i."needsReview" = false`, Prisma.sql`i."userId" = ${userId}`],
+        [
+          // TODO.ingestion - fix this, make sure any calls to images don't get images that aren't scanned unless the request comes from the owner
+          Prisma.sql`i."needsReview" = false AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."userId" = ${userId}`,
+        ],
         ' OR '
       )})`
     );
@@ -1205,6 +1199,12 @@ export const getImagesForModelVersion = async ({
     Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
     Prisma.sql`i."needsReview" = false`,
   ];
+
+  // ensure that only scanned images make it to the main feed
+  imageWhere.push(
+    Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+  );
+
   if (!!excludedTagIds?.length) {
     const excludedTagsOr: Prisma.Sql[] = [
       Prisma.join(
@@ -1280,7 +1280,13 @@ export const getImagesForPosts = async ({
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere: Prisma.Sql[] = [Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`];
+
   if (!isOwnerRequest) {
+    // ensure that only scanned images make it to the main feed
+    imageWhere.push(
+      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
+
     if (!!excludedTagIds?.length) {
       const excludedTagsOr: Prisma.Sql[] = [
         Prisma.sql`i."scannedAt" IS NOT NULL`,
@@ -1478,6 +1484,9 @@ export const getImagesByCategory = async ({
   });
 
   const AND = [Prisma.sql`p."publishedAt" IS NOT NULL`];
+
+  // ensure that only scanned images make it to the main feed
+  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
 
   // Apply excluded tags
   if (input.excludedTagIds?.length)

@@ -899,6 +899,7 @@ enum ImageIngestionStatus {
   Scanned
   Error
   Blocked
+  NotFound
 }
 
 model Image {

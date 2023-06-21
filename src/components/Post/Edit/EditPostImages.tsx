@@ -88,6 +88,7 @@ function ImageController({
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
+  // TODO.ingestion - one request with multiple image ids tied to a zustand store
   const { data, refetch } = trpc.image.getIngestionResults.useQuery({ id }, { enabled: false });
   const debouncer = useDebouncer(1000);
 
@@ -96,7 +97,7 @@ function ImageController({
     debouncer(refetch);
   }, [id, refetch, debouncer]);
 
-  useEffect(() => console.log({ data }), [data]);
+  // TODO.ingestion - ok button on tos alert that deletes the image, drop opacity on image, don't show tags
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
@@ -106,7 +107,7 @@ function ImageController({
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
       />
-      {/* TODO - get tags for every image after a set time */}
+
       {data?.tags && (
         <VotableTags
           entityType="image"
