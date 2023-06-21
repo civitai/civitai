@@ -12,12 +12,14 @@ import {
   Modal,
   Stack,
   Text,
+  ThemeIcon,
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelModifier, ModelStatus } from '@prisma/client';
 import {
+  IconClock,
   IconDownload,
   IconExclamationMark,
   IconHeart,
@@ -30,7 +32,7 @@ import { DefaultErrorShape } from '@trpc/server';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -68,6 +70,8 @@ import { trpc } from '~/utils/trpc';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
+import dayjs from 'dayjs';
 
 export function ModelVersionDetails({
   model,
@@ -84,6 +88,7 @@ export function ModelVersionDetails({
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [opened, { toggle }] = useDisclosure(false);
+  const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -98,7 +103,7 @@ export function ModelVersionDetails({
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
 
-  const handlePublishClick = async () => {
+  const handlePublishClick = async (publishDate?: Date) => {
     try {
       if (model.status !== ModelStatus.Published) {
         // Publish model, version and all of its posts
@@ -106,10 +111,14 @@ export function ModelVersionDetails({
           model.status === ModelStatus.UnpublishedViolation && user?.isModerator
             ? model.modelVersions.map(({ id }) => id)
             : [version.id];
-        await publishModelMutation.mutateAsync({ id: model.id, versionIds });
+        await publishModelMutation.mutateAsync({
+          id: model.id,
+          publishedAt: publishDate,
+          versionIds,
+        });
       } else {
         // Just publish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id });
+        await publishVersionMutation.mutateAsync({ id: version.id, publishedAt: publishDate });
       }
     } catch (e) {
       const error = e as TRPCClientErrorBase<DefaultErrorShape>;
@@ -300,6 +309,8 @@ export function ModelVersionDetails({
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
     hasPosts;
+  const scheduledPublishDate =
+    version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
   const showRequestReview =
     isOwner &&
@@ -340,9 +351,38 @@ export function ModelVersionDetails({
               Request a Review
             </Button>
           ) : showPublishButton ? (
-            <Button color="green" onClick={handlePublishClick} loading={publishing} fullWidth>
-              Publish this version
-            </Button>
+            <Stack spacing={4}>
+              <Button.Group>
+                <Button
+                  color="green"
+                  onClick={() => handlePublishClick()}
+                  loading={publishing}
+                  fullWidth
+                >
+                  Publish this version
+                </Button>
+                <Tooltip label="Schedule Publish" withArrow>
+                  <Button
+                    color="green"
+                    variant="outline"
+                    loading={publishing}
+                    onClick={() => setScheduleModalOpened((current) => !current)}
+                  >
+                    <IconClock size={20} />
+                  </Button>
+                </Tooltip>
+              </Button.Group>
+              {scheduledPublishDate && isOwnerOrMod && (
+                <Group spacing={4}>
+                  <ThemeIcon color="gray" variant="filled" radius="xl">
+                    <IconClock size={20} />
+                  </ThemeIcon>
+                  <Text size="xs" color="dimmed">
+                    Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
+                  </Text>
+                </Group>
+              )}
+            </Stack>
           ) : (
             <Stack spacing={4}>
               <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
@@ -767,6 +807,11 @@ export function ModelVersionDetails({
           <RenderHtml html={version.description} />
         </Modal>
       )}
+      <ScheduleModal
+        opened={scheduleModalOpened}
+        onClose={() => setScheduleModalOpened((current) => !current)}
+        onSubmit={(date: Date) => handlePublishClick(date)}
+      />
     </Grid>
   );
 }

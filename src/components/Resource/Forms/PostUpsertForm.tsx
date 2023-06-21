@@ -1,7 +1,7 @@
 import { Button, Grid, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { ModelStatus } from '@prisma/client';
-import { IconAlertTriangle, IconArrowsSort } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowsSort, IconClock } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useRouter } from 'next/router';
@@ -18,7 +18,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { showErrorNotification } from '~/utils/notifications';
+import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { trpc } from '~/utils/trpc';
+import { useState } from 'react';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
   const queryUtils = trpc.useContext();
@@ -95,6 +97,8 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
+  const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
+
   const id = useEditPostContext((state) => state.id);
   const tags = useEditPostContext((state) => state.tags);
   const images = useEditPostContext((state) => state.images);
@@ -118,11 +122,11 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
     tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
   const canPublish = !isUploading && !!modelVersion?.files?.length;
 
-  const handlePublish = () => {
+  const handlePublish = async (publishDate?: Date) => {
     if (!currentUser || !modelVersion) return;
 
     async function onSuccess() {
-      setPublishedAt(new Date());
+      setPublishedAt(publishDate ?? new Date());
       // Update post title
       mutate(
         { id, title: `${modelVersion?.model.name} - ${modelVersion?.name} Showcase` },
@@ -148,11 +152,15 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
     }
 
     if (modelVersion.model.status !== ModelStatus.Published)
-      publishModelMutation.mutate(
-        { id: modelId, versionIds: [modelVersionId] },
+      await publishModelMutation.mutateAsync(
+        { id: modelId, versionIds: [modelVersionId], publishedAt: publishDate },
         { onSuccess, onError }
       );
-    else publishVersionMutation.mutate({ id: modelVersionId }, { onSuccess, onError });
+    else
+      await publishVersionMutation.mutateAsync(
+        { id: modelVersionId, publishedAt: publishDate },
+        { onSuccess, onError }
+      );
   };
 
   const handleSave = () => {
@@ -199,16 +207,26 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
           width={260}
           withArrow
         >
-          <div style={{ display: 'flex', flex: 2 }}>
+          <Button.Group>
             <Button
               disabled={!canSave}
               style={{ flex: 1 }}
-              onClick={canPublish ? handlePublish : handleSave}
+              onClick={() => (canPublish ? handlePublish() : handleSave())}
               loading={isLoading}
             >
               {canPublish ? 'Publish' : 'Save'}
             </Button>
-          </div>
+            <Tooltip label="Schedule Publish" withArrow>
+              <Button
+                variant="outline"
+                loading={isLoading}
+                onClick={() => setScheduleModalOpened((current) => !current)}
+                disabled={!canSave}
+              >
+                <IconClock size={20} />
+              </Button>
+            </Tooltip>
+          </Button.Group>
         </Tooltip>
       )}
       <Text size="xs">
@@ -227,6 +245,11 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
           </>
         )}
       </Text>
+      <ScheduleModal
+        opened={scheduleModalOpened}
+        onClose={() => setScheduleModalOpened((current) => !current)}
+        onSubmit={(date: Date) => handlePublish(date)}
+      />
     </Stack>
   );
 }

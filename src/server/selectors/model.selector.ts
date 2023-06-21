@@ -112,6 +112,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       baseModel: true,
       earlyAccessTimeFrame: true,
       status: true,
+      publishedAt: true,
       meta: true,
       rank: {
         select: {
