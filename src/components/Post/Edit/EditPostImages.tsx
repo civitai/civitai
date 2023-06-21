@@ -90,7 +90,7 @@ function ImageController({
 
   // TODO.ingestion - one request with multiple image ids tied to a zustand store
   const { data, refetch } = trpc.image.getIngestionResults.useQuery({ id }, { enabled: false });
-  const debouncer = useDebouncer(1000);
+  const debouncer = useDebouncer(1500);
 
   useEffect(() => {
     if (!id) return;
@@ -108,7 +108,7 @@ function ImageController({
         onLoad={() => setWithBorder(true)}
       />
 
-      {data?.tags && (
+      {!!data?.tags.length && data.ingestion === ImageIngestionStatus.Scanned && (
         <VotableTags
           entityType="image"
           entityId={id}
