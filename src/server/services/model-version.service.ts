@@ -6,6 +6,7 @@ import {
   DeleteExplorationPromptInput,
   ModelVersionMeta,
   ModelVersionUpsertInput,
+  PublishVersionInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -161,17 +162,25 @@ export const updateModelVersionById = ({
 
 export const publishModelVersionById = async ({
   id,
+  publishedAt,
   meta,
-}: GetByIdInput & { meta?: ModelVersionMeta }) => {
-  const publishedAt = new Date();
+}: PublishVersionInput & { meta?: ModelVersionMeta }) => {
+  let status: ModelStatus = ModelStatus.Published;
+  if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
+  else publishedAt = new Date();
+
   const version = await dbWrite.modelVersion.update({
     where: { id },
     data: {
-      status: ModelStatus.Published,
+      status,
       publishedAt,
       meta,
-      model: { update: { lastVersionAt: publishedAt } },
-      posts: { updateMany: { where: { publishedAt: null }, data: { publishedAt } } },
+      model:
+        status !== ModelStatus.Scheduled ? { update: { lastVersionAt: publishedAt } } : undefined,
+      posts:
+        status !== ModelStatus.Scheduled
+          ? { updateMany: { where: { publishedAt: null }, data: { publishedAt } } }
+          : undefined,
     },
     select: {
       id: true,

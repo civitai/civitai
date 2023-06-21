@@ -30,6 +30,7 @@ import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-c
 import { ingestImages } from '~/server/jobs/ingest-images';
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
 import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
+import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -55,6 +56,7 @@ export const jobs: Job[] = [
   ingestImages,
   tempRecomputePostMetrics,
   tempScanFilesMissingHashes,
+  processScheduledPublishing,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -65,6 +67,7 @@ export default WebhookEndpoint(async (req, res) => {
   const toRun = [];
   const alreadyRunning = [];
   const afterResponse = [];
+  let result: MixedObject | void;
 
   const now = new Date();
   for (const { name, cron, run, options } of jobs) {
@@ -98,20 +101,17 @@ export default WebhookEndpoint(async (req, res) => {
     };
 
     if (options.shouldWait || wait) {
-      const result = await processJob();
-      // If this was the only job that got requested and we waited for the outcome, return the status
-      if (runJob) {
-        res.status(200).json(result);
-        return;
-      }
+      result = await processJob();
       ran.push(name);
+      // If this was the only job that got requested and we waited for the outcome, return the status
+      if (runJob) break;
     } else {
       afterResponse.push(processJob);
       toRun.push(name);
     }
   }
 
-  res.status(200).json({ ok: true, ran, toRun, alreadyRunning });
+  res.status(200).json(result ?? { ok: true, ran, toRun, alreadyRunning });
   await Promise.all(afterResponse.map((run) => run()));
 });
 

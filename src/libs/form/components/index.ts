@@ -21,7 +21,7 @@ import {
 } from '@mantine/core';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
-import { DatePicker } from '@mantine/dates';
+import { DatePicker, TimeInput } from '@mantine/dates';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
 import { withWatcher } from '~/libs/form/hoc/withWatcher';
@@ -60,6 +60,7 @@ export const InputProfileImageUpload = withWatcher(withController(ProfileImageUp
 export const InputSimpleImageUpload = withWatcher(withController(SimpleImageUpload));
 export const InputFileList = withWatcher(withController(FileList));
 export const InputTags = withWatcher(withController(TagsInput));
+export const InputTime = withWatcher(withController(TimeInput));
 
 export const InputSwitch = withWatcher(
   withController(Switch, ({ field }) => ({

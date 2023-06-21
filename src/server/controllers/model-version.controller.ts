@@ -8,6 +8,7 @@ import {
   GetModelVersionSchema,
   ModelVersionMeta,
   ModelVersionUpsertInput,
+  PublishVersionInput,
 } from '~/server/schema/model-version.schema';
 import { DeclineReviewSchema, ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
@@ -185,7 +186,7 @@ export const publishModelVersionHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: PublishVersionInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {

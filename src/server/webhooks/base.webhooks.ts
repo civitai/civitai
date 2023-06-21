@@ -7,7 +7,7 @@ type WebhookProcessor = {
 };
 
 export type WebhookProcessorRunContext = {
-  lastSent: string;
+  lastSent: Date;
   prisma: PrismaClient;
 };
 
