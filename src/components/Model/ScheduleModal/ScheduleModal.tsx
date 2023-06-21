@@ -32,23 +32,28 @@ export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
 
   return (
     <Modal opened={opened} onClose={onClose} title="Schedule your model" size="md" centered>
-      <Stack spacing="xl">
+      <Stack spacing="md">
         <Text size="sm" color="dimmed">
           Select the date and time you want to publish this model.
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
           <Stack spacing="xl">
-            <Group spacing={8} grow>
-              <InputDatePicker
-                name="date"
-                label="Publish Date"
-                placeholder="Select a date"
-                withAsterisk
-                minDate={minDate}
-                maxDate={maxDate}
-              />
-              <InputTime name="time" label="Publish Time" format="12" withAsterisk />
-            </Group>
+            <Stack spacing={4}>
+              <Group spacing={8} grow>
+                <InputDatePicker
+                  name="date"
+                  label="Publish Date"
+                  placeholder="Select a date"
+                  withAsterisk
+                  minDate={minDate}
+                  maxDate={maxDate}
+                />
+                <InputTime name="time" label="Publish Time" format="12" withAsterisk />
+              </Group>
+              <Text size="xs" color="dimmed">
+                The date and time are in your local timezone.
+              </Text>
+            </Stack>
             <Group position="right">
               <Button variant="default" onClick={onClose}>
                 Cancel

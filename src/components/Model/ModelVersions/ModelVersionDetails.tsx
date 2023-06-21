@@ -763,6 +763,11 @@ export function ModelVersionDetails({
               {`A verified artist believes this model was fine-tuned on their art. We're discussing this with the model creator and artist`}
             </AlertWithIcon>
           )}
+          {model.poi && (
+            <AlertWithIcon icon={<IconExclamationMark />}>
+              {`This resource is intended to reproduce the likeness of a real person. Out of respect for this individual and in accordance with our Content Rules, no moderated content or commercial use is allowed.`}
+            </AlertWithIcon>
+          )}
         </Stack>
       </Grid.Col>
 
