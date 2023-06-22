@@ -3,9 +3,9 @@ import {
   TypographyStylesProvider,
   TypographyStylesProviderProps,
 } from '@mantine/core';
-import React from 'react';
+import { useMemo } from 'react';
 
-import { sanitizeHtml } from '~/utils/html-helpers';
+import { needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
 
 const useStyles = createStyles((theme) => ({
   htmlRenderer: {
@@ -76,28 +76,50 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function RenderHtml({ html, withMentions = false, ...props }: Props) {
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
 
-  if (withMentions) {
-    html = sanitizeHtml(html, {
-      transformTags: {
-        span: function (tagName, attribs) {
-          const dataType = attribs['data-type'];
-          const isMention = dataType === 'mention';
+  html = useMemo(
+    () =>
+      sanitizeHtml(html, {
+        transformTags: {
+          span: function (tagName, attribs) {
+            const dataType = attribs['data-type'];
+            const isMention = dataType === 'mention';
+            const style = attribs['style'];
+            const hexColor = style?.match(/color:#([0-9a-f]{6})/)?.[1];
+            const needsSwap = hexColor
+              ? needsColorSwap({ hexColor, colorScheme: theme.colorScheme, threshold: 0.2 })
+              : false;
 
-          return isMention
-            ? {
-                tagName: 'a',
-                attribs: {
-                  ...attribs,
-                  href: `/user/${attribs['data-label'] ?? attribs['data-id']}`,
-                },
-              }
-            : { tagName, attribs };
+            return withMentions && isMention
+              ? {
+                  tagName: 'a',
+                  attribs: {
+                    ...attribs,
+                    href: `/user/${attribs['data-label'] ?? attribs['data-id']}`,
+                  },
+                }
+              : {
+                  tagName,
+                  attribs: {
+                    ...attribs,
+                    style:
+                      needsSwap && hexColor
+                        ? style +
+                          `;color:${
+                            theme.colorScheme === 'dark'
+                              ? theme.fn.lighten(hexColor, 0.5)
+                              : theme.fn.darken(hexColor, 0.3)
+                          }`
+                        : style,
+                  },
+                };
+          },
         },
-      },
-    });
-  }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [html, withMentions, theme.colorScheme]
+  );
 
   return (
     <TypographyStylesProvider {...props} className={classes.htmlRenderer}>

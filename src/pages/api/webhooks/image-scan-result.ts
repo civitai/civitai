@@ -24,7 +24,7 @@ type BodyProps = z.infer<typeof schema>;
 const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
-  tags: tagSchema.array().optional(),
+  tags: tagSchema.array().nullish(),
   status: z.nativeEnum(Status),
 });
 
@@ -105,7 +105,7 @@ const computedTagCombos: Record<string, ComputedTagTester> = {
 
 const computedTagsCombosArray = Object.entries(computedTagCombos);
 async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
-  if (!incomingTags.length) return;
+  if (!incomingTags?.length) return;
 
   // De-dupe incoming tags and keep tag with highest confidence
   const tagMap: Record<string, IncomingTag> = {};

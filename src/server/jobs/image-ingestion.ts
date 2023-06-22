@@ -13,7 +13,6 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
       OR: [
         {
           scanRequestedAt: { lte: decreaseDate(new Date(), 5, 'minute') },
-          scannedAt: null,
           ingestion: ImageIngestionStatus.Pending,
         },
         { scanRequestedAt: null },
