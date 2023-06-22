@@ -58,12 +58,11 @@ export const useHiddenPreferences = ({
     [modelResults.data, modelResults.error, modelResults.isLoading, showAll]
   );
 
-  useEffect(() => console.log({ modelIds }), [modelIds]);
-
   const userResults = trpc.user.getHiddenPreferences.useQuery(
     { type: 'users' },
     { enabled: users && enabled, ...options }
   );
+
   const userIds = useMemo(
     () => (showAll || userResults.isLoading || userResults.error ? [] : userResults.data),
     [userResults.data, userResults.error, userResults.isLoading, showAll]
@@ -107,6 +106,13 @@ export const useHiddenPreferences = ({
   ]);
 
   // const isLoading = (images && imageResults.isLoading) || (models && modelResults.)
+
+  console.log({
+    imageIds,
+    modelIds,
+    userIds,
+    tagIds,
+  });
 
   return {
     imageIds,

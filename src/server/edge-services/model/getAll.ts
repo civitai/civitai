@@ -36,6 +36,8 @@ export const getAll = async <TSelect extends Prisma.ModelSelect>(
   const lowerQuery = query?.toLowerCase();
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
 
+  // TODO.edge-cache - filter out content with hidden tags at the server level
+
   // #region [WHERE]
   if (currentUser?.isModerator) {
     if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);

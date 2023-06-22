@@ -120,6 +120,12 @@ export const getHiddenPreferencesSchema = z.object({
   refreshCache: z.boolean().optional(),
 });
 
+export type GetHiddenPreferencesOutput2 = z.output<typeof getHiddenPreferencesSchema2>;
+export const getHiddenPreferencesSchema2 = z.object({
+  types: hiddenPreferenceTypes.array(),
+  refreshCache: z.boolean().optional(),
+});
+
 export type ToggleHiddenPreferenceOutput = z.output<typeof toggleHiddenPreferenceSchema>;
 export const toggleHiddenPreferenceSchema = z.object({
   entityType: z.enum(['users', 'models']),

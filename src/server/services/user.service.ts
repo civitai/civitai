@@ -1,5 +1,7 @@
 import {
   GetHiddenPreferencesOutput,
+  GetHiddenPreferencesOutput2,
+  HiddenPreferenceTypes,
   ToggleHiddenPreferenceOutput,
   ToggleUserArticleEngagementsInput,
 } from './../schema/user.schema';
@@ -35,7 +37,7 @@ import {
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
-import { getSystemPermissions } from '~/server/services/system-cache';
+import { getModerationTags, getSystemPermissions } from '~/server/services/system-cache';
 // import { createCannyToken } from '~/server/canny/canny';
 
 // const xprisma = prisma.$extends({
@@ -685,5 +687,27 @@ export const toggleHiddenPreference = async ({
       return await toggleHideUser({ userId, targetUserId: entityId });
     default:
       throw new Error('unhandled hidden user preferences type');
+  }
+};
+
+// TODO.edge-cache - develop api for managing hidden preferences at app level
+type HiddenPreferences = {
+  users?: number[];
+  models?: number[];
+  images?: number[];
+  tags?: number[];
+  moderated?: number[];
+};
+
+export const getHiddenPreferences2 = async ({
+  types,
+  refreshCache,
+  userId,
+}: GetHiddenPreferencesOutput2 & { userId: number }) => {
+  const result: HiddenPreferences = {};
+
+  if (types.includes('tags')) {
+    result.moderated = await getModerationTags().then((data) => data.map((x) => x.id));
+    // result.tags = await
   }
 };

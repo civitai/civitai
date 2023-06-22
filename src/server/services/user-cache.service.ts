@@ -162,7 +162,6 @@ export async function getHiddenModelsForUser({
   if (refreshCache) await redis.del(`user:${userId}:hidden-models`);
 
   const hiddenModels = await getHiddenModels(userId);
-  console.log('___________________3', hiddenModels);
 
   await redis.set(`user:${userId}:hidden-models`, JSON.stringify(hiddenModels), {
     EX: HIDDEN_CACHE_EXPIRY,

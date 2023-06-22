@@ -39,7 +39,6 @@ export function ModelsInfinite({
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && !isFetching) {
-      console.log('test');
       fetchNextPage?.();
     }
   }, [fetchNextPage, inView, isFetching]);
