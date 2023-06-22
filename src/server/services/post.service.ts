@@ -442,7 +442,7 @@ type PostImageRaw = {
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
-  needsReview: boolean;
+  needsReview: string | null;
   postId: number;
 };
 export const getPostsByCategory = async ({

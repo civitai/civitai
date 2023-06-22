@@ -213,12 +213,7 @@ function ReviewCarousel({
   const hasMultipleImages = review.images.length > 1;
 
   const handleNavigate = (imageId: number) => {
-    openRoutedContext('galleryDetailModal', {
-      galleryImageId: imageId,
-      reviewId: review.id,
-      infinite: false,
-      returnUrl: Router.asPath,
-    });
+    console.log('deprecated');
   };
 
   // this is used to keep content rendered while scrolling - carousel unmounted

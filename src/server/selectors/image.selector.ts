@@ -77,7 +77,7 @@ export const prepareCreateImage = (image: ImageUploadProps) => {
   const payload: Omit<Prisma.ImageCreateInput, 'user'> = {
     ...image,
     name,
-    needsReview: getNeedsReview(image),
+    // needsReview: getNeedsReview(image),
     meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
     generationProcess: image.meta
       ? getImageGenerationProcess(image.meta as Prisma.JsonObject)

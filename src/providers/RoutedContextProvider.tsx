@@ -14,7 +14,6 @@ const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLight
 const ReviewEdit = dynamic(() => import('~/routed-context/modals/ReviewEdit'));
 const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'));
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
-const GalleryDetailModal = dynamic(() => import('~/routed-context/modals/GalleryDetailModal'));
 const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
 const ModelEdit = dynamic(() => import('~/routed-context/modals/ModelEdit'));
@@ -102,22 +101,6 @@ const registry = {
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],
-  },
-  galleryDetailModal: {
-    Component: GalleryDetailModal,
-    resolve: ({ galleryImageId, ...args }: React.ComponentProps<typeof GalleryDetailModal>) => {
-      const slug = Router.query.slug ?? 'placeholder';
-      return [
-        {
-          query: { ...Router.query, slug, galleryImageId, ...args, modal: 'galleryDetailModal' },
-        },
-        {
-          pathname: `/gallery/${galleryImageId}`,
-          query: args,
-        }, // could be a page url for reviews here (/comments/:commentId)
-        { shallow: true },
-      ];
-    },
   },
   imageDetailModal: {
     Component: ImageDetailModal,
