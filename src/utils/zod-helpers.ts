@@ -23,6 +23,8 @@ export function stringArray<I extends ZodArray<ZodNumber>>(schema?: I) {
 /** Converts a comma delimited string to an array of strings */
 export function commaDelimitedStringArray() {
   return z.preprocess((value) => {
+    if (Array.isArray(value)) return value.length ? value.map(String) : [];
+
     const str = String(value);
     return str.split(',');
   }, z.array(z.string()));
@@ -31,7 +33,7 @@ export function commaDelimitedStringArray() {
 /** Converts a comma delimited string to an array of numbers */
 export function commaDelimitedNumberArray(options?: { message?: string }) {
   return commaDelimitedStringArray()
-    .transform((val) => parseNumericStringArray(val))
+    .transform((val) => parseNumericStringArray(val) ?? [])
     .refine(
       (val) => (val ? val?.every((v) => isNumeric(v)) : true),
       options?.message ?? 'Value should be a number array'

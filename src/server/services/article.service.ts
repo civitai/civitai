@@ -39,6 +39,7 @@ export const getArticles = async ({
   hidden,
   username,
   includeDrafts,
+  ids,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
@@ -49,6 +50,7 @@ export const getArticles = async ({
     if (query) AND.push({ title: { contains: query } });
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
+    if (!!ids?.length) AND.push({ id: { in: ids } });
     if (username) AND.push({ user: { username } });
 
     if (!isOwnerRequest) {
@@ -98,6 +100,7 @@ export const getArticles = async ({
         cover: true,
         title: true,
         publishedAt: true,
+        nsfw: true,
         user: { select: userWithCosmeticsSelect },
         tags: { select: { tag: { select: simpleTagSelect } } },
         stats: {

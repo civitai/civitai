@@ -52,7 +52,7 @@ type ImagesAsPostsInfiniteProps = {
   modelId: number;
   username?: string;
   modelVersions?: ModelVersionsProps[];
-  generationModelId?: number;
+  generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
 };
 
 const LIMIT = 50;
@@ -61,7 +61,7 @@ export default function ImagesAsPostsInfinite({
   username,
   modelVersions,
   selectedVersionId,
-  generationModelId,
+  generationOptions,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -176,12 +176,13 @@ export default function ImagesAsPostsInfinite({
                 <MasonryColumns
                   data={items}
                   staticItem={
-                    !!generationModelId && selectedVersionId
+                    !!generationOptions?.generationModelId && selectedVersionId
                       ? (props) => (
                           <ModelGenerationCard
                             {...props}
                             versionId={selectedVersionId}
-                            modelId={generationModelId}
+                            modelId={generationOptions.generationModelId}
+                            withEditingActions={generationOptions?.includeEditingActions}
                           />
                         )
                       : undefined

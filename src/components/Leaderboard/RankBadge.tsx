@@ -6,7 +6,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 const rankColors: Record<number, MantineColor> = {
   1: 'blue',
   3: 'yellow',
-  10: 'silver',
+  10: 'gray',
   100: 'orange',
 };
 
@@ -34,6 +34,7 @@ export const RankBadge = ({ rank, size, textSize = 'sm', iconSize = 18, ...props
         <IconBadge
           size={size}
           color={badgeColor}
+          variant={badgeColor === 'gray' ? 'filled' : undefined}
           href={`/leaderboard/${rank.leaderboardId}?position=${rank.leaderboardRank}`}
           icon={!hasLeaderboardCosmetic ? <IconCrown size={iconSize} /> : undefined}
           sx={

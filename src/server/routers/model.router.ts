@@ -1,17 +1,14 @@
-import {
-  findModelsToAssociate,
-  getAssociatedModelsCardData,
-  getAssociatedModelsSimple,
-  setAssociatedModels,
-} from './../services/model.service';
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
+import { BrowsingMode } from '~/server/common/enums';
 import {
   changeModelModifierHandler,
   createModelHandler,
   declineReviewHandler,
   deleteModelHandler,
+  findResourcesToAssociateHandler,
+  getAssociatedResourcesCardDataHandler,
   getDownloadCommandHandler,
   getModelDetailsForReviewHandler,
   getModelHandler,
@@ -31,28 +28,39 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
+import { cacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   changeModelModifierSchema,
   declineReviewSchema,
   deleteModelSchema,
+  findResourcesToAssociateSchema,
   GetAllModelsOutput,
   getAllModelsSchema,
+  getAssociatedResourcesSchema,
   getDownloadSchema,
   getModelsByCategorySchema,
+  getModelsWithCategoriesSchema,
+  getModelVersionsSchema,
   ModelInput,
   modelSchema,
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
+  setAssociatedResourcesSchema,
+  setModelsCategorySchema,
   toggleModelLockSchema,
   unpublishModelSchema,
-  getModelsWithCategoriesSchema,
-  setModelsCategorySchema,
-  getAssociatedModelsSchema,
-  setAssociatedModelsSchema,
-  findModelsToAssociateSchema,
 } from '~/server/schema/model.schema';
+import {
+  getAllModelsWithCategories,
+  getAssociatedResourcesSimple,
+  getModelsByCategory,
+  getSimpleModelWithVersions,
+  setAssociatedResources,
+  setModelsCategory,
+} from '~/server/services/model.service';
+import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import {
   guardedProcedure,
   middleware,
@@ -61,17 +69,8 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
-import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
-import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
-import { BrowsingMode } from '~/server/common/enums';
-import {
-  getAllModelsWithCategories,
-  getModelsByCategory,
-  getSimpleModelWithVersions,
-  setModelsCategory,
-} from '~/server/services/model.service';
-import { cacheIt } from '~/server/middleware.trpc';
+import { checkFileExists, getS3Client } from '~/utils/s3-utils';
 import { getAllSchema } from '~/server/edge-services/model/schemas';
 import { getInfinite } from '~/server/edge-services/model/getInfinite';
 
@@ -165,7 +164,7 @@ export const modelRouter = router({
     .use(applyUserPreferences)
     .query(getModelsWithVersionsHandler),
   getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
-  getVersions: publicProcedure.input(getByIdSchema).query(getModelVersionsHandler),
+  getVersions: publicProcedure.input(getModelVersionsSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
@@ -219,17 +218,17 @@ export const modelRouter = router({
   setCategory: protectedProcedure
     .input(setModelsCategorySchema)
     .mutation(({ input, ctx }) => setModelsCategory({ ...input, userId: ctx.user?.id })),
-  findModelsToAssociate: publicProcedure
-    .input(findModelsToAssociateSchema)
-    .query(({ input }) => findModelsToAssociate(input)),
-  getAssociatedModelsCardData: publicProcedure
-    .input(getAssociatedModelsSchema)
+  findResourcesToAssociate: publicProcedure
+    .input(findResourcesToAssociateSchema)
+    .query(findResourcesToAssociateHandler),
+  getAssociatedResourcesCardData: publicProcedure
+    .input(getAssociatedResourcesSchema)
     .use(applyUserPreferences)
-    .query(({ input, ctx }) => getAssociatedModelsCardData(input, ctx.user)),
-  getAssociatedModelsSimple: publicProcedure
-    .input(getAssociatedModelsSchema)
-    .query(({ input }) => getAssociatedModelsSimple(input)),
-  setAssociatedModels: protectedProcedure
-    .input(setAssociatedModelsSchema)
-    .mutation(({ input, ctx }) => setAssociatedModels(input, ctx.user)),
+    .query(getAssociatedResourcesCardDataHandler),
+  getAssociatedResourcesSimple: publicProcedure
+    .input(getAssociatedResourcesSchema)
+    .query(({ input }) => getAssociatedResourcesSimple(input)),
+  setAssociatedResources: protectedProcedure
+    .input(setAssociatedResourcesSchema)
+    .mutation(({ input, ctx }) => setAssociatedResources(input, ctx.user)),
 });

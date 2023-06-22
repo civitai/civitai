@@ -90,3 +90,9 @@ export const deleteExplorationPromptSchema = z.object({
 });
 
 export type ModelVersionMeta = ModelMeta & { picFinderModelId?: number };
+
+export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
+export const publishVersionSchema = z.object({
+  id: z.number(),
+  publishedAt: z.date().optional(),
+});

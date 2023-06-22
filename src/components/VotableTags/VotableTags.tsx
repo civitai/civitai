@@ -30,9 +30,9 @@ export function VotableTags({
 }: GalleryTagProps) {
   const queryUtils = trpc.useContext();
   const setVote = useVotableTagStore((state) => state.setVote);
-  const { data: tags = initialTags, isLoading } = trpc.tag.getVotableTags.useQuery(
+  const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
-    { enabled: !initialTags }
+    { enabled: !initialTags, initialData: initialTags }
   );
   canAdd = canAdd && !initialTags;
   canAddModerated = canAddModerated && !initialTags;
@@ -80,7 +80,7 @@ export function VotableTags({
   const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });
   const displayedTags = useMemo(() => {
     if (!tags) return [];
-    const displayTags = tags.sort((a, b) => {
+    const displayTags = [...tags].sort((a, b) => {
       const aMod = a.type === 'Moderation';
       const bMod = b.type === 'Moderation';
       const aNew = a.id === 0;

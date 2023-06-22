@@ -81,7 +81,6 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     | PostEditImage
     | undefined;
 
-  const hasTags = !!image?._count.tags;
   const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
   const defaultValues: z.infer<typeof schema> = {
     hideMeta: image?.hideMeta ?? false,
@@ -153,7 +152,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
               />
               <InputCheckbox name="hideMeta" label="Hide generation data" />
             </Stack> */}
-            <Input.Wrapper label="Tags">
+            {/* <Input.Wrapper label="Tags">
               <Group spacing={4}>
                 {hasTags ? (
                   <VotableTags entityId={image.id} entityType="image" canAdd canAddModerated />
@@ -164,7 +163,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                   </Alert>
                 )}
               </Group>
-            </Input.Wrapper>
+            </Input.Wrapper> */}
             <Input.Wrapper label="Resources">
               {!!image.resourceHelper.length ? (
                 <Stack>

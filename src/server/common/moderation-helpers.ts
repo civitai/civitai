@@ -41,7 +41,7 @@ export const unpublishReasons = {
     notificationMessage: 'Content depicting graphic violence or extreme gore are not allowed.',
   },
   beastiality: {
-    optionLabel: 'Depiction of "beastiality"',
+    optionLabel: 'Depiction of "bestiality"',
     notificationMessage: 'Depictions of bestiality are not allowed.',
   },
   'non-generated-image': {

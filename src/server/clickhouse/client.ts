@@ -67,6 +67,7 @@ export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete';
 export type TagEngagementType = 'Hide' | 'Allow';
 export type UserEngagementType = 'Follow' | 'Hide' | 'Delete';
 export type CommentType = 'Model' | 'Image' | 'Post' | 'Comment' | 'Review';
+export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags';
 export type ImageActivityType = 'Create' | 'Delete' | 'DeleteTOS' | 'Tags' | 'Resources';
 export type QuestionType = 'Create' | 'Delete';
@@ -184,6 +185,10 @@ export class Tracker {
 
   public comment(values: { type: CommentType; entityId: number; nsfw: boolean }) {
     return this.track('comments', values);
+  }
+
+  public commentEvent(values: { type: CommentActivity; commentId: number }) {
+    return this.track('commentEvents', values);
   }
 
   public post(values: { type: PostActivityType; postId: number; nsfw: boolean; tags: string[] }) {

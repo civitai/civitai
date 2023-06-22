@@ -27,8 +27,12 @@ import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
+import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
+import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
+import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
+import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 
-const jobs: Job[] = [
+export const jobs: Job[] = [
   scanFilesJob,
   updateMetricsJob,
   updateMetricsModelJob,
@@ -49,16 +53,22 @@ const jobs: Job[] = [
   ...applyDiscordRoles,
   applyNsfwBaseline,
   ...leaderboardJobs,
+  ingestImages,
+  removeBlockedImages,
+  tempRecomputePostMetrics,
+  tempScanFilesMissingHashes,
+  processScheduledPublishing,
 ];
 
 const log = createLogger('jobs', 'green');
 
 export default WebhookEndpoint(async (req, res) => {
-  const { run: runJob } = querySchema.parse(req.query);
+  const { run: runJob, wait } = querySchema.parse(req.query);
   const ran = [];
   const toRun = [];
   const alreadyRunning = [];
   const afterResponse = [];
+  let result: MixedObject | void;
 
   const now = new Date();
   for (const { name, cron, run, options } of jobs) {
@@ -79,9 +89,10 @@ export default WebhookEndpoint(async (req, res) => {
         log(`${name} starting`);
         axiom.info(`starting`);
         lock(name, options.lockExpiration);
-        await run();
+        const result = await run();
         log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
         axiom.info('success', { duration: Date.now() - jobStart });
+        return result;
       } catch (e) {
         log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
         axiom.error(`failed`, { duration: Date.now() - jobStart, error: e });
@@ -90,16 +101,18 @@ export default WebhookEndpoint(async (req, res) => {
       }
     };
 
-    if (options.shouldWait) {
-      await processJob();
+    if (options.shouldWait || wait) {
+      result = await processJob();
       ran.push(name);
+      // If this was the only job that got requested and we waited for the outcome, return the status
+      if (runJob) break;
     } else {
       afterResponse.push(processJob);
       toRun.push(name);
     }
   }
 
-  res.status(200).json({ ok: true, ran, toRun, alreadyRunning });
+  res.status(200).json(result ?? { ok: true, ran, toRun, alreadyRunning });
   await Promise.all(afterResponse.map((run) => run()));
 });
 
@@ -130,6 +143,7 @@ function isCronMatch(
 
 const querySchema = z.object({
   run: z.string().optional(),
+  wait: z.coerce.boolean().optional(),
 });
 
 async function isLocked(name: string) {

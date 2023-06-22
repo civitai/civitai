@@ -4,6 +4,8 @@ import {
   IconDotsVertical,
   IconTrash,
   IconEdit,
+  IconEye,
+  IconEyeOff,
   IconFlag,
   IconLock,
   IconLockOpen,
@@ -108,13 +110,35 @@ export function CommentDiscussionMenu({
     openConfirmModal({
       modalId: 'confirm-tos-violation',
       title: 'Report ToS Violation',
-      children: `Are you sure you want to report this comment for a Terms of Service violation? Once marked, it won't show up for other people`,
+      children: `Are you sure you want to report this comment as a Terms of Service violation?`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
       confirmProps: { color: 'red', disabled: tosViolationMutation.isLoading },
       closeOnConfirm: false,
       onConfirm: () => tosViolationMutation.mutate({ id: comment.id }),
     });
+  };
+
+  const upsertCommentMutation = trpc.comment.upsert.useMutation();
+  const handleToggleHideComment = () => {
+    upsertCommentMutation.mutate(
+      { ...comment, hidden: !comment.hidden },
+      {
+        async onSuccess() {
+          await queryUtils.comment.getAll.invalidate();
+          await queryUtils.comment.getCommentCountByModel.invalidate({
+            modelId: comment.modelId,
+            hidden: true,
+          });
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Could not hide comment',
+            error: new Error(error.message),
+          });
+        },
+      }
+    );
   };
 
   return (
@@ -142,6 +166,18 @@ export function CommentDiscussionMenu({
                 Edit comment
               </Menu.Item>
             )}
+            <Menu.Item
+              icon={
+                comment.hidden ? (
+                  <IconEye size={14} stroke={1.5} />
+                ) : (
+                  <IconEyeOff size={14} stroke={1.5} />
+                )
+              }
+              onClick={handleToggleHideComment}
+            >
+              {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+            </Menu.Item>
             {isMod && !hideLockOption && (
               <Menu.Item
                 icon={
@@ -181,7 +217,7 @@ export function CommentDiscussionMenu({
 }
 
 type Props = MenuProps & {
-  comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked'>;
+  comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId'>;
   user?: SessionUser | null;
   size?: MantineNumberSize;
   hideLockOption?: boolean;

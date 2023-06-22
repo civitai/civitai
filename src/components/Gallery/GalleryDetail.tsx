@@ -180,7 +180,7 @@ export function GalleryDetail() {
     openConfirmModal({
       modalId: 'confirm-tos-violation',
       title: 'Report ToS Violation',
-      children: `Are you sure you want to report this image for a Terms of Service violation? Once marked, it won't show up for other people`,
+      children: `Are you sure you want to remove this image as a Terms of Service violation? The uploader will be notified.`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
       confirmProps: { color: 'red', loading: tosViolationMutation.isLoading },

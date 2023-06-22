@@ -97,7 +97,6 @@ import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -399,23 +398,21 @@ export default function ModelDetailsV2({
     return () => router.beforePopState(() => true);
   }, [id]); // Add any state variables to dependencies array if needed.
 
-  // useEffect(() => {
-  //   function onConnect() {
-  //     console.log('connected');
-  //     picFinderSocket.send(
-  //       JSON.stringify({ newConnection: { apiKey: env.NEXT_PUBLIC_PICFINDER_API_KEY } })
-  //     );
-  //   }
-
-  //   picFinderSocket.on('connect', onConnect);
-
-  //   return () => {
-  //     picFinderSocket.off('connect', onConnect);
-  //   };
-  // }, []);
-
   if (loadingModel) return <PageLoader />;
   if (!model) return <NotFound />;
+
+  const deleted = !!model && !!model.deletedAt && model.status === ModelStatus.Deleted;
+  if (!!model.deletedAt && !isOwner && !isModerator) {
+    if (model.deletedBy !== model.user.id) return <NotFound />;
+    else
+      return (
+        <Center p="xl">
+          <Alert>
+            <Text size="lg">This resource has been removed by its owner</Text>
+          </Alert>
+        </Center>
+      );
+  }
 
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
@@ -443,7 +440,6 @@ export default function ModelDetailsV2({
     );
 
   const isFavorite = !!favoriteModels.find((modelId) => modelId === id);
-  const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const published = model.status === ModelStatus.Published;
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const isMuted = currentUser?.muted ?? false;
@@ -891,7 +887,10 @@ export default function ModelDetailsV2({
             modelId={model.id}
             selectedVersionId={selectedVersion?.id}
             modelVersions={model.modelVersions}
-            generationModelId={selectedVersion?.meta.picFinderModelId}
+            generationOptions={{
+              generationModelId: selectedVersion?.meta.picFinderModelId,
+              includeEditingActions: isOwner,
+            }}
           />
         </Box>
       )}

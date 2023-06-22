@@ -9,7 +9,6 @@ import { getMetadata, auditMetaData } from '~/utils/image-metadata';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
-import { IngestImageReturnType } from '~/server/services/image.service';
 import { PostImage } from '~/server/selectors/post.selector';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
@@ -193,32 +192,6 @@ const createEditPostStore = ({
                         data: { ...created, previewUrl: data.url },
                       };
                     });
-                    try {
-                      const result = await ingestImage(created);
-                      if (result.type === 'error') {
-                        // console.error(result.data.error);
-                      } else if (result.type === 'blocked') {
-                        set((state) => {
-                          const index = state.images.findIndex(
-                            (x) => x.type === 'image' && x.data.id === created.id
-                          );
-                          if (index === -1) throw new Error('index out of bounds');
-                          state.images[index].type = 'blocked';
-                          state.images[index].data = { ...result.data, uuid: data.uuid };
-                        });
-                      } else if (result.type === 'success') {
-                        const { count } = result.data;
-                        set((state) => {
-                          const index = state.images.findIndex(
-                            (x) => x.type === 'image' && x.data.id === created.id
-                          );
-                          if (index === -1) throw new Error('index out of bounds');
-                          (state.images[index].data as PostEditImage)._count = { tags: count };
-                        });
-                      }
-                    } catch (error) {
-                      console.error(error);
-                    }
                   });
                 })
             );
@@ -333,15 +306,4 @@ const getImageDataFromFile = async (file: File) => {
     status: blockedFor ? 'blocked' : 'uploading',
     message: blockedFor?.filter(isDefined).join(', '),
   };
-};
-
-const ingestImage = async (image: PostEditImage): Promise<IngestImageReturnType> => {
-  const res = await fetch('/api/image/ingest', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(image),
-    credentials: 'include',
-  });
-  if (!res.ok) throw new Error((await res.json()).message);
-  return await res.json();
 };

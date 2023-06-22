@@ -6,6 +6,7 @@ export function DeleteImage({
   children,
   imageId,
   onSuccess,
+  skipConfirm,
 }: {
   imageId: number;
   children: ({
@@ -16,6 +17,7 @@ export function DeleteImage({
     isLoading: boolean;
   }) => React.ReactElement;
   onSuccess?: (imageId: number) => void;
+  skipConfirm?: boolean;
 }) {
   const { mutate, isLoading } = trpc.image.delete.useMutation({
     async onSuccess(_, { id }) {
@@ -27,16 +29,20 @@ export function DeleteImage({
     },
   });
   const onClick = () => {
-    openConfirmModal({
-      modalId: 'delete-confirm',
-      centered: true,
-      title: 'Delete image',
-      children: 'Are you sure you want to delete this image?',
-      labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-      confirmProps: { color: 'red', loading: isLoading },
-      closeOnConfirm: false,
-      onConfirm: () => mutate({ id: imageId }),
-    });
+    if (skipConfirm) {
+      mutate({ id: imageId });
+    } else {
+      openConfirmModal({
+        modalId: 'delete-confirm',
+        centered: true,
+        title: 'Delete image',
+        children: 'Are you sure you want to delete this image?',
+        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+        confirmProps: { color: 'red', loading: isLoading },
+        closeOnConfirm: false,
+        onConfirm: () => mutate({ id: imageId }),
+      });
+    }
   };
 
   return children({ onClick, isLoading });

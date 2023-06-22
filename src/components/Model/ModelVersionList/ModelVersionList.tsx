@@ -14,6 +14,7 @@ import {
   IconBan,
   IconChevronLeft,
   IconChevronRight,
+  IconClock,
   IconDotsVertical,
   IconEdit,
   IconFileSettings,
@@ -158,6 +159,8 @@ export function ModelVersionList({
           const missingFiles = !version.files.length;
           const missingPosts = !version.posts.length;
           const published = version.status === 'Published';
+          const scheduled = version.status === 'Scheduled';
+          const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
 
           const versionButton = (
             <Button
@@ -181,7 +184,7 @@ export function ModelVersionList({
                 return onVersionClick(version);
               }}
               leftIcon={
-                showExtraIcons && (missingFiles || missingPosts || !published) ? (
+                showExtraIcons && (hasProblem || scheduled) ? (
                   <ThemeIcon
                     color="yellow"
                     variant="light"
@@ -189,7 +192,7 @@ export function ModelVersionList({
                     size="sm"
                     sx={{ backgroundColor: 'transparent' }}
                   >
-                    <IconAlertTriangle size={14} />
+                    {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
                   </ThemeIcon>
                 ) : undefined
               }
