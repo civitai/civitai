@@ -150,6 +150,7 @@ export type PublishModelSchema = z.infer<typeof publishModelSchema>;
 export const publishModelSchema = z.object({
   id: z.number(),
   versionIds: z.array(z.number()).optional(),
+  publishedAt: z.date().optional(),
 });
 
 export type UnpublishModelSchema = z.infer<typeof unpublishModelSchema>;

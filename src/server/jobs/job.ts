@@ -2,7 +2,7 @@ import { dbWrite } from '~/server/db/client';
 
 export type Job = {
   name: string;
-  run: () => Promise<void>;
+  run: () => Promise<MixedObject | void>;
   cron: string;
   options: JobOptions;
 };
@@ -15,7 +15,7 @@ export type JobOptions = {
 export function createJob(
   name: string,
   cron: string,
-  fn: () => Promise<void>,
+  fn: () => Promise<MixedObject | void>,
   options: Partial<JobOptions> = {}
 ) {
   return {

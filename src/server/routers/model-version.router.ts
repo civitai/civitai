@@ -14,6 +14,7 @@ import {
   deleteExplorationPromptSchema,
   getModelVersionSchema,
   modelVersionUpsertSchema2,
+  publishVersionSchema,
   upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
 import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
@@ -69,7 +70,7 @@ export const modelVersionRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteModelVersionHandler),
   publish: protectedProcedure
-    .input(getByIdSchema)
+    .input(publishVersionSchema)
     .use(isOwnerOrModerator)
     .mutation(publishModelVersionHandler),
   unpublish: protectedProcedure

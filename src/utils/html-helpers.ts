@@ -1,4 +1,5 @@
-import sanitize from 'sanitize-html';
+import sanitize, { Transformer } from 'sanitize-html';
+import linkBlocklist from '~/server/utils/link-blocklist.json';
 
 export type santizeHtmlOptions = sanitize.IOptions & { stripEmpty?: boolean };
 export function sanitizeHtml(
@@ -60,7 +61,23 @@ export function sanitizeHtml(
       : undefined,
     allowedIframeHostnames: ['www.youtube.com', 'www.instagram.com', 'www.strawpoll.com'],
     transformTags: {
-      a: sanitize.simpleTransform('a', { rel: 'ugc' }),
+      a: function (tagName, { href, ...attr }) {
+        const hrefDomain = new URL(href).hostname;
+        const isBlocked = linkBlocklist.some((domain) => domain === hrefDomain);
+        if (isBlocked)
+          return {
+            tagName: 'span',
+            text: '[Blocked Link]',
+          };
+        return {
+          tagName: 'a',
+          attribs: {
+            ...attr,
+            href,
+            rel: 'ugc',
+          },
+        };
+      } as Transformer,
     },
     ...options,
   });

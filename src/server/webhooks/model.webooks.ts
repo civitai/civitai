@@ -13,9 +13,20 @@ export const modelWebhooks = createWebhookProcessor({
     getData: async ({ lastSent, prisma }) => {
       const models = await prisma.model.findMany({
         where: {
-          publishedAt: {
-            gt: lastSent,
-          },
+          OR: [
+            {
+              publishedAt: {
+                gt: lastSent,
+              },
+              status: 'Published',
+            },
+            {
+              publishedAt: {
+                lt: lastSent,
+              },
+              status: 'Scheduled',
+            },
+          ],
           deletedAt: null,
         },
         select: getAllModelsWithVersionsSelect,

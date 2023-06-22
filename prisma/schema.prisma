@@ -289,6 +289,7 @@ model Import {
 enum ModelStatus {
   Draft
   Published
+  Scheduled
   Unpublished
   UnpublishedViolation
   GatherInterest
@@ -1277,6 +1278,7 @@ model Comment {
   review       Review?  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   reviewId     Int?
   locked       Boolean? @default(false)
+  hidden       Boolean? @default(false)
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]

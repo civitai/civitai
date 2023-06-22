@@ -11,6 +11,7 @@ import {
   toggleLockHandler,
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
+import { getCommentCountByModel } from '~/server/services/comment.service';
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -18,6 +19,7 @@ import {
   CommentUpsertInput,
   commentUpsertInput,
   getAllCommentsSchema,
+  getCommentCountByModelSchema,
   getCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { toggleReactionInput } from '~/server/schema/review.schema';
@@ -87,6 +89,9 @@ export const commentRouter = router({
   getReactions: publicProcedure.input(getCommentReactionsSchema).query(getCommentReactionsHandler),
   getCommentsById: publicProcedure.input(getByIdSchema).query(getCommentCommentsHandler),
   getCommentsCount: publicProcedure.input(getByIdSchema).query(getCommentCommentsCountHandler),
+  getCommentCountByModel: publicProcedure
+    .input(getCommentCountByModelSchema)
+    .query(({ input }) => getCommentCountByModel(input)),
   upsert: guardedProcedure
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)
