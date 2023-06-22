@@ -10,6 +10,7 @@ import { isDefined } from '~/utils/type-guards';
 import { isEqual, uniqWith } from 'lodash-es';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ModelType } from '@prisma/client';
 
 export function EditPostReviews() {
   const currentUser = useCurrentUser();
@@ -36,19 +37,28 @@ export function EditPostReviews() {
   const reviews = useMemo(() => {
     const previous = [];
     const pending = [];
+    let warnAdditionalResource = false;
     if (data) {
+      let hasBaseModel = false;
+      let hasAdditionalResource = false;
       for (const review of data) {
         if (review.reviewCreatedAt) {
           previous.push(review);
         } else {
           pending.push(review);
         }
+
+        if (review.modelType === ModelType.Checkpoint) hasBaseModel = true;
+        else hasAdditionalResource = true;
       }
+
+      warnAdditionalResource = hasBaseModel && hasAdditionalResource;
     }
 
     return {
       previous,
       pending,
+      warnAdditionalResource,
     };
   }, [data]);
 
@@ -111,6 +121,14 @@ export function EditPostReviews() {
               </>
             )}
           </Stack>
+          {reviews.warnAdditionalResource && (
+            <DismissibleAlert
+              id="additional-resource-alert"
+              color="blue"
+              title="Rating base models vs additional resources"
+              content="When reviewing base models alongside additional resources like a LoRA or Textual Inversion, keep in mind that you are reviewing the base model itself and not compatability with the additional resources."
+            />
+          )}
 
           {missingResources && (
             <Alert color="yellow">
