@@ -478,10 +478,10 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
 
-  // if (!isProd && !callbackUrl) {
-  //   console.log('skip ingest');
-  //   return true;
-  // }
+  if (!isProd && !callbackUrl) {
+    console.log('skip ingest');
+    return true;
+  }
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
