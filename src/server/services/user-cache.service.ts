@@ -184,7 +184,15 @@ async function getHiddenImages(userId: number) {
     select: { imageId: true },
   });
 
-  const hiddenImages = [...new Set(votedHideImages?.map((x) => x.imageId) ?? [])];
+  const selectedHideImages = await dbWrite.imageEngagement.findMany({
+    where: { userId, type: UserEngagementType.Hide },
+    select: { imageId: true },
+  });
+
+  const hiddenImages = [
+    ...selectedHideImages,
+    ...new Set(votedHideImages?.map((x) => x.imageId) ?? []),
+  ];
   return hiddenImages;
 }
 
