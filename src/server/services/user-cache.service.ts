@@ -190,7 +190,7 @@ async function getHiddenImages(userId: number) {
   });
 
   const hiddenImages = [
-    ...selectedHideImages,
+    ...selectedHideImages.map((x) => x.imageId),
     ...new Set(votedHideImages?.map((x) => x.imageId) ?? []),
   ];
   return hiddenImages;
