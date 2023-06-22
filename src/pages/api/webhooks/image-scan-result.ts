@@ -24,7 +24,7 @@ type BodyProps = z.infer<typeof schema>;
 const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
-  tags: tagSchema.array().optional(),
+  tags: tagSchema.array().nullish(),
   status: z.nativeEnum(Status),
 });
 
