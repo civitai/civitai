@@ -16,6 +16,7 @@ import {
   GetImageInput,
   GetImagesByCategoryInput,
   GetInfiniteImagesInput,
+  ImageModerationSchema,
   IngestImageInput,
   ingestImageSchema,
   isImageResource,
@@ -83,7 +84,7 @@ type GetGalleryImagesRaw = {
   generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
   scannedAt: Date | null;
-  needsReview: boolean;
+  needsReview: string | null;
   userId: number;
   index: number | null;
   modelId: number | null;
@@ -132,7 +133,7 @@ export const getGalleryImages = async ({
   // Exclude images that need review
   if (!isMod) {
     const needsReviewOR = [
-      Prisma.sql`i."needsReview" = false`,
+      Prisma.sql`i."needsReview" IS NULL`,
       Prisma.sql`i."userId" = ${user?.id}`,
     ];
     AND.push(Prisma.sql`(${Prisma.join(needsReviewOR, ' OR ')})`);
@@ -201,7 +202,7 @@ export const getGalleryImages = async ({
 
   if (needsReview) {
     AND.length = 0;
-    AND.push(Prisma.sql`i."needsReview" = true`);
+    AND.push(Prisma.sql`i."needsReview" != null`);
     orderBy = 'i.id';
   } else if (tagReview) {
     AND.length = 0;
@@ -354,12 +355,7 @@ export const moderateImages = async ({
   nsfw,
   needsReview,
   delete: deleteImages,
-}: {
-  ids: number[];
-  nsfw?: NsfwLevel;
-  needsReview?: boolean;
-  delete?: boolean;
-}) => {
+}: ImageModerationSchema) => {
   if (deleteImages) {
     for (const id of ids) await deleteImageById({ id });
   } else {
@@ -584,7 +580,7 @@ type GetAllImagesRaw = {
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
-  needsReview: boolean;
+  needsReview: string | null;
   userId: number;
   index: number;
   postId: number;
@@ -642,7 +638,7 @@ export const getAllImages = async ({
 
   // If User Isn't mod
   if (!isModerator) {
-    needsReview = false;
+    needsReview = null;
     tagReview = false;
     reportReview = false;
 
@@ -650,7 +646,7 @@ export const getAllImages = async ({
   }
 
   if (needsReview) {
-    AND.push(Prisma.sql`i."needsReview" = true`);
+    AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
     AND.push(Prisma.sql`i."scannedAt" IS NOT NULL`);
     AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
   }
@@ -1031,7 +1027,7 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" = false AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
           Prisma.sql`i."userId" = ${userId}`,
         ],
         ' OR '
@@ -1195,7 +1191,7 @@ export const getImagesForModelVersion = async ({
 
   const imageWhere: Prisma.Sql[] = [
     Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
-    Prisma.sql`i."needsReview" = false`,
+    Prisma.sql`i."needsReview" IS NULL`,
   ];
 
   // ensure that only scanned images make it to the main feed
@@ -1415,7 +1411,7 @@ export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: 
 
 export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: number }) {
   // Hide images that need review
-  const needsReviewOr = [Prisma.sql`i."needsReview" = false`];
+  const needsReviewOr = [Prisma.sql`i."needsReview" IS NULL`];
   // Hide images that aren't published
   const publishedOr = [Prisma.sql`p."publishedAt" IS NOT NULL`];
 
@@ -1448,7 +1444,7 @@ type GetImageByCategoryRaw = {
   generationProcess: ImageGenerationProcess;
   mimeType: string;
   scannedAt: Date;
-  needsReview: boolean;
+  needsReview: string | null;
   postId: number;
   username: string | null;
   userImage: string | null;

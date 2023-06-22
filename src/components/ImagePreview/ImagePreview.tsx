@@ -70,10 +70,10 @@ export function ImagePreview({
     if (!user?.isModerator) return;
     moderateImagesMutation.mutate({
       ids: [id],
-      needsReview: accept ? false : undefined,
+      needsReview: accept ? null : undefined,
       delete: !accept ? true : undefined,
     });
-    setNeedsReview(false);
+    setNeedsReview(null);
   };
 
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);

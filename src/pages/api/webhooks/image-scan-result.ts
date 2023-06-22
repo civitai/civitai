@@ -203,13 +203,25 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
-    // Set scannedAt and needsReview
-    const shouldReview = hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw);
+    let reviewKey: string | null = null;
+    if (hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw)) reviewKey = 'minor';
+    else if (nsfw) {
+      const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
+        SELECT
+          COUNT(*) > 0 "poi"
+        FROM "ImageResource" ir
+        JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE ir."imageId" = ${image.id} AND m.poi
+      `;
+      if (poi) reviewKey = 'poi';
+    }
     const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
 
+    // Set scannedAt and needsReview
     const data: Prisma.ImageUpdateInput = {
       scannedAt: new Date(),
-      needsReview: shouldReview ? true : undefined,
+      needsReview: reviewKey,
       ingestion: ImageIngestionStatus.Scanned,
     };
 

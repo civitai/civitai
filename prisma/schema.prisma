@@ -923,7 +923,7 @@ model Image {
   featuredAt        DateTime?
   postId            Int?
   post              Post?                   @relation(fields: [postId], references: [id], onDelete: SetNull)
-  needsReview       Boolean                 @default(false)
+  needsReview       String?
   hideMeta          Boolean                 @default(false)
   index             Int?
   scannedAt         DateTime?
