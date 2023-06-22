@@ -129,6 +129,7 @@ model User {
   articleEngagements      ArticleEngagement[]
   leaderboardResults      LeaderboardResult[]
   receivedReports         UserReport[]
+  engagedImages           ImageEngagement[]
 }
 
 model CustomerSubscription {
@@ -947,10 +948,28 @@ model Image {
   modHelper       ImageModHelper?
   resources       ImageResource[]
   resourceHelper  ImageResourceHelper[]
+  engagements     ImageEngagement[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+}
+
+enum ImageEngagementType {
+  Favorite
+  Hide
+}
+
+model ImageEngagement {
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId   Int
+  image     Image               @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  type      ImageEngagementType
+  createdAt DateTime            @default(now())
+
+  @@id([userId, imageId])
+  @@index([imageId])
 }
 
 model ImageResource {

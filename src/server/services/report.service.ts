@@ -1,4 +1,4 @@
-import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
+import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -9,6 +9,7 @@ import {
   ReportEntity,
 } from '~/server/schema/report.schema';
 import { addTagVotes } from '~/server/services/tag.service';
+import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -157,6 +158,17 @@ export const createReport = async ({
             report,
           },
         });
+        if (data.reason === ReportReason.TOSViolation) {
+          await tx.imageEngagement.create({
+            data: {
+              imageId: id,
+              userId,
+              type: ImageEngagementType.Hide,
+            },
+          });
+          await refreshHiddenImagesForUser({ userId });
+        }
+
         break;
       case ReportEntity.ResourceReview:
         await tx.resourceReviewReport.create({
