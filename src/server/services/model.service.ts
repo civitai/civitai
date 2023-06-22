@@ -310,6 +310,7 @@ export const deleteModelById = async ({ id, userId }: GetByIdInput & { userId: n
     });
     if (!model) return null;
 
+    // TODO - account for case that a user restores a model and doesn't want all posts to be re-published
     await tx.post.updateMany({
       where: {
         userId: model.userId,
