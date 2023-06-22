@@ -8,7 +8,7 @@ Civitai is at the cutting-edge of AI and digital content creation, democratizing
 
 ## The Opportunity
 
-As a Senior DevOps Engineer, you will play a crucial role in streamlining our operations and automating our processes. Your expertise will be key in maintaining our Kubernetes clusters, working with various cloud platforms such as AWS, Azure, Cloudflare, Digital Ocean, and Vultr. You will help us improve the stability and performance of our main Civitai web experience, expand our offerings, and enhance the productivity of our development teams.
+As a Senior DevOps Engineer, you will play a foundational role in streamlining our operations and automating our processes. Your expertise will be key in maintaining our Kubernetes clusters, working with various cloud platforms such as AWS, Azure, Cloudflare, Digital Ocean, and Vultr. You will help us improve the stability and performance of our main Civitai web experience, expand our offerings, and enhance the productivity of our development teams.
 
 ## Responsibilities
 
@@ -43,7 +43,6 @@ As a Senior DevOps Engineer, you will play a crucial role in streamlining our op
 
 ## What You Can Expect From Civitai
 
-- Full-time contract role.
 - $166K - $198K annually, based on experience.
 - Fully remote position.
 

@@ -8,7 +8,7 @@ Civitai is an innovative platform standing at the forefront of the digital conte
 
 ## The Opportunity
 
-As our Marketing Manager, you'll play a pivotal role in shaping Civitai's market presence and influence. You will be responsible for creating strategic marketing initiatives that resonate with our vision, crafting compelling content, managing our digital marketing efforts, and providing astute market research. Your leadership will help drive our success and expand our impact.
+As our Marketing Manager, you'll play a foundational role in shaping Civitai's market presence and influence. You will be responsible for creating strategic marketing initiatives that resonate with our vision, crafting compelling content, managing our digital marketing efforts, and providing astute market research. Your leadership will help drive our success and expand our impact.
 
 ## Responsibilities
 
@@ -38,7 +38,6 @@ As our Marketing Manager, you'll play a pivotal role in shaping Civitai's market
 
 ## What You Can Expect From Civitai
 
-- Full-time contract role.
 - $80K - $106K annually, based on experience.
 - Fully remote position.
 

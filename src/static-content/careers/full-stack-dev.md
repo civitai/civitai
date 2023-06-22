@@ -8,7 +8,7 @@ At Civitai, we're more than just a company — we're a vibrant, innovative commu
 
 ## The Opportunity
 
-Our Full Stack Developer will be instrumental in shaping Civitai's product, playing a key role in the future of AI-driven content creation. You'll be directly involved in adding key features to our primary Civitai web experience, transforming complex feature-sets into streamlined, user-friendly solutions. Working alongside a small, agile, cross-functional team, you will ensure that our digital offerings come to life, creating an unparalleled user experience.
+Our Full Stack Developer will be foundational in shaping Civitai's product, playing a key role in the future of AI-driven content creation. You'll be directly involved in adding key features to our primary Civitai web experience, transforming complex feature-sets into streamlined, user-friendly solutions. Working alongside a small, agile, cross-functional team, you will ensure that our digital offerings come to life, creating an unparalleled user experience.
 
 ## Responsibilities
 
@@ -37,7 +37,6 @@ Our Full Stack Developer will be instrumental in shaping Civitai's product, play
 
 ## What You Can Expect From Civitai
 
-- Full-time contract role.
 - $135K - $160K annually, based on experience.
 - Fully remote position.
 

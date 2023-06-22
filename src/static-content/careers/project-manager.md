@@ -37,7 +37,6 @@ As a Project Manager at Civitai, you are not just overseeing tasks - you are the
 
 ## What You Can Expect From Civitai
 
-- Full-time contract role.
 - $106K - $138K annually, based on experience.
 - Fully remote position.
 
