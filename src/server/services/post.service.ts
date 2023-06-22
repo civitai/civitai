@@ -3,7 +3,7 @@ import { SessionUser } from 'next-auth';
 import { getSystemTags } from '~/server/services/system-cache';
 import { editPostSelect } from './../selectors/post.selector';
 import { isDefined } from '~/utils/type-guards';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   PostUpdateInput,
   AddPostTagInput,
@@ -17,7 +17,14 @@ import {
   GetPostsByCategoryInput,
 } from './../schema/post.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { TagType, TagTarget, Prisma, ImageGenerationProcess, NsfwLevel } from '@prisma/client';
+import {
+  TagType,
+  TagTarget,
+  Prisma,
+  ImageGenerationProcess,
+  NsfwLevel,
+  ImageIngestionStatus,
+} from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -28,10 +35,12 @@ import {
   applyUserPreferencesSql,
   deleteImageById,
   getImagesForPosts,
+  ingestImage,
 } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
+import { logToDb } from '~/utils/logging';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -335,11 +344,11 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
 export const addPostImage = async ({
   modelVersionId,
   meta,
-  ...image
+  ...props
 }: AddPostImageInput & { userId: number }) => {
   const partialResult = await dbWrite.image.create({
     data: {
-      ...image,
+      ...props,
       meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
     },
@@ -347,20 +356,15 @@ export const addPostImage = async ({
   });
 
   await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+  await ingestImage({ image: { id: partialResult.id, url: props.url } });
 
-  const rawResult = await dbWrite.image.findUnique({
+  const image = await dbWrite.image.findUnique({
     where: { id: partialResult.id },
     select: editPostImageSelect,
   });
-  const imageTagCounts = await getTagCountForImages([partialResult.id]);
+  if (!image) throw throwDbError(`Image not found`);
 
-  const result = {
-    ...rawResult,
-    _count: { tags: imageTagCounts[partialResult.id] },
-  };
-
-  if (!result) throw throwNotFoundError(`Image ${partialResult.id} not found`);
-  return result;
+  return image;
 };
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -554,6 +558,12 @@ export const getPostsByCategory = async ({
   const postIds = postsRaw.map((p) => p.id);
   if (postIds.length) {
     const imageAND = [Prisma.sql`"postId" IN (${Prisma.join(postIds)})`];
+
+    // ensure that only scanned images make it to the main feed
+    imageAND.push(
+      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
+
     applyUserPreferencesSql(imageAND, { ...input, userId });
     applyModRulesSql(imageAND, { userId });
     images = await dbRead.$queryRaw<PostImageRaw[]>`

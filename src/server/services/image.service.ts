@@ -2,6 +2,7 @@ import {
   CosmeticSource,
   CosmeticType,
   ImageGenerationProcess,
+  ImageIngestionStatus,
   NsfwLevel,
   Prisma,
   ReportReason,
@@ -37,7 +38,7 @@ import {
 } from '~/server/schema/image.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getImageV2Select, ImageV2Model } from '~/server/selectors/imagev2.selector';
-import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getAllowedAnonymousTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
@@ -49,6 +50,10 @@ import {
 import { decreaseDate } from '~/utils/date-helpers';
 import { deleteObject } from '~/utils/s3-utils';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
+import { logToDb } from '~/utils/logging';
+// TODO.ingestion - logToDb something something 'axiom'
+
+// no user should have to see images on the site that haven't been scanned or are queued for removal
 
 // export const getModelVersionImages = async ({ modelVersionId }: { modelVersionId: number }) => {
 //   const result = await dbRead.imagesOnModels.findMany({
@@ -121,6 +126,8 @@ export const getGalleryImages = async ({
   const AND: Prisma.Sql[] = [];
   // Exclude TOS violations
   if (!isMod) AND.push(Prisma.sql`i."tosViolation" = false`);
+  // ensure that only scanned images make it to the main feed
+  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
 
   // Exclude images that need review
   if (!isMod) {
@@ -463,33 +470,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   });
 };
 
-export type ImageScanResultResponse = {
-  ok: boolean;
-  error?: string;
-  deleted?: boolean;
-  blockedFor?: string[];
-  tags?: { type: string; name: string }[];
-};
-
-export type IngestImageReturnType =
-  | {
-      type: 'error';
-      data: { error: string };
-    }
-  | {
-      type: 'blocked';
-      data: { blockedFor?: string[]; tags?: { type: string; name: string }[] };
-    }
-  | {
-      type: 'success';
-      data: { count: number };
-    };
-
-export const ingestImage = async ({
-  image,
-}: {
-  image: IngestImageInput;
-}): Promise<IngestImageReturnType> => {
+export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id } = ingestImageSchema.parse(image);
@@ -499,44 +480,33 @@ export const ingestImage = async ({
 
   if (!isProd && !callbackUrl) {
     console.log('skip ingest');
-  } else {
-    const { ok, deleted, blockedFor, tags, error } = (await fetch(env.IMAGE_SCANNING_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        imageId: id,
-        imageKey: url,
-        wait: true,
-        scans: [ImageScanType.Label, ImageScanType.Moderation],
-        callbackUrl,
-      }),
-    }).then((res) => res.json())) as ImageScanResultResponse;
-
-    await dbWrite.image.update({
+    return true;
+  }
+  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      imageId: id,
+      imageKey: url,
+      // wait: true,
+      scans: [ImageScanType.Label, ImageScanType.Moderation],
+      callbackUrl,
+    }),
+  });
+  if (response.status === 202) {
+    await dbWrite.image.updateMany({
       where: { id },
       data: { scanRequestedAt },
-      select: { id: true },
     });
-
-    if (deleted)
-      return {
-        type: 'blocked',
-        data: { tags, blockedFor },
-      };
-
-    if (error) {
-      return {
-        type: 'error',
-        data: { error },
-      };
-    }
+    return true;
+  } else {
+    await logToDb('image-ingestion', {
+      type: 'error',
+      imageId: id,
+      url,
+    });
+    return false;
   }
-
-  const count = await dbWrite.tagsOnImage.count({ where: { imageId: id } });
-  return {
-    type: 'success',
-    data: { count },
-  };
 };
 
 // TODO.posts - remove when post implementation is fully ready
@@ -666,6 +636,9 @@ export const getAllImages = async ({
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: NsfwLevel }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
+
+  // ensure that only scanned images make it to the main feed
+  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
 
   // If User Isn't mod
   if (!isModerator) {
@@ -1057,7 +1030,10 @@ export const getImage = async ({
   if (!isModerator)
     AND.push(
       Prisma.sql`(${Prisma.join(
-        [Prisma.sql`i."needsReview" = false`, Prisma.sql`i."userId" = ${userId}`],
+        [
+          Prisma.sql`i."needsReview" = false AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."userId" = ${userId}`,
+        ],
         ' OR '
       )})`
     );
@@ -1221,6 +1197,12 @@ export const getImagesForModelVersion = async ({
     Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
     Prisma.sql`i."needsReview" = false`,
   ];
+
+  // ensure that only scanned images make it to the main feed
+  imageWhere.push(
+    Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+  );
+
   if (!!excludedTagIds?.length) {
     const excludedTagsOr: Prisma.Sql[] = [
       Prisma.join(
@@ -1296,7 +1278,13 @@ export const getImagesForPosts = async ({
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere: Prisma.Sql[] = [Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`];
+
   if (!isOwnerRequest) {
+    // ensure that only scanned images make it to the main feed
+    imageWhere.push(
+      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
+
     if (!!excludedTagIds?.length) {
       const excludedTagsOr: Prisma.Sql[] = [
         Prisma.sql`i."scannedAt" IS NOT NULL`,
@@ -1495,6 +1483,9 @@ export const getImagesByCategory = async ({
 
   const AND = [Prisma.sql`p."publishedAt" IS NOT NULL`];
 
+  // ensure that only scanned images make it to the main feed
+  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
+
   // Apply excluded tags
   if (input.excludedTagIds?.length)
     AND.push(Prisma.sql`NOT EXISTS (
@@ -1630,4 +1621,65 @@ export const getImagesByCategory = async ({
   });
 
   return { items, nextCursor };
+};
+
+export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
+export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
+  const images = await dbRead.image.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      ingestion: true,
+      blockedFor: true,
+      tagComposites: {
+        where: { OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
+        select: imageTagCompositeSelect,
+        orderBy: { score: 'desc' },
+      },
+    },
+  });
+
+  const dictionary = images.reduce<
+    Record<
+      number,
+      { ingestion: ImageIngestionStatus; blockedFor?: string; tags?: VotableTagModel[] }
+    >
+  >((acc, value) => {
+    const { id, ingestion, blockedFor, tagComposites } = value;
+    const tags: VotableTagModel[] = tagComposites.map(
+      ({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+        ...tag,
+        id: tagId,
+        type: tagType,
+        nsfw: tagNsfw,
+        name: tagName,
+      })
+    );
+    return {
+      ...acc,
+      [id]: {
+        ingestion,
+        blockedFor: blockedFor ?? undefined,
+        tags: !!blockedFor ? undefined : tags,
+      },
+    };
+  }, {});
+
+  if (userId) {
+    const userVotes = await dbRead.tagsOnImageVote.findMany({
+      where: { imageId: { in: ids }, userId },
+      select: { tagId: true, vote: true },
+    });
+
+    for (const key in dictionary) {
+      if (dictionary.hasOwnProperty(key)) {
+        for (const tag of dictionary[key].tags ?? []) {
+          const userVote = userVotes.find((vote) => vote.tagId === tag.id);
+          if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+        }
+      }
+    }
+  }
+
+  return dictionary;
 };
