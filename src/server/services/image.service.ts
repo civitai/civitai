@@ -1623,53 +1623,6 @@ export const getImagesByCategory = async ({
   return { items, nextCursor };
 };
 
-// TODO.ingestion - remove this
-export const getImageIngestionResults = async ({
-  id,
-  userId,
-}: GetByIdInput & { userId?: number }) => {
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      ingestion: true,
-      blockedFor: true,
-      tagComposites: {
-        where: { OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
-        select: imageTagCompositeSelect,
-        orderBy: { score: 'desc' },
-      },
-    },
-  });
-  if (!image) throw throwNotFoundError();
-
-  const votableTags: VotableTagModel[] = image.tagComposites.map(
-    ({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
-      ...tag,
-      id: tagId,
-      type: tagType,
-      nsfw: tagNsfw,
-      name: tagName,
-    })
-  );
-  if (userId) {
-    const userVotes = await dbRead.tagsOnImageVote.findMany({
-      where: { imageId: id, userId },
-      select: { tagId: true, vote: true },
-    });
-
-    for (const tag of votableTags) {
-      const userVote = userVotes.find((vote) => vote.tagId === tag.id);
-      if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
-    }
-  }
-
-  return {
-    ingestion: image.ingestion,
-    blockedFor: image.blockedFor,
-    tags: votableTags,
-  };
-};
-
 export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
 export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
   const images = await dbRead.image.findMany({

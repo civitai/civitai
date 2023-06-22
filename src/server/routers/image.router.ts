@@ -42,11 +42,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { applyUserPreferences } from '~/server/middleware.trpc';
-import {
-  getImageIngestionResults,
-  getImagesByCategory,
-  removeImageResource,
-} from '~/server/services/image.service';
+import { getImagesByCategory, removeImageResource } from '~/server/services/image.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -122,7 +118,4 @@ export const imageRouter = router({
     .use(applyUserPreferences())
     // .use(cacheIt())
     .query(({ input, ctx }) => getImagesByCategory({ ...input, userId: ctx.user?.id })),
-  getIngestionResults: publicProcedure
-    .input(getByIdSchema)
-    .query(({ input, ctx }) => getImageIngestionResults({ ...input, userId: ctx.user?.id })),
 });
