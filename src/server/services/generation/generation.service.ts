@@ -20,8 +20,9 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
 import { isDev } from '~/env/other';
-
-const imageGenerationApi = 'https://image-generation-scheduler.civitai.com';
+import { env } from '~/env/server.mjs';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getBaseUrl } from '~/server/utils/url-helpers';
 
 export const getGenerationResource = async ({
   id,
@@ -51,7 +52,7 @@ export const getGenerationResources = async ({
   user,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
   // TODO - apply user preferences - but do we really need this? Maybe a direct search should yield all results since their browsing experience is already set to their browsing preferences
-  // TODO.Justin - sql query for selecting resources
+  // TODO.Justin - optimize sql query for selecting resources
   const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [{ publishedAt: { not: null } }];
   const MODEL_AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   if (ids) AND.push({ id: { in: ids } });
@@ -92,9 +93,8 @@ export const getGenerationResources = async ({
 export const getGenerationRequests = async (
   props: GetGenerationRequestsInput & { userId: number }
 ) => {
-  if (isDev) props.userId = 1; // TODO.remove after generation is working properly
   const params = QS.stringify(props);
-  const response = await fetch(`${imageGenerationApi}/requests?${params}`);
+  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
   if (!response.ok) throw new Error(response.statusText);
   const { cursor, requests }: Generation.Api.Request = await response.json();
   const modelVersionIds = requests.flatMap((x) => x.assets.map((x) => x.modelVersionId));
@@ -142,19 +142,95 @@ export const getGenerationRequests = async (
   return { items, nextCursor: cursor === 0 ? undefined : cursor ?? undefined };
 };
 
-export const createGenerationRequest = async (
-  props: CreateGenerationRequestInput & { userId: number }
-) => {
+const additionalNetworkTypes = [ModelType.LORA, ModelType.LoCon, ModelType.Hypernetwork];
+type ModelFileResult = {
+  url: string;
+  name: string;
+  type: ModelType;
+  metadata: FileMetadata;
+  modelVersionId: number;
+  hash?: string;
+};
+type GenerationRequestAsset = {
+  type: ModelType;
+  hash?: string;
+  url: string;
+  modelVersionId: number;
+};
+type GenerationRequestAdditionalNetwork = {
+  strength?: number;
+};
+export const createGenerationRequest = async ({
+  userId,
+  ...props
+}: CreateGenerationRequestInput & { userId: number }) => {
   const checkpoint = props.resources.find((x) => x.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
-  //TODO.Justin - get model files/hashes and any associated config files
+  // TODO Koen: Finish connecting this to the scheduler.
+
+  const versionIds = props.resources.map((x) => x.modelVersionId);
+  const files = await dbRead.$queryRaw<ModelFileResult[]>`
+    SELECT
+      mf.url,
+      mf.name,
+      mf.type,
+      mf.metadata,
+      mf."modelVersionId",
+      (SELECT mfh.hash FROM "ModelFileHash" mfh WHERE mfh."modelFileId" = mf.id AND mfh.type = 'SHA256') as "hash"
+    FROM "ModelFile" mf
+    WHERE mf."modelVersionId" IN (${Prisma.join(versionIds)});
+  `;
+
+  // For textual inversions, pull in the trigger words of the model version (there should only be one).
+
+  const assets: GenerationRequestAsset[] = [];
+  const additionalNetworks: Record<string, GenerationRequestAdditionalNetwork> = {};
+  for (const resource of props.resources) {
+    const versionFiles = files.filter((x) => x.modelVersionId === resource.modelVersionId);
+    const primaryFile = getPrimaryFile(versionFiles);
+    if (!primaryFile) throw throwBadRequestError('No primary file found for model version');
+
+    // Prepare asset
+    const downloadUrl = `${getBaseUrl()}/api/download/models/${primaryFile.modelVersionId}?fp=${
+      primaryFile.metadata.fp
+    }&size=${primaryFile.metadata.size}&format=${primaryFile.metadata.format}&type=${
+      primaryFile.type
+    }`;
+    assets.push({
+      type: resource.type,
+      hash: primaryFile.hash,
+      url: downloadUrl,
+      modelVersionId: resource.modelVersionId,
+    });
+
+    // Prepare additional networks
+    if (additionalNetworkTypes.includes(resource.type)) {
+      additionalNetworks[`@civitai/${resource.modelVersionId}`] = {
+        strength: resource.strength,
+        type: resource.type,
+        // trigger word for textual inversion
+      };
+    }
+  }
+
+  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId,
+      assets,
+      job: {
+        quantity: props.quantity,
+        additionalNetworks,
+      },
+    }),
+  });
 };
 
 export const getGenerationImages = async (props: GetGenerationImagesInput & { userId: number }) => {
-  if (isDev) props.userId = 1; // TODO.remove after generation is working properly
   const params = QS.stringify(props);
-  const response = await fetch(`${imageGenerationApi}/images?${params}`);
+  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/images?${params}`);
   if (!response.ok) throw new Error(response.statusText);
   const { cursor, images, requests }: Generation.Api.Images = await response.json();
 

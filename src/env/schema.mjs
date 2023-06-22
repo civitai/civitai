@@ -80,6 +80,7 @@ export const serverSchema = z.object({
   PLAYFAB_SECRET_KEY: z.string().optional(),
   TRPC_ORIGINS: commaDelimitedStringArray().optional(),
   CANNY_SECRET: z.string().optional(),
+  SCHEDULER_ENDPOINT: z.string().url().optional(),
 });
 
 /**
