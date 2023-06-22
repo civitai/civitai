@@ -15,9 +15,12 @@ import {
   Popover,
   Code,
   BadgeProps,
+  Button,
+  Skeleton,
+  Loader,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -36,6 +39,11 @@ import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
 import { ImageIngestionStatus } from '@prisma/client';
+import { isDefined } from '~/utils/type-guards';
+import {
+  ImageIngestionProvider,
+  useImageIngestionContext,
+} from '~/components/Image/Ingestion/ImageIngestionProvider';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
@@ -44,20 +52,26 @@ export function EditPostImages({ max }: { max?: number }) {
   const upload = useEditPostContext((state) => state.upload);
   const images = useEditPostContext((state) => state.images);
 
+  const imageIds = images
+    .map((x) => (x.type === 'image' ? x.data.id : undefined))
+    .filter(isDefined);
+
   const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
 
   return (
     <Stack>
       <ImageDropzone onDrop={handleDrop} count={images.length} max={max} />
-      <Stack>
-        {images.map(({ type, data }, index) => (
-          <Fragment key={index}>
-            {type === 'image' && <ImageController image={data} />}
-            {type === 'upload' && <ImageUpload {...data} />}
-            {type === 'blocked' && <ImageBlocked {...data} />}
-          </Fragment>
-        ))}
-      </Stack>
+      <ImageIngestionProvider ids={imageIds}>
+        <Stack>
+          {images.map(({ type, data }, index) => (
+            <Fragment key={index}>
+              {type === 'image' && <ImageController image={data} />}
+              {type === 'upload' && <ImageUpload {...data} />}
+              {type === 'blocked' && <ImageBlocked {...data} />}
+            </Fragment>
+          ))}
+        </Stack>
+      </ImageIngestionProvider>
       <EditImageDrawer />
     </Stack>
   );
@@ -88,16 +102,13 @@ function ImageController({
   const setSelectedImageId = useEditPostContext((state) => state.setSelectedImageId);
   const handleSelectImageClick = () => setSelectedImageId(id);
 
-  // TODO.ingestion - one request with multiple image ids tied to a zustand store
-  const { data, refetch } = trpc.image.getIngestionResults.useQuery({ id }, { enabled: false });
-  const debouncer = useDebouncer(1500);
-
-  useEffect(() => {
-    if (!id) return;
-    debouncer(refetch);
-  }, [id, refetch, debouncer]);
-
-  // TODO.ingestion - ok button on tos alert that deletes the image, drop opacity on image, don't show tags
+  const data = useImageIngestionContext(useCallback((state) => state.images[id] ?? {}, [id]));
+  const pending = useImageIngestionContext(
+    useCallback((state) => state.pending[id] ?? { attempts: 0, success: false }, [id])
+  );
+  const isBlocked = data?.ingestion === ImageIngestionStatus.Blocked;
+  const isLoading = pending.attempts < 5 && !pending.success;
+  const loadingFailed = !isLoading && !data;
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
@@ -106,66 +117,87 @@ function ImageController({
         alt={name ?? undefined}
         width={width ?? 1200}
         onLoad={() => setWithBorder(true)}
+        className={cx({ [classes.blocked]: isBlocked })}
       />
 
-      {!!data?.tags.length && data.ingestion === ImageIngestionStatus.Scanned && (
-        <VotableTags
-          entityType="image"
-          entityId={id}
-          p="xs"
-          canAdd
-          canAddModerated
-          tags={data.tags}
-        />
+      {(!data || data.ingestion !== ImageIngestionStatus.Blocked) && (
+        <>
+          {isLoading ? (
+            <Group p="xs" sx={{ width: '100%' }} spacing="xs" noWrap>
+              <Loader size={20} />
+              <Skeleton height={20} />
+            </Group>
+          ) : loadingFailed ? (
+            <Alert color="yellow" m="xs">
+              There are no tags associated with this image yet. Tags will be assigned to this image
+              soon.
+            </Alert>
+          ) : !!data.tags?.length ? (
+            <VotableTags
+              entityType="image"
+              entityId={id}
+              p="xs"
+              canAdd
+              canAddModerated
+              tags={data.tags}
+            />
+          ) : null}
+          <>
+            <Group className={classes.actions}>
+              {meta ? (
+                <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+                  Generation Data
+                </Badge>
+              ) : (
+                <Badge {...warningBadgeProps} onClick={handleSelectImageClick}>
+                  Missing Generation Data
+                </Badge>
+              )}
+              {resourceHelper.length ? (
+                <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
+                  Resources: {resourceHelper.length}
+                </Badge>
+              ) : (
+                <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
+                  Missing Resources
+                </Badge>
+              )}
+              <Menu position="bottom-end" withinPortal>
+                <Menu.Target>
+                  <ActionIcon size="lg" variant="transparent" p={0}>
+                    <IconDotsVertical
+                      size={24}
+                      color="#fff"
+                      style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                    />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
+                  <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
+                    {({ onClick, isLoading }) => (
+                      <Menu.Item color="red" onClick={onClick}>
+                        Delete image
+                      </Menu.Item>
+                    )}
+                  </DeleteImage>
+                </Menu.Dropdown>
+              </Menu>
+            </Group>
+          </>
+        </>
       )}
-      <>
-        <Group className={classes.actions}>
-          {meta ? (
-            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Generation Data
-            </Badge>
-          ) : (
-            <Badge {...warningBadgeProps} onClick={handleSelectImageClick}>
-              Missing Generation Data
-            </Badge>
-          )}
-          {resourceHelper.length ? (
-            <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
-              Resources: {resourceHelper.length}
-            </Badge>
-          ) : (
-            <Badge {...blockingBadgeProps} onClick={handleSelectImageClick}>
-              Missing Resources
-            </Badge>
-          )}
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <ActionIcon size="lg" variant="transparent" p={0}>
-                <IconDotsVertical
-                  size={24}
-                  color="#fff"
-                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                />
-              </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item onClick={handleSelectImageClick}>Edit image</Menu.Item>
-              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)}>
-                {({ onClick, isLoading }) => (
-                  <Menu.Item color="red" onClick={onClick}>
-                    Delete image
-                  </Menu.Item>
-                )}
-              </DeleteImage>
-            </Menu.Dropdown>
-          </Menu>
-        </Group>
-      </>
       {data?.ingestion === ImageIngestionStatus.Blocked && (
         <Card
           radius={0}
           p={0}
-          sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }}
+          sx={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%,-50%)',
+            minWidth: 300,
+          }}
         >
           <Alert
             color="red"
@@ -191,7 +223,16 @@ function ImageController({
               </Group>
             }
           >
-            <Text>This image has been flagged as a TOS violation.</Text>
+            <Stack align="flex-end" spacing={0}>
+              <Text>This image has been flagged as a TOS violation.</Text>
+              <DeleteImage imageId={id} onSuccess={(id) => removeImage(id)} skipConfirm>
+                {({ onClick, isLoading }) => (
+                  <Button onClick={onClick} loading={isLoading}>
+                    Ok
+                  </Button>
+                )}
+              </DeleteImage>
+            </Stack>
           </Alert>
         </Card>
       )}
@@ -347,6 +388,9 @@ const useStyles = createStyles((theme) => {
       flexDirection: 'column',
       alignItems: 'center',
       minHeight: 200,
+    },
+    blocked: {
+      opacity: 0.3,
     },
     actions: {
       position: 'absolute',

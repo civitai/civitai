@@ -80,7 +80,7 @@ export function VotableTags({
   const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });
   const displayedTags = useMemo(() => {
     if (!tags) return [];
-    const displayTags = tags.sort((a, b) => {
+    const displayTags = [...tags].sort((a, b) => {
       const aMod = a.type === 'Moderation';
       const bMod = b.type === 'Moderation';
       const aNew = a.id === 0;

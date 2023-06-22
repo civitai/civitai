@@ -1623,6 +1623,7 @@ export const getImagesByCategory = async ({
   return { items, nextCursor };
 };
 
+// TODO.ingestion - remove this
 export const getImageIngestionResults = async ({
   id,
   userId,
@@ -1667,4 +1668,65 @@ export const getImageIngestionResults = async ({
     blockedFor: image.blockedFor,
     tags: votableTags,
   };
+};
+
+export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
+export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
+  const images = await dbRead.image.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      ingestion: true,
+      blockedFor: true,
+      tagComposites: {
+        where: { OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
+        select: imageTagCompositeSelect,
+        orderBy: { score: 'desc' },
+      },
+    },
+  });
+
+  const dictionary = images.reduce<
+    Record<
+      number,
+      { ingestion: ImageIngestionStatus; blockedFor?: string; tags?: VotableTagModel[] }
+    >
+  >((acc, value) => {
+    const { id, ingestion, blockedFor, tagComposites } = value;
+    const tags: VotableTagModel[] = tagComposites.map(
+      ({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+        ...tag,
+        id: tagId,
+        type: tagType,
+        nsfw: tagNsfw,
+        name: tagName,
+      })
+    );
+    return {
+      ...acc,
+      [id]: {
+        ingestion,
+        blockedFor: blockedFor ?? undefined,
+        tags: !!blockedFor ? undefined : tags,
+      },
+    };
+  }, {});
+
+  if (userId) {
+    const userVotes = await dbRead.tagsOnImageVote.findMany({
+      where: { imageId: { in: ids }, userId },
+      select: { tagId: true, vote: true },
+    });
+
+    for (const key in dictionary) {
+      if (dictionary.hasOwnProperty(key)) {
+        for (const tag of dictionary[key].tags ?? []) {
+          const userVote = userVotes.find((vote) => vote.tagId === tag.id);
+          if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+        }
+      }
+    }
+  }
+
+  return dictionary;
 };

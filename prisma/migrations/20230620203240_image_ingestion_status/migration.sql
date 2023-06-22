@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked');
+CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound');
 
 -- AlterTable
 ALTER TABLE "Image" ADD COLUMN     "blockedFor" TEXT,

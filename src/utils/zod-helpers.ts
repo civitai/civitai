@@ -33,7 +33,7 @@ export function commaDelimitedStringArray() {
 /** Converts a comma delimited string to an array of numbers */
 export function commaDelimitedNumberArray(options?: { message?: string }) {
   return commaDelimitedStringArray()
-    .transform((val) => parseNumericStringArray(val))
+    .transform((val) => parseNumericStringArray(val) ?? [])
     .refine(
       (val) => (val ? val?.every((v) => isNumeric(v)) : true),
       options?.message ?? 'Value should be a number array'

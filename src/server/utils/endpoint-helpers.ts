@@ -5,7 +5,7 @@ import { Partner } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { isMaintenanceMode } from '~/env/other';
-import { Session } from 'next-auth';
+import { Session, SessionUser } from 'next-auth';
 import { AxiomAPIRequest, withAxiom } from 'next-axiom';
 
 export function handleMaintenanceMode(req: NextApiRequest, res: NextApiResponse) {
@@ -85,7 +85,7 @@ export function PublicEndpoint(
 }
 
 export function AuthedEndpoint(
-  handler: (req: AxiomAPIRequest, res: NextApiResponse, user: Session['user']) => Promise<void>,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
