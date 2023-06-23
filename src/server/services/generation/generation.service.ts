@@ -16,6 +16,7 @@ import {
   // ImageRequestProps,
   // JobProps,
   Generation,
+  GenerationRequestStatus,
 } from '~/server/services/generation/generation.types';
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
@@ -23,6 +24,35 @@ import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { redis } from '~/server/redis/client';
+
+export function parseModelVersionId(assetId: string) {
+  const pattern = /^@civitai\/(\d+)$/;
+  const match = assetId.match(pattern);
+
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+
+  return null;
+}
+
+function mapRequestStatus(label: string): GenerationRequestStatus {
+  switch (label) {
+    case 'Pending':
+      return GenerationRequestStatus.Pending;
+    case 'Processing':
+      return GenerationRequestStatus.Processing;
+    case 'Cancelled':
+      return GenerationRequestStatus.Cancelled;
+    case 'Error':
+      return GenerationRequestStatus.Error;
+    case 'Succeeded':
+      return GenerationRequestStatus.Succeeded;
+    default:
+      throw new Error(`Invalid status label: ${label}`);
+  }
+}
 
 export const getGenerationResource = async ({
   id,
@@ -71,6 +101,11 @@ export const getGenerationResources = async ({
   }
   if (!!MODEL_AND.length) AND.push({ model: { AND: MODEL_AND } });
 
+  const coveredModelVersions = await getGenerationCoverage();
+  if (coveredModelVersions) {
+    AND.push({ id: { in: coveredModelVersions } });
+  }
+
   const results = await dbRead.modelVersion.findMany({
     take,
     where: { AND },
@@ -97,7 +132,11 @@ export const getGenerationRequests = async (
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
   if (!response.ok) throw new Error(response.statusText);
   const { cursor, requests }: Generation.Api.Request = await response.json();
-  const modelVersionIds = requests.flatMap((x) => x.assets.map((x) => x.modelVersionId));
+  const modelVersionIds = requests
+    .map((x) => parseModelVersionId(x.job.model))
+    .concat(requests.flatMap((x) => Object.keys(x.job.additionalNetworks).map(parseModelVersionId)))
+    .filter((x) => x !== null) as number[];
+
   const modelVersions = await dbRead.modelVersion.findMany({
     where: { id: { in: modelVersionIds } },
     select: generationResourceSelect,
@@ -112,15 +151,19 @@ export const getGenerationRequests = async (
 
   const items = requests.map((x): Generation.Client.Request => {
     const { additionalNetworks, ...job } = x.job;
+
+    const assets = [x.job.model, ...Object.keys(x.job.additionalNetworks)];
+
     return {
       id: x.id,
       createdAt: x.createdAt,
-      estimatedCompletionDate: x.estimatedCompletionDate,
-      status: x.status,
-      resources: x.assets
-        .map((asset): Generation.Client.Resource | undefined => {
-          const modelVersion = modelVersions.find((x) => x.id === asset.modelVersionId);
-          const network = additionalNetworks[asset.hash] ?? {};
+      estimatedCompletionDate: x.estimatedCompletedAt,
+      status: mapRequestStatus(x.status),
+      resources: assets
+        .map((assetId): Generation.Client.Resource | undefined => {
+          const modelVersionId = parseModelVersionId(assetId);
+          const modelVersion = modelVersions.find((x) => x.id === modelVersionId);
+          const network = x.job.additionalNetworks[assetId] ?? {};
           if (!modelVersion) return undefined;
           const { model } = modelVersion;
           return {
@@ -151,12 +194,6 @@ type ModelFileResult = {
   modelVersionId: number;
   hash?: string;
 };
-type GenerationRequestAsset = {
-  type: ModelType;
-  hash?: string;
-  url: string;
-  modelVersionId: number;
-};
 type GenerationRequestAdditionalNetwork = {
   strength?: number;
 };
@@ -168,64 +205,38 @@ export const createGenerationRequest = async ({
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
   // TODO Koen: Finish connecting this to the scheduler.
-
-  const versionIds = props.resources.map((x) => x.modelVersionId);
-  const files = await dbRead.$queryRaw<ModelFileResult[]>`
-    SELECT
-      mf.url,
-      mf.name,
-      mf.type,
-      mf.metadata,
-      mf."modelVersionId",
-      (SELECT mfh.hash FROM "ModelFileHash" mfh WHERE mfh."modelFileId" = mf.id AND mfh.type = 'SHA256') as "hash"
-    FROM "ModelFile" mf
-    WHERE mf."modelVersionId" IN (${Prisma.join(versionIds)});
-  `;
-
   // For textual inversions, pull in the trigger words of the model version (there should only be one).
-
-  const assets: GenerationRequestAsset[] = [];
-  const additionalNetworks: Record<string, GenerationRequestAdditionalNetwork> = {};
-  for (const resource of props.resources) {
-    const versionFiles = files.filter((x) => x.modelVersionId === resource.modelVersionId);
-    const primaryFile = getPrimaryFile(versionFiles);
-    if (!primaryFile) throw throwBadRequestError('No primary file found for model version');
-
-    // Prepare asset
-    const downloadUrl = `${getBaseUrl()}/api/download/models/${primaryFile.modelVersionId}?fp=${
-      primaryFile.metadata.fp
-    }&size=${primaryFile.metadata.size}&format=${primaryFile.metadata.format}&type=${
-      primaryFile.type
-    }`;
-    assets.push({
-      type: resource.type,
-      hash: primaryFile.hash,
-      url: downloadUrl,
-      modelVersionId: resource.modelVersionId,
-    });
-
-    // Prepare additional networks
-    if (additionalNetworkTypes.includes(resource.type)) {
-      additionalNetworks[`@civitai/${resource.modelVersionId}`] = {
-        strength: resource.strength,
-        type: resource.type,
-        // trigger word for textual inversion
-      };
-    }
-  }
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       userId,
-      assets,
       job: {
+        model: `@civitai/${checkpoint.modelVersionId}`,
         quantity: props.quantity,
-        additionalNetworks,
+        additionalNetworks: props.resources
+          .filter((x) => x !== checkpoint)
+          .reduce((acc, obj) => {
+            const { modelVersionId, ...rest } = obj;
+            acc[modelVersionId] = rest;
+            return acc;
+          }, {} as { [key: string]: object }),
+        params: {
+          prompt: props.prompt,
+          negativePrompt: props.negativePrompt,
+          scheduler: 'EulerA', // props.sampler, // todo: synchronize terminology, use from user input
+          steps: props.steps,
+          cfgScale: props.cfgScale,
+          width: props.width,
+          height: props.height,
+          seed: props.seed,
+        },
       },
     }),
   });
+
+  // todo: whats next
 };
 
 export const getGenerationImages = async (props: GetGenerationImagesInput & { userId: number }) => {
@@ -255,3 +266,27 @@ export const getGenerationImages = async (props: GetGenerationImagesInput & { us
     }, {}),
   };
 };
+
+const generationCoverageCacheKey = 'IMAGEN_AVAILABLE_MODELVERSIONS';
+
+export async function refreshGeneratioCoverage() {
+  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/coverage`);
+  const coverage = (await response.json()) as Generation.Client.Coverage;
+
+  const availableModelVersions = Object.keys(coverage.assets)
+    .filter((assetKey) => coverage.assets[assetKey].workers > 0)
+    .map((x) => parseModelVersionId(x))
+    .filter((x) => x) as number[];
+
+  await redis.set(generationCoverageCacheKey, JSON.stringify(availableModelVersions));
+  return availableModelVersions;
+}
+
+export async function getGenerationCoverage() {
+  const coverage = await redis.get(generationCoverageCacheKey);
+  if (!coverage) {
+    return refreshGeneratioCoverage();
+  }
+
+  return JSON.parse(coverage) as number[];
+}

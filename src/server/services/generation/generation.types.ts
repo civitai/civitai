@@ -34,6 +34,7 @@ export namespace Generation {
   export type Job = {
     quantity: number;
     priority: number;
+    model: string;
     params: Params;
     additionalNetworks: Record<string, AdditionalNetwork>;
   };
@@ -64,16 +65,27 @@ export namespace Generation {
       images: Image[];
       requests: ImageRequestDictionary;
     };
+
+    export type Coverage = {
+      assets: AssetCoverageDictionary;
+      assetTypes: AssetTypeCoverageDictionary;
+    };
+
+    export type AssetCoverageDictionary = Record<string, AssetCoverage>;
+    export type AssetTypeCoverageDictionary = Record<string, AssetCoverage>;
+
+    export type AssetCoverage = {
+      workers: number;
+    };
   }
 
   export namespace Api {
     type RequestProps = {
       id: number;
       createdAt: Date;
-      estimatedCompletionDate: Date;
+      estimatedCompletedAt: Date;
       userId: number;
-      status: GenerationRequestStatus;
-      assets: Asset[];
+      status: string;
       job: Job;
       images?: Image[];
     };
