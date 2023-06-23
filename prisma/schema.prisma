@@ -1778,6 +1778,7 @@ model GenerationServiceProvider {
   @@id([name])
 }
 
+/// @view
 model QuestionRank {
   questionId              Int      @id
   question                Question @relation(fields: [questionId], references: [id], onDelete: NoAction)
