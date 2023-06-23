@@ -6,7 +6,7 @@ import {
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ModelType, Prisma } from '@prisma/client';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
@@ -83,7 +83,16 @@ export const getGenerationResources = async ({
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
   // TODO - apply user preferences - but do we really need this? Maybe a direct search should yield all results since their browsing experience is already set to their browsing preferences
   // TODO.Justin - optimize sql query for selecting resources
-  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [{ publishedAt: { not: null } }];
+  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [
+    { publishedAt: { not: null } },
+    {
+      modelVersionGenerationCoverage: {
+        workers: {
+          gt: 0,
+        },
+      },
+    },
+  ];
   const MODEL_AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   if (ids) AND.push({ id: { in: ids } });
   if (!!types?.length) MODEL_AND.push({ type: { in: types } });
@@ -101,16 +110,20 @@ export const getGenerationResources = async ({
   }
   if (!!MODEL_AND.length) AND.push({ model: { AND: MODEL_AND } });
 
-  const coveredModelVersions = await getGenerationCoverage();
-  if (coveredModelVersions) {
-    AND.push({ id: { in: coveredModelVersions } });
-  }
-
   const results = await dbRead.modelVersion.findMany({
     take,
     where: { AND },
     select: generationResourceSelect,
     orderBy: { id: 'desc' },
+  });
+
+  // It would be preferrable to do a join when fetching the modelVersions
+  // Not sure if this is possible wth prisma queries are there is no defined relationship
+  const allServiceProviders = await dbRead.generationServiceProvider.findMany({
+    select: {
+      name: true,
+      schedulers: true,
+    },
   });
 
   return results
@@ -122,6 +135,9 @@ export const getGenerationResources = async ({
       modelId: model.id,
       modelName: model.name,
       modelType: model.type,
+      serviceProviders: allServiceProviders.filter(
+        (sp) => (x.modelVersionGenerationCoverage?.serviceProviders ?? []).indexOf(sp.name) !== -1
+      ),
     }));
 };
 
@@ -267,26 +283,33 @@ export const getGenerationImages = async (props: GetGenerationImagesInput & { us
   };
 };
 
-const generationCoverageCacheKey = 'IMAGEN_AVAILABLE_MODELVERSIONS';
-
 export async function refreshGeneratioCoverage() {
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/coverage`);
   const coverage = (await response.json()) as Generation.Client.Coverage;
 
-  const availableModelVersions = Object.keys(coverage.assets)
-    .filter((assetKey) => coverage.assets[assetKey].workers > 0)
-    .map((x) => parseModelVersionId(x))
-    .filter((x) => x) as number[];
+  const modelVersionCoverage = Object.keys(coverage.assets)
+    .map((x) => ({
+      modelVersionId: parseModelVersionId(x) as number,
+      workers: coverage.assets[x].workers,
+      serviceProviders: Object.keys(coverage.assets[x].serviceProviders),
+    }))
+    .filter((x) => x.modelVersionId !== null);
 
-  await redis.set(generationCoverageCacheKey, JSON.stringify(availableModelVersions));
-  return availableModelVersions;
-}
+  const values = modelVersionCoverage
+    .map(
+      (data) =>
+        `('${data.modelVersionId}', ${data.workers}, '{${data.serviceProviders.join(',')}}')`
+    )
+    .join(', ');
 
-export async function getGenerationCoverage() {
-  const coverage = await redis.get(generationCoverageCacheKey);
-  if (!coverage) {
-    return refreshGeneratioCoverage();
-  }
+  await dbWrite.$queryRawUnsafe(`
+    INSERT INTO modelVersionGenerationCoverage (modelVersionId, workers, serviceProviders)
+    VALUES ${values}
+    ON CONFLICT (modelVersionId)
+    DO UPDATE
+    SET workers = EXCLUDED.workers,
+        serviceProviders = EXCLUDED.serviceProviders;
+  `);
 
-  return JSON.parse(coverage) as number[];
+  // TODO: Update serviceProviders
 }

@@ -69,12 +69,19 @@ export namespace Generation {
     export type Coverage = {
       assets: AssetCoverageDictionary;
       assetTypes: AssetTypeCoverageDictionary;
+      schedulers: SchedulerCoverageDictionary;
     };
 
-    export type AssetCoverageDictionary = Record<string, AssetCoverage>;
-    export type AssetTypeCoverageDictionary = Record<string, AssetCoverage>;
+    export type AssetCoverageDictionary = Record<string, ItemCoverage>;
+    export type AssetTypeCoverageDictionary = Record<string, ItemCoverage>;
+    export type SchedulerCoverageDictionary = Record<string, ItemCoverage>;
 
-    export type AssetCoverage = {
+    export type ItemCoverage = {
+      workers: number;
+      serviceProviders: Record<string, ServiceProviderCoverage>;
+    };
+
+    export type ServiceProviderCoverage = {
       workers: number;
     };
   }
