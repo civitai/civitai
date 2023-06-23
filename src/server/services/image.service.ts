@@ -357,7 +357,10 @@ export const moderateImages = async ({
   delete: deleteImages,
 }: ImageModerationSchema) => {
   if (deleteImages) {
-    for (const id of ids) await deleteImageById({ id });
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids }, needsReview: { not: null } },
+      data: { nsfw, needsReview: null, ingestion: 'Blocked' },
+    });
   } else {
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },

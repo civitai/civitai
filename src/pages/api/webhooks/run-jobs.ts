@@ -70,8 +70,7 @@ export default WebhookEndpoint(async (req, res) => {
   if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
   const { name, run, options } = job;
 
-  if (await isLocked(name))
-    return res.status(400).json({ ok: false, error: 'Job already running' });
+  if (await isLocked(name)) return res.status(200).json({ ok: true, error: 'Job already running' });
 
   const jobStart = Date.now();
   const axiom = req.log.with({ scope: 'job', name });
