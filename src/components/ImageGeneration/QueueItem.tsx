@@ -13,17 +13,21 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
+import { useCallback } from 'react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { Generation } from '~/server/services/generation/generation.types';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 
-export function QueueItem({ item, onBoostClick }: Props) {
+export function QueueItem({ id, onBoostClick }: Props) {
   const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
+
+  const item = useImageGenerationStore(useCallback((state) => state.requests[id], []));
 
   const { prompt, ...details } = item.params;
   const detailItems = Object.entries(details).map(([key, value]) => ({
@@ -126,6 +130,7 @@ export function QueueItem({ item, onBoostClick }: Props) {
 }
 
 type Props = {
-  item: Generation.Client.Request;
+  // item: Generation.Client.Request;
+  id: number;
   onBoostClick: (item: Generation.Client.Request) => void;
 };

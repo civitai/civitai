@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { ClearableNumberInput } from '~/components/ClearableNumberInput/ClearableNumberInput';
 import { CheckpointSelect } from '~/components/ImageGeneration/GenerationForm/GenerationResourceSelect';
 import MentionExample from '~/components/ImageGeneration/SlateEditor/SlateEditor';
+import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import {
   Form,
   InputNumber,
@@ -53,13 +54,16 @@ export function Generate({
     model: [request?.resources.find((x) => x.modelType === ModelType.Checkpoint)],
     ...request?.params,
   };
+  const setRequests = useImageGenerationStore((state) => state.setRequests);
   const form = useForm({ schema, defaultValues: defaultDemoValues });
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
-    onSuccess: () => {
-      console.log('success');
+    onSuccess: (data) => {
+      setRequests([data]);
       onSuccess?.();
     },
   });
+
+  // TODO - something something `useFormStorage`
 
   return (
     <Form
@@ -105,11 +109,11 @@ export function Generate({
           label={
             <Group position="apart">
               Prompt
-              <Text variant="link">
+              {/* <Text variant="link">
                 <Group align="center" spacing={4}>
                   <span>From Collection</span> <IconBook2 size={16} />
                 </Group>
-              </Text>
+              </Text> */}
             </Group>
           }
         >
@@ -150,7 +154,7 @@ export function Generate({
                     <InputNumber name="seed" label="Seed" placeholder="Random" min={0} />
                   </Grid.Col>
                   <Grid.Col span={6}>
-                    <InputNumber name="clipSkip" label="Clip Skip" min={0} />
+                    <InputNumber name="clipSkip" label="Clip Skip" min={0} max={10} />
                   </Grid.Col>
                 </Grid>
               </Stack>
@@ -163,7 +167,9 @@ export function Generate({
           <Button onClick={() => form.reset()} variant="default">
             Reset
           </Button>
-          <Button type="submit">Go</Button>
+          <Button type="submit" loading={isLoading}>
+            Go
+          </Button>
         </Group>
         {/* TODO.Quantity,Go */}
       </Stack>

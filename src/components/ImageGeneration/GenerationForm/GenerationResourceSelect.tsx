@@ -128,7 +128,6 @@ function GenerationResourceSelect({
 type SearchItemProps = { value: string; resource: Generation.Client.Resource };
 const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
   ({ value, resource, ...props }, ref) => {
-    console.log({ props });
     return (
       <Stack spacing={0} ref={ref} {...props} key={`${resource.modelId}_${resource.id}`}>
         <Group position="apart" noWrap>

@@ -141,13 +141,7 @@ export const getGenerationResources = async ({
     }));
 };
 
-export const getGenerationRequests = async (
-  props: GetGenerationRequestsInput & { userId: number }
-) => {
-  const params = QS.stringify(props);
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
-  if (!response.ok) throw new Error(response.statusText);
-  const { cursor, requests }: Generation.Api.Request = await response.json();
+const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
   const modelVersionIds = requests
     .map((x) => parseModelVersionId(x.job.model))
     .concat(requests.flatMap((x) => Object.keys(x.job.additionalNetworks).map(parseModelVersionId)))
@@ -158,14 +152,7 @@ export const getGenerationRequests = async (
     select: generationResourceSelect,
   });
 
-  // // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
-  // let nextCursor: number | undefined;
-  // if (requests.length > props.take) {
-  //   const nextItem = requests.pop();
-  //   nextCursor = nextItem?.id;
-  // }
-
-  const items = requests.map((x): Generation.Client.Request => {
+  return requests.map((x): Generation.Client.Request => {
     const { additionalNetworks, ...job } = x.job;
 
     const assets = [x.job.model, ...Object.keys(x.job.additionalNetworks)];
@@ -197,6 +184,23 @@ export const getGenerationRequests = async (
       images: x.images,
     };
   });
+};
+
+export const getGenerationRequests = async (
+  props: GetGenerationRequestsInput & { userId: number }
+) => {
+  const params = QS.stringify(props);
+  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
+  if (!response.ok) throw new Error(response.statusText);
+  const { cursor, requests }: Generation.Api.Request = await response.json();
+  // // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
+  // let nextCursor: number | undefined;
+  // if (requests.length > props.take) {
+  //   const nextItem = requests.pop();
+  //   nextCursor = nextItem?.id;
+  // }
+
+  const items = await formatGenerationRequests(requests);
 
   return { items, nextCursor: cursor === 0 ? undefined : cursor ?? undefined };
 };
@@ -252,7 +256,10 @@ export const createGenerationRequest = async ({
     }),
   });
 
-  // todo: whats next
+  if (!response.ok) throw throwBadRequestError();
+  const data: Generation.Api.RequestProps = await response.json();
+  const [formatted] = await formatGenerationRequests([data]);
+  return formatted;
 };
 
 export const getGenerationImages = async (props: GetGenerationImagesInput & { userId: number }) => {

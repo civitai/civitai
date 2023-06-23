@@ -80,7 +80,7 @@ export function FeedItem({
               <Transition mounted={opened} transition="slide-right">
                 {(transitionStyles) => (
                   <Group spacing={0} style={transitionStyles} noWrap>
-                    <ActionIcon size="md" p={4} variant="light">
+                    <ActionIcon size="md" p={4} variant="light" disabled>
                       <IconPlayerPlayFilled />
                     </ActionIcon>
                     <ActionIcon
@@ -88,6 +88,7 @@ export function FeedItem({
                       p={4}
                       variant="light"
                       onClick={() => onCreateVariantClick(image)}
+                      disabled
                     >
                       <IconArrowsShuffle />
                     </ActionIcon>

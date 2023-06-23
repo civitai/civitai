@@ -1,14 +1,16 @@
 import { Center, Loader, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { BoostModal } from '~/components/ImageGeneration/BoostModal';
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/hooks/useGetGenerationRequests';
+import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { Generation } from '~/server/services/generation/generation.types';
+import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { useDebouncer } from '~/utils/debouncer';
 
 const items = [
   {
@@ -290,39 +292,66 @@ type State = {
   opened: boolean;
 };
 
+const POLLABLE_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 export function Queue() {
   const { ref, inView } = useInView();
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [state, setState] = useState<State>({ selectedItem: null, opened: false });
   const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
+  const debouncer = useDebouncer(5000);
 
-  //TODO.generation - determin how we are going to get progress updates on pending/processing items
-  const { requests, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
-    useGetGenerationRequests({
-      take: 2,
-      // status: [
-      //   GenerationRequestStatus.Pending,
-      //   GenerationRequestStatus.Processing,
-      //   GenerationRequestStatus.Succeeded,
-      // ],
-    });
+  // Global store values
+  const requests = useImageGenerationStore((state) => state.requests);
+  const setRequests = useImageGenerationStore((state) => state.setRequests);
+  const requestIds = Object.values(requests)
+    .sort((a, b) => b.id - a.id)
+    .map((x) => x.id);
 
+  const {
+    requests: infiniteRequests,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isFetching,
+    isError,
+  } = useGetGenerationRequests({ take: 2 });
+
+  const { requests: polledRequests, refetch: pollPending } = useGetGenerationRequests(
+    { take: 100, status: POLLABLE_STATUSES },
+    { enabled: false }
+  );
+
+  // infinite paging
   useEffect(() => {
     if (inView && !isFetching && !isError) fetchNextPage?.();
   }, [fetchNextPage, inView, isFetching, isError]);
+
+  // set requests from infinite paging data
+  useEffect(() => setRequests(infiniteRequests), [infiniteRequests, setRequests]);
+
+  // // debounced polling of pending/processing requests
+  // useEffect(() => {
+  //   if (Object.values(requests).some((x) => POLLABLE_STATUSES.includes(x.status))) {
+  //     debouncer(pollPending);
+  //   }
+  // }, [requests, debouncer, pollPending]);
+
+  // // update requests dictionary with polled requests
+  // useEffect(() => setRequests(polledRequests), [polledRequests, setRequests]);
 
   return isLoading ? (
     <Center p="xl">
       <Loader />
     </Center>
-  ) : requests.length > 0 ? (
+  ) : requestIds.length > 0 ? (
     <>
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
         <Stack>
-          {requests.map((item) => (
+          {requestIds.map((id) => (
             <QueueItem
-              key={item.id}
-              item={item}
+              key={id}
+              id={id}
               onBoostClick={(item) =>
                 showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined
               }

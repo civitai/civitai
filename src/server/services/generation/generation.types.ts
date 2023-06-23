@@ -87,7 +87,7 @@ export namespace Generation {
   }
 
   export namespace Api {
-    type RequestProps = {
+    export type RequestProps = {
       id: number;
       createdAt: Date;
       estimatedCompletedAt: Date;

@@ -5,6 +5,7 @@ import {
   Center,
   Group,
   Loader,
+  Overlay,
   ScrollArea,
   Stack,
   Text,
@@ -826,40 +827,43 @@ export function Feed() {
 
   return (
     <Stack sx={{ position: 'relative' }}>
-      <Group spacing="xs">
-        <Autocomplete
-          placeholder="Search by prompt"
-          // TODO.generation: add search by prompt
-          data={[]}
-          icon={<IconSearch size={14} />}
-          sx={{ flex: 1 }}
-        />
-        <Group spacing={4}>
-          <Tooltip label="Sort items">
-            <ActionIcon size="xs">
-              <IconSortDescending2 />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="Toggle filter toolbar">
-            <ActionIcon size="xs">
-              <IconFilter />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={state.layout === 'grid' ? 'List layout' : 'Grid layout'}>
-            <ActionIcon
-              size="xs"
-              onClick={() =>
-                setState((current) => ({
-                  ...current,
-                  layout: current.layout === 'grid' ? 'list' : 'grid',
-                }))
-              }
-            >
-              {state.layout === 'grid' ? <IconLayoutList /> : <IconLayoutGrid />}
-            </ActionIcon>
-          </Tooltip>
+      <div style={{ position: 'relative' }}>
+        <Overlay blur={2} opacity={0.3} color="#000" />
+        <Group spacing="xs">
+          <Autocomplete
+            placeholder="Search by prompt"
+            // TODO.generation: add search by prompt
+            data={[]}
+            icon={<IconSearch size={14} />}
+            sx={{ flex: 1 }}
+          />
+          <Group spacing={4}>
+            <Tooltip label="Sort items">
+              <ActionIcon size="xs">
+                <IconSortDescending2 />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Toggle filter toolbar">
+              <ActionIcon size="xs">
+                <IconFilter />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label={state.layout === 'grid' ? 'List layout' : 'Grid layout'}>
+              <ActionIcon
+                size="xs"
+                onClick={() =>
+                  setState((current) => ({
+                    ...current,
+                    layout: current.layout === 'grid' ? 'list' : 'grid',
+                  }))
+                }
+              >
+                {state.layout === 'grid' ? <IconLayoutList /> : <IconLayoutGrid />}
+              </ActionIcon>
+            </Tooltip>
+          </Group>
         </Group>
-      </Group>
+      </div>
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 139px)' : 'calc(100vh - 139px)'}>
         <div className={classes.grid}>
           {images.map((image) => {
@@ -946,7 +950,7 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
                 </ActionIcon>
               </Tooltip>
               <Tooltip label="Post images" withinPortal>
-                <ActionIcon size="md" variant="light">
+                <ActionIcon size="md" variant="light" disabled>
                   <IconCloudUpload />
                 </ActionIcon>
               </Tooltip>
@@ -955,11 +959,11 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
                   <IconWindowMaximize />
                 </ActionIcon>
               </Tooltip>
-              <Tooltip label="Delete images" withinPortal>
+              {/* <Tooltip label="Delete images" withinPortal>
                 <ActionIcon size="md" variant="light" color="red">
                   <IconTrash />
                 </ActionIcon>
-              </Tooltip>
+              </Tooltip> */}
             </Group>
           </Stack>
         </Card>

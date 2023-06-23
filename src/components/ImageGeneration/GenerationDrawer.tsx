@@ -51,7 +51,7 @@ export function GenerationDrawer({ ...props }: Props) {
   return (
     <Drawer
       {...props}
-      size={mobile ? '90%' : '50%'}
+      size={mobile ? '90%' : 600}
       position={mobile ? 'bottom' : 'right'}
       withCloseButton={false}
     >
@@ -63,22 +63,22 @@ export function GenerationDrawer({ ...props }: Props) {
         keepMounted={false}
         inverted
       >
+        <Tabs.Panel value="generate">
+          <Generate onSuccess={() => setView('queue')} />
+        </Tabs.Panel>
         <Tabs.Panel value="queue">
           <Queue />
-        </Tabs.Panel>
-        <Tabs.Panel value="generate">
-          <Generate />
         </Tabs.Panel>
         <Tabs.Panel value="feed">
           <Feed />
         </Tabs.Panel>
 
         <Tabs.List grow>
-          <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>
-            Queue
-          </Tabs.Tab>
           <Tabs.Tab value="generate" icon={<IconPlayerPlayFilled size={16} />}>
             Generate
+          </Tabs.Tab>
+          <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>
+            Queue
           </Tabs.Tab>
           <Tabs.Tab value="feed" icon={<IconSlideshow size={16} />}>
             Feed
