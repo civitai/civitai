@@ -89,6 +89,16 @@ export function AppFooter() {
           </Button>
           <Button
             component={NextLink}
+            href="/content/careers"
+            {...buttonProps}
+            variant="subtle"
+            color="green"
+            px={mobile ? 5 : 'xs'}
+          >
+            Join Us 💼
+          </Button>
+          <Button
+            component={NextLink}
             prefetch={false}
             href="/content/tos"
             {...buttonProps}

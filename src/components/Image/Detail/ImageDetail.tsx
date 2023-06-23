@@ -47,7 +47,7 @@ export function ImageDetail() {
   const { image, isLoading, active, toggleInfo, close, isOwner, isMod, shareUrl } =
     useImageDetailContext();
 
-  if (!image && isLoading) return <PageLoader />;
+  if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
 
   return (

@@ -236,14 +236,16 @@ export const updateMetricsJob = createJob(
         ) u ON u.user_id = a.user_id
         LEFT JOIN (
           SELECT
-            "userId" user_id,
+            rr."userId" user_id,
             COUNT(*) review_count,
-            SUM(IIF("createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_review_count,
-            SUM(IIF("createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_review_count,
-            SUM(IIF("createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_review_count,
-            SUM(IIF("createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_review_count
-          FROM "ResourceReview"
-          GROUP BY "userId"
+            SUM(IIF(rr."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_review_count,
+            SUM(IIF(rr."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_review_count,
+            SUM(IIF(rr."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_review_count,
+            SUM(IIF(rr."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_review_count
+          FROM "ResourceReview" rr
+          JOIN "Model" m on rr."modelId" = m.id
+          WHERE m.status = 'Published'
+          GROUP BY rr."userId"
         ) r ON r.user_id = a.user_id
         LEFT JOIN (
           SELECT

@@ -1,4 +1,4 @@
-import { Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
+import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -9,6 +9,7 @@ import {
   ReportEntity,
 } from '~/server/schema/report.schema';
 import { addTagVotes } from '~/server/services/tag.service';
+import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -68,6 +69,17 @@ const validateReportCreation = async ({
   return updatedReport;
 };
 
+const reportTypeNameMap: Record<ReportEntity, string> = {
+  [ReportEntity.User]: 'user',
+  [ReportEntity.Model]: 'model',
+  [ReportEntity.Comment]: 'comment',
+  [ReportEntity.CommentV2]: 'comment',
+  [ReportEntity.Image]: 'image',
+  [ReportEntity.ResourceReview]: 'review',
+  [ReportEntity.Article]: 'article',
+  [ReportEntity.Post]: 'post',
+};
+
 export const createReport = async ({
   userId,
   type,
@@ -91,6 +103,10 @@ export const createReport = async ({
   }
 
   if (isReportingLocked) throwBadRequestError('Reporting is locked for this model.');
+
+  // Add report type to details for notifications
+  if (!data.details) data.details = {};
+  (data.details as MixedObject).reportType = reportTypeNameMap[type];
 
   const validReport =
     data.reason !== ReportReason.NSFW
@@ -157,6 +173,17 @@ export const createReport = async ({
             report,
           },
         });
+        if (data.reason === ReportReason.TOSViolation) {
+          await tx.imageEngagement.create({
+            data: {
+              imageId: id,
+              userId,
+              type: ImageEngagementType.Hide,
+            },
+          });
+          await refreshHiddenImagesForUser({ userId });
+        }
+
         break;
       case ReportEntity.ResourceReview:
         await tx.resourceReviewReport.create({

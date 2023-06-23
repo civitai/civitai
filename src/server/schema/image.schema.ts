@@ -88,7 +88,7 @@ export const imageSchema = z.object({
   nsfw: z.nativeEnum(NsfwLevel).optional(),
   analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
-  needsReview: z.boolean().optional(),
+  needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
   postId: z.number().optional(),
@@ -107,14 +107,14 @@ export const imageUpdateSchema = z.object({
     .or(z.string().uuid('One of the files did not upload properly, please try again').optional())
     .optional(),
   nsfw: z.boolean().optional(),
-  needsReview: z.boolean().optional(),
+  needsReview: z.string().nullish(),
 });
 export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
   nsfw: z.nativeEnum(NsfwLevel).optional(),
-  needsReview: z.boolean().optional(),
+  needsReview: z.string().nullish(),
   delete: z.boolean().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
@@ -206,7 +206,7 @@ export const getInfiniteImagesSchema = z
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
     withTags: z.boolean().optional(),
     browsingMode: z.nativeEnum(BrowsingMode).optional(),
-    needsReview: z.boolean().optional(),
+    needsReview: z.string().nullish(),
     tagReview: z.boolean().optional(),
     reportReview: z.boolean().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),

@@ -8,6 +8,7 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { ReviewReactions } from '@prisma/client';
 
 type ImageDetailState = {
   images: ImageV2Model[];
@@ -48,6 +49,7 @@ export function ImageDetailProvider({
     limit?: number;
     prioritizedUserIds?: number[];
     tags?: number[];
+    reactions?: ReviewReactions[];
   } & Record<string, unknown>;
 }) {
   const router = useRouter();
@@ -55,12 +57,13 @@ export function ImageDetailProvider({
   const closingRef = useRef(false);
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId, modelId, modelVersionId, username } = filters;
+  const { postId, modelId, modelVersionId, username, reactions } = filters;
 
   // #region [data fetching]
   const shouldFetchMany = Object.keys(filters).length > 0;
-  const { images, isLoading: imagesLoading } = useQueryImages(
-    { ...filters },
+  const { images, isInitialLoading: imagesLoading } = useQueryImages(
+    // TODO: Hacky way to prevent sending the username when filtering by reactions
+    { ...filters, username: !!reactions?.length ? undefined : username },
     {
       enabled: shouldFetchMany,
     }
@@ -68,7 +71,7 @@ export function ImageDetailProvider({
 
   const shouldFetchImage =
     !imagesLoading && !!images?.length && !images.find((x) => x.id === imageId);
-  const { data: prefetchedImage, isLoading: imageLoading } = trpc.image.get.useQuery(
+  const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
     { id: imageId },
     { enabled: shouldFetchImage }
   );

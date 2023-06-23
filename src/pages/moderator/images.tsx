@@ -105,23 +105,30 @@ const useStore = create<StoreState>()(
   }))
 );
 
+const ImageReviewType = {
+  minor: 'Minors',
+  poi: 'POI',
+} as const;
+
+type ImageReviewType = keyof typeof ImageReviewType;
+
 export default function Images() {
   const { ref, inView } = useInView();
   // const queryUtils = trpc.useContext();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
-  const [type, setType] = useState<'Flagged' | 'Reported'>('Flagged');
+  const [type, setType] = useState<ImageReviewType | 'reported'>('minor');
 
-  const viewingReported = type === 'Reported';
+  const viewingReported = type === 'reported';
 
   const filters = useMemo(
     () => ({
-      needsReview: !viewingReported ? true : undefined,
+      needsReview: !viewingReported ? type : undefined,
       reportReview: viewingReported ? true : undefined,
       include: viewingReported ? (['report'] as ImageInclude[]) : undefined,
       sort: ImageSort.Newest,
     }),
-    [viewingReported]
+    [type, viewingReported]
   );
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     trpc.image.getInfinite.useInfiniteQuery(filters, {
@@ -129,7 +136,7 @@ export default function Images() {
     });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
-  const handleTypeChange = (value: 'Flagged' | 'Reported') => {
+  const handleTypeChange = (value: ImageReviewType | 'reported') => {
     setType(value);
   };
 
@@ -138,6 +145,11 @@ export default function Images() {
   useEffect(() => {
     if (inView) fetchNextPage();
   }, [fetchNextPage, inView]);
+
+  const segments = [
+    ...Object.entries(ImageReviewType).map(([key, value]) => ({ value: key, label: value })),
+    { value: 'reported', label: 'Reported' },
+  ];
 
   return (
     <Container size="xl" py="xl">
@@ -163,12 +175,7 @@ export default function Images() {
         <Stack spacing={0} mb="lg">
           <Group>
             <Title order={1}>Images Needing Review</Title>
-            <SegmentedControl
-              size="sm"
-              data={['Flagged', 'Reported']}
-              onChange={handleTypeChange}
-              value={type}
-            />
+            <SegmentedControl size="sm" data={segments} onChange={handleTypeChange} value={type} />
           </Group>
           <Text color="dimmed">
             These are images that have been{' '}
@@ -212,10 +219,10 @@ function ModerationControls({
 }: {
   images: ImagesInfiniteModel[];
   filters: any;
-  view: 'Flagged' | 'Reported';
+  view: ImageReviewType | 'reported';
 }) {
   const queryUtils = trpc.useContext();
-  const viewingReported = view === 'Reported';
+  const viewingReported = view === 'reported';
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
@@ -237,7 +244,8 @@ function ModerationControls({
           for (const page of data.pages)
             for (const item of page.items) {
               if (ids.includes(item.id)) {
-                item.needsReview = deleted === true || needsReview === false ? false : true;
+                item.needsReview =
+                  deleted === true || needsReview === null ? null : item.needsReview;
               }
             }
         })
@@ -325,7 +333,7 @@ function ModerationControls({
 
     return moderateImagesMutation.mutate({
       ids: selected,
-      needsReview: false,
+      needsReview: null,
     });
   };
 
@@ -408,7 +416,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
     <Card
       shadow="sm"
       p="xs"
-      sx={{ opacity: image.needsReview === false && !pendingReport ? 0.2 : undefined }}
+      sx={{ opacity: !image.needsReview && !pendingReport ? 0.2 : undefined }}
       withBorder
     >
       <Card.Section sx={{ height: `${height}px` }}>

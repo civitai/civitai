@@ -114,7 +114,7 @@ type ImageProps = {
   postId?: number | null;
   width?: number | null;
   height?: number | null;
-  needsReview?: boolean;
+  needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
 };
@@ -238,10 +238,10 @@ ImageGuard.Report = function ReportImage({
     if (!isModerator) return;
     moderateImagesMutation.mutate({
       ids: [image.id],
-      needsReview: accept ? false : undefined,
+      needsReview: accept ? null : undefined,
       delete: !accept ? true : undefined,
     });
-    setNeedsReview(false);
+    setNeedsReview(null);
   };
   // if (!showReportNsfw) return null;
 

@@ -5,7 +5,9 @@ export const reportNotifications = createNotificationProcessor({
     displayName: 'Report actioned',
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `The ${details.reportType} you reported has been actioned. Thanks for helping keep the community safe!`,
+      message: `The ${
+        details.reportType ?? 'item'
+      } you reported has been actioned. Thanks for helping keep the community safe!`,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH actioned AS (
@@ -15,6 +17,7 @@ export const reportNotifications = createNotificationProcessor({
             'reportId', r.id,
             'reportType',
               CASE
+                WHEN jsonb_typeof(r.details->'reportType') = 'string' THEN r.details->>'reportType'
                 WHEN EXISTS (SELECT 1 FROM "ResourceReviewReport" WHERE "reportId" = r.id) THEN 'review'
                 WHEN EXISTS (SELECT 1 FROM "ReviewReport" WHERE "reportId" = r.id) THEN 'review'
                 WHEN EXISTS (SELECT 1 FROM "ModelReport" WHERE "reportId" = r.id) THEN 'resource'

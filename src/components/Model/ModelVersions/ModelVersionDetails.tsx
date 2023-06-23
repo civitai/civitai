@@ -765,7 +765,16 @@ export function ModelVersionDetails({
           )}
           {model.poi && (
             <AlertWithIcon icon={<IconExclamationMark />}>
-              {`This resource is intended to reproduce the likeness of a real person. Out of respect for this individual and in accordance with our Content Rules, no moderated content or commercial use is allowed.`}
+              This resource is intended to reproduce the likeness of a real person. Out of respect
+              for this individual and in accordance with our{' '}
+              <Text component={NextLink} variant="link" href="/content/rules/real-people">
+                Content Rules
+              </Text>
+              , only{' '}
+              <Text component={NextLink} variant="link" href="/content/rules/real-people">
+                work-safe images
+              </Text>{' '}
+              and non-commercial use is permitted.
             </AlertWithIcon>
           )}
         </Stack>

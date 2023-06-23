@@ -78,7 +78,7 @@ export const getGalleryImageDetailHandler = async ({
   try {
     const isMod = ctx.user?.isModerator;
     const item = await dbRead.image.findFirst({
-      where: { id, OR: isMod ? undefined : [{ needsReview: false }, { userId: ctx.user?.id }] },
+      where: { id, OR: isMod ? undefined : [{ needsReview: null }, { userId: ctx.user?.id }] },
       // TODO.gallery - If the gallery is infinite, use the current gallery filters. If the gallery is finite, use MetricTimeFrame.AllTime
       select: imageGallerySelect({ user: ctx.user }),
     });

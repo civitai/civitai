@@ -129,6 +129,7 @@ model User {
   articleEngagements      ArticleEngagement[]
   leaderboardResults      LeaderboardResult[]
   receivedReports         UserReport[]
+  engagedImages           ImageEngagement[]
 }
 
 model CustomerSubscription {
@@ -896,6 +897,14 @@ enum NsfwLevel {
   X
 }
 
+enum ImageIngestionStatus {
+  Pending
+  Scanned
+  Error
+  Blocked
+  NotFound
+}
+
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -915,13 +924,15 @@ model Image {
   featuredAt        DateTime?
   postId            Int?
   post              Post?                   @relation(fields: [postId], references: [id], onDelete: SetNull)
-  needsReview       Boolean                 @default(false)
+  needsReview       String?
   hideMeta          Boolean                 @default(false)
   index             Int?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   mimeType          String?
   sizeKB            Int?
+  ingestion         ImageIngestionStatus    @default(Pending)
+  blockedFor        String?
 
   imagesOnModels  ImagesOnModels?
   imagesOnReviews ImagesOnReviews?
@@ -938,10 +949,28 @@ model Image {
   modHelper       ImageModHelper?
   resources       ImageResource[]
   resourceHelper  ImageResourceHelper[]
+  engagements     ImageEngagement[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+}
+
+enum ImageEngagementType {
+  Favorite
+  Hide
+}
+
+model ImageEngagement {
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId   Int
+  image     Image               @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  type      ImageEngagementType
+  createdAt DateTime            @default(now())
+
+  @@id([userId, imageId])
+  @@index([imageId])
 }
 
 model ImageResource {

@@ -1,24 +1,32 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { Prisma, TagTarget, TagType } from '@prisma/client';
+import { ImageIngestionStatus, Prisma, TagTarget, TagType } from '@prisma/client';
 import { auditMetaData } from '~/utils/image-metadata';
-import { deleteImageById } from '~/server/services/image.service';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
 
+const tagCache: Record<string, number> = {};
+
+enum Status {
+  Success = 0,
+  NotFound = 1, // image not found at url
+  Unscannable = 2,
+}
+
+type IncomingTag = z.infer<typeof tagSchema>;
 const tagSchema = z.object({
   tag: z.string().transform((x) => x.toLowerCase().trim()),
   id: z.number().optional(),
   confidence: z.number(),
 });
-type IncomingTag = z.infer<typeof tagSchema>;
-const bodySchema = z.object({
+type BodyProps = z.infer<typeof schema>;
+const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
-  tags: z.array(tagSchema).optional(),
+  tags: tagSchema.array().nullish(),
+  status: z.nativeEnum(Status),
 });
-const tagCache: Record<string, number> = {};
 
 function isModerationCategory(tag: string) {
   return topLevelModerationCategories.includes(tag);
@@ -28,30 +36,76 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   if (req.method !== 'POST')
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 
-  const bodyResults = bodySchema.safeParse(req.body);
+  const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success)
     return res
       .status(400)
       .json({ ok: false, error: `Invalid body: ${bodyResults.error.flatten().fieldErrors}` });
-  const { id: imageId, isValid, tags: incomingTags } = bodyResults.data;
 
-  // If image is not valid, delete image
-  if (!isValid) {
-    try {
-      await deleteImageById({ id: imageId });
-    } catch {
-      // Do nothing... it must already be gone
+  const data = bodyResults.data;
+
+  try {
+    switch (bodyResults.data.status) {
+      case Status.NotFound:
+        await dbWrite.image.update({
+          where: { id: data.id },
+          data: { ingestion: ImageIngestionStatus.NotFound },
+        });
+        break;
+      case Status.Unscannable:
+        await dbWrite.image.update({
+          where: { id: data.id },
+          data: { ingestion: ImageIngestionStatus.Error },
+        });
+        break;
+      case Status.Success:
+        await handleSuccess(data);
+        break;
+      default: {
+        throw new Error('unhandled data type');
+      }
     }
     return res.status(200).json({ ok: true });
+  } catch (e: any) {
+    return res.status(400).send({ error: e.message });
   }
+});
 
-  // Clear automated tags
-  await dbWrite.tagsOnImage.deleteMany({
-    where: { imageId, automated: true },
-  });
+type ComputedTagTester = {
+  includesAll?: string[];
+  includesSome?: string[];
+  excludes?: string[];
+};
+const computedTagCombos: Record<string, ComputedTagTester> = {
+  'female swimwear or underwear': {
+    includesAll: ['female'],
+    includesSome: ['swimwear', 'underwear', 'lingerie', 'bikini'],
+    excludes: [
+      'dress',
+      'nudity',
+      'illustrated explicit nudity',
+      'partial nudity',
+      'sexual activity',
+      'graphic female nudity',
+    ],
+  },
+  'male swimwear or underwear': {
+    includesAll: ['male'],
+    includesSome: ['swimwear', 'underwear', 'lingerie'],
+    excludes: [
+      'dress',
+      'nudity',
+      'illustrated explicit nudity',
+      'partial nudity',
+      'sexual activity',
+      'graphic male nudity',
+    ],
+  },
+};
 
-  // If there are no tags, return
-  if (!incomingTags || incomingTags.length === 0) return res.status(200).json({ ok: true });
+const computedTagsCombosArray = Object.entries(computedTagCombos);
+async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
+  if (!incomingTags?.length) return;
 
   // De-dupe incoming tags and keep tag with highest confidence
   const tagMap: Record<string, IncomingTag> = {};
@@ -61,7 +115,13 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   const tags = Object.values(tagMap);
 
   // Add computed tags
-  addComputedTags(tags); // mutates array
+  for (const [toAdd, { includesAll, includesSome, excludes }] of computedTagsCombosArray) {
+    if (tags.some((x) => x.tag === toAdd)) continue;
+    if (includesAll && !includesAll.every((x) => tags.some((y) => y.tag === x))) continue;
+    if (includesSome && !includesSome.some((x) => tags.some((y) => y.tag === x))) continue;
+    if (excludes && excludes.some((x) => tags.some((y) => y.tag === x))) continue;
+    tags.push({ tag: toAdd, confidence: 70 });
+  }
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
@@ -103,24 +163,23 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     }
   }
 
-  // Add new automated tags to image
+  const image = await dbWrite.image.findUnique({
+    where: { id },
+    select: { id: true, meta: true },
+  });
+  if (!image) throw new Error('Image not found');
+
   try {
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled")
       VALUES ${tags
         .filter((x) => x.id)
-        .map((x) => `(${imageId}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)})`)
+        .map((x) => `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)})`)
         .join(', ')}
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
     `);
   } catch (e: any) {
-    const image = await dbWrite.image.findUnique({
-      where: { id: imageId },
-      select: { id: true },
-    });
-    if (!image) return res.status(404).json({ error: 'Image not found' });
-
-    return res.status(500).json({ ok: false, error: e.message });
+    throw new Error(e.message);
   }
 
   try {
@@ -128,7 +187,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     const tags =
       (
         await dbWrite.tagsOnImage.findMany({
-          where: { imageId, automated: true },
+          where: { imageId: id, automated: true },
           select: { tag: { select: { type: true, name: true } } },
         })
       )?.map((x) => x.tag) ?? [];
@@ -144,76 +203,44 @@ export default WebhookEndpoint(async function imageTags(req, res) {
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
-    // Set scannedAt and needsReview
-    const shouldReview = hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw);
-    const image = await dbWrite.image.update({
-      where: { id: imageId },
-      data: { scannedAt: new Date(), needsReview: shouldReview ? true : undefined },
-      select: { id: true, meta: true },
-    });
-
-    // Set nsfw level
-    await dbWrite.$executeRaw`
-      SELECT update_nsfw_level(${imageId}::int);
-    `;
-
-    // Check metadata for blocklist if nsfw, if on blocklist, delete it...
+    let reviewKey: string | null = null;
+    if (hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw)) reviewKey = 'minor';
+    else if (nsfw) {
+      const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
+        SELECT
+          COUNT(*) > 0 "poi"
+        FROM "ImageResource" ir
+        JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE ir."imageId" = ${image.id} AND m.poi
+      `;
+      if (poi) reviewKey = 'poi';
+    }
     const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
+
+    // Set scannedAt and needsReview
+    const data: Prisma.ImageUpdateInput = {
+      scannedAt: new Date(),
+      needsReview: reviewKey,
+      ingestion: ImageIngestionStatus.Scanned,
+    };
+
     if (nsfw && prompt) {
       const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
       if (!success) {
-        await deleteImageById({ id: imageId });
-        return res
-          .status(200)
-          .json({ ok: false, error: 'Contains blocked keywords', deleted: true, blockedFor, tags });
+        data.ingestion = ImageIngestionStatus.Blocked;
+        data.blockedFor = blockedFor.join(',');
       }
     }
+
+    await dbWrite.image.updateMany({
+      where: { id },
+      data,
+    });
+
+    // Set nsfw level
+    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
   } catch (e: any) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-
-  res.status(200).json({ ok: true });
-});
-
-type ComputedTagTester = {
-  includesAll?: string[];
-  includesSome?: string[];
-  excludes?: string[];
-};
-const computedTagCombos: Record<string, ComputedTagTester> = {
-  'female swimwear or underwear': {
-    includesAll: ['female'],
-    includesSome: ['swimwear', 'underwear', 'lingerie', 'bikini'],
-    excludes: [
-      'dress',
-      'nudity',
-      'illustrated explicit nudity',
-      'partial nudity',
-      'sexual activity',
-      'graphic female nudity',
-    ],
-  },
-  'male swimwear or underwear': {
-    includesAll: ['male'],
-    includesSome: ['swimwear', 'underwear', 'lingerie'],
-    excludes: [
-      'dress',
-      'nudity',
-      'illustrated explicit nudity',
-      'partial nudity',
-      'sexual activity',
-      'graphic male nudity',
-    ],
-  },
-};
-const computedTagsCombosArray = Object.entries(computedTagCombos);
-function addComputedTags(tags: IncomingTag[]) {
-  if (!tags?.length) return;
-  for (const [toAdd, { includesAll, includesSome, excludes }] of computedTagsCombosArray) {
-    if (tags.some((x) => x.tag === toAdd)) continue;
-    if (includesAll && !includesAll.every((x) => tags.some((y) => y.tag === x))) continue;
-    if (includesSome && !includesSome.some((x) => tags.some((y) => y.tag === x))) continue;
-    if (excludes && excludes.some((x) => tags.some((y) => y.tag === x))) continue;
-    tags.push({ tag: toAdd, confidence: 70 });
+    throw new Error(e.message);
   }
 }
