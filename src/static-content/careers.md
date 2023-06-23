@@ -5,7 +5,7 @@ title: "Careers: Ignite the AI Revolution with Civitai"
 **Envisioning a future where AI seamlessly enhances everyday life, Civitai is actively on the lookout for visionary creators, technologists, and innovators to spearhead our mission - democratising access to AI tools for everyone.**
 
 ## Who We Are
-Established in November 2022, Civitai is a trailblazer in the field of artificial intelligence, steadfast in our mission to make stable diffusion resources universally accessible. More than a team, we are a vibrant collective of audacious creators, technologists, and innovators, leading the charge in AI advancements.
+Established in November 2022, Civitai is a trailblazer in the field of artificial intelligence, steadfast in our mission to make generative AI resources universally accessible. More than a team, we are a vibrant collective of audacious creators, technologists, and innovators, leading the charge in AI advancements.
 
 At Civitai, we're not just in the business of AI - we're fostering a culture of open-source collaboration and championing the democratization of AI-driven content creation. We hold steadfast in our belief that cutting-edge technology should not be a privilege for the few but a shared resource that catalyses the creative prowess and growth of all individuals.
 
