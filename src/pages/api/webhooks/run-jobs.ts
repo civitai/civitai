@@ -63,87 +63,38 @@ export const jobs: Job[] = [
 const log = createLogger('jobs', 'green');
 
 export default WebhookEndpoint(async (req, res) => {
-  const { run: runJob, wait } = querySchema.parse(req.query);
-  const ran = [];
-  const toRun = [];
-  const alreadyRunning = [];
-  const afterResponse = [];
+  const { run: runJob } = querySchema.parse(req.query);
+
+  // Get requested job
+  const job = jobs.find((x) => x.name === runJob);
+  if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+  const { name, run, options } = job;
+
+  if (await isLocked(name))
+    return res.status(400).json({ ok: false, error: 'Job already running' });
+
+  const jobStart = Date.now();
+  const axiom = req.log.with({ scope: 'job', name });
   let result: MixedObject | void;
-
-  const now = new Date();
-  for (const { name, cron, run, options } of jobs) {
-    if (runJob) {
-      if (runJob !== name) continue;
-    } else if (!isCronMatch(cron, now)) continue;
-
-    if (await isLocked(name)) {
-      log(`${name} already running`);
-      alreadyRunning.push(name);
-      continue;
-    }
-
-    const processJob = async () => {
-      const jobStart = Date.now();
-      const axiom = req.log.with({ scope: 'job', name });
-      try {
-        log(`${name} starting`);
-        axiom.info(`starting`);
-        lock(name, options.lockExpiration);
-        const result = await run();
-        log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
-        axiom.info('success', { duration: Date.now() - jobStart });
-        return result;
-      } catch (e) {
-        log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
-        axiom.error(`failed`, { duration: Date.now() - jobStart, error: e });
-      } finally {
-        unlock(name);
-      }
-    };
-
-    if (options.shouldWait || wait) {
-      result = await processJob();
-      ran.push(name);
-      // If this was the only job that got requested and we waited for the outcome, return the status
-      if (runJob) break;
-    } else {
-      afterResponse.push(processJob);
-      toRun.push(name);
-    }
-  }
-
-  res.status(200).json(result ?? { ok: true, ran, toRun, alreadyRunning });
-  await Promise.all(afterResponse.map((run) => run()));
-});
-
-// https://github.com/harrisiirak/cron-parser/issues/153#issuecomment-590099607
-const cronScopes = ['minute', 'hour', 'day', 'month', 'weekday'] as const;
-function isCronMatch(
-  cronExpression: string,
-  date: Date,
-  scope: (typeof cronScopes)[number] = 'minute'
-): boolean {
-  const scopeIndex = cronScopes.indexOf(scope);
-  const day = dayjs(date);
-
   try {
-    const { fields } = cronParser.parseExpression(cronExpression);
-
-    if (scopeIndex <= 0 && !(fields.minute as number[]).includes(day.minute())) return false;
-    if (scopeIndex <= 1 && !(fields.hour as number[]).includes(day.hour())) return false;
-    if (scopeIndex <= 2 && !(fields.dayOfMonth as number[]).includes(day.date())) return false;
-    if (scopeIndex <= 3 && !(fields.month as number[]).includes(day.month() + 1)) return false;
-    if (scopeIndex <= 4 && !(fields.dayOfWeek as number[]).includes(day.day())) return false;
-
-    return true;
+    log(`${name} starting`);
+    axiom.info(`starting`);
+    await lock(name, options.lockExpiration);
+    result = await run();
+    log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
+    axiom.info('success', { duration: Date.now() - jobStart });
+    res.status(200).json({ ok: true, result: result ?? null });
   } catch (e) {
-    return false;
+    log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
+    axiom.error(`failed`, { duration: Date.now() - jobStart, error: e });
+    res.status(500).json({ ok: false, error: e });
+  } finally {
+    await unlock(name);
   }
-}
+});
 
 const querySchema = z.object({
   run: z.string().optional(),
-  wait: z.coerce.boolean().optional(),
 });
 
 async function isLocked(name: string) {
