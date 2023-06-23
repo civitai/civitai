@@ -8,7 +8,7 @@ import {
 import { SessionUser } from 'next-auth';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { ModelType, Prisma } from '@prisma/client';
+import { GenerationSchedulers, ModelType, Prisma } from '@prisma/client';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import {
   // GenerationRequestProps,
@@ -283,7 +283,7 @@ export const getGenerationImages = async (props: GetGenerationImagesInput & { us
   };
 };
 
-export async function refreshGeneratioCoverage() {
+export async function refreshGenerationCoverage() {
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/coverage`);
   const coverage = (await response.json()) as Generation.Client.Coverage;
 
@@ -298,18 +298,29 @@ export async function refreshGeneratioCoverage() {
   const values = modelVersionCoverage
     .map(
       (data) =>
-        `('${data.modelVersionId}', ${data.workers}, '{${data.serviceProviders.join(',')}}')`
+        `(${data.modelVersionId}, ${data.workers}, ARRAY[${data.serviceProviders
+          .map((x) => `'${x}'`)
+          .join(',')}])`
     )
     .join(', ');
 
   await dbWrite.$queryRawUnsafe(`
-    INSERT INTO modelVersionGenerationCoverage (modelVersionId, workers, serviceProviders)
-    VALUES ${values}
-    ON CONFLICT (modelVersionId)
+    INSERT INTO "ModelVersionGenerationCoverage" ("modelVersionId", "workers", "serviceProviders")
+    SELECT mv."id", mc."workers", mc."serviceProviders"
+    FROM (VALUES ${values}) AS mc ("modelVersionId", "workers", "serviceProviders")
+    JOIN "ModelVersion" mv ON mv."id" = mc."modelVersionId"
+    ON CONFLICT ("modelVersionId")
     DO UPDATE
-    SET workers = EXCLUDED.workers,
-        serviceProviders = EXCLUDED.serviceProviders;
+    SET "workers" = EXCLUDED."workers",
+        "serviceProviders" = EXCLUDED."serviceProviders";
   `);
 
-  // TODO: Update serviceProviders
+  // const serviceProviders = [];
+  // for (const schedulerEntry of Object.entries(coverage.schedulers)) {
+  //   const scheduler = schedulerEntry[0];
+  //   const mappedScheduler: GenerationSchedulers = scheduler;
+  //   const schedulerCoverage = schedulerEntry[1];
+  //   for (const serviceProvider of schedulerCoverage.serviceProviders) {
+  //   }
+  // }
 }
