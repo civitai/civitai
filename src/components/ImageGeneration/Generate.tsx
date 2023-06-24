@@ -9,14 +9,23 @@ import {
   Divider,
   Grid,
   Button,
+  ScrollArea,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconBook2 } from '@tabler/icons-react';
+import { useState } from 'react';
+import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 import { ClearableNumberInput } from '~/components/ClearableNumberInput/ClearableNumberInput';
 import { CheckpointSelect } from '~/components/ImageGeneration/GenerationForm/GenerationResourceSelect';
+import {
+  ResourceSelect,
+  InputResourceSelect,
+  ResourceSelectModal,
+} from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import MentionExample from '~/components/ImageGeneration/SlateEditor/SlateEditor';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import {
   Form,
   InputNumber,
@@ -38,7 +47,7 @@ const resourceSchema = z
   .passthrough();
 
 const schema = generationParamsSchema.extend({
-  model: resourceSchema.array().max(1),
+  model: resourceSchema,
   additionalResources: resourceSchema.array().default([]),
   aspectRatio: z.string(),
 });
@@ -50,12 +59,14 @@ export function Generate({
   request?: Generation.Client.Request;
   onSuccess?: () => void;
 }) {
+  const mobile = useIsMobile({ breakpoint: 'md' });
+  const localValue = localStorage.getItem('generation-form');
   const defaultValues = {
-    model: [request?.resources.find((x) => x.modelType === ModelType.Checkpoint)],
+    model: request?.resources.find((x) => x.modelType === ModelType.Checkpoint),
     ...request?.params,
   };
+  const [opened, setOpened] = useState(false);
   const setRequests = useImageGenerationStore((state) => state.setRequests);
-  const form = useForm({ schema, defaultValues: defaultDemoValues });
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
     onSuccess: (data) => {
       setRequests([data]);
@@ -63,81 +74,106 @@ export function Generate({
     },
   });
 
-  // TODO - something something `useFormStorage`
+  const form = useForm({
+    schema,
+    defaultValues: localValue ? JSON.parse(localValue) : defaultDemoValues,
+  });
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: 'additionalResources',
+    keyName: 'uid',
+  });
 
   return (
-    <Form
-      form={form}
-      onSubmit={(values) => {
-        const [width, height] = values.aspectRatio.split('x');
-        mutate({
-          height: Number(height),
-          width: Number(width),
-          resources: [...values.model, ...values.additionalResources].map((resource) => ({
-            modelVersionId: resource.id,
-            type: resource.modelType,
-            strength: resource.strength,
-          })),
-          prompt: values.prompt,
-          negativePrompt: values.negativePrompt,
-          cfgScale: values.cfgScale,
-          sampler: values.sampler,
-          steps: values.steps,
-          seed: values.seed,
-          clipSkip: values.clipSkip,
-          quantity: values.quantity,
-        });
-      }}
-    >
-      <Stack>
-        <CheckpointSelect
-          label="Model"
-          name="model"
-          required
-          limit={1}
-          types={[ModelType.Checkpoint]}
-        />
-        <CheckpointSelect
-          label="Additional Resources"
-          name="additionalResources"
-          required
-          notTypes={[ModelType.Checkpoint]}
-        />
-
-        <Input.Wrapper
-          labelProps={{ sx: { width: '100%' } }}
-          label={
-            <Group position="apart">
-              Prompt
-              {/* <Text variant="link">
+    <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
+      <Form
+        form={form}
+        onSubmit={(values) => {
+          localStorage.setItem('generation-form', JSON.stringify(values));
+          form.reset(values);
+          const [width, height] = values.aspectRatio.split('x');
+          console.log({ values });
+          mutate({
+            height: Number(height),
+            width: Number(width),
+            resources: [values.model, ...values.additionalResources].map((resource) => ({
+              modelVersionId: resource.id,
+              type: resource.modelType,
+              strength: resource.strength,
+            })),
+            prompt: values.prompt,
+            negativePrompt: values.negativePrompt,
+            cfgScale: values.cfgScale,
+            sampler: values.sampler,
+            steps: values.steps,
+            seed: values.seed,
+            clipSkip: values.clipSkip,
+            quantity: values.quantity,
+          });
+        }}
+      >
+        <Stack>
+          <InputResourceSelect
+            label="Model"
+            name="model"
+            withAsterisk
+            types={[ModelType.Checkpoint]}
+          />
+          <Stack spacing="xs">
+            {fields.map((item, index) => (
+              <InputResourceSelect
+                key={index}
+                name={`additionalResources[${index}]`}
+                types={[ModelType.LORA, ModelType.TextualInversion]}
+                onRemove={() => remove(index)}
+              />
+            ))}
+            <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
+              Add Additional Resource
+            </Button>
+            <ResourceSelectModal
+              opened={opened}
+              onClose={() => setOpened(false)}
+              title="Select Additional Resource"
+              types={[ModelType.LORA, ModelType.TextualInversion]}
+              onSelect={(value) => append(value)}
+              notIds={[...fields.map((item) => item.id)]}
+            />
+          </Stack>
+          {/* <Input.Wrapper
+            labelProps={{ sx: { width: '100%' } }}
+            label={
+              <Group position="apart">
+                Prompt
+                <Text variant="link">
                 <Group align="center" spacing={4}>
                   <span>From Collection</span> <IconBook2 size={16} />
                 </Group>
-              </Text> */}
-            </Group>
-          }
-        >
-          <InputTextArea name="prompt" autosize />
-          <InputTextArea name="negativePrompt" autosize />
-          {/* <MentionExample value={prompt} /> */}
-        </Input.Wrapper>
-        <Stack spacing={0}>
-          <Input.Label>Aspect Ratio</Input.Label>
-          <InputSegmentedControl name="aspectRatio" data={aspectRatioControls} />
-        </Stack>
+              </Text>
+              </Group>
+            }
+          >
+            <MentionExample value={prompt} />
+          </Input.Wrapper> */}
+          <InputTextArea name="prompt" autosize label="Prompt" />
+          <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
+          <Stack spacing={0}>
+            <Input.Label>Aspect Ratio</Input.Label>
+            <InputSegmentedControl name="aspectRatio" data={aspectRatioControls} />
+          </Stack>
 
-        {/* ADVANCED */}
-        <Accordion variant="separated">
-          <Accordion.Item value="advanced">
-            <Accordion.Control>
-              <Divider label="Advanced" labelPosition="left" labelProps={{ size: 'md' }} />
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Stack>
-                <InputNumber name="cfgScale" label="Creativity (CFG Scale)" step={0.5} />
-                <InputSelect name="sampler" label="Engine (Sampler)" data={allSamplers} />
-                <InputNumber name="steps" label="Quality (Steps)" />
-                {/* <Stack spacing={0}>
+          {/* ADVANCED */}
+          <Accordion variant="separated">
+            <Accordion.Item value="advanced">
+              <Accordion.Control>
+                <Divider label="Advanced" labelPosition="left" labelProps={{ size: 'md' }} />
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack>
+                  <InputNumber name="cfgScale" label="Creativity (CFG Scale)" step={0.5} />
+                  <InputSelect name="sampler" label="Engine (Sampler)" data={allSamplers} />
+                  <InputNumber name="steps" label="Quality (Steps)" />
+                  {/* <Stack spacing={0}>
                   <Input.Label>Creativity (CFG Scale)</Input.Label>
                   <SegmentedControl data={cfgScales} />
                 </Stack>
@@ -149,31 +185,32 @@ export function Generate({
                   <Input.Label>Quality (Steps)</Input.Label>
                   <SegmentedControl data={steps} />
                 </Stack> */}
-                <Grid>
-                  <Grid.Col span={6}>
-                    <InputNumber name="seed" label="Seed" placeholder="Random" min={0} />
-                  </Grid.Col>
-                  <Grid.Col span={6}>
-                    <InputNumber name="clipSkip" label="Clip Skip" min={0} max={10} />
-                  </Grid.Col>
-                </Grid>
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
+                  <Grid>
+                    <Grid.Col span={6}>
+                      <InputNumber name="seed" label="Seed" placeholder="Random" min={0} />
+                    </Grid.Col>
+                    <Grid.Col span={6}>
+                      <InputNumber name="clipSkip" label="Clip Skip" min={0} max={10} />
+                    </Grid.Col>
+                  </Grid>
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
 
-        <InputNumber name="quantity" label="Quantity" />
-        <Group>
-          <Button onClick={() => form.reset()} variant="default">
-            Reset
-          </Button>
-          <Button type="submit" loading={isLoading}>
-            Go
-          </Button>
-        </Group>
-        {/* TODO.Quantity,Go */}
-      </Stack>
-    </Form>
+          <InputNumber name="quantity" label="Quantity" />
+          <Group>
+            <Button onClick={() => form.reset()} variant="default">
+              Reset
+            </Button>
+            <Button type="submit" loading={isLoading}>
+              Go
+            </Button>
+          </Group>
+          {/* TODO.Quantity,Go */}
+        </Stack>
+      </Form>
+    </ScrollArea.Autosize>
   );
 }
 
@@ -248,15 +285,13 @@ const defaultDemoValues = {
   aspectRatio: '768x512',
   quantity: 2,
   clipSkip: 1,
-  model: [
-    {
-      id: 29460,
-      name: 'V2.0',
-      trainedWords: ['analog style', 'modelshoot style', 'nsfw', 'nudity'],
-      modelId: 4201,
-      modelName: 'Realistic Vision V2.0',
-      modelType: ModelType.Checkpoint,
-    },
-  ],
+  model: {
+    id: 29460,
+    name: 'V2.0',
+    trainedWords: ['analog style', 'modelshoot style', 'nsfw', 'nudity'],
+    modelId: 4201,
+    modelName: 'Realistic Vision V2.0',
+    modelType: ModelType.Checkpoint,
+  },
 };
 // #endregion

@@ -817,7 +817,7 @@ export function Feed() {
     isRefetching,
     isFetching,
     isError,
-  } = useGetGenerationImages({ take: 6 });
+  } = useGetGenerationImages({ take: 20 });
 
   useEffect(() => {
     if (inView && !isFetching && !isError) fetchNextPage?.();

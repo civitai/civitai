@@ -330,15 +330,15 @@ export function Queue() {
   // set requests from infinite paging data
   useEffect(() => setRequests(infiniteRequests), [infiniteRequests, setRequests]);
 
-  // // debounced polling of pending/processing requests
-  // useEffect(() => {
-  //   if (Object.values(requests).some((x) => POLLABLE_STATUSES.includes(x.status))) {
-  //     debouncer(pollPending);
-  //   }
-  // }, [requests, debouncer, pollPending]);
+  // debounced polling of pending/processing requests
+  useEffect(() => {
+    if (Object.values(requests).some((x) => POLLABLE_STATUSES.includes(x.status))) {
+      debouncer(pollPending);
+    }
+  }, [requests, debouncer, pollPending]);
 
-  // // update requests dictionary with polled requests
-  // useEffect(() => setRequests(polledRequests), [polledRequests, setRequests]);
+  // update requests dictionary with polled requests
+  useEffect(() => setRequests(polledRequests), [polledRequests, setRequests]);
 
   return isLoading ? (
     <Center p="xl">
