@@ -31,7 +31,7 @@ type ImageGenerationState = {
   };
 };
 
-const useImageGenerationStore = createStore<ImageGenerationState>()(
+const useImageGenerationStoreOld = createStore<ImageGenerationState>()(
   devtools(
     immer((set, get) => ({
       requests: {},
@@ -111,7 +111,14 @@ const useImageGenerationStore = createStore<ImageGenerationState>()(
           set((state) => {
             state.delete.isLoading = true;
           });
-          // TODO - talk to koen about setting this endpoint up
+
+          const response = await fetch(`/api/generation/${id}`, { method: 'DELETE' });
+          if (!response.ok) {
+            set((state) => {
+              state.delete.isLoading = false;
+            });
+          }
+
           set((state) => {
             state.delete.isLoading = false;
             delete state.requests[id];

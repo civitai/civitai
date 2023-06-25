@@ -25,11 +25,18 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { Generation } from '~/server/services/generation/generation.types';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function QueueItem({ id, onBoostClick }: Props) {
   const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
 
   const item = useImageGenerationStore(useCallback((state) => state.requests[id], []));
+  const removeRequest = useImageGenerationStore((state) => state.removeRequest);
+  const deleteMutation = trpc.generation.deleteRequest.useMutation({
+    onSuccess: (response, request) => {
+      removeRequest(request.id);
+    },
+  });
 
   const { prompt, ...details } = item.params;
   const detailItems = Object.entries(details).map(([key, value]) => ({
@@ -83,7 +90,12 @@ export function QueueItem({ id, onBoostClick }: Props) {
               </HoverCard>
             </Button.Group>
           </Group>
-          <ActionIcon color="red" size="md">
+          <ActionIcon
+            color="red"
+            size="md"
+            onClick={() => deleteMutation.mutate({ id })}
+            disabled={deleteMutation.isLoading}
+          >
             <IconX />
           </ActionIcon>
         </Group>

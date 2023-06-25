@@ -8,6 +8,7 @@ import {
 
 import {
   createGenerationRequest,
+  deleteGenerationRequest,
   getGenerationImages,
   getGenerationRequests,
   getGenerationResource,
@@ -37,4 +38,7 @@ export const generationRouter = router({
   getImages: protectedProcedure
     .input(getGenerationImagesSchema)
     .query(({ input, ctx }) => getGenerationImages({ ...input, userId: ctx.user.id })),
+  deleteRequest: protectedProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) => deleteGenerationRequest({ ...input, userId: ctx.user.id })),
 });

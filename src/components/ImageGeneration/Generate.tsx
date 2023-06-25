@@ -17,10 +17,8 @@ import { IconBook2, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
-import { ClearableNumberInput } from '~/components/ClearableNumberInput/ClearableNumberInput';
 import { CheckpointSelect } from '~/components/ImageGeneration/GenerationForm/GenerationResourceSelect';
 import {
-  ResourceSelect,
   InputResourceSelect,
   ResourceSelectModal,
 } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
@@ -180,7 +178,11 @@ export function Generate({
                     step={0.5}
                     precision={1}
                   />
-                  <InputSelect name="sampler" label="Engine (Sampler)" data={constants.samplers} />
+                  <InputSelect
+                    name="sampler"
+                    label="Engine (Sampler)"
+                    data={[...constants.samplers]}
+                  />
                   <InputNumber name="steps" label="Quality (Steps)" />
                   {/* <Stack spacing={0}>
                   <Input.Label>Creativity (CFG Scale)</Input.Label>

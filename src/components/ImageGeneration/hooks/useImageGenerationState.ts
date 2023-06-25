@@ -8,6 +8,7 @@ type RequestsDictionary = Record<number, Generation.Client.Request>;
 
 type ImageGenerationState = {
   requests: RequestsDictionary;
+  deleted: number[];
   setRequests: (requests: Generation.Client.Request[]) => void;
   removeRequest: (id: number) => void;
 };
@@ -16,9 +17,12 @@ export const useImageGenerationStore = create<ImageGenerationState>()(
   devtools(
     immer((set, get) => ({
       requests: {},
+      deleted: [],
       setRequests: (requests) => {
+        const deleted = get().deleted;
         set((state) => {
           for (const request of requests) {
+            if (deleted.includes(request.id)) break;
             if (!state.requests[request.id]) state.requests[request.id] = request;
             else if (!isEqual(state.requests[request.id], request))
               state.requests[request.id] = request;
@@ -28,6 +32,7 @@ export const useImageGenerationStore = create<ImageGenerationState>()(
       removeRequest: (id) => {
         set((state) => {
           delete state.requests[id];
+          state.deleted.push(id);
         });
       },
     }))
