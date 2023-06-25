@@ -59,7 +59,7 @@ export function ResourceSelect({
   };
 
   const handleRemove = () => {
-    // handleSetModel(undefined);
+    handleSetModel(undefined);
     onRemove?.();
   };
 
