@@ -78,7 +78,7 @@ export function Generate({
     schema,
     defaultValues: localValue ? JSON.parse(localValue) : defaultDemoValues,
   });
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, remove, update } = useFieldArray({
     control: form.control,
     name: 'additionalResources',
     keyName: 'uid',
@@ -126,6 +126,7 @@ export function Generate({
                 name={`additionalResources[${index}]`}
                 types={[ModelType.LORA, ModelType.TextualInversion]}
                 onRemove={() => remove(index)}
+                onChange={(value) => update(index, value)}
               />
             ))}
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>

@@ -109,9 +109,9 @@ export namespace Generation {
 }
 
 export enum GenerationRequestStatus {
-  Pending = 0,
-  Processing = 1,
-  Cancelled = 2,
-  Error = 3,
-  Succeeded = 4,
+  Pending = 'Pending',
+  Processing = 'Processing',
+  Cancelled = 'Cancelled',
+  Error = 'Error',
+  Succeeded = 'Succeeded',
 }
