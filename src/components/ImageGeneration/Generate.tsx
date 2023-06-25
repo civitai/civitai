@@ -10,9 +10,10 @@ import {
   Grid,
   Button,
   ScrollArea,
+  ActionIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconBook2 } from '@tabler/icons-react';
+import { IconBook2, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
@@ -171,7 +172,12 @@ export function Generate({
               </Accordion.Control>
               <Accordion.Panel>
                 <Stack>
-                  <InputNumber name="cfgScale" label="Creativity (CFG Scale)" step={0.5} />
+                  <InputNumber
+                    name="cfgScale"
+                    label="Creativity (CFG Scale)"
+                    step={0.5}
+                    precision={1}
+                  />
                   <InputSelect name="sampler" label="Engine (Sampler)" data={allSamplers} />
                   <InputNumber name="steps" label="Quality (Steps)" />
                   {/* <Stack spacing={0}>
@@ -188,7 +194,26 @@ export function Generate({
                 </Stack> */}
                   <Grid>
                     <Grid.Col span={6}>
-                      <InputNumber name="seed" label="Seed" placeholder="Random" min={0} />
+                      <InputNumber
+                        name="seed"
+                        label="Seed"
+                        placeholder="Random"
+                        min={0}
+                        format="default"
+                        hideControls
+                        rightSection={
+                          <ActionIcon
+                            color="gray"
+                            radius="xl"
+                            size="xs"
+                            variant="filled"
+                            mr={3}
+                            onClick={() => form.setValue('seed', undefined)}
+                          >
+                            <IconX size={12} />
+                          </ActionIcon>
+                        }
+                      />
                     </Grid.Col>
                     <Grid.Col span={6}>
                       <InputNumber name="clipSkip" label="Clip Skip" min={0} max={10} />
@@ -199,7 +224,7 @@ export function Generate({
             </Accordion.Item>
           </Accordion>
 
-          <InputNumber name="quantity" label="Quantity" />
+          <InputNumber name="quantity" label="Quantity" min={0} max={10} />
           <Group>
             <Button onClick={() => form.reset()} variant="default">
               Reset
@@ -282,7 +307,6 @@ const defaultDemoValues = {
   cfgScale: 7,
   steps: 25,
   sampler: 'Euler a',
-  seed: 2299724292,
   aspectRatio: '768x512',
   quantity: 2,
   clipSkip: 1,

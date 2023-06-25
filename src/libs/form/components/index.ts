@@ -34,7 +34,11 @@ import { SimpleImageUpload } from './SimpleImageUpload';
 export * from './Form';
 
 export const InputText = withWatcher(withController(TextInputWrapper));
-export const InputNumber = withWatcher(withController(NumberInputWrapper));
+export const InputNumber = withWatcher(
+  withController(NumberInputWrapper, ({ field }) => ({
+    value: field.value,
+  }))
+);
 export const InputTextArea = withWatcher(withController(Textarea));
 export const InputTransferList = withWatcher(withController(TransferList));
 export const InputSelect = withWatcher(withController(SelectWrapper));
