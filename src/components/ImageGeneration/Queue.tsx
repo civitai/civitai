@@ -315,7 +315,7 @@ export function Queue() {
     isRefetching,
     isFetching,
     isError,
-  } = useGetGenerationRequests({ take: 2 });
+  } = useGetGenerationRequests({ take: 10 });
 
   const { requests: polledRequests, refetch: pollPending } = useGetGenerationRequests(
     { take: 100, status: POLLABLE_STATUSES },

@@ -47,7 +47,6 @@ export function ResourceSelect({
   }, [model]); // eslint-disable-line
 
   const handleSetModel = (value?: Generation.Client.Resource) => {
-    console.log({ value });
     setModel(value);
     onChange?.(value);
   };
@@ -60,6 +59,7 @@ export function ResourceSelect({
   };
 
   const handleRemove = () => {
+    // handleSetModel(undefined);
     onRemove?.();
   };
 
