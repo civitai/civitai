@@ -5,7 +5,9 @@ import {
   Button,
   Card,
   Group,
+  HoverCard,
   Paper,
+  Popover,
   Stack,
   Text,
   ThemeIcon,
@@ -60,33 +62,25 @@ export function QueueItem({ id, onBoostClick }: Props) {
               >
                 ETA <Countdown endTime={item.estimatedCompletionDate} />
               </Button>
-              <Button
-                size="xs"
-                // TODO.generations: add action when modal is deactivated
-                rightIcon={showBoostModal ? <IconBolt size={16} /> : undefined}
-                onClick={() => onBoostClick(item)}
-                compact
-              >
-                Boost
-                {/* TODO.generations - probably need to confirm boost since buzz = money */}
-              </Button>
-              {!showBoostModal && (
-                <Button
-                  size="xs"
-                  variant="white"
-                  color="gray"
-                  px={4}
-                  sx={{ pointerEvents: 'none' }}
-                  compact
-                >
-                  <Group spacing={2}>
-                    <IconBolt size={16} />
-                    <Text size="xs" inline>
-                      10
+              <HoverCard withArrow position="top" withinPortal>
+                <HoverCard.Target>
+                  <Button
+                    size="xs"
+                    rightIcon={showBoostModal ? <IconBolt size={16} /> : undefined}
+                    compact
+                  >
+                    Boost
+                  </Button>
+                </HoverCard.Target>
+                <HoverCard.Dropdown title="Coming soon" maw={300}>
+                  <Stack spacing={0}>
+                    <Text weight={500}>Coming soon!</Text>
+                    <Text size="xs">
+                      Want to run this request faster? Boost it to the front of the queue.
                     </Text>
-                  </Group>
-                </Button>
-              )}
+                  </Stack>
+                </HoverCard.Dropdown>
+              </HoverCard>
             </Button.Group>
           </Group>
           <ActionIcon color="red" size="md">
