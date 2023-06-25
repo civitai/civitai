@@ -38,6 +38,7 @@ import {
 import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
+import { constants } from '~/server/common/constants';
 
 const resourceSchema = z
   .object({
@@ -179,7 +180,7 @@ export function Generate({
                     step={0.5}
                     precision={1}
                   />
-                  <InputSelect name="sampler" label="Engine (Sampler)" data={allSamplers} />
+                  <InputSelect name="sampler" label="Engine (Sampler)" data={constants.samplers} />
                   <InputNumber name="steps" label="Quality (Steps)" />
                   {/* <Stack spacing={0}>
                   <Input.Label>Creativity (CFG Scale)</Input.Label>
@@ -268,29 +269,6 @@ const samplers = [
   { label: 'Fast', value: 'Euler A' },
   { label: 'Popular', value: 'DPM++ 2M Karras' },
   { label: 'Quality', value: 'DPM++ SDE Karras' },
-];
-
-const allSamplers = [
-  'Euler a',
-  'Euler',
-  'LMS',
-  'Heun',
-  'DPM2',
-  'DPM2 a',
-  'DPM++ 2S a',
-  'DPM++ 2M',
-  'DPM++ SDE',
-  'DPM fast',
-  'DPM adaptive',
-  'LMS Karras',
-  'DPM2 Karras',
-  'DPM2 a Karras',
-  'DPM++ 2S a Karras',
-  'DPM++ 2M Karras',
-  'DPM++ SDE Karras',
-  'DDIM',
-  'PLMS',
-  'UniPC',
 ];
 
 const steps = [

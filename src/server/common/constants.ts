@@ -82,6 +82,28 @@ export const constants = {
   timeCutOffs: {
     updatedModel: 2 * 60 * 60 * 1000,
   },
+  samplers: [
+    'Euler a',
+    'Euler',
+    'LMS',
+    'Heun',
+    'DPM2',
+    'DPM2 a',
+    'DPM++ 2S a',
+    'DPM++ 2M',
+    'DPM++ SDE',
+    'DPM fast',
+    'DPM adaptive',
+    'LMS Karras',
+    'DPM2 Karras',
+    'DPM2 a Karras',
+    'DPM++ 2S a Karras',
+    'DPM++ 2M Karras',
+    'DPM++ SDE Karras',
+    'DDIM',
+    'PLMS',
+    'UniPC',
+  ],
   availableReactions: {
     [ReviewReactions.Like]: '👍',
     [ReviewReactions.Dislike]: '👎',
@@ -117,3 +139,4 @@ export const CAROUSEL_LIMIT = 20;
 
 export type BaseModel = (typeof constants.baseModels)[number];
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
+export type Sampler = (typeof constants.samplers)[number];

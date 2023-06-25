@@ -1,5 +1,6 @@
 import { ModelType } from '@prisma/client';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
@@ -29,7 +30,7 @@ export const generationParamsSchema = z.object({
   prompt: z.string(),
   negativePrompt: z.string().optional(),
   cfgScale: z.number().min(1).max(30),
-  sampler: z.string(),
+  sampler: z.enum(constants.samplers),
   steps: z.number().min(1).max(150),
   seed: z.number().nullish(),
   clipSkip: z.number().default(1),

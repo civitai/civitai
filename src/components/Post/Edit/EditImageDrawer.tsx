@@ -33,6 +33,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { IconInfoCircle } from '@tabler/icons-react';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { constants } from '~/server/common/constants';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -276,28 +277,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                   name="meta.sampler"
                   clearable
                   searchable
-                  data={[
-                    'Euler a',
-                    'Euler',
-                    'LMS',
-                    'Heun',
-                    'DPM2',
-                    'DPM2 a',
-                    'DPM++ 2S a',
-                    'DPM++ 2M',
-                    'DPM++ SDE',
-                    'DPM fast',
-                    'DPM adaptive',
-                    'LMS Karras',
-                    'DPM2 Karras',
-                    'DPM2 a Karras',
-                    'DPM++ 2S a Karras',
-                    'DPM++ 2M Karras',
-                    'DPM++ SDE Karras',
-                    'DDIM',
-                    'PLMS',
-                    'UniPC',
-                  ]}
+                  data={constants.samplers as unknown as string[]}
                   label="Sampler"
                 />
               </Grid.Col>

@@ -25,6 +25,7 @@ import { env } from '~/env/server.mjs';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { redis } from '~/server/redis/client';
+import { Sampler } from '~/server/common/constants';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -205,6 +206,29 @@ export const getGenerationRequests = async (
   return { items, nextCursor: cursor === 0 ? undefined : cursor ?? undefined };
 };
 
+const samplersToSchedulers: Record<Sampler, string> = {
+  'Euler a': 'EulerA',
+  Euler: 'Euler',
+  LMS: 'LMS',
+  Heun: 'Heun',
+  DPM2: 'DPM2',
+  'DPM2 a': 'DPM2A',
+  'DPM++ 2S a': 'DPM2SA',
+  'DPM++ 2M': 'DPM2M',
+  'DPM++ SDE': 'DPMSDE',
+  'DPM fast': 'DPMFast',
+  'DPM adaptive': 'DPMAdaptive',
+  'LMS Karras': 'LMSKarras',
+  'DPM2 Karras': 'DPM2Karras',
+  'DPM2 a Karras': 'DPM2AKarras',
+  'DPM++ 2S a Karras': 'DPM2SAKarras',
+  'DPM++ 2M Karras': 'DPM2MKarras',
+  'DPM++ SDE Karras': 'DPMSDEKarras',
+  DDIM: 'DDIM',
+  PLMS: 'PLMS',
+  UniPC: 'UniPC',
+};
+
 const additionalNetworkTypes = [ModelType.LORA, ModelType.LoCon, ModelType.Hypernetwork];
 type ModelFileResult = {
   url: string;
@@ -224,8 +248,8 @@ export const createGenerationRequest = async ({
   const checkpoint = props.resources.find((x) => x.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
-  // TODO Koen: Finish connecting this to the scheduler.
-  // For textual inversions, pull in the trigger words of the model version (there should only be one).
+
+  // TODO: Justin For textual inversions, pull in the trigger words of the model version (there should only be one).
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
@@ -239,13 +263,13 @@ export const createGenerationRequest = async ({
           .filter((x) => x !== checkpoint)
           .reduce((acc, obj) => {
             const { modelVersionId, ...rest } = obj;
-            acc[modelVersionId] = rest;
+            acc[`@civitai/${modelVersionId}`] = rest;
             return acc;
           }, {} as { [key: string]: object }),
         params: {
           prompt: props.prompt,
           negativePrompt: props.negativePrompt,
-          scheduler: 'EulerA', // props.sampler, // todo: synchronize terminology, use from user input
+          scheduler: samplersToSchedulers[props.sampler],
           steps: props.steps,
           cfgScale: props.cfgScale,
           width: props.width,
