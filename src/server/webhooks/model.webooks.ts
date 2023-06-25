@@ -11,12 +11,14 @@ export const modelWebhooks = createWebhookProcessor({
   'new-model': {
     displayName: 'New Models',
     getData: async ({ lastSent, prisma }) => {
+      const now = new Date();
       const models = await prisma.model.findMany({
         where: {
           OR: [
             {
               publishedAt: {
                 gt: lastSent,
+                lte: now,
               },
               status: 'Published',
             },
