@@ -92,7 +92,6 @@ export function Generate({
           localStorage.setItem('generation-form', JSON.stringify(values));
           form.reset(values);
           const [width, height] = values.aspectRatio.split('x');
-          console.log({ values });
           mutate({
             height: Number(height),
             width: Number(width),
@@ -122,11 +121,13 @@ export function Generate({
           <Stack spacing="xs">
             {fields.map((item, index) => (
               <InputResourceSelect
-                key={index}
-                name={`additionalResources[${index}]`}
+                key={item.uid}
+                name={`additionalResources.${index}`}
                 types={[ModelType.LORA, ModelType.TextualInversion]}
                 onRemove={() => remove(index)}
-                onChange={(value) => update(index, value)}
+                onChange={(value) => {
+                  if (value) update(index, value);
+                }}
               />
             ))}
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>

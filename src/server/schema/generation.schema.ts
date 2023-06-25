@@ -33,7 +33,7 @@ export const generationParamsSchema = z.object({
   steps: z.number().min(1).max(150),
   seed: z.number().optional(),
   clipSkip: z.number().default(1),
-  quantity: z.number(),
+  quantity: z.number().max(10),
 });
 
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
