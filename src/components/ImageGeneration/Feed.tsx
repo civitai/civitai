@@ -12,6 +12,8 @@ import {
   Tooltip,
   Transition,
   createStyles,
+  HoverCard,
+  TooltipProps,
 } from '@mantine/core';
 import {
   IconCloudUpload,
@@ -828,7 +830,18 @@ export function Feed() {
   return (
     <Stack sx={{ position: 'relative' }}>
       <div style={{ position: 'relative' }}>
-        <Overlay blur={2} opacity={0.3} color="#000" />
+        <HoverCard withArrow>
+          <HoverCard.Target>
+            <Overlay blur={2} opacity={0.3} color="#000" />
+          </HoverCard.Target>
+          <HoverCard.Dropdown maw={300}>
+            <Text weight={500}>Coming soon!</Text>
+            <Text size="xs">
+              Search through your generated images by prompt, sort them, filter them by resources
+              used, or switch your layout.
+            </Text>
+          </HoverCard.Dropdown>
+        </HoverCard>
         <Group spacing="xs">
           <Autocomplete
             placeholder="Search by prompt"
@@ -927,6 +940,11 @@ export function Feed() {
   );
 }
 
+const tooltipProps = {
+  withinPortal: true,
+  withArrow: true,
+  color: 'dark',
+};
 function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps) {
   return (
     <Transition mounted={selectCount > 0} transition="slide-up">
@@ -944,20 +962,24 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
               {selectCount} selected
             </Text>
             <Group spacing={8}>
-              <Tooltip label="Deselect all" withinPortal>
+              <Tooltip label="Deselect all" {...tooltipProps}>
                 <ActionIcon size="md" onClick={onDeselectClick} variant="light">
-                  <IconSquareOff />
+                  <IconSquareOff size={20} />
                 </ActionIcon>
               </Tooltip>
-              <Tooltip label="Post images" withinPortal>
-                <ActionIcon size="md" variant="light" disabled>
-                  <IconCloudUpload />
-                </ActionIcon>
+              <Tooltip label="Post images" {...tooltipProps}>
+                <span>
+                  <ActionIcon size="md" variant="light" disabled>
+                    <IconCloudUpload size={20} />
+                  </ActionIcon>
+                </span>
               </Tooltip>
-              <Tooltip label="Upscale images" withinPortal>
-                <ActionIcon size="md" variant="light" disabled>
-                  <IconWindowMaximize />
-                </ActionIcon>
+              <Tooltip label="Upscale images" {...tooltipProps}>
+                <span>
+                  <ActionIcon size="md" variant="light" disabled>
+                    <IconWindowMaximize size={20} />
+                  </ActionIcon>
+                </span>
               </Tooltip>
               {/* <Tooltip label="Delete images" withinPortal>
                 <ActionIcon size="md" variant="light" color="red">

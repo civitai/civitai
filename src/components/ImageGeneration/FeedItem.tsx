@@ -1,4 +1,13 @@
-import { Paper, Checkbox, AspectRatio, Card, ActionIcon, Group, Transition } from '@mantine/core';
+import {
+  Paper,
+  Checkbox,
+  AspectRatio,
+  Card,
+  ActionIcon,
+  Group,
+  Transition,
+  Tooltip,
+} from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconArrowsShuffle,
@@ -10,6 +19,12 @@ import {
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Generation } from '~/server/services/generation/generation.types';
+
+const tooltipProps = {
+  withinPortal: true,
+  withArrow: true,
+  color: 'dark',
+};
 
 /**
  * TODO.generation:
@@ -70,34 +85,45 @@ export function FeedItem({
             padding: theme.spacing.xs,
             position: 'absolute',
             width: '100%',
+            overflow: 'hidden',
           })}
         >
           <Card p={0} withBorder>
             <Group spacing={0} noWrap>
-              <ActionIcon size="md" variant="light" p={4} onClick={toggle}>
+              <ActionIcon size="md" variant="light" p={4} onClick={toggle} radius={0}>
                 <IconBolt />
               </ActionIcon>
-              <Transition mounted={opened} transition="slide-right">
-                {(transitionStyles) => (
-                  <Group spacing={0} style={transitionStyles} noWrap>
-                    <ActionIcon size="md" p={4} variant="light" disabled>
+              {opened && (
+                <Group spacing={0} noWrap>
+                  <Tooltip {...tooltipProps} label="Generate">
+                    <ActionIcon size="md" p={4} variant="light" radius={0}>
                       <IconPlayerPlayFilled />
                     </ActionIcon>
-                    <ActionIcon
-                      size="md"
-                      p={4}
-                      variant="light"
-                      onClick={() => onCreateVariantClick(image)}
-                      disabled
-                    >
-                      <IconArrowsShuffle />
-                    </ActionIcon>
-                    <ActionIcon size="md" p={4} variant="light" disabled>
-                      <IconWindowMaximize />
-                    </ActionIcon>
-                  </Group>
-                )}
-              </Transition>
+                  </Tooltip>
+
+                  <Tooltip {...tooltipProps} label="Create variant">
+                    <span>
+                      <ActionIcon
+                        size="md"
+                        p={4}
+                        variant="light"
+                        onClick={() => onCreateVariantClick(image)}
+                        radius={0}
+                        disabled
+                      >
+                        <IconArrowsShuffle />
+                      </ActionIcon>
+                    </span>
+                  </Tooltip>
+                  <Tooltip {...tooltipProps} label="Upscale">
+                    <span>
+                      <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
+                        <IconWindowMaximize />
+                      </ActionIcon>
+                    </span>
+                  </Tooltip>
+                </Group>
+              )}
             </Group>
           </Card>
 
