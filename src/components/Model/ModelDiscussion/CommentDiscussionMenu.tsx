@@ -33,6 +33,8 @@ export function CommentDiscussionMenu({
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
   const isMuted = user?.muted ?? false;
+  const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
+  const isModelOwner = model && user && model.user.id === user.id;
 
   const deleteMutation = trpc.comment.delete.useMutation({
     async onSuccess() {
@@ -166,38 +168,40 @@ export function CommentDiscussionMenu({
                 Edit comment
               </Menu.Item>
             )}
-            <Menu.Item
-              icon={
-                comment.hidden ? (
-                  <IconEye size={14} stroke={1.5} />
-                ) : (
-                  <IconEyeOff size={14} stroke={1.5} />
-                )
-              }
-              onClick={handleToggleHideComment}
-            >
-              {comment.hidden ? 'Unhide comment' : 'Hide comment'}
-            </Menu.Item>
-            {isMod && !hideLockOption && (
-              <Menu.Item
-                icon={
-                  comment.locked ? (
-                    <IconLockOpen size={14} stroke={1.5} />
-                  ) : (
-                    <IconLock size={14} stroke={1.5} />
-                  )
-                }
-                onClick={handleToggleLockThread}
-              >
-                {comment.locked ? 'Unlock comment' : 'Lock comment'}
-              </Menu.Item>
-            )}
-            {isMod && (
-              <Menu.Item icon={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
-                Remove as TOS Violation
-              </Menu.Item>
-            )}
           </>
+        )}
+        {isMod && !hideLockOption && (
+          <Menu.Item
+            icon={
+              comment.locked ? (
+                <IconLockOpen size={14} stroke={1.5} />
+              ) : (
+                <IconLock size={14} stroke={1.5} />
+              )
+            }
+            onClick={handleToggleLockThread}
+          >
+            {comment.locked ? 'Unlock comment' : 'Lock comment'}
+          </Menu.Item>
+        )}
+        {(isModelOwner || isMod) && (
+          <Menu.Item
+            icon={
+              comment.hidden ? (
+                <IconEye size={14} stroke={1.5} />
+              ) : (
+                <IconEyeOff size={14} stroke={1.5} />
+              )
+            }
+            onClick={handleToggleHideComment}
+          >
+            {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+          </Menu.Item>
+        )}
+        {isMod && (
+          <Menu.Item icon={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
+            Remove as TOS Violation
+          </Menu.Item>
         )}
         {(!user || !isOwner) && (
           <LoginRedirect reason="report-model">
