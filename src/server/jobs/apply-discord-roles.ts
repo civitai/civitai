@@ -226,18 +226,10 @@ export const applyDiscordRoles = [applyDiscordActivityRoles, applyDiscordPaidRol
 const getAccountsInRole = async (role: DiscordRole) => {
   const accounts =
     (
-      await dbRead.account.findMany({
-        where: {
-          provider: 'discord',
-          metadata: {
-            path: ['roles'],
-            array_contains: role.name,
-          },
-        },
-        select: {
-          providerAccountId: true,
-        },
-      })
+      await dbRead.$queryRawUnsafe<{ providerAccountId: string }[]>(`
+        SELECT "providerAccountId"
+        FROM "Account"
+        WHERE provider = 'discord' AND metadata->'roles' @> '["${role.name}"]'`)
     )?.map((x) => x.providerAccountId) ?? [];
   return accounts;
 };
