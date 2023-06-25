@@ -11,6 +11,7 @@ export namespace Generation {
     url: string;
     available: boolean;
     requestId: number;
+    seed?: number; // TODO.generation - check if this prop will be set
   };
 
   export type Params = {

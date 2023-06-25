@@ -8,7 +8,8 @@ type RequestsDictionary = Record<number, Generation.Client.Request>;
 
 type ImageGenerationState = {
   requests: RequestsDictionary;
-  deleted: number[];
+  feed: Generation.Image[];
+  deletedRequests: number[];
   setRequests: (requests: Generation.Client.Request[]) => void;
   removeRequest: (id: number) => void;
 };
@@ -17,22 +18,33 @@ export const useImageGenerationStore = create<ImageGenerationState>()(
   devtools(
     immer((set, get) => ({
       requests: {},
-      deleted: [],
+      feed: [],
+      deletedRequests: [],
       setRequests: (requests) => {
-        const deleted = get().deleted;
+        const deleted = get().deletedRequests;
         set((state) => {
           for (const request of requests) {
             if (deleted.includes(request.id)) break;
-            if (!state.requests[request.id]) state.requests[request.id] = request;
-            else if (!isEqual(state.requests[request.id], request))
+            if (!state.requests[request.id]) {
+              // add request data
+              state.requests[request.id] = request;
+              // add image data
+              for (const image of request.images ?? []) {
+                state.feed.push(image);
+              }
+            } else if (!isEqual(state.requests[request.id], request))
               state.requests[request.id] = request;
           }
         });
       },
       removeRequest: (id) => {
         set((state) => {
+          // remove request
           delete state.requests[id];
-          state.deleted.push(id);
+          // ensure request isn't added again by `setRequests`
+          state.deletedRequests.push(id);
+          // remove request images from feed
+          state.feed = [...state.feed.filter((x) => x.requestId !== id)];
         });
       },
     }))
