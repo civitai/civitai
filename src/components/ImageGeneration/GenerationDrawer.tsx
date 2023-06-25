@@ -45,7 +45,7 @@ export function GenerationDrawer({ ...props }: Props) {
 
   const [view, setView] = useLocalStorage({
     key: 'generate-drawer-view',
-    defaultValue: result.success ? result.data.view : 'queue',
+    defaultValue: (result.success ? result.data.view : undefined) ?? 'generate',
   });
 
   return (

@@ -250,13 +250,16 @@ export const createGenerationRequest = async ({
           cfgScale: props.cfgScale,
           width: props.width,
           height: props.height,
-          seed: props.seed,
+          seed: props.seed ?? -1,
         },
       },
     }),
   });
 
-  if (!response.ok) throw throwBadRequestError();
+  if (!response.ok) {
+    const message = await response.json();
+    throw throwBadRequestError(message);
+  }
   const data: Generation.Api.RequestProps = await response.json();
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
