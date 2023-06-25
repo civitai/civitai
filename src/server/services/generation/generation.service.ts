@@ -7,7 +7,11 @@ import {
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { GenerationSchedulers, ModelType, Prisma } from '@prisma/client';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import {
@@ -333,4 +337,27 @@ export async function refreshGenerationCoverage() {
   //   for (const serviceProvider of schedulerCoverage.serviceProviders) {
   //   }
   // }
+}
+
+export async function getGenerationRequestById({ id }: GetByIdInput) {
+  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`);
+  if (!response) throw throwNotFoundError();
+
+  const data: Generation.Api.RequestProps = await response.json();
+  const [request] = await formatGenerationRequests([data]);
+  return request;
+}
+
+export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { userId: number }) {
+  const getResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`);
+  if (!getResponse) throw throwNotFoundError();
+
+  const request: Generation.Api.RequestProps = await getResponse.json();
+  if (request.userId !== userId) throw throwAuthorizationError();
+
+  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`, {
+    method: 'DELETE',
+  });
+
+  if (!deleteResponse.ok) throw throwNotFoundError();
 }
