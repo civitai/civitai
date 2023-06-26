@@ -74,7 +74,7 @@ export function GenerationDrawer({ ...props }: Props) {
         </Tabs.Panel>
 
         <Tabs.List grow>
-          <Tabs.Tab value="generate" icon={<IconPlayerPlayFilled size={16} />}>
+          <Tabs.Tab value="generate" icon={<IconPlayerPlayFilled size={16} />} data-autofocus>
             Generate
           </Tabs.Tab>
           <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>

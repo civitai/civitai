@@ -94,6 +94,7 @@ export function PostImages({
                   <ImageMetaPopover
                     meta={image.meta as ImageMetaProps}
                     generationProcess={image.generationProcess ?? 'txt2img'}
+                    imageId={image.id}
                   >
                     <ActionIcon variant="transparent" size="lg" className={classes.meta}>
                       <IconInfoCircle

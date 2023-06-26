@@ -60,6 +60,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                 <ImageMetaPopover
                   meta={image.meta as any}
                   generationProcess={image.generationProcess ?? undefined}
+                  imageId={image.id}
                 >
                   <ActionIcon className={classes.info} variant="transparent" size="lg">
                     <IconInfoCircle

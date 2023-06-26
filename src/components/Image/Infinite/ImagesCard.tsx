@@ -80,6 +80,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               <ImageMetaPopover
                                 meta={image.meta as any}
                                 generationProcess={image.generationProcess ?? undefined}
+                                imageId={image.id}
                               >
                                 <ActionIcon
                                   className={classes.info}
