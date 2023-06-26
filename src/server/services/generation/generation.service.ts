@@ -1,5 +1,7 @@
+import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
   GetGenerationImagesInput,
   GetGenerationRequestsInput,
@@ -10,6 +12,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ModelType, Prisma } from '@prisma/client';
@@ -450,3 +453,18 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
     width: image.width,
   };
 };
+
+export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
+  try {
+    const resource = await dbRead.modelVersionGenerationCoverage.findFirst({
+      where: { modelVersionId: id, workers: { gt: 0 } },
+      select: { modelVersionId: true, serviceProviders: true },
+    });
+    if (!resource) return throwNotFoundError(`No resource with id ${id}`);
+
+    return resource;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+}

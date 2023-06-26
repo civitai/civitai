@@ -175,6 +175,7 @@ export function Lightbox({
                     <ImageMeta
                       meta={images[index].meta as ImageMetaProps}
                       generationProcess={images[index].generationProcess ?? 'txt2img'}
+                      imageId={image.id}
                     />
                   </Stack>
                 </Paper>

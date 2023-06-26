@@ -29,6 +29,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '@mantine/next';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { isDefined } from '~/utils/type-guards';
 
 export function ImagesAsPostsCard({
   data,
@@ -214,6 +215,7 @@ export function ImagesAsPostsCard({
                               <ImageMetaPopover
                                 meta={image.meta as any}
                                 generationProcess={image.generationProcess ?? undefined}
+                                imageId={image.id}
                               >
                                 <ActionIcon
                                   className={classes.info}
@@ -316,6 +318,7 @@ export function ImagesAsPostsCard({
                                   <ImageMetaPopover
                                     meta={image.meta as any}
                                     generationProcess={image.generationProcess ?? undefined}
+                                    imageId={image.id}
                                   >
                                     <ActionIcon
                                       className={classes.info}

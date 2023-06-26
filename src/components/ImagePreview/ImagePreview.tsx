@@ -95,6 +95,7 @@ export function ImagePreview({
     <ImageMetaPopover
       meta={meta as ImageMetaProps}
       generationProcess={generationProcess ?? 'txt2img'}
+      imageId={id}
     >
       <ActionIcon variant="transparent" size="lg">
         <IconInfoCircle

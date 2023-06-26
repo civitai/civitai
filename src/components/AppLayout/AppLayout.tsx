@@ -9,7 +9,6 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
 import { IconBan, IconBrush } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 
@@ -20,6 +19,7 @@ import { FloatingActionButton } from '~/components/FloatingActionButton/Floating
 import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useGenerationStore } from '~/store/generation.store';
 
 export function AppLayout({ children, showNavbar }: Props) {
   const { colorScheme } = useMantineTheme();
@@ -27,7 +27,8 @@ export function AppLayout({ children, showNavbar }: Props) {
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
 
-  const [opened, { open, close }] = useDisclosure();
+  const drawerOpened = useGenerationStore((state) => state.drawerOpened);
+  const toggleDrawer = useGenerationStore((state) => state.toggleDrawer);
 
   return (
     <>
@@ -53,13 +54,19 @@ export function AppLayout({ children, showNavbar }: Props) {
         {!isBanned ? (
           <>
             {children}
+            {/* TODO.generation: Move this out of AppLayout so drawer can be opened anywhere */}
             {flags.imageGeneration && (
               <>
-                <GenerationDrawer opened={opened} onClose={close} />
-                <FloatingActionButton transition="pop" onClick={open} mounted={!opened} px="xs">
+                <GenerationDrawer opened={drawerOpened} onClose={toggleDrawer} />
+                <FloatingActionButton
+                  transition="pop"
+                  onClick={toggleDrawer}
+                  mounted={!drawerOpened}
+                  px="xs"
+                >
                   <Group spacing="xs">
                     <IconBrush size={20} />
-                    <Text>Create</Text>
+                    <Text inherit>Create</Text>
                   </Group>
                 </FloatingActionButton>
               </>
