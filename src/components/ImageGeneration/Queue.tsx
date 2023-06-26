@@ -324,7 +324,12 @@ export function Queue() {
         .filter((x) => POLLABLE_STATUSES.includes(x.status))
         .map((x) => x.id),
     },
-    { enabled: false }
+    {
+      enabled: false,
+      onError: () => {
+        debouncer(pollPending);
+      },
+    }
   );
 
   // infinite paging

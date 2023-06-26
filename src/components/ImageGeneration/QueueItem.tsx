@@ -25,7 +25,8 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
-import { Generation } from '~/server/services/generation/generation.types';
+import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { formatDate } from '~/utils/date-helpers';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -47,13 +48,26 @@ export function QueueItem({ id, onBoostClick }: Props) {
     value: <ContentClamp maxHeight={44}>{value as string}</ContentClamp>,
   }));
 
+  const pendingProcessing =
+    item.status === GenerationRequestStatus.Pending ||
+    item.status === GenerationRequestStatus.Processing;
+  const succeeded = item.status === GenerationRequestStatus.Succeeded;
+
   return (
     <Card withBorder>
       <Card.Section py="xs" inheritPadding withBorder>
         <Group position="apart">
           <Group spacing={8}>
             {!!item.images?.length && (
-              <ThemeIcon variant="outline" w="auto" h="auto" size="sm" color="gray" px={8} py={2}>
+              <ThemeIcon
+                variant={succeeded ? 'light' : 'filled'}
+                w="auto"
+                h="auto"
+                size="sm"
+                color={succeeded ? 'green' : 'gray'}
+                px={8}
+                py={2}
+              >
                 <Group spacing={8}>
                   <IconPhoto size={16} />
                   <Text size="sm" inline>
@@ -62,36 +76,41 @@ export function QueueItem({ id, onBoostClick }: Props) {
                 </Group>
               </ThemeIcon>
             )}
-            <Button.Group>
-              <Button
-                size="xs"
-                variant="outline"
-                color="gray"
-                sx={{ pointerEvents: 'none' }}
-                compact
-              >
-                ETA <Countdown endTime={item.estimatedCompletionDate} />
-              </Button>
-              <HoverCard withArrow position="top" withinPortal>
-                <HoverCard.Target>
-                  <Button
-                    size="xs"
-                    rightIcon={showBoostModal ? <IconBolt size={16} /> : undefined}
-                    compact
-                  >
-                    Boost
-                  </Button>
-                </HoverCard.Target>
-                <HoverCard.Dropdown title="Coming soon" maw={300}>
-                  <Stack spacing={0}>
-                    <Text weight={500}>Coming soon!</Text>
-                    <Text size="xs">
-                      Want to run this request faster? Boost it to the front of the queue.
-                    </Text>
-                  </Stack>
-                </HoverCard.Dropdown>
-              </HoverCard>
-            </Button.Group>
+            <Text size="sm">{formatDate(item.createdAt, 'MMM DD, YYYY hh:mm A')}</Text>
+            {(item.status === GenerationRequestStatus.Pending ||
+              item.status === GenerationRequestStatus.Processing) && (
+              <Button.Group>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  color="gray"
+                  sx={{ pointerEvents: 'none' }}
+                  compact
+                >
+                  ETA <Countdown endTime={item.estimatedCompletionDate} />
+                </Button>
+                <HoverCard withArrow position="top" withinPortal>
+                  <HoverCard.Target>
+                    <Button
+                      size="xs"
+                      rightIcon={showBoostModal ? <IconBolt size={16} /> : undefined}
+                      compact
+                    >
+                      Boost
+                    </Button>
+                  </HoverCard.Target>
+                  <HoverCard.Dropdown title="Coming soon" maw={300}>
+                    <Stack spacing={0}>
+                      <Text weight={500}>Coming soon!</Text>
+                      <Text size="xs">
+                        Want to run this request faster? Boost it to the front of the queue.
+                      </Text>
+                    </Stack>
+                  </HoverCard.Dropdown>
+                </HoverCard>
+              </Button.Group>
+            )}
+            {}
           </Group>
           <ActionIcon
             color="red"
@@ -110,7 +129,11 @@ export function QueueItem({ id, onBoostClick }: Props) {
         <Collection
           items={item.resources}
           limit={3}
-          renderItem={(resource: any) => <Badge size="sm">{resource.name}</Badge>}
+          renderItem={(resource: any) => (
+            <Badge size="sm">
+              {resource.modelName} - {resource.name}
+            </Badge>
+          )}
           grouped
         />
         {!!item.images?.length && (
