@@ -43,6 +43,7 @@ const resourceSchema = z
     id: z.number(),
     modelType: z.nativeEnum(ModelType),
     strength: z.number().optional(),
+    trainedWords: z.string().array().optional(),
   })
   .passthrough();
 
@@ -99,6 +100,10 @@ export function Generate({
               modelVersionId: resource.id,
               type: resource.modelType,
               strength: resource.strength,
+              triggerWord:
+                resource.modelType === ModelType.TextualInversion
+                  ? resource.trainedWords?.[0]
+                  : undefined,
             })),
             prompt: values.prompt,
             negativePrompt: values.negativePrompt,

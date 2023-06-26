@@ -233,18 +233,6 @@ const samplersToSchedulers: Record<Sampler, string> = {
   UniPC: 'UniPC',
 };
 
-const additionalNetworkTypes = [ModelType.LORA, ModelType.LoCon, ModelType.Hypernetwork];
-type ModelFileResult = {
-  url: string;
-  name: string;
-  type: ModelType;
-  metadata: FileMetadata;
-  modelVersionId: number;
-  hash?: string;
-};
-type GenerationRequestAdditionalNetwork = {
-  strength?: number;
-};
 export const createGenerationRequest = async ({
   userId,
   ...props
@@ -252,8 +240,6 @@ export const createGenerationRequest = async ({
   const checkpoint = props.resources.find((x) => x.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
-
-  // TODO: Justin For textual inversions, pull in the trigger words of the model version (there should only be one).
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
