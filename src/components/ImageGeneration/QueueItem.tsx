@@ -40,6 +40,9 @@ export function QueueItem({ id, onBoostClick }: Props) {
     onSuccess: (response, request) => {
       removeRequest(request.id);
     },
+    onError: (err) => {
+      console.log({ err });
+    },
   });
 
   const { prompt, ...details } = item.params;
@@ -110,7 +113,6 @@ export function QueueItem({ id, onBoostClick }: Props) {
                 </HoverCard>
               </Button.Group>
             )}
-            {}
           </Group>
           <ActionIcon
             color="red"

@@ -1,4 +1,4 @@
-import { Center, Loader, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -349,6 +349,13 @@ export function Queue() {
 
   // update requests dictionary with polled requests
   useEffect(() => setRequests(polledRequests), [polledRequests, setRequests]);
+
+  if (isError)
+    return (
+      <Alert color="red">
+        <Text align="center">Could not retrieve image generation requests</Text>
+      </Alert>
+    );
 
   return isLoading ? (
     <Center p="xl">

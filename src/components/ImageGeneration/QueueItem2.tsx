@@ -30,6 +30,7 @@ import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useI
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Generation } from '~/server/services/generation/generation.types';
 import { formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -40,6 +41,13 @@ export function QueueItem2({ id }: { id: number }) {
   const deleteMutation = trpc.generation.deleteRequest.useMutation({
     onSuccess: (response, request) => {
       removeRequest(request.id);
+    },
+    onError: (err) => {
+      console.log({ err });
+      // showErrorNotification({
+      //   title: 'Failed to delete generation request',
+      //   reason: ''
+      // })
     },
   });
   const modelVersion = item.resources.find((x) => x.modelType === ModelType.Checkpoint);

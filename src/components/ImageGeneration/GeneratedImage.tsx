@@ -31,7 +31,7 @@ export function GeneratedImage({
     <AspectRatio ratio={width / height}>
       <Card p={0} sx={{ position: 'relative' }} withBorder>
         {loading && (
-          <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}>
             <Loader />
           </Center>
         )}
@@ -42,7 +42,7 @@ export function GeneratedImage({
             onLoad={() => setLoading(false)}
             onError={() => setLoading(false)}
             onClick={handleImageClick}
-            style={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer', zIndex: 2 }}
           />
         )}
       </Card>

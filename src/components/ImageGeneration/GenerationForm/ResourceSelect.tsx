@@ -62,6 +62,8 @@ export function ResourceSelect({
     onChange?.(resource);
   };
 
+  // TODO.generation - support unavailable resources as default values. User should be able to see that a resource is unavailable and remove it from 'additional resources'
+
   return (
     <>
       <Input.Wrapper label={resource?.modelType ?? label} {...inputWrapperProps}>

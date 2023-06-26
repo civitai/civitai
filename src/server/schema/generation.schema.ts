@@ -28,7 +28,7 @@ export const getGenerationRequestsSchema = z.object({
 
 export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;
 export const generationParamsSchema = z.object({
-  prompt: z.string(),
+  prompt: z.string(), // TODO.generation - check for blocked words in prompt
   negativePrompt: z.string().optional(),
   cfgScale: z.number().min(1).max(30),
   sampler: z.enum(constants.samplers),
