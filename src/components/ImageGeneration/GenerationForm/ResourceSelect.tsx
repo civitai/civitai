@@ -13,6 +13,8 @@ import {
   Badge,
   Loader,
   createStyles,
+  CloseButton,
+  Divider,
 } from '@mantine/core';
 import { useDebouncedValue, usePrevious } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
@@ -38,10 +40,11 @@ export function ResourceSelect({
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
   const [opened, setOpened] = useState(false);
   const [strength, setStrength] = useState(value?.strength ?? 1);
+  const [resource, setResource] = useState(value);
 
   useEffect(() => {
     if (!value) return;
-    onChange?.({ ...value, strength });
+    handleSetResource?.({ ...value, strength });
   }, [strength]); // eslint-disable-line
 
   const handleStrengthChange = (strength: number) => {
@@ -50,14 +53,19 @@ export function ResourceSelect({
   };
 
   const handleRemove = () => {
-    onChange?.(undefined);
+    handleSetResource?.(undefined);
     onRemove?.();
+  };
+
+  const handleSetResource = (resource?: Generation.Client.Resource) => {
+    setResource(resource);
+    onChange?.(resource);
   };
 
   return (
     <>
-      <Input.Wrapper label={value?.modelType ?? label} {...inputWrapperProps}>
-        {!value ? (
+      <Input.Wrapper label={resource?.modelType ?? label} {...inputWrapperProps}>
+        {!resource ? (
           <div>
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
               Add {label}
@@ -69,14 +77,14 @@ export function ResourceSelect({
               {/* Header */}
               <Group spacing="xs" position="apart">
                 <Text lineClamp={1}>
-                  {value.modelName} - {value.name}
+                  {resource.modelName} - {resource.name}
                 </Text>
                 <ActionIcon size="xs" variant="subtle" color="red" onClick={handleRemove}>
                   <IconX />
                 </ActionIcon>
               </Group>
               {/* LORA */}
-              {value.modelType === ModelType.LORA && (
+              {resource.modelType === ModelType.LORA && (
                 <Group spacing="xs">
                   <Slider
                     style={{ flex: 1 }}
@@ -90,21 +98,20 @@ export function ResourceSelect({
                 </Group>
               )}
               {/* TEXTUAL INVERSION */}
-              {value.modelType === ModelType.TextualInversion && (
-                <TrainedWords trainedWords={value.trainedWords} type={value.modelType} />
+              {resource.modelType === ModelType.TextualInversion && (
+                <TrainedWords trainedWords={resource.trainedWords} type={resource.modelType} />
               )}
             </Stack>
           </Card>
         )}
       </Input.Wrapper>
-      {!value && (
+      {!resource && (
         <ResourceSelectModal
           opened={opened}
           onClose={() => setOpened(false)}
           title={`Select ${label}`}
-          onSelect={(value) => onChange?.(value)}
+          onSelect={(value) => handleSetResource(value)}
           types={types}
-          notIds={value ? [value.id] : undefined}
         />
       )}
     </>
@@ -129,6 +136,7 @@ export function ResourceSelectModal({
   types?: ModelType[];
   notIds?: number[];
 }) {
+  const { classes } = useStyles();
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
@@ -143,39 +151,57 @@ export function ResourceSelectModal({
   };
 
   return (
-    <Modal opened={opened} title={title} onClose={onClose} size="sm">
-      <Stack>
-        <TextInput
-          value={search}
-          placeholder="Search"
-          onChange={(e) => setSearch(e.target.value)}
-          rightSection={isLoading ? <Loader size="xs" /> : null}
-          autoFocus
-        />
-        <Stack>
-          {data
-            .filter((resource) => !notIds.includes(resource.id))
-            .map((resource) => (
-              <Stack
-                spacing={0}
-                key={`${resource.modelId}_${resource.id}`}
-                onClick={() => handleSelect(resource)}
-              >
-                <Group position="apart" noWrap>
-                  <Text weight={700} lineClamp={1}>
-                    {resource.modelName}
-                  </Text>
-                  <Badge>{resource.modelType}</Badge>
-                </Group>
-                <Text size="sm">{resource.name}</Text>
-              </Stack>
-            ))}
+    <Modal opened={opened} withCloseButton={false} onClose={onClose} size="sm" padding={0}>
+      {opened && (
+        <Stack spacing={4}>
+          <Stack p="xs">
+            <Group position="apart">
+              {title ? <Text>{title}</Text> : <div></div>}
+              <CloseButton onClick={onClose} />
+            </Group>
+            <TextInput
+              value={search}
+              placeholder="Search"
+              onChange={(e) => setSearch(e.target.value)}
+              rightSection={isLoading ? <Loader size="xs" /> : null}
+              autoFocus
+            />
+          </Stack>
+          <Stack spacing={0}>
+            {data
+              .filter((resource) => !notIds.includes(resource.id))
+              .map((resource) => (
+                <Stack
+                  spacing={0}
+                  key={`${resource.modelId}_${resource.id}`}
+                  onClick={() => handleSelect(resource)}
+                  className={classes.resource}
+                  p="xs"
+                >
+                  <Group position="apart" noWrap>
+                    <Text weight={700} lineClamp={1}>
+                      {resource.modelName}
+                    </Text>
+                    <Badge>{resource.modelType}</Badge>
+                  </Group>
+                  <Text size="sm">{resource.name}</Text>
+                </Stack>
+              ))}
+          </Stack>
         </Stack>
-      </Stack>
+      )}
     </Modal>
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  resourceSelect: {},
-}));
+const useStyles = createStyles((theme) => {
+  const colors = theme.fn.variant({ variant: 'light' });
+  return {
+    resource: {
+      '&:hover': {
+        cursor: 'pointer',
+        background: colors.background,
+      },
+    },
+  };
+});
