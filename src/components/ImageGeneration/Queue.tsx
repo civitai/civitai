@@ -318,7 +318,12 @@ export function Queue() {
   } = useGetGenerationRequests({ take: 10 });
 
   const { requests: polledRequests, refetch: pollPending } = useGetGenerationRequests(
-    { take: 100, status: POLLABLE_STATUSES },
+    {
+      take: 100,
+      requestId: Object.values(requests)
+        .filter((x) => POLLABLE_STATUSES.includes(x.status))
+        .map((x) => x.id),
+    },
     { enabled: false }
   );
 

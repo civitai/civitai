@@ -23,6 +23,7 @@ export const getGenerationRequestsSchema = z.object({
   take: z.number().default(10),
   cursor: z.number().optional(),
   status: z.nativeEnum(GenerationRequestStatus).array().optional(),
+  requestId: z.number().array().optional(),
 });
 
 export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;
