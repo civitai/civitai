@@ -240,6 +240,7 @@ ImageGuard.Report = function ReportImage({
       ids: [image.id],
       needsReview: accept ? null : undefined,
       delete: !accept ? true : undefined,
+      reviewType: 'minor',
     });
     setNeedsReview(null);
   };

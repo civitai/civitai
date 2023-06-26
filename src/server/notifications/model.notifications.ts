@@ -142,7 +142,7 @@ export const modelNotifications = createNotificationProcessor({
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Favorite'
-        WHERE (mv."publishedAt" >= '${lastSent}' AND mv.status = 'Published')
+        WHERE (mv."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND mv.status = 'Published')
         OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
@@ -177,7 +177,7 @@ export const modelNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = m."userId"
         JOIN "UserEngagement" ue ON ue."targetUserId" = m."userId" AND m."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE
-          (m."publishedAt" >= '${lastSent}' AND m.status = 'Published')
+          (m."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND m.status = 'Published')
         OR (m."publishedAt" <= '${lastSent}' AND m.status = 'Scheduled')
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
