@@ -101,9 +101,7 @@ export function ResourceSelect({
                 </Group>
               )}
               {/* TEXTUAL INVERSION */}
-              {resource.modelType === ModelType.TextualInversion && (
-                <TrainedWords trainedWords={resource.trainedWords} type={resource.modelType} />
-              )}
+              {<TrainedWords trainedWords={resource.trainedWords} type={resource.modelType} />}
             </Stack>
           </Card>
         )}
