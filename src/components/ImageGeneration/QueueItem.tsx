@@ -12,6 +12,7 @@ import {
   Text,
   ThemeIcon,
   UnstyledButton,
+  createStyles,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
@@ -22,12 +23,14 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { Generation } from '~/server/services/generation/generation.types';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function QueueItem({ id, onBoostClick }: Props) {
+  const { classes } = useStyles();
   const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
 
   const item = useImageGenerationStore(useCallback((state) => state.requests[id], []));
@@ -110,6 +113,18 @@ export function QueueItem({ id, onBoostClick }: Props) {
           renderItem={(resource: any) => <Badge size="sm">{resource.name}</Badge>}
           grouped
         />
+        {!!item.images?.length && (
+          <div className={classes.imageGrid}>
+            {item.images.map((image) => (
+              <GeneratedImage
+                key={image.id}
+                height={item.params.height}
+                width={item.params.width}
+                image={image}
+              />
+            ))}
+          </div>
+        )}
       </Stack>
       <Card.Section withBorder>
         <Accordion variant="filled">
@@ -140,3 +155,15 @@ type Props = {
   id: number;
   onBoostClick: (item: Generation.Client.Request) => void;
 };
+
+const useStyles = createStyles((theme) => ({
+  imageGrid: {
+    display: 'flex',
+    gap: theme.spacing.xs,
+    flexWrap: 'wrap',
+
+    '& > *': {
+      width: 100,
+    },
+  },
+}));

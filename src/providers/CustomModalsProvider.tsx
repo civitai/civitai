@@ -13,6 +13,9 @@ const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
 );
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
+const GeneratedImageLightbox = dynamic(
+  () => import('~/components/ImageGeneration/GeneratedImageLightbox')
+);
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
@@ -75,6 +78,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
         {
           onboarding: DynamicOnboardingModal,
           questionsInfo: QuestionsInfoModal,
+          generatedImageLightbox: GeneratedImageLightbox,
           'civitai-link-success': CivitaiLinkSuccessModal,
           ...(Object.keys(registry) as Array<keyof typeof registry>).reduce<any>((acc, key) => {
             acc[key] = registry[key].Component;
