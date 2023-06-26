@@ -238,13 +238,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
             </Stack>
           )}
-          <Group spacing="xs" grow noWrap>
+          <Group spacing="xs">
             <InputNumber
               name="epochs"
               label="Training Epochs"
               placeholder="Training Epochs"
               min={0}
               max={100000}
+              sx={{ flexGrow: 1 }}
             />
             <InputNumber
               name="steps"
@@ -252,6 +253,15 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               placeholder="Training Steps"
               min={0}
               step={500}
+              sx={{ flexGrow: 1 }}
+            />
+            <InputNumber
+              name="Clip Skip"
+              label="Recommended Clip Skip"
+              placeholder="Clip Skip"
+              min={1}
+              max={12}
+              sx={{ flexGrow: 1 }}
             />
           </Group>
         </Stack>

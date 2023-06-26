@@ -192,6 +192,11 @@ export function ModelVersionDetails({
     { label: 'Steps', value: version.steps?.toLocaleString() ?? 0, visible: !!version.steps },
     { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {
+      label: 'Recommended Clip Skip',
+      value: version.clipSkip?.toLocaleString() ?? 0,
+      visible: !!version.clipSkip,
+    },
+    {
       label: 'Trigger Words',
       visible: !!version.trainedWords?.length,
       value: (
