@@ -45,6 +45,7 @@ export const createGenerationRequestSchema = generationParamsSchema.extend({
       modelVersionId: z.number(),
       type: z.nativeEnum(ModelType),
       strength: z.number().min(-1).max(2).optional(),
+      triggerWord: z.string().optional(),
     })
     .array(),
   height: z.number(),
