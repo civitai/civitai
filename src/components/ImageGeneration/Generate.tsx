@@ -63,7 +63,7 @@ export function Generate({
   onSuccess?: () => void;
 }) {
   const mobile = useIsMobile({ breakpoint: 'md' });
-  const defaultValues = schema.parse(imageGenerationFormStorage.get() ?? defaultDemoValues);
+  const defaultValues = schema.parse(imageGenerationFormStorage.get());
   const [opened, setOpened] = useState(false);
   const [baseModel, setBaseModel] = useState(defaultValues.model.baseModel);
   const setRequests = useImageGenerationStore((state) => state.setRequests);
