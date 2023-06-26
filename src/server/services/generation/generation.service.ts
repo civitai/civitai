@@ -12,25 +12,15 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { GenerationSchedulers, ModelType, Prisma } from '@prisma/client';
+import { ModelType, Prisma } from '@prisma/client';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
-import {
-  // GenerationRequestProps,
-  // GenerationResourceModel,
-  // ImageRequestProps,
-  // JobProps,
-  Generation,
-  GenerationRequestStatus,
-} from '~/server/services/generation/generation.types';
+import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
-import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { getBaseUrl } from '~/server/utils/url-helpers';
-import { redis } from '~/server/redis/client';
-import { Sampler } from '~/server/common/constants';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
+
+import { BaseModel, Sampler } from '~/server/common/constants';
+import { imageMetaSchema } from '~/server/schema/image.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -76,15 +66,21 @@ export const getGenerationResource = async ({
     modelId: model.id,
     modelName: model.name,
     modelType: model.type,
+    baseModel: x.baseModel,
   };
 };
 
+const baseModelSets: Array<BaseModel[]> = [
+  ['SD 1.4', 'SD 1.5'],
+  ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
+];
 export const getGenerationResources = async ({
   take,
   query,
   types,
   notTypes,
   ids, // used for getting initial values of resources
+  baseModel,
   user,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
   // TODO - apply user preferences - but do we really need this? Maybe a direct search should yield all results since their browsing experience is already set to their browsing preferences
@@ -113,6 +109,10 @@ export const getGenerationResources = async ({
         { model: { name: { contains: query, mode: 'insensitive' } } },
       ],
     });
+  }
+  if (baseModel) {
+    const baseModelSet = baseModelSets.find((x) => x.includes(baseModel as BaseModel));
+    if (baseModelSet) AND.push({ baseModel: { in: baseModelSet } });
   }
   if (!!MODEL_AND.length) AND.push({ model: { AND: MODEL_AND } });
 
@@ -148,6 +148,7 @@ export const getGenerationResources = async ({
       modelId: model.id,
       modelName: model.name,
       modelType: model.type,
+      baseModel: x.baseModel,
       serviceProviders: allServiceProviders.filter(
         (sp) => (x.modelVersionGenerationCoverage?.serviceProviders ?? []).indexOf(sp.name) !== -1
       ),
@@ -189,6 +190,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
             modelId: model.id,
             modelName: model.name,
             modelType: model.type,
+            baseModel: modelVersion.baseModel,
             ...network,
           };
         })
@@ -392,29 +394,56 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
   });
   if (!image) throw throwNotFoundError();
 
-  const resources = await dbRead.$queryRaw<Generation.Client.Resource[]>`
-      SELECT
+  const resources = await dbRead.$queryRaw<
+    Array<Generation.Client.Resource & { covered: boolean; hash?: string }>
+  >`
+    SELECT
       mv.id,
       mv.name,
       mv."trainedWords",
       m.id "modelId",
       m.name "modelName",
-      m.type "modelType"
+      m.type "modelType",
+      ir."hash",
+      EXISTS (SELECT 1 FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "covered"
     FROM "ImageResource" ir
-    LEFT JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
-    LEFT JOIN "Model" m on m.id = mv."modelId"
+    JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
+    JOIN "Model" m on m.id = mv."modelId"
     WHERE ir."imageId" = ${id}
   `;
 
-  const { 'Clip skip': clipSkip, ...meta } = imageGenerationSchema.parse(image.meta);
+  const {
+    'Clip skip': clipSkip,
+    hashes,
+    prompt,
+    negativePrompt,
+    ...meta
+  } = imageMetaSchema.parse(image.meta);
   const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
   const additionalResources = resources.filter((x) => x.modelType !== ModelType.Checkpoint);
 
-  // consider getting the strength of loras from the prompt
+  if (hashes && prompt) {
+    for (const [key, hash] of Object.entries(hashes)) {
+      if (!key.startsWith('lora:')) continue;
+
+      // get the resource that matches the hash
+      const resource = additionalResources.find((x) => x.hash === hash);
+      if (!resource) continue;
+
+      // get everything that matches <key:{number}>
+      const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(prompt);
+      if (!matches) continue;
+
+      resource.strength = parseFloat(matches[1]);
+    }
+  }
 
   return {
-    ...meta,
+    hashes,
+    prompt,
+    negativePrompt,
     clipSkip,
+    ...meta,
     model,
     additionalResources,
     height: image.height,

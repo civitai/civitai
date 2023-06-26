@@ -1,4 +1,5 @@
 import { ModelType } from '@prisma/client';
+import { BaseModel } from '~/server/common/constants';
 
 export namespace Generation {
   export type AdditionalNetwork = Partial<{
@@ -48,6 +49,7 @@ export namespace Generation {
       modelId: number;
       modelName: string;
       modelType: ModelType;
+      baseModel: string;
     };
 
     export type Request = {

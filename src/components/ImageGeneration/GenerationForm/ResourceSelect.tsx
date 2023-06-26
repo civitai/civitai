@@ -16,12 +16,13 @@ import {
   CloseButton,
   Divider,
 } from '@mantine/core';
-import { useDebouncedValue, usePrevious } from '@mantine/hooks';
+import { useDebouncedValue } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
 import { IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { withController } from '~/libs/form/hoc/withController';
+import { BaseModel } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
 
@@ -130,6 +131,7 @@ export function ResourceSelectModal({
   onSelect,
   types,
   notIds = [],
+  baseModel,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -137,13 +139,14 @@ export function ResourceSelectModal({
   onSelect: (value: Generation.Client.Resource) => void;
   types?: ModelType[];
   notIds?: number[];
+  baseModel?: string;
 }) {
   const { classes } = useStyles();
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
   const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
-    { types, query: debounced },
+    { types, query: debounced, baseModel },
     { enabled: debounced.length >= 3 }
   );
 

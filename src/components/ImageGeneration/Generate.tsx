@@ -37,6 +37,7 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
 import { FieldArray } from '~/libs/form/components/FieldArray';
+import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 
 const resourceSchema = z
   .object({
@@ -44,6 +45,7 @@ const resourceSchema = z
     modelType: z.nativeEnum(ModelType),
     strength: z.number().optional(),
     trainedWords: z.string().array().optional(),
+    baseModel: z.string(),
   })
   .passthrough();
 
@@ -61,12 +63,9 @@ export function Generate({
   onSuccess?: () => void;
 }) {
   const mobile = useIsMobile({ breakpoint: 'md' });
-  const localValue = localStorage.getItem('generation-form');
-  const defaultValues = {
-    model: request?.resources.find((x) => x.modelType === ModelType.Checkpoint),
-    ...request?.params,
-  };
+  const defaultValues = schema.parse(imageGenerationFormStorage.get() ?? defaultDemoValues);
   const [opened, setOpened] = useState(false);
+  const [baseModel, setBaseModel] = useState(defaultValues.model.baseModel);
   const setRequests = useImageGenerationStore((state) => state.setRequests);
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
     onSuccess: (data) => {
@@ -77,7 +76,7 @@ export function Generate({
 
   const form = useForm({
     schema,
-    defaultValues: localValue ? JSON.parse(localValue) : defaultDemoValues,
+    defaultValues: defaultValues as any,
   });
 
   return (
@@ -85,7 +84,7 @@ export function Generate({
       <Form
         form={form}
         onSubmit={(values) => {
-          localStorage.setItem('generation-form', JSON.stringify(values));
+          imageGenerationFormStorage.set(values);
           form.reset(values);
           const [width, height] = values.aspectRatio.split('x');
           mutate({
@@ -117,6 +116,9 @@ export function Generate({
             name="model"
             withAsterisk
             types={[ModelType.Checkpoint]}
+            onChange={(value) => {
+              if (value) setBaseModel(value.baseModel);
+            }}
           />
           <FieldArray
             control={form.control}
@@ -145,6 +147,7 @@ export function Generate({
                   types={[ModelType.LORA, ModelType.TextualInversion]}
                   onSelect={(value) => append(value)}
                   notIds={[...fields.map((item) => item.id)]}
+                  baseModel={baseModel}
                 />
               </Stack>
             )}
@@ -219,7 +222,7 @@ export function Generate({
                             size="xs"
                             variant="filled"
                             mr={3}
-                            onClick={() => form.setValue('seed', -1)}
+                            onClick={() => form.setValue('seed', undefined)}
                           >
                             <IconX size={12} />
                           </ActionIcon>
@@ -305,6 +308,7 @@ const defaultDemoValues = {
     modelId: 4201,
     modelName: 'Realistic Vision V2.0',
     modelType: ModelType.Checkpoint,
+    baseModel: 'SD 1.5',
   },
 };
 // #endregion
