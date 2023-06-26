@@ -189,11 +189,35 @@ export function ModelVersionDetails({
       label: 'Base Model',
       value: <Text>{version.baseModel}</Text>,
     },
-    { label: 'Steps', value: version.steps?.toLocaleString() ?? 0, visible: !!version.steps },
-    { label: 'Epoch', value: version.epochs?.toLocaleString() ?? 0, visible: !!version.epochs },
     {
-      label: 'Recommended Clip Skip',
-      value: version.clipSkip?.toLocaleString() ?? 0,
+      label: 'Training',
+      value: (
+        <Group spacing={4}>
+          {version.steps && (
+            <Badge size="sm" radius="sm" color="teal">
+              Steps: {version.steps.toLocaleString()}
+            </Badge>
+          )}
+          {version.epochs && (
+            <Badge size="sm" radius="sm" color="teal">
+              Epochs: {version.epochs.toLocaleString()}
+            </Badge>
+          )}
+        </Group>
+      ),
+      visible: !!version.steps || !!version.epochs,
+    },
+    {
+      label: 'Usage Tips',
+      value: (
+        <Group spacing={4}>
+          {version.clipSkip && (
+            <Badge size="sm" radius="sm" color="cyan">
+              Clip Skip: {version.clipSkip.toLocaleString()}
+            </Badge>
+          )}
+        </Group>
+      ),
       visible: !!version.clipSkip,
     },
     {

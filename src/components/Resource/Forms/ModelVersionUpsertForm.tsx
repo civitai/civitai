@@ -1,4 +1,4 @@
-import { Group, Input, Stack, Text } from '@mantine/core';
+import { Divider, Group, Input, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useEffect } from 'react';
 import { z } from 'zod';
@@ -238,23 +238,29 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
             </Stack>
           )}
-          <Group spacing="xs">
-            <InputNumber
-              name="epochs"
-              label="Training Epochs"
-              placeholder="Training Epochs"
-              min={0}
-              max={100000}
-              sx={{ flexGrow: 1 }}
-            />
-            <InputNumber
-              name="steps"
-              label="Training Steps"
-              placeholder="Training Steps"
-              min={0}
-              step={500}
-              sx={{ flexGrow: 1 }}
-            />
+          <Stack spacing={4}>
+            <Divider label="Training Params" />
+            <Group spacing="xs" grow>
+              <InputNumber
+                name="epochs"
+                label="Epochs"
+                placeholder="Training Epochs"
+                min={0}
+                max={100000}
+                sx={{ flexGrow: 1 }}
+              />
+              <InputNumber
+                name="steps"
+                label="Steps"
+                placeholder="Training Steps"
+                min={0}
+                step={500}
+                sx={{ flexGrow: 1 }}
+              />
+            </Group>
+          </Stack>
+          <Stack spacing={4}>
+            <Divider label="Usage Tips" />
             <InputNumber
               name="Clip Skip"
               label="Recommended Clip Skip"
@@ -263,7 +269,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               max={12}
               sx={{ flexGrow: 1 }}
             />
-          </Group>
+          </Stack>
         </Stack>
         {children({ loading: upsertVersionMutation.isLoading })}
       </Form>
