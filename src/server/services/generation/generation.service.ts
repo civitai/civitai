@@ -118,7 +118,14 @@ export const getGenerationResources = async ({
   const results = await dbRead.modelVersion.findMany({
     take,
     where: { AND },
-    select: generationResourceSelect,
+    select: {
+      ...generationResourceSelect,
+      modelVersionGenerationCoverage: {
+        select: {
+          serviceProviders: true,
+        },
+      },
+    },
     orderBy: { id: 'desc' },
   });
 

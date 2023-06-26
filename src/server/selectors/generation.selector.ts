@@ -5,11 +5,6 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
   name: true,
   trainedWords: true,
   index: true,
-  modelVersionGenerationCoverage: {
-    select: {
-      serviceProviders: true,
-    },
-  },
   model: {
     select: {
       id: true,
