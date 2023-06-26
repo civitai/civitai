@@ -37,36 +37,27 @@ export function ResourceSelect({
   types?: ModelType[];
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
   const [opened, setOpened] = useState(false);
-  const [strength, setStrength] = useState(value?.strength);
-  const [model, setModel] = useState(value);
+  const [strength, setStrength] = useState(value?.strength ?? 1);
 
-  // const previous = usePrevious(model);
   useEffect(() => {
-    if (strength !== undefined || !model) return;
-    handleStrengthChange(model.strength ?? 1);
-  }, [model]); // eslint-disable-line
-
-  const handleSetModel = (value?: Generation.Client.Resource) => {
-    setModel(value);
-    onChange?.(value);
-  };
+    if (!value) return;
+    onChange?.({ ...value, strength });
+  }, [strength]); // eslint-disable-line
 
   const handleStrengthChange = (strength: number) => {
-    if (!model) return;
-    const rounded = Math.round(strength * 10) / 10;
-    handleSetModel({ ...model, strength: rounded });
+    const rounded = Math.round(strength * 100) / 100;
     setStrength(rounded);
   };
 
   const handleRemove = () => {
-    handleSetModel(undefined);
+    onChange?.(undefined);
     onRemove?.();
   };
 
   return (
     <>
-      <Input.Wrapper label={model?.modelType ?? label} {...inputWrapperProps}>
-        {!model ? (
+      <Input.Wrapper label={value?.modelType ?? label} {...inputWrapperProps}>
+        {!value ? (
           <div>
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
               Add {label}
@@ -78,20 +69,20 @@ export function ResourceSelect({
               {/* Header */}
               <Group spacing="xs" position="apart">
                 <Text lineClamp={1}>
-                  {model.modelName} - {model.name}
+                  {value.modelName} - {value.name}
                 </Text>
                 <ActionIcon size="xs" variant="subtle" color="red" onClick={handleRemove}>
                   <IconX />
                 </ActionIcon>
               </Group>
               {/* LORA */}
-              {model.modelType === ModelType.LORA && (
+              {value.modelType === ModelType.LORA && (
                 <Group spacing="xs">
                   <Slider
                     style={{ flex: 1 }}
                     value={strength}
                     onChange={handleStrengthChange}
-                    step={0.1}
+                    step={0.05}
                     min={-1}
                     max={2}
                   />
@@ -99,19 +90,19 @@ export function ResourceSelect({
                 </Group>
               )}
               {/* TEXTUAL INVERSION */}
-              {model.modelType === ModelType.TextualInversion && (
-                <TrainedWords trainedWords={model.trainedWords} type={model.modelType} />
+              {value.modelType === ModelType.TextualInversion && (
+                <TrainedWords trainedWords={value.trainedWords} type={value.modelType} />
               )}
             </Stack>
           </Card>
         )}
       </Input.Wrapper>
-      {!model && (
+      {!value && (
         <ResourceSelectModal
           opened={opened}
           onClose={() => setOpened(false)}
           title={`Select ${label}`}
-          onSelect={(value) => handleSetModel(value)}
+          onSelect={(value) => onChange?.(value)}
           types={types}
           notIds={value ? [value.id] : undefined}
         />

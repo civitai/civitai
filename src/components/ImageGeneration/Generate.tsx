@@ -37,6 +37,7 @@ import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
+import { FieldArray } from '~/libs/form/components/FieldArray';
 
 const resourceSchema = z
   .object({
@@ -78,11 +79,6 @@ export function Generate({
     schema,
     defaultValues: localValue ? JSON.parse(localValue) : defaultDemoValues,
   });
-  const { fields, append, remove, update } = useFieldArray({
-    control: form.control,
-    name: 'additionalResources',
-    keyName: 'uid',
-  });
 
   return (
     <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
@@ -118,30 +114,37 @@ export function Generate({
             withAsterisk
             types={[ModelType.Checkpoint]}
           />
-          <Stack spacing="xs">
-            {fields.map((item, index) => (
-              <InputResourceSelect
-                key={item.uid}
-                name={`additionalResources.${index}`}
-                types={[ModelType.LORA, ModelType.TextualInversion]}
-                onRemove={() => remove(index)}
-                onChange={(value) => {
-                  if (value) update(index, value);
-                }}
-              />
-            ))}
-            <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
-              Add Additional Resource
-            </Button>
-            <ResourceSelectModal
-              opened={opened}
-              onClose={() => setOpened(false)}
-              title="Select Additional Resource"
-              types={[ModelType.LORA, ModelType.TextualInversion]}
-              onSelect={(value) => append(value)}
-              notIds={[...fields.map((item) => item.id)]}
-            />
-          </Stack>
+          <FieldArray
+            control={form.control}
+            name="additionalResources"
+            keyName={'uid' as any} // TODO.type fix
+            render={({ fields, append, remove, update }) => (
+              <Stack spacing="xs">
+                {fields.map((item, index) => (
+                  <InputResourceSelect
+                    key={item.id}
+                    name={`additionalResources.${index}`}
+                    types={[ModelType.LORA, ModelType.TextualInversion]}
+                    onRemove={() => remove(index)}
+                    onChange={(value) => {
+                      if (value) update(index, value);
+                    }}
+                  />
+                ))}
+                <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
+                  Add Additional Resource
+                </Button>
+                <ResourceSelectModal
+                  opened={opened}
+                  onClose={() => setOpened(false)}
+                  title="Select Additional Resource"
+                  types={[ModelType.LORA, ModelType.TextualInversion]}
+                  onSelect={(value) => append(value)}
+                  notIds={[...fields.map((item) => item.id)]}
+                />
+              </Stack>
+            )}
+          />
           {/* <Input.Wrapper
             labelProps={{ sx: { width: '100%' } }}
             label={
