@@ -6,7 +6,6 @@ import { useInView } from 'react-intersection-observer';
 
 import { BoostModal } from '~/components/ImageGeneration/BoostModal';
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
-import { QueueItem2 } from '~/components/ImageGeneration/QueueItem2';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/hooks/useGetGenerationRequests';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -355,12 +354,12 @@ export function Queue() {
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
         <Stack>
           {requestIds.map((id) => (
-            <QueueItem2
+            <QueueItem
               key={id}
               id={id}
-              // onBoostClick={(item) =>
-              //   showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined
-              // }
+              onBoostClick={(item) =>
+                showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined
+              }
             />
           ))}
           {hasNextPage && !isLoading && !isRefetching && (
