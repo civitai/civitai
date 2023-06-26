@@ -15,17 +15,7 @@ import { useState } from 'react';
 import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-
-interface ScrollPosition {
-  x: number;
-  y: number;
-}
-
-function getScrollPosition(): ScrollPosition {
-  return typeof window !== 'undefined'
-    ? { x: window.pageXOffset, y: window.pageYOffset }
-    : { x: 0, y: 0 };
-}
+import { getScrollPosition } from '~/utils/window-helpers';
 
 const buttonProps: ButtonProps = {
   size: 'xs',

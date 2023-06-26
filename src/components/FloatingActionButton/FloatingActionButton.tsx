@@ -1,4 +1,6 @@
 import { Affix, Button, ButtonProps, Transition, TransitionProps } from '@mantine/core';
+import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
+import { getScrollPosition } from '~/utils/window-helpers';
 
 type Props = Omit<ButtonProps, 'style' | 'onClick'> &
   Pick<TransitionProps, 'transition' | 'mounted' | 'duration'> & {
@@ -12,8 +14,18 @@ export function FloatingActionButton({
   duration,
   ...buttonProps
 }: Props) {
+  const [hasFooter, setHasFooter] = useDebouncedState(true, 200);
+
+  useWindowEvent('scroll', () => {
+    const scroll = getScrollPosition();
+    setHasFooter(scroll.y < 10);
+  });
+
   return (
-    <Affix position={{ bottom: 70, right: 20 }}>
+    <Affix
+      position={{ bottom: hasFooter ? 70 : 12, right: 12 }}
+      style={{ transition: 'bottom 300ms linear' }}
+    >
       <Transition transition={transition} mounted={mounted} duration={duration}>
         {(transitionStyles) => (
           <Button {...buttonProps} style={transitionStyles}>

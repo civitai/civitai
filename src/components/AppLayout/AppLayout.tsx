@@ -2,6 +2,7 @@ import {
   AppShell,
   Button,
   Center,
+  Group,
   Stack,
   Text,
   ThemeIcon,
@@ -9,7 +10,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconBan, IconBolt } from '@tabler/icons-react';
+import { IconBan, IconBrush } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';
@@ -55,8 +56,11 @@ export function AppLayout({ children, showNavbar }: Props) {
             {flags.imageGeneration && (
               <>
                 <GenerationDrawer opened={opened} onClose={close} />
-                <FloatingActionButton transition="pop" onClick={open} mounted={!opened}>
-                  <IconBolt />
+                <FloatingActionButton transition="pop" onClick={open} mounted={!opened} px="xs">
+                  <Group spacing="xs">
+                    <IconBrush size={20} />
+                    <Text>Create</Text>
+                  </Group>
                 </FloatingActionButton>
               </>
             )}
