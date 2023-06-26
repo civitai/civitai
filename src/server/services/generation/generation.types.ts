@@ -49,6 +49,7 @@ export namespace Generation {
       modelName: string;
       modelType: ModelType;
     };
+
     export type Request = {
       id: number;
       createdAt: Date;
@@ -60,6 +61,7 @@ export namespace Generation {
       resources: Resource[];
       images?: Image[];
     };
+
     export type ImageRequest = { params: Params };
     export type ImageRequestDictionary = Record<string, ImageRequest>;
     export type Images = {

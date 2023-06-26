@@ -30,6 +30,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { redis } from '~/server/redis/client';
 import { Sampler } from '~/server/common/constants';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -378,3 +379,45 @@ export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { u
 
   if (!deleteResponse.ok) throw throwNotFoundError();
 }
+
+export type GetImageGenerationDataProps = AsyncReturnType<typeof getImageGenerationData>;
+export const getImageGenerationData = async ({ id }: GetByIdInput) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      meta: true,
+      height: true,
+      width: true,
+    },
+  });
+  if (!image) throw throwNotFoundError();
+
+  const resources = await dbRead.$queryRaw<Generation.Client.Resource[]>`
+      SELECT
+      mv.id,
+      mv.name,
+      mv."trainedWords",
+      m.id "modelId",
+      m.name "modelName",
+      m.type "modelType"
+    FROM "ImageResource" ir
+    LEFT JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
+    LEFT JOIN "Model" m on m.id = mv."modelId"
+    WHERE ir."imageId" = ${id}
+  `;
+
+  const { 'Clip skip': clipSkip, ...meta } = imageGenerationSchema.parse(image.meta);
+  const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
+  const additionalResources = resources.filter((x) => x.modelType !== ModelType.Checkpoint);
+
+  // consider getting the strength of loras from the prompt
+
+  return {
+    ...meta,
+    clipSkip,
+    model,
+    additionalResources,
+    height: image.height,
+    width: image.width,
+  };
+};

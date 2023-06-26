@@ -17,7 +17,6 @@ import { IconBook2, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
-import { CheckpointSelect } from '~/components/ImageGeneration/GenerationForm/GenerationResourceSelect';
 import {
   InputResourceSelect,
   ResourceSelectModal,
@@ -220,7 +219,7 @@ export function Generate({
                             size="xs"
                             variant="filled"
                             mr={3}
-                            onClick={() => form.setValue('seed', undefined)}
+                            onClick={() => form.setValue('seed', -1)}
                           >
                             <IconX size={12} />
                           </ActionIcon>

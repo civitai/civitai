@@ -188,7 +188,17 @@ const useStyles = createStyles((theme) => ({
     flexWrap: 'wrap',
 
     '& > *': {
-      width: 100,
+      width: 120,
     },
   },
+
+  // imageGrid: {
+  //   display: 'grid',
+  //   gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 160px))',
+  //   gap: theme.spacing.xs,
+
+  //   // [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
+  //   //   gridTemplateColumns: '1fr 1fr',
+  //   // },
+  // },
 }));

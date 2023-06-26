@@ -12,6 +12,7 @@ import {
   getGenerationRequests,
   getGenerationResource,
   getGenerationResources,
+  getImageGenerationData,
 } from '~/server/services/generation/generation.service';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -38,4 +39,8 @@ export const generationRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))
     .mutation(({ input, ctx }) => deleteGenerationRequest({ ...input, userId: ctx.user.id })),
+  getImageGenerationData: publicProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('imageGeneration'))
+    .query(({ input, ctx }) => getImageGenerationData({ ...input })),
 });

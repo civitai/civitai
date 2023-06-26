@@ -25,6 +25,17 @@ export const imageGenerationSchema = z.object({
   steps: stringToNumber,
   sampler: undefinedString,
   seed: stringToNumber,
+  'Clip skip': z.coerce.number().optional(),
+  // resources: z
+  //   .object({
+  //     name: z.string().optional(),
+  //     type: z.string().optional(),
+  //     weight: z.number().optional(),
+  //     hash: z.string().optional(),
+  //   })
+  //   .passthrough()
+  //   .array()
+  //   .optional(),
 });
 
 export const imageMetaSchema = imageGenerationSchema
