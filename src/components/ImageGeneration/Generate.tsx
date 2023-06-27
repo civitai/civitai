@@ -35,7 +35,7 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { generationParamsSchema } from '~/server/schema/generation.schema';
+import { additionalResourceLimit, generationParamsSchema } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
 import { constants, Sampler } from '~/server/common/constants';
@@ -66,7 +66,7 @@ const schema = generationParamsSchema.extend({
     .refine((data) => !!data, { message: 'Please select a model to generate from' }),
   aspectRatio: z.string(),
   baseModel: z.string().optional(),
-  additionalResources: resourceSchema.array().default([]),
+  additionalResources: resourceSchema.array().max(additionalResourceLimit).default([]),
 });
 
 export function Generate({
@@ -220,9 +220,11 @@ export function Generate({
                       }}
                     />
                   ))}
-                  <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
-                    Add Additional Resource
-                  </Button>
+                  {fields.length < additionalResourceLimit && (
+                    <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
+                      Add Additional Resource
+                    </Button>
+                  )}
                   <ResourceSelectModal
                     opened={opened}
                     onClose={() => setOpened(false)}

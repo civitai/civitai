@@ -34,6 +34,7 @@ export const generationParamsSchema = z.object({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
+    .max(1000, 'Prompt cannot be longer than 1000 characters')
     .superRefine((val, ctx) => {
       const { blockedFor, success } = auditPrompt(val);
       if (!success)
@@ -42,7 +43,7 @@ export const generationParamsSchema = z.object({
           message: `Blocked for: ${blockedFor.join(', ')}`,
         });
     }),
-  negativePrompt: z.string().optional(),
+  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.number().min(1).max(30),
   sampler: z.enum(constants.samplers),
   steps: z.number().min(1).max(150),
@@ -51,6 +52,7 @@ export const generationParamsSchema = z.object({
   quantity: z.number().max(10),
 });
 
+export const additionalResourceLimit = 10;
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
 export const createGenerationRequestSchema = generationParamsSchema.extend({
   resources: z
@@ -60,7 +62,8 @@ export const createGenerationRequestSchema = generationParamsSchema.extend({
       strength: z.number().min(-1).max(2).optional(),
       triggerWord: z.string().optional(),
     })
-    .array(),
+    .array()
+    .max(additionalResourceLimit),
   height: z.number(),
   width: z.number(),
 });
