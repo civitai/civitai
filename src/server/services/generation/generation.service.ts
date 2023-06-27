@@ -1,5 +1,7 @@
+import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
   GetGenerationImagesInput,
   GetGenerationRequestsInput,
@@ -10,28 +12,22 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwDbError,
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
-import { GenerationSchedulers, ModelType, Prisma } from '@prisma/client';
-import { generationResourceSelect } from '~/server/selectors/generation.selector';
+import { ModelStatus, ModelType, Prisma } from '@prisma/client';
 import {
-  // GenerationRequestProps,
-  // GenerationResourceModel,
-  // ImageRequestProps,
-  // JobProps,
-  Generation,
-  GenerationRequestStatus,
-} from '~/server/services/generation/generation.types';
+  GenerationResourceSelect,
+  generationResourceSelect,
+} from '~/server/selectors/generation.selector';
+import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
-import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { getBaseUrl } from '~/server/utils/url-helpers';
-import { redis } from '~/server/redis/client';
-import { Sampler } from '~/server/common/constants';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
+
+import { BaseModel, Sampler } from '~/server/common/constants';
+import { imageMetaSchema } from '~/server/schema/image.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -61,14 +57,8 @@ function mapRequestStatus(label: string): GenerationRequestStatus {
   }
 }
 
-export const getGenerationResource = async ({
-  id,
-}: GetByIdInput): Promise<Generation.Client.Resource> => {
-  const resource = await dbRead.modelVersion.findUnique({
-    where: { id },
-    select: generationResourceSelect,
-  });
-  if (!resource) throw throwNotFoundError();
+type MappedGenerationResource = ReturnType<typeof mapGenerationResource>;
+function mapGenerationResource(resource: GenerationResourceSelect) {
   const { model, ...x } = resource;
   return {
     id: x.id,
@@ -77,59 +67,73 @@ export const getGenerationResource = async ({
     modelId: model.id,
     modelName: model.name,
     modelType: model.type,
+    baseModel: x.baseModel,
   };
+}
+
+export const getGenerationResource = async ({
+  id,
+}: GetByIdInput): Promise<Generation.Client.Resource> => {
+  const resource = await dbRead.modelVersion.findUnique({
+    where: { id },
+    select: generationResourceSelect,
+  });
+  if (!resource) throw throwNotFoundError();
+  return mapGenerationResource(resource);
 };
 
+const baseModelSets: Array<BaseModel[]> = [
+  ['SD 1.4', 'SD 1.5'],
+  ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
+];
 export const getGenerationResources = async ({
   take,
   query,
   types,
   notTypes,
   ids, // used for getting initial values of resources
+  baseModel,
   user,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
-  // TODO - apply user preferences - but do we really need this? Maybe a direct search should yield all results since their browsing experience is already set to their browsing preferences
-  // TODO.Justin - optimize sql query for selecting resources
-  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [
-    { publishedAt: { not: null } },
-    {
-      modelVersionGenerationCoverage: {
-        workers: {
-          gt: 0,
-        },
-      },
-    },
-  ];
-  const MODEL_AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
-  if (ids) AND.push({ id: { in: ids } });
-  if (!!types?.length) MODEL_AND.push({ type: { in: types } });
-  if (!!notTypes?.length) MODEL_AND.push({ type: { notIn: notTypes } });
+  const sqlAnd = [Prisma.sql`mv.status = 'Published'`];
+  if (ids) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
+  if (!!types?.length)
+    sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
+  if (!!notTypes?.length)
+    sqlAnd.push(Prisma.sql`m.type != ANY(ARRAY[${Prisma.join(notTypes, ',')}]::"ModelType"[])`);
   if (query) {
-    // MODEL_AND.push({ name: { contains: query, mode: 'insensitive' } });
-    AND.push({
-      OR: [
-        { files: { some: { name: { startsWith: query, mode: 'insensitive' } } } },
-        { files: { some: { hashes: { some: { hash: query } } } } },
-        { trainedWords: { has: query } }, // TODO - filter needs to be able to do something like 'startsWith' or 'contains'
-        { model: { name: { contains: query, mode: 'insensitive' } } },
-      ],
-    });
+    const pgQuery = '%' + query + '%';
+    sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
   }
-  if (!!MODEL_AND.length) AND.push({ model: { AND: MODEL_AND } });
+  if (baseModel) {
+    const baseModelSet = baseModelSets.find((x) => x.includes(baseModel as BaseModel));
+    if (baseModelSet)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+  }
 
-  const results = await dbRead.modelVersion.findMany({
-    take,
-    where: { AND },
-    select: {
-      ...generationResourceSelect,
-      modelVersionGenerationCoverage: {
-        select: {
-          serviceProviders: true,
-        },
-      },
-    },
-    orderBy: { id: 'desc' },
-  });
+  let orderBy = 'mv.index';
+  if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
+
+  const results = await dbRead.$queryRaw<
+    Array<MappedGenerationResource & { index: number; serviceProviders?: string[] }>
+  >`
+    SELECT
+      mv.id,
+      mv.index,
+      mv.name,
+      mv."trainedWords",
+      m.id "modelId",
+      m.name "modelName",
+      m.type "modelType",
+      mv."baseModel",
+      (SELECT mgc."serviceProviders" FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "serviceProviders"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
+    WHERE ${Prisma.join(sqlAnd, ' AND ')}
+    ORDER BY ${Prisma.raw(orderBy)}
+    LIMIT ${take}
+  `;
 
   // It would be preferrable to do a join when fetching the modelVersions
   // Not sure if this is possible wth prisma queries are there is no defined relationship
@@ -140,19 +144,12 @@ export const getGenerationResources = async ({
     },
   });
 
-  return results
-    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-    .map(({ model, ...x }) => ({
-      id: x.id,
-      name: x.name,
-      trainedWords: x.trainedWords,
-      modelId: model.id,
-      modelName: model.name,
-      modelType: model.type,
-      serviceProviders: allServiceProviders.filter(
-        (sp) => (x.modelVersionGenerationCoverage?.serviceProviders ?? []).indexOf(sp.name) !== -1
-      ),
-    }));
+  return results.map((resource) => ({
+    ...resource,
+    serviceProviders: allServiceProviders.filter(
+      (sp) => (resource?.serviceProviders ?? []).indexOf(sp.name) !== -1
+    ),
+  }));
 };
 
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
@@ -190,6 +187,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
             modelId: model.id,
             modelName: model.name,
             modelType: model.type,
+            baseModel: modelVersion.baseModel,
             ...network,
           };
         })
@@ -398,32 +396,76 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
   });
   if (!image) throw throwNotFoundError();
 
-  const resources = await dbRead.$queryRaw<Generation.Client.Resource[]>`
-      SELECT
+  const resources = await dbRead.$queryRaw<
+    Array<Generation.Client.Resource & { covered: boolean; hash?: string }>
+  >`
+    SELECT
       mv.id,
       mv.name,
       mv."trainedWords",
       m.id "modelId",
       m.name "modelName",
-      m.type "modelType"
+      m.type "modelType",
+      ir."hash",
+      EXISTS (SELECT 1 FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "covered"
     FROM "ImageResource" ir
-    LEFT JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
-    LEFT JOIN "Model" m on m.id = mv."modelId"
+    JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
+    JOIN "Model" m on m.id = mv."modelId"
     WHERE ir."imageId" = ${id}
   `;
 
-  const { 'Clip skip': clipSkip, ...meta } = imageGenerationSchema.parse(image.meta);
+  const {
+    'Clip skip': clipSkip,
+    hashes,
+    prompt,
+    negativePrompt,
+    sampler,
+    ...meta
+  } = imageMetaSchema.parse(image.meta);
   const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
   const additionalResources = resources.filter((x) => x.modelType !== ModelType.Checkpoint);
 
-  // consider getting the strength of loras from the prompt
+  if (hashes && prompt) {
+    for (const [key, hash] of Object.entries(hashes)) {
+      if (!key.startsWith('lora:')) continue;
+
+      // get the resource that matches the hash
+      const resource = additionalResources.find((x) => x.hash === hash);
+      if (!resource) continue;
+
+      // get everything that matches <key:{number}>
+      const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(prompt);
+      if (!matches) continue;
+
+      resource.strength = parseFloat(matches[1]);
+    }
+  }
 
   return {
-    ...meta,
+    hashes,
+    prompt,
+    negativePrompt,
     clipSkip,
+    sampler: sampler as Sampler,
+    ...meta,
     model,
     additionalResources,
     height: image.height,
     width: image.width,
   };
 };
+
+export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
+  try {
+    const resource = await dbRead.modelVersionGenerationCoverage.findFirst({
+      where: { modelVersionId: id, workers: { gt: 0 } },
+      select: { modelVersionId: true, serviceProviders: true },
+    });
+    if (!resource) return throwNotFoundError(`No resource with id ${id}`);
+
+    return resource;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+}

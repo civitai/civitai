@@ -9,16 +9,23 @@ import {
   SimpleGrid,
   Button,
   Badge,
+  CopyButton,
+  Tooltip,
+  ActionIcon,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { IconCheck, IconCopy } from '@tabler/icons-react';
+import { IconCheck, IconCopy, IconBrush } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { encodeMetadata } from '~/utils/image-metadata';
-import { ImageGenerationProcess } from '@prisma/client';
+import { ImageGenerationProcess, ModelType } from '@prisma/client';
+import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useGenerationStore } from '~/store/generation.store';
 
 type Props = {
   meta: ImageMetaProps;
   generationProcess?: ImageGenerationProcess;
+  imageId?: number;
 };
 type MetaDisplay = {
   label: string;
@@ -36,7 +43,10 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   'Clip skip': 'Clip skip',
 };
 
-export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
+export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Props) {
+  const flags = useFeatureFlags();
+  const toggleGenerationDrawer = useGenerationStore((state) => state.toggleDrawer);
+
   const { copied, copy } = useClipboard();
   const metas = useMemo(() => {
     const long: MetaDisplay[] = [];
@@ -58,6 +68,17 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
     const hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
     return { long, medium, short, hasControlNet };
   }, [meta]);
+
+  const { data = [] } = trpc.image.getResources.useQuery(
+    { id: imageId as number },
+    { enabled: flags.imageGeneration && !!imageId }
+  );
+  const resourceId = data.find((x) => x.modelType === ModelType.Checkpoint)?.modelVersionId;
+
+  const { data: resourceCoverage } = trpc.generation.checkResourcesCoverage.useQuery(
+    { id: resourceId as number },
+    { enabled: flags.imageGeneration && !!resourceId }
+  );
 
   return (
     <Stack spacing="xs">
@@ -90,6 +111,7 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
             <Text size="sm" weight={500}>
               {label}
             </Text>
+
             {label === 'Prompt' && (
               <>
                 <Badge size="xs" radius="sm">
@@ -97,6 +119,23 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
                   {metas.hasControlNet && ' + ControlNet'}
                 </Badge>
               </>
+            )}
+            {(label === 'Prompt' || label === 'Negative prompt') && (
+              <CopyButton value={value}>
+                {({ copied, copy }) => (
+                  <Tooltip label={`Copy ${label.toLowerCase()}`} color="dark" withArrow>
+                    <ActionIcon
+                      variant="transparent"
+                      size="xs"
+                      color={copied ? 'green' : 'blue'}
+                      onClick={copy}
+                      ml="auto"
+                    >
+                      {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
             )}
           </Group>
           <Code
@@ -142,17 +181,47 @@ export function ImageMeta({ meta, generationProcess = 'txt2img' }: Props) {
           </Group>
         ))}
       </SimpleGrid>
-      <Button
-        size="xs"
-        color={copied ? 'teal' : 'blue'}
-        variant="light"
-        leftIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-        onClick={() => {
-          copy(encodeMetadata(meta));
-        }}
-      >
-        {copied ? 'Copied' : 'Copy Generation Data'}
-      </Button>
+      {resourceCoverage ? (
+        <Button.Group>
+          <Button
+            size="xs"
+            variant="light"
+            leftIcon={<IconBrush size={16} />}
+            onClick={() => toggleGenerationDrawer({ imageId })}
+            sx={{ flex: 1 }}
+          >
+            Start Creating
+          </Button>
+          <Tooltip
+            label={copied ? 'Copied' : 'Copy generation data'}
+            color="dark"
+            withArrow
+            withinPortal
+          >
+            <Button
+              size="xs"
+              variant="light"
+              onClick={() => {
+                copy(encodeMetadata(meta));
+              }}
+            >
+              {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+            </Button>
+          </Tooltip>
+        </Button.Group>
+      ) : (
+        <Button
+          size="xs"
+          color={copied ? 'teal' : 'blue'}
+          variant="light"
+          leftIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+          onClick={() => {
+            copy(encodeMetadata(meta));
+          }}
+        >
+          {copied ? 'Copied' : 'Copy Generation Data'}
+        </Button>
+      )}
     </Stack>
   );
 }
@@ -161,6 +230,7 @@ export function ImageMetaPopover({
   meta,
   generationProcess,
   children,
+  imageId,
   ...popoverProps
 }: Props & { children: React.ReactElement } & PopoverProps) {
   return (
@@ -173,7 +243,7 @@ export function ImageMetaPopover({
       <Popover width={350} shadow="md" position="top-end" withArrow withinPortal {...popoverProps}>
         <Popover.Target>{children}</Popover.Target>
         <Popover.Dropdown>
-          <ImageMeta meta={meta} generationProcess={generationProcess} />
+          <ImageMeta meta={meta} generationProcess={generationProcess} imageId={imageId} />
         </Popover.Dropdown>
       </Popover>
     </div>

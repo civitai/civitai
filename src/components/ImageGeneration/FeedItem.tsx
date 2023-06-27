@@ -9,6 +9,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { ModelType } from '@prisma/client';
 import {
   IconArrowsShuffle,
   IconBolt,
@@ -17,8 +18,12 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { useImageGenerationRequest } from '~/components/ImageGeneration/hooks/useImageGenerationState';
+import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Generation } from '~/server/services/generation/generation.types';
+import { useGenerationStore } from '~/store/generation.store';
 
 const tooltipProps = {
   withinPortal: true,
@@ -31,14 +36,20 @@ const tooltipProps = {
  * - add action to generate image with the same prompt (play icon)
  * - correctly type the image object
  */
-export function FeedItem({
-  image,
-  request,
-  selected,
-  onCheckboxClick,
-  onCreateVariantClick,
-}: Props) {
+export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClick }: Props) {
   const [opened, { toggle, close }] = useDisclosure();
+  const request = useImageGenerationRequest(image.requestId);
+  const setView = useGenerationStore((state) => state.setActiveTab);
+
+  const handleGenerate = () => {
+    imageGenerationFormStorage.set({
+      model: request.resources.find((x) => x.modelType === ModelType.Checkpoint),
+      additionalResources: request.resources.filter((x) => x.modelType !== ModelType.Checkpoint),
+      ...request.params,
+      aspectRatio: `${request.params.width}x${request.params.height}`,
+    });
+    setView('generate');
+  };
 
   return (
     <Paper
@@ -61,14 +72,14 @@ export function FeedItem({
       })}
     >
       <AspectRatio ratio={1}>
-        <EdgeImage src={image.url} width={request.params.width} />
+        <GeneratedImage width={request.params.width} height={request.params.height} image={image} />
       </AspectRatio>
       <Checkbox
         sx={(theme) => ({
           position: 'absolute',
           top: theme.spacing.xs,
           left: theme.spacing.xs,
-          zIndex: 1,
+          zIndex: 3,
         })}
         checked={selected}
         onChange={(event) => {
@@ -86,6 +97,7 @@ export function FeedItem({
             position: 'absolute',
             width: '100%',
             overflow: 'hidden',
+            zIndex: 3,
           })}
         >
           <Card p={0} withBorder>
@@ -96,7 +108,7 @@ export function FeedItem({
               {opened && (
                 <Group spacing={0} noWrap>
                   <Tooltip {...tooltipProps} label="Generate">
-                    <ActionIcon size="md" p={4} variant="light" radius={0}>
+                    <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
                       <IconPlayerPlayFilled />
                     </ActionIcon>
                   </Tooltip>
@@ -149,7 +161,6 @@ export function FeedItem({
 
 type Props = {
   image: Generation.Image;
-  request: Generation.Client.ImageRequest;
   selected: boolean;
   onCheckboxClick: (data: { image: any; checked: boolean }) => void;
   onCreateVariantClick: (image: any) => void;

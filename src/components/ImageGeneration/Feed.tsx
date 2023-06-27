@@ -32,6 +32,7 @@ import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariants
 
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
 import { useGetGenerationImages } from '~/components/ImageGeneration/hooks/useGetGenerationImages';
+import { useImageGenerationFeed } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type State = {
@@ -60,17 +61,10 @@ export function Feed() {
     variantModalOpened: false,
   });
 
-  const {
-    images,
-    requestData,
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isRefetching,
-    isFetching,
-    isError,
-  } = useGetGenerationImages({ take: 20 });
+  const { feed, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
+    useImageGenerationFeed();
 
+  // infinite paging
   useEffect(() => {
     if (inView && !isFetching && !isError) fetchNextPage?.();
   }, [fetchNextPage, inView, isFetching, isError]);
@@ -78,11 +72,11 @@ export function Feed() {
   const { classes } = useStyles();
 
   return (
-    <Stack sx={{ position: 'relative' }}>
-      <div style={{ position: 'relative' }}>
+    <Stack sx={{ position: 'relative', height: '100%' }} spacing={0}>
+      <div className={classes.searchPanel}>
         <HoverCard withArrow>
           <HoverCard.Target>
-            <Overlay blur={2} opacity={0.3} color="#000" />
+            <Overlay blur={1} opacity={0.3} color="#000" />
           </HoverCard.Target>
           <HoverCard.Dropdown maw={300}>
             <Text weight={500}>Coming soon!</Text>
@@ -92,51 +86,57 @@ export function Feed() {
             </Text>
           </HoverCard.Dropdown>
         </HoverCard>
-        <Group spacing="xs">
-          <Autocomplete
-            placeholder="Search by prompt"
-            // TODO.generation: add search by prompt
-            data={[]}
-            icon={<IconSearch size={14} />}
-            sx={{ flex: 1 }}
-          />
-          <Group spacing={4}>
-            <Tooltip label="Sort items">
-              <ActionIcon size="xs">
-                <IconSortDescending2 />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Toggle filter toolbar">
-              <ActionIcon size="xs">
-                <IconFilter />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label={state.layout === 'grid' ? 'List layout' : 'Grid layout'}>
-              <ActionIcon
-                size="xs"
-                onClick={() =>
-                  setState((current) => ({
-                    ...current,
-                    layout: current.layout === 'grid' ? 'list' : 'grid',
-                  }))
-                }
-              >
-                {state.layout === 'grid' ? <IconLayoutList /> : <IconLayoutGrid />}
-              </ActionIcon>
-            </Tooltip>
+        <Card withBorder shadow="xl" p={0}>
+          <Group spacing="xs">
+            <Autocomplete
+              placeholder="Search by prompt"
+              // TODO.generation: add search by prompt
+              data={[]}
+              icon={<IconSearch size={14} />}
+              sx={{ flex: 1 }}
+              styles={{
+                input: {
+                  border: 0,
+                },
+              }}
+            />
+            <Group spacing={4} pr="md">
+              <Tooltip label="Sort items">
+                <ActionIcon size="xs">
+                  <IconSortDescending2 />
+                </ActionIcon>
+              </Tooltip>
+              <Tooltip label="Toggle filter toolbar">
+                <ActionIcon size="xs">
+                  <IconFilter />
+                </ActionIcon>
+              </Tooltip>
+              <Tooltip label={state.layout === 'grid' ? 'List layout' : 'Grid layout'}>
+                <ActionIcon
+                  size="xs"
+                  onClick={() =>
+                    setState((current) => ({
+                      ...current,
+                      layout: current.layout === 'grid' ? 'list' : 'grid',
+                    }))
+                  }
+                >
+                  {state.layout === 'grid' ? <IconLayoutList /> : <IconLayoutGrid />}
+                </ActionIcon>
+              </Tooltip>
+            </Group>
           </Group>
-        </Group>
+        </Card>
       </div>
-      <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 139px)' : 'calc(100vh - 139px)'}>
+      <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
         <div className={classes.grid}>
-          {images.map((image) => {
+          {feed.map((image) => {
             const selected = state.selectedItems.includes(image.id);
 
             return (
               <FeedItem
                 key={image.id}
                 image={image}
-                request={requestData[image.requestId]}
                 selected={selected}
                 onCheckboxClick={({ image, checked }) => {
                   if (checked) {
@@ -167,7 +167,7 @@ export function Feed() {
             </Center>
           )}
         </div>
-      </ScrollArea.Autosize>
+      </ScrollArea>
       <FloatingActions
         selectCount={state.selectedItems.length}
         onDeselectClick={() =>
@@ -257,9 +257,19 @@ const useStyles = createStyles((theme) => ({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
     gap: theme.spacing.md,
+    paddingTop: 4 + 36 + theme.spacing.xs,
+    paddingBottom: theme.spacing.md,
 
     [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
       gridTemplateColumns: '1fr 1fr',
     },
+  },
+  searchPanel: {
+    position: 'absolute',
+    top: 4,
+    zIndex: 10,
+    marginLeft: -4,
+    marginRight: -4,
+    width: 'calc(100% + 8px)',
   },
 }));

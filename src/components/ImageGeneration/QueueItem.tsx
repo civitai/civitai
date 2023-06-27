@@ -13,6 +13,9 @@ import {
   ThemeIcon,
   UnstyledButton,
   createStyles,
+  MantineColor,
+  Tooltip,
+  Divider,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
@@ -26,9 +29,17 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDateMin } from '~/utils/date-helpers';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+
+const statusColors: Record<GenerationRequestStatus, MantineColor> = {
+  [GenerationRequestStatus.Pending]: 'gray',
+  [GenerationRequestStatus.Cancelled]: 'gray',
+  [GenerationRequestStatus.Processing]: 'yellow',
+  [GenerationRequestStatus.Succeeded]: 'green',
+  [GenerationRequestStatus.Error]: 'red',
+};
 
 export function QueueItem({ id, onBoostClick }: Props) {
   const { classes } = useStyles();
@@ -51,37 +62,39 @@ export function QueueItem({ id, onBoostClick }: Props) {
     value: <ContentClamp maxHeight={44}>{value as string}</ContentClamp>,
   }));
 
+  const status = item.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
-    item.status === GenerationRequestStatus.Pending ||
-    item.status === GenerationRequestStatus.Processing;
-  const succeeded = item.status === GenerationRequestStatus.Succeeded;
+    status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
+  const succeeded = status === GenerationRequestStatus.Succeeded;
+  const failed = status === GenerationRequestStatus.Error;
 
   return (
-    <Card withBorder>
-      <Card.Section py="xs" inheritPadding withBorder>
+    <Card withBorder px="xs">
+      <Card.Section py={4} inheritPadding withBorder>
         <Group position="apart">
           <Group spacing={8}>
             {!!item.images?.length && (
-              <ThemeIcon
-                variant={succeeded ? 'light' : 'filled'}
-                w="auto"
-                h="auto"
-                size="sm"
-                color={succeeded ? 'green' : 'gray'}
-                px={8}
-                py={2}
-              >
-                <Group spacing={8}>
-                  <IconPhoto size={16} />
-                  <Text size="sm" inline>
-                    {item.images.length}
-                  </Text>
-                </Group>
-              </ThemeIcon>
+              <Tooltip label={status} withArrow color="dark">
+                <ThemeIcon
+                  variant={pendingProcessing ? 'filled' : 'light'}
+                  w="auto"
+                  h="auto"
+                  size="sm"
+                  color={statusColors[status]}
+                  px={4}
+                  py={2}
+                  sx={{ cursor: 'default' }}
+                >
+                  <Group spacing={4}>
+                    <IconPhoto size={16} />
+                    <Text size="sm" inline weight={500}>
+                      {item.images.length}
+                    </Text>
+                  </Group>
+                </ThemeIcon>
+              </Tooltip>
             )}
-            <Text size="sm">{formatDate(item.createdAt, 'MMM DD, YYYY hh:mm A')}</Text>
-            {(item.status === GenerationRequestStatus.Pending ||
-              item.status === GenerationRequestStatus.Processing) && (
+            {pendingProcessing && (
               <Button.Group>
                 <Button
                   size="xs"
@@ -113,6 +126,9 @@ export function QueueItem({ id, onBoostClick }: Props) {
                 </HoverCard>
               </Button.Group>
             )}
+            <Text size="xs" color="dimmed">
+              {formatDateMin(item.createdAt)}
+            </Text>
           </Group>
           <ActionIcon
             color="red"
@@ -120,13 +136,13 @@ export function QueueItem({ id, onBoostClick }: Props) {
             onClick={() => deleteMutation.mutate({ id })}
             disabled={deleteMutation.isLoading}
           >
-            <IconX />
+            <IconX size={20} />
           </ActionIcon>
         </Group>
       </Card.Section>
-      <Stack py="md" spacing={8}>
-        <ContentClamp maxHeight={44}>
-          <Text>{prompt}</Text>
+      <Stack py="xs" spacing={8}>
+        <ContentClamp maxHeight={36} labelSize="xs">
+          <Text lh={1.3}>{prompt}</Text>
         </ContentClamp>
         <Collection
           items={item.resources}
@@ -138,7 +154,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
           )}
           grouped
         />
-        {!!item.images?.length && (
+        {!failed && !!item.images?.length && (
           <div className={classes.imageGrid}>
             {item.images.map((image) => (
               <GeneratedImage
@@ -151,12 +167,42 @@ export function QueueItem({ id, onBoostClick }: Props) {
           </div>
         )}
       </Stack>
-      <Card.Section withBorder>
-        <Accordion variant="filled">
+      <Card.Section
+        withBorder
+        sx={(theme) => ({
+          marginLeft: -theme.spacing.xs,
+          marginRight: -theme.spacing.xs,
+        })}
+      >
+        <Accordion
+          variant="filled"
+          styles={(theme) => ({
+            content: {
+              padding: 0,
+            },
+            item: {
+              overflow: 'hidden',
+              background: 'transparent',
+            },
+            control: {
+              padding: 6,
+              paddingLeft: theme.spacing.xs + 6,
+              paddingRight: theme.spacing.xs + 6,
+            },
+          })}
+        >
           <Accordion.Item value="details">
-            <Accordion.Control>Additional Details</Accordion.Control>
+            <Accordion.Control>
+              <Text size="sm" weight={500}>
+                Additional Details
+              </Text>
+            </Accordion.Control>
             <Accordion.Panel>
-              <DescriptionTable items={detailItems} labelWidth={150} />
+              <DescriptionTable
+                items={detailItems}
+                labelWidth={150}
+                paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
+              />
             </Accordion.Panel>
           </Accordion.Item>
         </Accordion>

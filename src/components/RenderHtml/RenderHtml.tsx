@@ -81,6 +81,7 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
   html = useMemo(
     () =>
       sanitizeHtml(html, {
+        parseStyleAttributes: false,
         transformTags: {
           span: function (tagName, attribs) {
             const dataType = attribs['data-type'];

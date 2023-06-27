@@ -296,6 +296,7 @@ function ModerationControls({
       {
         ids: selected,
         delete: true,
+        reviewType: view,
       },
       {
         onSuccess() {
@@ -334,6 +335,7 @@ function ModerationControls({
     return moderateImagesMutation.mutate({
       ids: selected,
       needsReview: null,
+      reviewType: view,
     });
   };
 

@@ -1,11 +1,13 @@
 import { getByIdSchema } from './../schema/base.schema';
 import {
+  checkResourcesCoverageSchema,
   createGenerationRequestSchema,
   getGenerationImagesSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
 import {
+  checkResourcesCoverage,
   createGenerationRequest,
   deleteGenerationRequest,
   getGenerationImages,
@@ -43,4 +45,7 @@ export const generationRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))
     .query(({ input, ctx }) => getImageGenerationData({ ...input })),
+  checkResourcesCoverage: publicProcedure
+    .input(checkResourcesCoverageSchema)
+    .query(({ input }) => checkResourcesCoverage(input)),
 });

@@ -1,12 +1,18 @@
 import { Drawer, DrawerProps, Tabs, createStyles } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconListDetails, IconPlayerPlayFilled, IconSlideshow } from '@tabler/icons-react';
+import {
+  IconBrush,
+  IconListDetails,
+  IconPlayerPlayFilled,
+  IconSlideshow,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Feed } from './Feed';
 import { Generate } from './Generate';
 import { Queue } from './Queue';
+import { useGenerationStore } from '~/store/generation.store';
 
 type TabKey = (typeof tabKeys)[number];
 const tabKeys = ['queue', 'generate', 'feed'] as const;
@@ -37,23 +43,32 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function GenerationDrawer({ ...props }: Props) {
+export function GenerationDrawer() {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { classes } = useStyles();
   const router = useRouter();
   const result = schema.safeParse(router.query);
+  const opened = useGenerationStore((state) => state.drawerOpened);
+  const toggleDrawer = useGenerationStore((state) => state.toggleDrawer);
+  const view = useGenerationStore((state) => state.activeTab);
+  const setView = useGenerationStore((state) => state.setActiveTab);
 
-  const [view, setView] = useLocalStorage({
-    key: 'generate-drawer-view',
-    defaultValue: (result.success ? result.data.view : undefined) ?? 'generate',
-  });
+  // const [view, setView] = useLocalStorage({
+  //   key: 'generate-drawer-view',
+  //   defaultValue: (result.success ? result.data.view : undefined) ?? 'generate',
+  // });
+
+  const modelVersionId = useGenerationStore((state) => state.modelVersionId);
+  const imageId = useGenerationStore((state) => state.imageId);
 
   return (
     <Drawer
-      {...props}
+      opened={opened}
+      onClose={toggleDrawer}
       size={mobile ? '90%' : 600}
       position={mobile ? 'bottom' : 'right'}
       withCloseButton={false}
+      zIndex={301}
     >
       <Tabs
         value={view}
@@ -63,18 +78,22 @@ export function GenerationDrawer({ ...props }: Props) {
         keepMounted={false}
         inverted
       >
-        <Tabs.Panel value="generate">
-          <Generate onSuccess={() => setView('queue')} />
+        <Tabs.Panel value="generate" pt={0}>
+          <Generate
+            onSuccess={() => setView('queue')}
+            modelVersionId={modelVersionId}
+            imageId={imageId}
+          />
         </Tabs.Panel>
-        <Tabs.Panel value="queue">
+        <Tabs.Panel value="queue" py={0}>
           <Queue />
         </Tabs.Panel>
-        <Tabs.Panel value="feed">
+        <Tabs.Panel value="feed" py={0}>
           <Feed />
         </Tabs.Panel>
 
         <Tabs.List grow>
-          <Tabs.Tab value="generate" icon={<IconPlayerPlayFilled size={16} />}>
+          <Tabs.Tab value="generate" icon={<IconBrush size={16} />} data-autofocus>
             Generate
           </Tabs.Tab>
           <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>

@@ -16,13 +16,17 @@ import {
   CloseButton,
   Divider,
 } from '@mantine/core';
-import { useDebouncedValue, usePrevious } from '@mantine/hooks';
+import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
 import { IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { useFormContext } from 'react-hook-form';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { withController } from '~/libs/form/hoc/withController';
+import { BaseModel } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
+import { removeEmpty } from '~/utils/object-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ResourceSelect({
@@ -33,14 +37,14 @@ export function ResourceSelect({
   label,
   ...inputWrapperProps
 }: {
-  value?: Generation.Client.Resource;
-  onChange?: (value?: Generation.Client.Resource) => void;
+  value?: Generation.Client.Resource | null;
+  onChange?: (value: Generation.Client.Resource | null) => void;
   onRemove?: () => void;
   types?: ModelType[];
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
   const [opened, setOpened] = useState(false);
   const [strength, setStrength] = useState(value?.strength ?? 1);
-  const [resource, setResource] = useState(value);
+  // const [resource, setResource] = useState(value);
 
   useEffect(() => {
     if (!value) return;
@@ -53,61 +57,87 @@ export function ResourceSelect({
   };
 
   const handleRemove = () => {
-    handleSetResource?.(undefined);
+    handleSetResource?.(null);
     onRemove?.();
   };
 
-  const handleSetResource = (resource?: Generation.Client.Resource) => {
-    setResource(resource);
+  const handleSetResource = (resource: Generation.Client.Resource | null) => {
+    // setResource(resource);
     onChange?.(resource);
   };
 
+  // const { formState } = useFormContext();
+  // const { isSubmitted, isDirty } = formState;
+  // useDidUpdate(() => {
+  //   if (!isSubmitted && !isDirty) {
+  //     // clear value when form is reset
+  //     setResource(value);
+  //   }
+  // }, [isDirty]); //eslint-disable-line
+
   // TODO.generation - support unavailable resources as default values. User should be able to see that a resource is unavailable and remove it from 'additional resources'
+
+  const hasTrainedWords = !!value?.trainedWords?.length;
+  const hasStrength = value?.modelType === ModelType.LORA;
+  const hasAdditionalContent = hasTrainedWords || hasStrength;
 
   return (
     <>
-      <Input.Wrapper label={resource?.modelType ?? label} {...inputWrapperProps}>
-        {!resource ? (
+      <Input.Wrapper
+        label={label ?? getDisplayName(value?.modelType ?? 'Resource')}
+        {...inputWrapperProps}
+      >
+        {!value ? (
           <div>
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
               Add {label}
             </Button>
           </div>
         ) : (
-          <Card p="xs">
-            <Stack spacing="xs">
-              {/* Header */}
+          <Card p="xs" withBorder>
+            <Card.Section withBorder={hasAdditionalContent} p="xs" py={6}>
               <Group spacing="xs" position="apart">
-                <Text lineClamp={1}>
-                  {resource.modelName} - {resource.name}
+                <Text lineClamp={1} size="sm" weight={500}>
+                  {value.modelName} - {value.name}
                 </Text>
-                <ActionIcon size="xs" variant="subtle" color="red" onClick={handleRemove}>
-                  <IconX />
+                <ActionIcon size="sm" variant="subtle" color="red" onClick={handleRemove}>
+                  <IconX size={20} />
                 </ActionIcon>
               </Group>
-              {/* LORA */}
-              {resource.modelType === ModelType.LORA && (
-                <Group spacing="xs">
-                  <Slider
-                    style={{ flex: 1 }}
-                    value={strength}
-                    onChange={handleStrengthChange}
-                    step={0.05}
-                    min={-1}
-                    max={2}
+            </Card.Section>
+            {hasAdditionalContent && (
+              <Stack spacing={6} pt="xs">
+                {/* LORA */}
+                {hasStrength && (
+                  <Group spacing="xs" align="center">
+                    <Text size="xs" weight={500}>
+                      Strength
+                    </Text>
+                    <Slider
+                      style={{ flex: 1 }}
+                      value={strength}
+                      onChange={handleStrengthChange}
+                      marks={[{ value: 0 }, { value: 1 }]}
+                      step={0.05}
+                      min={-1}
+                      max={2}
+                    />
+                    <Text size="xs" w={28} ta="right">{`${strength.toFixed(2)}`}</Text>
+                  </Group>
+                )}
+                {hasTrainedWords && (
+                  <TrainedWords
+                    trainedWords={value.trainedWords}
+                    type={value.modelType}
+                    limit={4}
                   />
-                  <Text style={{ width: 30 }} align="right">{`${strength}`}</Text>
-                </Group>
-              )}
-              {/* TEXTUAL INVERSION */}
-              {resource.modelType === ModelType.TextualInversion && (
-                <TrainedWords trainedWords={resource.trainedWords} type={resource.modelType} />
-              )}
-            </Stack>
+                )}
+              </Stack>
+            )}
           </Card>
         )}
       </Input.Wrapper>
-      {!resource && (
+      {!value && (
         <ResourceSelectModal
           opened={opened}
           onClose={() => setOpened(false)}
@@ -130,6 +160,7 @@ export function ResourceSelectModal({
   onSelect,
   types,
   notIds = [],
+  baseModel,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -137,15 +168,18 @@ export function ResourceSelectModal({
   onSelect: (value: Generation.Client.Resource) => void;
   types?: ModelType[];
   notIds?: number[];
+  baseModel?: string;
 }) {
   const { classes } = useStyles();
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
-  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
-    { types, query: debounced },
-    { enabled: debounced.length >= 3 }
-  );
+  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery({
+    types,
+    query: debounced,
+    ...removeEmpty({ baseModel }),
+    supported: true,
+  });
 
   const handleSelect = (value: Generation.Client.Resource) => {
     onSelect(value);
@@ -153,7 +187,14 @@ export function ResourceSelectModal({
   };
 
   return (
-    <Modal opened={opened} withCloseButton={false} onClose={onClose} size="sm" padding={0}>
+    <Modal
+      opened={opened}
+      withCloseButton={false}
+      onClose={onClose}
+      size="sm"
+      padding={0}
+      zIndex={400}
+    >
       {opened && (
         <Stack spacing={4}>
           <Stack p="xs">
@@ -181,12 +222,14 @@ export function ResourceSelectModal({
                   p="xs"
                 >
                   <Group position="apart" noWrap>
-                    <Text weight={700} lineClamp={1}>
+                    <Text weight={700} lineClamp={1} size="sm">
                       {resource.modelName}
                     </Text>
+                  </Group>
+                  <Group position="apart">
+                    <Text size="xs">{resource.name}</Text>
                     <Badge>{resource.modelType}</Badge>
                   </Group>
-                  <Text size="sm">{resource.name}</Text>
                 </Stack>
               ))}
           </Stack>

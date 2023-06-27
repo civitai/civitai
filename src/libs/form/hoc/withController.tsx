@@ -39,6 +39,7 @@ export function withController<
 
           const handleChange = (...values: any) => { //eslint-disable-line
             props.onChange?.(...values);
+            // @ts-ignore
             field.onChange(...values);
           };
 

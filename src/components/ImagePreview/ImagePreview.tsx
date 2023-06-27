@@ -61,20 +61,21 @@ export function ImagePreview({
   ...props
 }: ImagePreviewProps) {
   const { classes, cx } = useStyles({ radius });
-  const user = useCurrentUser();
-  const [needsReview, setNeedsReview] = useState(initialNeedsReview);
+  // const user = useCurrentUser();
+  // const [needsReview, setNeedsReview] = useState(initialNeedsReview);
 
   // TODO Briant: Perhaps move this to a moderation provider or store?
-  const moderateImagesMutation = trpc.image.moderate.useMutation();
-  const handleModerate = async (accept: boolean) => {
-    if (!user?.isModerator) return;
-    moderateImagesMutation.mutate({
-      ids: [id],
-      needsReview: accept ? null : undefined,
-      delete: !accept ? true : undefined,
-    });
-    setNeedsReview(null);
-  };
+  // const moderateImagesMutation = trpc.image.moderate.useMutation();
+  // const handleModerate = async (accept: boolean) => {
+  //   if (!user?.isModerator) return;
+  //   moderateImagesMutation.mutate({
+  //     ids: [id],
+  //     needsReview: accept ? null : undefined,
+  //     delete: !accept ? true : undefined,
+  //     reviewType: 'minor',
+  //   });
+  //   setNeedsReview(null);
+  // };
 
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
 
@@ -95,6 +96,7 @@ export function ImagePreview({
     <ImageMetaPopover
       meta={meta as ImageMetaProps}
       generationProcess={generationProcess ?? 'txt2img'}
+      imageId={id}
     >
       <ActionIcon variant="transparent" size="lg">
         <IconInfoCircle
