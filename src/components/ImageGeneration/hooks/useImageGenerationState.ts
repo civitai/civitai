@@ -41,8 +41,11 @@ export const useImageGenerationStore = create<ImageGenerationState>()(
 
               if (isNew) state.ids.unshift(request.id);
               else state.ids.push(request.id);
-            } else if (!isEqual(state.requests[request.id], request))
+            } else if (!isEqual(state.requests[request.id], request)) {
               state.requests[request.id] = request;
+              if (request.status === GenerationRequestStatus.Error)
+                state.feed = state.feed.filter((x) => x.requestId !== request.id);
+            }
           }
         });
       },
