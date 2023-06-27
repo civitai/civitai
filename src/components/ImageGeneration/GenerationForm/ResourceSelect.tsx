@@ -178,6 +178,7 @@ export function ResourceSelectModal({
     types,
     query: debounced,
     ...removeEmpty({ baseModel }),
+    supported: true,
   });
 
   const handleSelect = (value: Generation.Client.Resource) => {

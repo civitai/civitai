@@ -18,6 +18,7 @@ export const getGenerationResourcesSchema = z.object({
   notTypes: z.nativeEnum(ModelType).array().optional(),
   ids: z.number().array().optional(),
   baseModel: z.string().optional(),
+  supported: z.boolean().optional(),
 });
 
 export type GetGenerationRequestsInput = z.infer<typeof getGenerationRequestsSchema>;
