@@ -34,6 +34,7 @@ import { FeedItem } from '~/components/ImageGeneration/FeedItem';
 import { useGetGenerationImages } from '~/components/ImageGeneration/hooks/useGetGenerationImages';
 import { useImageGenerationFeed } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { constants } from '~/server/common/constants';
 
 type State = {
   layout: 'list' | 'grid';
@@ -190,11 +191,13 @@ export function Feed() {
   );
 }
 
-const tooltipProps = {
+const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
   color: 'dark',
+  zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
+
 function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps) {
   return (
     <Transition mounted={selectCount > 0} transition="slide-up">

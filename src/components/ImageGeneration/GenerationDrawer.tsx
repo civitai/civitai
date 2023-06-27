@@ -13,6 +13,7 @@ import { Feed } from './Feed';
 import { Generate } from './Generate';
 import { Queue } from './Queue';
 import { useGenerationStore } from '~/store/generation.store';
+import { constants } from '~/server/common/constants';
 
 type TabKey = (typeof tabKeys)[number];
 const tabKeys = ['queue', 'generate', 'feed'] as const;
@@ -68,7 +69,7 @@ export function GenerationDrawer() {
       size={mobile ? '90%' : 600}
       position={mobile ? 'bottom' : 'right'}
       withCloseButton={false}
-      zIndex={301}
+      zIndex={constants.imageGeneration.drawerZIndex}
     >
       <Tabs
         value={view}

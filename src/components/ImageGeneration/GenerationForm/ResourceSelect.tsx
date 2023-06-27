@@ -89,7 +89,13 @@ export function ResourceSelect({
       >
         {!value ? (
           <div>
-            <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
+            <Button
+              mb={inputWrapperProps.error ? 5 : undefined}
+              onClick={() => setOpened(true)}
+              variant="outline"
+              size="xs"
+              fullWidth
+            >
               Add {label}
             </Button>
           </div>
