@@ -9,26 +9,6 @@ type Props = NumberInputProps & {
   onClear?: () => void;
 };
 
-// export function NumberInputWrapper({ format = 'delimited', ...props }: Props) {
-//   const { parser, formatter } = useMemo(() => {
-//     switch (format) {
-//       case 'delimited':
-//         return {
-//           parser: (value?: string) => value && value.replace(/\$\s?|(,*)/g, ''),
-//           formatter: (value?: string) => numberWithCommas(value),
-//         };
-//       default: {
-//         return {
-//           parser: undefined,
-//           formatter: undefined,
-//         };
-//       }
-//     }
-//   }, [format]);
-
-//   return <NumberInput parser={parser} formatter={formatter} {...props} />;
-// }
-
 export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
   ({ format = 'delimited', clearable, rightSection, onClear, ...props }, ref) => {
     const inputRef = useRef<HTMLInputElement>(null);
