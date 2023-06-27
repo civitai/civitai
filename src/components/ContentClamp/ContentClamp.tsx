@@ -1,10 +1,10 @@
-import { Spoiler, SpoilerProps } from '@mantine/core';
+import { MantineSize, Spoiler, SpoilerProps, Text } from '@mantine/core';
 
-export function ContentClamp({ children, maxHeight = 200, ...props }: Props) {
+export function ContentClamp({ children, maxHeight = 200, labelSize = 'sm', ...props }: Props) {
   return (
     <Spoiler
-      showLabel="Show More"
-      hideLabel="Hide"
+      showLabel={<Text size={labelSize}>Show More</Text>}
+      hideLabel={<Text size={labelSize}>Show More</Text>}
       maxHeight={maxHeight}
       sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
       {...props}
@@ -16,4 +16,5 @@ export function ContentClamp({ children, maxHeight = 200, ...props }: Props) {
 
 type Props = Omit<SpoilerProps, 'showLabel' | 'hideLabel' | 'maxHeight'> & {
   maxHeight?: number;
+  labelSize?: MantineSize;
 };

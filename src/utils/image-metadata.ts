@@ -239,6 +239,14 @@ export const auditMetaData = (
   return { blockedFor, success: !blockedFor.length };
 };
 
+export const auditPrompt = (prompt: string) => {
+  for (const { word, regex } of blockedNSFWRegex) {
+    if (regex.test(prompt)) return { blockedFor: [word], success: false };
+  }
+
+  return { blockedFor: [], success: true };
+};
+
 export const detectNsfwImage = ({ porn, hentai, sexy }: ImageAnalysisInput) => {
   const isNSFW = porn + hentai + sexy * 0.5 > 0.6; // If the sum of sketchy probabilities is greater than 0.6, it's NSFW
   return isNSFW;

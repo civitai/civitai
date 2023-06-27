@@ -425,25 +425,26 @@ model ModelVersion {
   fromImport           Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId         Int?
   inaccurate           Boolean     @default(false)
-  baseModel            String?
+  baseModel            String
   meta                 Json        @default("{}")
   earlyAccessTimeFrame Int         @default(0)
 
-  reviews                 Review[]
-  images                  ImagesOnModels[]
-  metrics                 ModelVersionMetric[]
-  files                   ModelFile[]
-  runStrategies           RunStrategy[]
-  engagements             ModelVersionEngagement[]
-  rank                    ModelVersionRank?
-  downloads               DownloadHistory[]
-  imageConnections        ImageConnection[]
-  imageResources          ImageResource[]
-  posts                   Post[]
-  resourceReviews         ResourceReview[]
-  hashes                  ModelHash[]
-  metricsDaily            ModelMetricDaily[]
-  ModelVersionExploration ModelVersionExploration[]
+  reviews                        Review[]
+  images                         ImagesOnModels[]
+  metrics                        ModelVersionMetric[]
+  files                          ModelFile[]
+  runStrategies                  RunStrategy[]
+  engagements                    ModelVersionEngagement[]
+  rank                           ModelVersionRank?
+  downloads                      DownloadHistory[]
+  imageConnections               ImageConnection[]
+  imageResources                 ImageResource[]
+  posts                          Post[]
+  resourceReviews                ResourceReview[]
+  hashes                         ModelHash[]
+  metricsDaily                   ModelMetricDaily[]
+  ModelVersionExploration        ModelVersionExploration[]
+  modelVersionGenerationCoverage ModelVersionGenerationCoverage?
 
   @@index([modelId], type: Hash)
 }
@@ -1740,6 +1741,44 @@ model ModelVersionExploration {
   @@id([modelVersionId, name])
 }
 
+model ModelVersionGenerationCoverage {
+  modelVersionId   Int
+  workers          Int
+  serviceProviders String[]
+  modelVersion     ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+
+  @@id([modelVersionId])
+}
+
+enum GenerationSchedulers {
+  EulerA
+  Euler
+  LMS
+  Heun
+  DPM2
+  DPM2A
+  DPM2SA
+  DPM2M
+  DPMSDE
+  DPMFast
+  DPMAdaptive
+  LMSKarras
+  DPM2Karras
+  DPM2AKarras
+  DPM2SAKarras
+  DPM2MKarras
+  DPMSDEKarras
+  DDIM
+}
+
+model GenerationServiceProvider {
+  name       String
+  schedulers GenerationSchedulers[]
+
+  @@id([name])
+}
+
+/// @view
 model QuestionRank {
   questionId              Int      @id
   question                Question @relation(fields: [questionId], references: [id], onDelete: NoAction)

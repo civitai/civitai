@@ -48,6 +48,7 @@ import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/F
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { CannyIdentityProvider } from '~/components/Canny/CannyProvider';
 import Router from 'next/router';
+import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -152,6 +153,7 @@ function MyApp(props: CustomAppProps) {
                       <FreezeProvider>
                         <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                       </FreezeProvider>
+                      <GenerationDrawer />
                       <CannyIdentityProvider />
                       <RoutedContextProvider2 />
                     </NotificationsProvider>
