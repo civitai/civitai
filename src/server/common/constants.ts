@@ -133,6 +133,9 @@ export const constants = {
       '#fd7e14',
     ] as string[],
   },
+  imageGeneration: {
+    drawerZIndex: 301,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

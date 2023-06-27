@@ -7,6 +7,7 @@ import {
   Group,
   Transition,
   Tooltip,
+  TooltipProps,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
@@ -22,13 +23,15 @@ import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useImageGenerationRequest } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 import { useGenerationStore } from '~/store/generation.store';
 
-const tooltipProps = {
+const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
   color: 'dark',
+  zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
 
 /**
@@ -114,25 +117,21 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
                   </Tooltip>
 
                   <Tooltip {...tooltipProps} label="Create variant">
-                    <span>
-                      <ActionIcon
-                        size="md"
-                        p={4}
-                        variant="light"
-                        onClick={() => onCreateVariantClick(image)}
-                        radius={0}
-                        disabled
-                      >
-                        <IconArrowsShuffle />
-                      </ActionIcon>
-                    </span>
+                    <ActionIcon
+                      size="md"
+                      p={4}
+                      variant="light"
+                      onClick={() => onCreateVariantClick(image)}
+                      radius={0}
+                      disabled
+                    >
+                      <IconArrowsShuffle />
+                    </ActionIcon>
                   </Tooltip>
                   <Tooltip {...tooltipProps} label="Upscale">
-                    <span>
-                      <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
-                        <IconWindowMaximize />
-                      </ActionIcon>
-                    </span>
+                    <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
+                      <IconWindowMaximize />
+                    </ActionIcon>
                   </Tooltip>
                 </Group>
               )}
@@ -141,6 +140,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
 
           <ImageMetaPopover
             meta={request.params}
+            zIndex={constants.imageGeneration.drawerZIndex + 1}
             // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
           >
             <ActionIcon variant="transparent" size="md">

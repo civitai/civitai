@@ -38,7 +38,7 @@ import {
 import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
-import { Sampler, constants } from '~/server/common/constants';
+import { Sampler } from '~/server/common/constants';
 import { FieldArray } from '~/libs/form/components/FieldArray';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
@@ -67,7 +67,9 @@ const resourceSchema = z
 
 type Schema = Partial<z.infer<typeof schema>>;
 const schema = generationParamsSchema.extend({
-  model: resourceSchema,
+  model: resourceSchema
+    .nullable()
+    .refine((data) => !!data, { message: 'Please select a model to generate from' }),
   aspectRatio: z.string(),
   baseModel: z.string().optional(),
   additionalResources: resourceSchema.array().default([]),
@@ -158,15 +160,17 @@ export function Generate({
         mutate({
           height: Number(height),
           width: Number(width),
-          resources: [values.model, ...values.additionalResources].map((resource) => ({
-            modelVersionId: resource.id,
-            type: resource.modelType,
-            strength: resource.strength,
-            triggerWord:
-              resource.modelType === ModelType.TextualInversion
-                ? resource.trainedWords?.[0]
-                : undefined,
-          })),
+          resources: [...(values.model ? [values.model] : []), ...values.additionalResources].map(
+            (resource) => ({
+              modelVersionId: resource.id,
+              type: resource.modelType,
+              strength: resource.strength,
+              triggerWord:
+                resource.modelType === ModelType.TextualInversion
+                  ? resource.trainedWords?.[0]
+                  : undefined,
+            })
+          ),
           prompt: values.prompt,
           negativePrompt: values.negativePrompt,
           cfgScale: values.cfgScale,
@@ -237,7 +241,7 @@ export function Generate({
             >
               <MentionExample value={prompt} />
             </Input.Wrapper> */}
-            <InputTextArea name="prompt" autosize label="Prompt" required />
+            <InputTextArea name="prompt" autosize label="Prompt" withAsterisk />
             <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
             <Stack spacing={0}>
               <Input.Label>Aspect Ratio</Input.Label>
@@ -303,6 +307,7 @@ export function Generate({
                           label="Seed"
                           placeholder="Random"
                           min={-1}
+                          max={999999999999999}
                           format="default"
                           hideControls
                           clearable
