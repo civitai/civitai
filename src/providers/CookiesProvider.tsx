@@ -28,6 +28,7 @@ export const modelFilterSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
+  supportsGeneration: z.boolean().optional(),
 });
 
 export const questionsFilterSchema = z.object({
@@ -87,6 +88,7 @@ export function parseCookies(
       status: cookies?.['f_status'],
       checkpointType: cookies?.['f_ckptType'],
       earlyAccess: cookies?.['f_earlyAccess'],
+      supportsGeneration: cookies?.['f_supportsGeneration'],
     },
     questions: {
       sort: cookies?.['q_sort'],
@@ -121,6 +123,7 @@ const zodParse = z
           status: z.string(),
           checkpointType: z.string(),
           earlyAccess: z.string(),
+          supportsGeneration: z.string(),
         })
         .partial(),
       questions: z
@@ -154,6 +157,7 @@ const zodParse = z
           baseModels: !!models.baseModels ? JSON.parse(decodeURIComponent(models.baseModels)) : [],
           status: !!models.status ? JSON.parse(decodeURIComponent(models.status)) : [],
           earlyAccess: models.earlyAccess === 'true',
+          supportsGeneration: models.supportsGeneration === 'true',
         },
         questions,
         gallery: {

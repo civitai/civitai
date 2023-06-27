@@ -41,6 +41,7 @@ const modelFilterSchema = z.object({
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
   view: viewModeSchema.default('feed'),
+  supportsGeneration: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;

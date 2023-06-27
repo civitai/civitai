@@ -5,6 +5,7 @@ import {
   ChipProps,
   createStyles,
   Divider,
+  Group,
   Indicator,
   Popover,
   SegmentedControl,
@@ -14,6 +15,7 @@ import { CheckpointType, ModelStatus, ModelType } from '@prisma/client';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons-react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
@@ -25,6 +27,7 @@ const availableStatus = Object.values(ModelStatus).filter((status) =>
 export function ModelFiltersDropdown() {
   const user = useCurrentUser();
   const { classes } = useStyles();
+  const flags = useFeatureFlags();
 
   const filters = useFiltersContext((state) => state.models);
   const setFilters = useSetFilters('models');
@@ -37,6 +40,7 @@ export function ModelFiltersDropdown() {
       status: undefined,
       checkpointType: undefined,
       earlyAccess: false,
+      supportsGeneration: false,
     });
 
   const chipProps: Partial<ChipProps> = {
@@ -50,7 +54,8 @@ export function ModelFiltersDropdown() {
     (filters.baseModels?.length ?? 0) +
     (filters.status?.length ?? 0) +
     (showCheckpointType && filters.checkpointType ? 1 : 0) +
-    (filters.earlyAccess ? 1 : 0);
+    (filters.earlyAccess ? 1 : 0) +
+    (filters.supportsGeneration ? 1 : 0);
 
   return (
     <IsClient>
@@ -90,14 +95,26 @@ export function ModelFiltersDropdown() {
                 ))}
               </Chip.Group>
             )}
-            <Chip
-              checked={filters.earlyAccess}
-              onChange={(checked) => setFilters({ earlyAccess: checked })}
-              mt={user?.isModerator ? 4 : undefined}
-              {...chipProps}
-            >
-              Early Access
-            </Chip>
+            <Group spacing={4}>
+              <Chip
+                checked={filters.earlyAccess}
+                onChange={(checked) => setFilters({ earlyAccess: checked })}
+                mt={user?.isModerator ? 4 : undefined}
+                {...chipProps}
+              >
+                Early Access
+              </Chip>
+              {flags.imageGeneration && (
+                <Chip
+                  checked={filters.supportsGeneration}
+                  onChange={(checked) => setFilters({ supportsGeneration: checked })}
+                  mt={user?.isModerator ? 4 : undefined}
+                  {...chipProps}
+                >
+                  Onsite Generation
+                </Chip>
+              )}
+            </Group>
             <Divider label="Model types" labelProps={{ weight: 'bold' }} />
             <Chip.Group
               spacing={4}

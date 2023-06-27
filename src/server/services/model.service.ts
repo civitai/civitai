@@ -120,6 +120,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     ids,
     needsReview,
     earlyAccess,
+    supportsGeneration,
   } = input;
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
@@ -219,6 +220,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (earlyAccess) {
     AND.push({ earlyAccessDeadline: { gte: new Date() } });
+  }
+
+  if (supportsGeneration) {
+    AND.push({
+      modelVersions: { some: { modelVersionGenerationCoverage: { workers: { gt: 0 } } } },
+    });
   }
 
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
