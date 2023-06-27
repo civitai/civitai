@@ -93,6 +93,7 @@ export const getGenerationResources = async ({
   ids, // used for getting initial values of resources
   baseModel,
   user,
+  supported,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published'`];
   if (ids) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
@@ -125,9 +126,14 @@ export const getGenerationResources = async ({
       m.name "modelName",
       m.type "modelType",
       mv."baseModel",
-      (SELECT mgc."serviceProviders" FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "serviceProviders"
+      ${Prisma.raw(supported ? `mgc."serviceProviders"` : `null`)} "serviceProviders"
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
+    ${Prisma.raw(
+      supported
+        ? `JOIN "ModelVersionGenerationCoverage" mgc ON mgc."modelVersionId" = mv.id AND mgc.workers > 0`
+        : ''
+    )}
     ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
     WHERE ${Prisma.join(sqlAnd, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}

@@ -222,13 +222,13 @@ export function ResourceSelectModal({
                   p="xs"
                 >
                   <Group position="apart" noWrap>
-                    <Text weight={700} lineClamp={1} size="sm">
+                    <Text weight={500} lineClamp={1} size="sm">
                       {resource.modelName}
                     </Text>
                   </Group>
                   <Group position="apart">
                     <Text size="xs">{resource.name}</Text>
-                    <Badge>{resource.modelType}</Badge>
+                    <Badge>{getDisplayName(resource.modelType)}</Badge>
                   </Group>
                 </Stack>
               ))}
