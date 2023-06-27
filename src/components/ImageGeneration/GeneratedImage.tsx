@@ -24,6 +24,7 @@ export function GeneratedImage({
     openContextModal({
       modal: 'generatedImageLightbox',
       size: width + 40,
+      zIndex: 400,
       innerProps: {
         width,
         image,
