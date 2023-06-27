@@ -142,6 +142,7 @@ export function Generate({
   const form = useForm({
     schema,
     defaultValues: { ...defaults, ...defaultValues } as any,
+    reValidateMode: 'onSubmit',
   });
 
   const handleResourceChange = (resource: Generation.Client.Resource) => {
