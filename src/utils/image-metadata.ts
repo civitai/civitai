@@ -215,7 +215,7 @@ const encoders = {
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const blockedBoth = '\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
+const blockedBoth = '\\%|\\~|\\\\$|\\.|-|\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
 const tokenRegex = (word: string) =>
   new RegExp(`(^|\\s|,|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'm');
 const blockedRegex = blocked.map((word) => ({
