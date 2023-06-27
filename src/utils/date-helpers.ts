@@ -4,6 +4,13 @@ export function formatDate(value: Date, format = 'MMM DD, YYYY') {
   return dayjs(value).format(format);
 }
 
+export function formatDateMin(value: Date) {
+  if (dayjs().isSame(value, 'day')) return dayjs(value).format('h:mma');
+  if (dayjs().isSame(value, 'month')) return dayjs(value).format('D h:mma');
+  if (dayjs().isSame(value, 'year')) return dayjs(value).format('MMM D h:mma');
+  return dayjs(value).format('MMM D, YYYY h:mma');
+}
+
 // Deprecated: Use DaysFromNow component instead
 export function daysFromNow(
   value: Date,

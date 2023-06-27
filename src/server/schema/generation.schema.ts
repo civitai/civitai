@@ -2,6 +2,7 @@ import { ModelType } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { auditPrompt } from '~/utils/image-metadata';
 
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -29,7 +30,14 @@ export const getGenerationRequestsSchema = z.object({
 
 export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;
 export const generationParamsSchema = z.object({
-  prompt: z.string(), // TODO.generation - check for blocked words in prompt
+  prompt: z.string().superRefine((val, ctx) => {
+    const { blockedFor, success } = auditPrompt(val);
+    if (!success)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Blocked for: ${blockedFor.join(', ')}`,
+      });
+  }),
   negativePrompt: z.string().optional(),
   cfgScale: z.number().min(1).max(30),
   sampler: z.enum(constants.samplers),

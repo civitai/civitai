@@ -167,7 +167,7 @@ export function Generate({
           >
             <MentionExample value={prompt} />
           </Input.Wrapper> */}
-          <InputTextArea name="prompt" autosize label="Prompt" />
+          <InputTextArea name="prompt" autosize label="Prompt" required />
           <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
           <Stack spacing={0}>
             <Input.Label>Aspect Ratio</Input.Label>

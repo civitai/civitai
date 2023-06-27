@@ -1,8 +1,11 @@
-import { AspectRatio, Loader, Center, Card } from '@mantine/core';
+import { AspectRatio, Loader, Center, Card, ThemeIcon } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
+import { IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Generation } from '~/server/services/generation/generation.types';
+
+type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
 
 export function GeneratedImage({
   width,
@@ -13,7 +16,8 @@ export function GeneratedImage({
   height: number;
   image?: Generation.Image;
 }) {
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<GeneratedImageStatus>('loading');
+  const [qs, setQs] = useState<string>('');
 
   const handleImageClick = () => {
     if (!image) return;
@@ -27,20 +31,27 @@ export function GeneratedImage({
     });
   };
 
+  const retry = () => setQs(`?${Date.now()}`);
+
   return (
     <AspectRatio ratio={width / height}>
       <Card p={0} sx={{ position: 'relative' }} withBorder>
-        {loading && (
+        {status !== 'loaded' && (
           <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}>
-            <Loader />
+            {status === 'loading' && <Loader />}
+            {status === 'error' && (
+              <ThemeIcon size="md" color="red" variant="light">
+                <IconX size={20} />
+              </ThemeIcon>
+            )}
           </Center>
         )}
-        {image && (
+        {status !== 'error' && image && (
           <EdgeImage
-            src={image.url}
+            src={image.url + qs}
             width={width}
-            onLoad={() => setLoading(false)}
-            onError={() => setLoading(false)}
+            onLoad={() => setStatus('loaded')}
+            onError={() => retry()}
             onClick={handleImageClick}
             style={{ cursor: 'pointer', zIndex: 2 }}
           />

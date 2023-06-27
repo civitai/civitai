@@ -13,6 +13,7 @@ import {
   ThemeIcon,
   UnstyledButton,
   createStyles,
+  MantineColor,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
@@ -26,9 +27,17 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDateMin } from '~/utils/date-helpers';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+
+const statusColors: Record<GenerationRequestStatus, MantineColor> = {
+  [GenerationRequestStatus.Pending]: 'gray',
+  [GenerationRequestStatus.Cancelled]: 'gray',
+  [GenerationRequestStatus.Processing]: 'yellow',
+  [GenerationRequestStatus.Succeeded]: 'green',
+  [GenerationRequestStatus.Error]: 'red',
+};
 
 export function QueueItem({ id, onBoostClick }: Props) {
   const { classes } = useStyles();
@@ -51,10 +60,11 @@ export function QueueItem({ id, onBoostClick }: Props) {
     value: <ContentClamp maxHeight={44}>{value as string}</ContentClamp>,
   }));
 
+  const status = item.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
-    item.status === GenerationRequestStatus.Pending ||
-    item.status === GenerationRequestStatus.Processing;
-  const succeeded = item.status === GenerationRequestStatus.Succeeded;
+    status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
+  const succeeded = status === GenerationRequestStatus.Succeeded;
+  const failed = status === GenerationRequestStatus.Error;
 
   return (
     <Card withBorder>
@@ -63,11 +73,11 @@ export function QueueItem({ id, onBoostClick }: Props) {
           <Group spacing={8}>
             {!!item.images?.length && (
               <ThemeIcon
-                variant={succeeded ? 'light' : 'filled'}
+                variant={pendingProcessing ? 'filled' : 'light'}
                 w="auto"
                 h="auto"
                 size="sm"
-                color={succeeded ? 'green' : 'gray'}
+                color={statusColors[status]}
                 px={8}
                 py={2}
               >
@@ -79,7 +89,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
                 </Group>
               </ThemeIcon>
             )}
-            <Text size="sm">{formatDate(item.createdAt, 'MMM DD, YYYY hh:mm A')}</Text>
+            <Text size="sm">{formatDateMin(item.createdAt)}</Text>
             {(item.status === GenerationRequestStatus.Pending ||
               item.status === GenerationRequestStatus.Processing) && (
               <Button.Group>
@@ -138,7 +148,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
           )}
           grouped
         />
-        {!!item.images?.length && (
+        {!failed && !!item.images?.length && (
           <div className={classes.imageGrid}>
             {item.images.map((image) => (
               <GeneratedImage
