@@ -16,10 +16,11 @@ import {
   CloseButton,
   Divider,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
+import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
 import { IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { useFormContext } from 'react-hook-form';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { withController } from '~/libs/form/hoc/withController';
 import { BaseModel } from '~/server/common/constants';
@@ -35,14 +36,13 @@ export function ResourceSelect({
   ...inputWrapperProps
 }: {
   value?: Generation.Client.Resource | null;
-  onChange?: (value?: Generation.Client.Resource) => void;
+  onChange?: (value: Generation.Client.Resource | null) => void;
   onRemove?: () => void;
   types?: ModelType[];
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
   const [opened, setOpened] = useState(false);
   const [strength, setStrength] = useState(value?.strength ?? 1);
-  const [resource, setResource] = useState(value);
-  console.log({ value });
+  // const [resource, setResource] = useState(value);
 
   useEffect(() => {
     if (!value) return;
@@ -55,21 +55,30 @@ export function ResourceSelect({
   };
 
   const handleRemove = () => {
-    handleSetResource?.(undefined);
+    handleSetResource?.(null);
     onRemove?.();
   };
 
-  const handleSetResource = (resource?: Generation.Client.Resource) => {
-    setResource(resource);
+  const handleSetResource = (resource: Generation.Client.Resource | null) => {
+    // setResource(resource);
     onChange?.(resource);
   };
+
+  // const { formState } = useFormContext();
+  // const { isSubmitted, isDirty } = formState;
+  // useDidUpdate(() => {
+  //   if (!isSubmitted && !isDirty) {
+  //     // clear value when form is reset
+  //     setResource(value);
+  //   }
+  // }, [isDirty]); //eslint-disable-line
 
   // TODO.generation - support unavailable resources as default values. User should be able to see that a resource is unavailable and remove it from 'additional resources'
 
   return (
     <>
-      <Input.Wrapper label={label ?? resource?.modelType} {...inputWrapperProps}>
-        {!resource ? (
+      <Input.Wrapper label={label ?? value?.modelType} {...inputWrapperProps}>
+        {!value ? (
           <div>
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
               Add {label}
@@ -81,14 +90,14 @@ export function ResourceSelect({
               {/* Header */}
               <Group spacing="xs" position="apart">
                 <Text lineClamp={1}>
-                  {resource.modelName} - {resource.name}
+                  {value.modelName} - {value.name}
                 </Text>
                 <ActionIcon size="xs" variant="subtle" color="red" onClick={handleRemove}>
                   <IconX />
                 </ActionIcon>
               </Group>
               {/* LORA */}
-              {resource.modelType === ModelType.LORA && (
+              {value.modelType === ModelType.LORA && (
                 <Group spacing="xs">
                   <Slider
                     style={{ flex: 1 }}
@@ -102,14 +111,14 @@ export function ResourceSelect({
                 </Group>
               )}
               {/* TEXTUAL INVERSION */}
-              {resource.trainedWords && (
-                <TrainedWords trainedWords={resource.trainedWords} type={resource.modelType} />
+              {value.trainedWords && (
+                <TrainedWords trainedWords={value.trainedWords} type={value.modelType} />
               )}
             </Stack>
           </Card>
         )}
       </Input.Wrapper>
-      {!resource && (
+      {!value && (
         <ResourceSelectModal
           opened={opened}
           onClose={() => setOpened(false)}

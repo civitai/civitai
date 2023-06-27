@@ -58,7 +58,7 @@ const schema = generationParamsSchema.extend({
 });
 
 // TODO.generation - add a reset button (not sure what will be reset yet)
-// TODO.generation
+// TODO.generation - show the base model, allow removal of base model, removing base model should remove all resources
 export function Generate({
   onSuccess,
   modelVersionId,
