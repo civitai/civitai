@@ -43,7 +43,7 @@ export const generationParamsSchema = z.object({
   cfgScale: z.number().min(1).max(30),
   sampler: z.enum(constants.samplers),
   steps: z.number().min(1).max(150),
-  seed: z.number().nullish(),
+  seed: z.number().min(-1).nullish(),
   clipSkip: z.number().default(1),
   quantity: z.number().max(10),
 });

@@ -50,6 +50,8 @@ export const useImageGenerationStore = create<ImageGenerationState>()(
         set((state) => {
           // remove request
           delete state.requests[id];
+          // update ids
+          state.ids = state.ids.filter((x) => x !== id);
           // ensure request isn't added again by `setRequests`
           state.deletedRequests.push(id);
           // remove request images from feed

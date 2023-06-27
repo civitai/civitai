@@ -56,8 +56,6 @@ export function QueueItem({ id, onBoostClick }: Props) {
     },
   });
 
-  if (!item) return null;
-
   const { prompt, ...details } = item.params;
   const detailItems = Object.entries(details).map(([key, value]) => ({
     label: titleCase(splitUppercase(key)),

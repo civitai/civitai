@@ -272,7 +272,7 @@ export function Generate({
                 </Accordion.Control>
                 <Accordion.Panel>
                   <Stack>
-                    <InputNumber name="steps" label="Quality (Steps)" />
+                    <InputNumber name="steps" label="Quality (Steps)" min={1} max={150} />
                     <InputNumber
                       name="cfgScale"
                       label="Creativity (CFG Scale)"
@@ -302,7 +302,7 @@ export function Generate({
                           name="seed"
                           label="Seed"
                           placeholder="Random"
-                          min={0}
+                          min={-1}
                           format="default"
                           hideControls
                           rightSection={

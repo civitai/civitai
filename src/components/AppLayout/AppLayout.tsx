@@ -54,7 +54,6 @@ export function AppLayout({ children, showNavbar }: Props) {
         {!isBanned ? (
           <>
             {children}
-            {/* TODO.generation: Move this out of AppLayout so drawer can be opened anywhere */}
             {flags.imageGeneration && (
               <>
                 <FloatingActionButton
