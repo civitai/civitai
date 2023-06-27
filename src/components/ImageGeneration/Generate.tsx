@@ -155,27 +155,28 @@ export function Generate({
         imageGenerationFormStorage.set(values);
         form.reset(values);
         const [width, height] = values.aspectRatio.split('x');
-        mutate({
-          height: Number(height),
-          width: Number(width),
-          resources: [values.model, ...values.additionalResources].map((resource) => ({
-            modelVersionId: resource.id,
-            type: resource.modelType,
-            strength: resource.strength,
-            triggerWord:
-              resource.modelType === ModelType.TextualInversion
-                ? resource.trainedWords?.[0]
-                : undefined,
-          })),
-          prompt: values.prompt,
-          negativePrompt: values.negativePrompt,
-          cfgScale: values.cfgScale,
-          sampler: values.sampler,
-          steps: values.steps,
-          seed: values.seed,
-          clipSkip: values.clipSkip,
-          quantity: values.quantity,
-        });
+        console.log({ values });
+        // mutate({
+        //   height: Number(height),
+        //   width: Number(width),
+        //   resources: [values.model, ...values.additionalResources].map((resource) => ({
+        //     modelVersionId: resource.id,
+        //     type: resource.modelType,
+        //     strength: resource.strength,
+        //     triggerWord:
+        //       resource.modelType === ModelType.TextualInversion
+        //         ? resource.trainedWords?.[0]
+        //         : undefined,
+        //   })),
+        //   prompt: values.prompt,
+        //   negativePrompt: values.negativePrompt,
+        //   cfgScale: values.cfgScale,
+        //   sampler: values.sampler,
+        //   steps: values.steps,
+        //   seed: values.seed,
+        //   clipSkip: values.clipSkip,
+        //   quantity: values.quantity,
+        // });
       }}
     >
       <Stack h="100%" spacing={0}>
@@ -305,18 +306,19 @@ export function Generate({
                           min={-1}
                           format="default"
                           hideControls
-                          rightSection={
-                            <ActionIcon
-                              color="gray"
-                              radius="xl"
-                              size="xs"
-                              variant="filled"
-                              mr={3}
-                              onClick={() => form.setValue('seed', -1)}
-                            >
-                              <IconX size={12} />
-                            </ActionIcon>
-                          }
+                          clearable
+                          // rightSection={
+                          //   <ActionIcon
+                          //     color="gray"
+                          //     radius="xl"
+                          //     size="xs"
+                          //     variant="filled"
+                          //     mr={3}
+                          //     onClick={() => form.setValue('seed', undefined)}
+                          //   >
+                          //     <IconX size={12} />
+                          //   </ActionIcon>
+                          // }
                         />
                       </Grid.Col>
                       <Grid.Col span={6}>

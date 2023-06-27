@@ -1,20 +1,25 @@
 import { CloseButton, Group, NumberInput, NumberInputProps } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useRef } from 'react';
+import { withController } from '~/libs/form/hoc/withController';
 
 type ClearableTextInputProps = NumberInputProps & {
   clearable?: boolean;
   onClear?: () => void;
 };
 
-export const ClearableNumberInput = forwardRef<HTMLInputElement, ClearableTextInputProps>(
+const ClearableNumberInput = forwardRef<HTMLInputElement, ClearableTextInputProps>(
   ({ clearable = true, rightSection, onClear, ...props }, ref) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const mergedRef = useMergedRef(ref, inputRef);
 
     const closeButton = props.value && (
       <CloseButton
-        variant="transparent"
+        radius="xl"
+        color="gray"
+        size="xs"
+        variant="filled"
+        mr={3}
         onClick={() => {
           const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
             window.HTMLInputElement.prototype,
@@ -25,6 +30,7 @@ export const ClearableNumberInput = forwardRef<HTMLInputElement, ClearableTextIn
           const ev2 = new Event('input', { bubbles: true });
           inputRef.current?.dispatchEvent(ev2);
           onClear?.();
+          props.onChange?.(undefined);
         }}
       />
     );
@@ -46,3 +52,4 @@ export const ClearableNumberInput = forwardRef<HTMLInputElement, ClearableTextIn
 );
 
 ClearableNumberInput.displayName = 'ClearableNumberInput';
+export const InputNumberClearable = withController(ClearableNumberInput);
