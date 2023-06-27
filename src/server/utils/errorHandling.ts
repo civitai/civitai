@@ -110,3 +110,12 @@ export function throwNotFoundError(message: string | null = null) {
     message,
   });
 }
+
+export function throwRateLimitError(message: string | null = null, error?: unknown) {
+  message ??= `Slow down! You've made too many requests. Please take a breather`;
+  throw new TRPCError({
+    code: 'TOO_MANY_REQUESTS',
+    message,
+    cause: error,
+  });
+}

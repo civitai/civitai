@@ -14,6 +14,7 @@ import {
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
+  throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import { ModelStatus, ModelType, Prisma } from '@prisma/client';
 import {
@@ -281,6 +282,11 @@ export const createGenerationRequest = async ({
       },
     }),
   });
+
+  if (response.status === 429) {
+    // too many requests
+    throwRateLimitError();
+  }
 
   if (!response.ok) {
     const message = await response.json();
