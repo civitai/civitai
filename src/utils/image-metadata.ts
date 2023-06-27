@@ -63,6 +63,8 @@ function createMetadataParser(
 }
 
 const decoder = new TextDecoder('utf-8');
+
+export const parsePromptMetadata = parseMetadata;
 // #endregion
 
 // #region [parsers]
@@ -198,9 +200,10 @@ function automaticEncoder({ prompt, negativePrompt, resources, ...other }: Image
   const lines = [prompt];
   if (negativePrompt) lines.push(`Negative prompt: ${negativePrompt}`);
   const fineDetails = [];
+  if (other.steps) fineDetails.push(`Steps: ${other.steps}`);
   for (const [k, v] of Object.entries(other)) {
     const key = automaticSDEncodeMap.get(k) ?? k;
-    if (key === 'hashes') continue;
+    if (key === 'hashes' || key === 'steps') continue;
     fineDetails.push(`${key}: ${v}`);
   }
   if (fineDetails.length > 0) lines.push(fineDetails.join(', '));

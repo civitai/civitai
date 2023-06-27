@@ -44,6 +44,7 @@ import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { parsePromptMetadata } from '~/utils/image-metadata';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
@@ -86,6 +87,7 @@ export function Generate({
   const [baseModel, setBaseModel] = useState(
     defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
   );
+  const [showParsePrompt, setShowParsePrompt] = useState(false);
   const isMuted = currentUser?.muted ?? false;
 
   // Handle display of survey after 10 minutes
@@ -237,7 +239,37 @@ export function Generate({
                 </Stack>
               )}
             />
-            <InputTextArea name="prompt" autosize label="Prompt" withAsterisk />
+            <InputTextArea
+              name="prompt"
+              label={
+                <>
+                  <Text inherit>Prompt</Text>
+                  {showParsePrompt && (
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => {
+                        const prompt = form.getValues('prompt');
+                        const metadata = parsePromptMetadata(prompt);
+                        form.reset(metadata);
+                        setShowParsePrompt(false);
+                      }}
+                      sx={{ order: 3, ml: 4 }}
+                      compact
+                    >
+                      Fill form
+                    </Button>
+                  )}
+                </>
+              }
+              labelProps={{ className: classes.promptInputLabel }}
+              onPaste={(event) => {
+                const text = event.clipboardData.getData('text/plain');
+                if (text && text.includes('Steps:')) setShowParsePrompt(true);
+              }}
+              autosize
+              withAsterisk
+            />
             <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
             <Stack spacing={0}>
               <Input.Label>Aspect Ratio</Input.Label>
@@ -420,6 +452,11 @@ const useStyles = createStyles((theme) => ({
     borderBottomLeftRadius: 0,
     borderTopLeftRadius: 0,
     height: 'auto',
+  },
+  promptInputLabel: {
+    display: 'inline-flex',
+    gap: 4,
+    marginBottom: 5,
   },
 }));
 
