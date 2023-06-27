@@ -31,19 +31,22 @@ export const getGenerationRequestsSchema = z.object({
 
 export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;
 export const generationParamsSchema = z.object({
-  prompt: z.string().superRefine((val, ctx) => {
-    const { blockedFor, success } = auditPrompt(val);
-    if (!success)
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Blocked for: ${blockedFor.join(', ')}`,
-      });
-  }),
+  prompt: z
+    .string()
+    .nonempty('Prompt cannot be empty')
+    .superRefine((val, ctx) => {
+      const { blockedFor, success } = auditPrompt(val);
+      if (!success)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Blocked for: ${blockedFor.join(', ')}`,
+        });
+    }),
   negativePrompt: z.string().optional(),
   cfgScale: z.number().min(1).max(30),
   sampler: z.enum(constants.samplers),
   steps: z.number().min(1).max(150),
-  seed: z.number().min(-1).nullish(),
+  seed: z.number().min(-1).max(999999999999999).nullish(),
   clipSkip: z.number().default(1),
   quantity: z.number().max(10),
 });
