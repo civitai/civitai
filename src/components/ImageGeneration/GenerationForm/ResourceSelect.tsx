@@ -15,6 +15,7 @@ import {
   createStyles,
   CloseButton,
   Divider,
+  Box,
 } from '@mantine/core';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
@@ -180,12 +181,17 @@ export function ResourceSelectModal({
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
-  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery({
-    types,
-    query: debounced,
-    ...removeEmpty({ baseModel }),
-    supported: true,
-  });
+  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
+    {
+      types,
+      query: debounced,
+      baseModel,
+      supported: true,
+    },
+    {
+      keepPreviousData: true,
+    }
+  );
 
   const handleSelect = (value: Generation.Client.Resource) => {
     onSelect(value);
@@ -216,6 +222,7 @@ export function ResourceSelectModal({
               autoFocus
             />
           </Stack>
+          {!debounced?.length && <Divider label="Popular Resources" labelPosition="center" />}
           <Stack spacing={0}>
             {data
               .filter((resource) => !notIds.includes(resource.id))
