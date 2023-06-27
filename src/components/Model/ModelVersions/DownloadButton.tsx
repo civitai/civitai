@@ -8,11 +8,11 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
     const button = iconOnly ? (
       <Tooltip label="Download options" withArrow>
         <Button ref={ref} {...buttonProps} px={0} w={36} variant="light">
-          <IconDownload size={16} />
+          <IconDownload size={24} />
         </Button>
       </Tooltip>
     ) : (
-      <Button ref={ref} {...buttonProps} leftIcon={<IconDownload size={16} />} />
+      <Button ref={ref} {...buttonProps} leftIcon={<IconDownload size={20} />} />
     );
 
     return canDownload ? button : <JoinPopover>{button}</JoinPopover>;

@@ -45,7 +45,7 @@ const resourceSchema = z
     modelType: z.nativeEnum(ModelType),
     strength: z.number().optional(),
     trainedWords: z.string().array().optional(),
-    baseModel: z.string(),
+    baseModel: z.string().optional(),
   })
   .passthrough();
 

@@ -111,22 +111,7 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
             <Text size="sm" weight={500}>
               {label}
             </Text>
-            {(label === 'Prompt' || label === 'Negative prompt') && (
-              <CopyButton value={value}>
-                {({ copied, copy }) => (
-                  <Tooltip label={`Copy ${label.toLowerCase()}`} color="gray">
-                    <ActionIcon
-                      variant="transparent"
-                      size="xs"
-                      color={copied ? 'green' : 'blue'}
-                      onClick={copy}
-                    >
-                      {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
-                    </ActionIcon>
-                  </Tooltip>
-                )}
-              </CopyButton>
-            )}
+
             {label === 'Prompt' && (
               <>
                 <Badge size="xs" radius="sm">
@@ -134,6 +119,23 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
                   {metas.hasControlNet && ' + ControlNet'}
                 </Badge>
               </>
+            )}
+            {(label === 'Prompt' || label === 'Negative prompt') && (
+              <CopyButton value={value}>
+                {({ copied, copy }) => (
+                  <Tooltip label={`Copy ${label.toLowerCase()}`} color="dark" withArrow>
+                    <ActionIcon
+                      variant="transparent"
+                      size="xs"
+                      color={copied ? 'green' : 'blue'}
+                      onClick={copy}
+                      ml="auto"
+                    >
+                      {!copied ? <IconCopy size={16} /> : <IconCheck size={16} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
             )}
           </Group>
           <Code

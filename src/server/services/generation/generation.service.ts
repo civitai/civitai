@@ -86,8 +86,6 @@ export const getGenerationResources = async ({
   baseModel,
   user,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
-  // TODO - apply user preferences - but do we really need this? Maybe a direct search should yield all results since their browsing experience is already set to their browsing preferences
-  // TODO.Justin - optimize sql query for selecting resources
   const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [
     { publishedAt: { not: null } },
     {
@@ -103,15 +101,7 @@ export const getGenerationResources = async ({
   if (!!types?.length) MODEL_AND.push({ type: { in: types } });
   if (!!notTypes?.length) MODEL_AND.push({ type: { notIn: notTypes } });
   if (query) {
-    // MODEL_AND.push({ name: { contains: query, mode: 'insensitive' } });
-    AND.push({
-      OR: [
-        { files: { some: { name: { startsWith: query, mode: 'insensitive' } } } },
-        { files: { some: { hashes: { some: { hash: query } } } } },
-        { trainedWords: { has: query } }, // TODO - filter needs to be able to do something like 'startsWith' or 'contains'
-        { model: { name: { contains: query, mode: 'insensitive' } } },
-      ],
-    });
+    AND.push({ model: { name: { contains: query, mode: 'insensitive' } } });
   }
   if (baseModel) {
     const baseModelSet = baseModelSets.find((x) => x.includes(baseModel as BaseModel));
