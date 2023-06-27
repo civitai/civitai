@@ -200,18 +200,18 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
     <Transition mounted={selectCount > 0} transition="slide-up">
       {(transitionStyles) => (
         <Card
-          p="xs"
-          radius={0}
+          p={4}
+          radius="sm"
           shadow="xl"
           style={transitionStyles}
-          sx={{ position: 'absolute', bottom: 8, left: 8, zIndex: 2 }}
+          sx={{ position: 'absolute', bottom: 8, left: 8, zIndex: 3 }}
           withBorder
         >
-          <Stack spacing={4}>
-            <Text color="dimmed" size="xs" inline>
+          <Stack spacing={6}>
+            <Text color="dimmed" size="xs" weight={500} inline>
               {selectCount} selected
             </Text>
-            <Group spacing={8}>
+            <Group spacing={4}>
               <Tooltip label="Deselect all" {...tooltipProps}>
                 <ActionIcon size="md" onClick={onDeselectClick} variant="light">
                   <IconSquareOff size={20} />

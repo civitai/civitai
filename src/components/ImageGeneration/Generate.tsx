@@ -42,6 +42,7 @@ import { Sampler, constants } from '~/server/common/constants';
 import { FieldArray } from '~/libs/form/components/FieldArray';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 const supportedSamplers: Sampler[] = [
   'Euler a',
@@ -88,6 +89,12 @@ export function Generate({
   const [baseModel, setBaseModel] = useState(
     defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
   );
+
+  // Handle display of survey after 10 minutes
+  if (!localStorage.getItem('generation-first-loaded'))
+    localStorage.setItem('generation-first-loaded', Date.now().toString());
+  const firstLoaded = parseInt(localStorage.getItem('generation-first-loaded') ?? '0');
+  const showSurvey = Date.now() - firstLoaded > 1000 * 60 * 10;
 
   const setRequests = useImageGenerationStore((state) => state.setRequests);
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
@@ -322,45 +329,69 @@ export function Generate({
             </Accordion>
           </Stack>
         </ScrollArea>
-        <Group spacing={0} className={classes.generateButtonContainer} noWrap>
-          <Card withBorder className={classes.generateButtonQuantity} p={0}>
-            <Stack spacing={0}>
-              <Text
-                size="xs"
-                color="dimmed"
-                weight={500}
-                ta="center"
-                className={classes.generateButtonQuantityText}
-              >
-                Quantity
-              </Text>
-              <InputNumber
-                name="quantity"
-                min={1}
-                max={10}
-                className={classes.generateButtonQuantityInput}
-              />
-            </Stack>
-          </Card>
-          <Button
-            type="submit"
-            size="lg"
-            loading={isLoading}
-            className={classes.generateButtonButton}
-          >
-            Generate
-          </Button>
-          <Tooltip label="Reset" color="dark" withArrow>
+        <Stack spacing="xs">
+          <Group spacing={0} className={classes.generateButtonContainer} noWrap>
+            <Card withBorder className={classes.generateButtonQuantity} p={0}>
+              <Stack spacing={0}>
+                <Text
+                  size="xs"
+                  color="dimmed"
+                  weight={500}
+                  ta="center"
+                  className={classes.generateButtonQuantityText}
+                >
+                  Quantity
+                </Text>
+                <InputNumber
+                  name="quantity"
+                  min={1}
+                  max={10}
+                  className={classes.generateButtonQuantityInput}
+                />
+              </Stack>
+            </Card>
             <Button
-              onClick={() => form.reset(defaults)}
-              variant="outline"
-              className={classes.generateButtonReset}
-              px="xs"
+              type="submit"
+              size="lg"
+              loading={isLoading}
+              className={classes.generateButtonButton}
             >
-              <IconX size={20} strokeWidth={3} />
+              Generate
             </Button>
-          </Tooltip>
-        </Group>
+            <Tooltip label="Reset" color="dark" withArrow>
+              <Button
+                onClick={() => form.reset(defaults)}
+                variant="outline"
+                className={classes.generateButtonReset}
+                px="xs"
+              >
+                <IconX size={20} strokeWidth={3} />
+              </Button>
+            </Tooltip>
+          </Group>
+          {showSurvey && (
+            <DismissibleAlert
+              id="generation-alpha-feedback"
+              title="Share your feedback!"
+              content={
+                <Text>
+                  Thank you for participating in our generation tech test. To help us improve the
+                  service and prioritize feature development, please take a moment to fill out{' '}
+                  <Text
+                    component="a"
+                    td="underline"
+                    href="https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4"
+                    variant="link"
+                    target="_blank"
+                  >
+                    our survey
+                  </Text>
+                  .
+                </Text>
+              }
+            />
+          )}
+        </Stack>
       </Stack>
     </Form>
   );
