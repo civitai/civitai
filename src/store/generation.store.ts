@@ -3,15 +3,29 @@ import { immer } from 'zustand/middleware/immer';
 
 type GenerationStore = {
   drawerOpened: boolean;
-  toggleDrawer: VoidFunction;
+  modelVersionId?: number;
+  imageId?: number;
+  activeTab: string;
+
+  toggleDrawer: (args?: { imageId?: number; modelVersionId?: number }) => void;
 };
 
 export const useGenerationStore = create<GenerationStore>()(
   immer((set) => ({
     drawerOpened: false,
-    toggleDrawer: () => {
+    activeTab: 'queue',
+    toggleDrawer: (args) => {
       set((state) => {
-        state.drawerOpened = !state.drawerOpened;
+        if (state.drawerOpened) {
+          state.drawerOpened = false;
+          state.modelVersionId = undefined;
+          state.imageId = undefined;
+        } else {
+          state.drawerOpened = true;
+          state.activeTab = 'generate';
+          state.modelVersionId = args?.modelVersionId;
+          state.imageId = args?.imageId;
+        }
       });
     },
   }))

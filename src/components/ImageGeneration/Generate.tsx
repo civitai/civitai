@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconBook2, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 import {
@@ -45,27 +45,32 @@ const resourceSchema = z
     modelType: z.nativeEnum(ModelType),
     strength: z.number().optional(),
     trainedWords: z.string().array().optional(),
-    baseModel: z.string().optional(),
+    baseModel: z.string(),
   })
   .passthrough();
 
+type Schema = Partial<z.infer<typeof schema>>;
 const schema = generationParamsSchema.extend({
   model: resourceSchema,
-  additionalResources: resourceSchema.array().default([]),
   aspectRatio: z.string(),
+  baseModel: z.string().optional(),
+  additionalResources: resourceSchema.array().default([]),
 });
 
 export function Generate({
-  request,
   onSuccess,
+  modelVersionId,
+  imageId,
 }: {
-  request?: Generation.Client.Request;
   onSuccess?: () => void;
+  modelVersionId?: number;
+  imageId?: number;
 }) {
   const mobile = useIsMobile({ breakpoint: 'md' });
-  const defaultValues = schema.parse(imageGenerationFormStorage.get());
+  const defaultValues = (imageGenerationFormStorage.get() ?? defaultDemoValues) as Schema;
   const [opened, setOpened] = useState(false);
   const [baseModel, setBaseModel] = useState(defaultValues.model.baseModel);
+
   const setRequests = useImageGenerationStore((state) => state.setRequests);
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
     onSuccess: (data) => {
@@ -74,10 +79,39 @@ export function Generate({
     },
   });
 
+  // #region [generate from model source]
+  const modelQuery = trpc.generation.getResource.useQuery(
+    { id: modelVersionId ?? 0 },
+    { enabled: !!modelVersionId }
+  );
+
+  useEffect(() => {
+    if (!modelQuery.data) return;
+    form.reset({ model: modelQuery.data });
+  }, [modelQuery.data]); // eslint-disable-line
+  // #endregion
+
+  // #region [generate from image source]
+  const imageQuery = trpc.generation.getImageGenerationData.useQuery(
+    { id: imageId ?? 0 },
+    { enabled: !!imageId }
+  );
+
+  useEffect(() => {
+    if (!imageQuery.data) return;
+    form.reset(imageQuery.data);
+  }, [imageQuery.data]); // eslint-disable-line
+  // #endregion
+
   const form = useForm({
     schema,
-    defaultValues: defaultValues as any,
+    defaultValues: { ...defaults, ...defaultValues } as any,
   });
+
+  const handleResourceChange = (resource: Generation.Client.Resource) => {
+    const baseModel = form.getValues('baseModel');
+    if (!baseModel) form.setValue('baseModel', resource.baseModel);
+  };
 
   return (
     <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
@@ -182,6 +216,7 @@ export function Generate({
               </Accordion.Control>
               <Accordion.Panel>
                 <Stack>
+                  <InputNumber name="steps" label="Quality (Steps)" />
                   <InputNumber
                     name="cfgScale"
                     label="Creativity (CFG Scale)"
@@ -193,7 +228,6 @@ export function Generate({
                     label="Engine (Sampler)"
                     data={[...constants.samplers]}
                   />
-                  <InputNumber name="steps" label="Quality (Steps)" />
                   {/* <Stack spacing={0}>
                   <Input.Label>Creativity (CFG Scale)</Input.Label>
                   <SegmentedControl data={cfgScales} />
@@ -289,18 +323,28 @@ const steps = [
   { label: 'High', value: '30' },
 ];
 
-// #region [developement]
-const defaultDemoValues = {
-  prompt:
-    'close up photo of a rabbit, forest, haze, halation, bloom, dramatic atmosphere, centred, rule of thirds, 200mm 1.4f macro shot',
-  negativePrompt:
-    '(semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime:1.4), text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
+const defaults = {
   cfgScale: 7,
   steps: 25,
   sampler: 'Euler a',
-  aspectRatio: '768x512',
-  quantity: 2,
+  seed: undefined,
   clipSkip: 1,
+  quantity: 1,
+  aspectRatio: '512x512',
+};
+
+// #region [developement]
+const defaultDemoValues = {
+  // prompt:
+  //   'close up photo of a rabbit, forest, haze, halation, bloom, dramatic atmosphere, centred, rule of thirds, 200mm 1.4f macro shot',
+  // negativePrompt:
+  //   '(semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime:1.4), text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
+  // cfgScale: 7,
+  // steps: 25,
+  // sampler: 'Euler a',
+  // aspectRatio: '768x512',
+  // quantity: 2,
+  // clipSkip: 1,
   model: {
     id: 29460,
     name: 'V2.0',

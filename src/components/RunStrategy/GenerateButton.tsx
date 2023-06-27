@@ -2,15 +2,14 @@ import { Button, Group, Text, Tooltip } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import { useGenerationStore } from '~/store/generation.store';
 
-export function GenerateButton({ iconOnly }: Props) {
+export function GenerateButton({ iconOnly, modelVersionId }: Props) {
   const toggleGenerationDrawer = useGenerationStore((state) => state.toggleDrawer);
 
   const button = (
     <Button
       variant="filled"
       sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
-      // TODO.briant: Send generation data to the drawer
-      onClick={toggleGenerationDrawer}
+      onClick={() => toggleGenerationDrawer({ modelVersionId })}
     >
       {iconOnly ? (
         <IconBrush size={24} />
@@ -33,4 +32,4 @@ export function GenerateButton({ iconOnly }: Props) {
     button
   );
 }
-type Props = { iconOnly?: boolean };
+type Props = { iconOnly?: boolean; modelVersionId?: number };

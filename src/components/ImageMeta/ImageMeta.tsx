@@ -188,8 +188,7 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
             color="teal"
             variant="light"
             leftIcon={<IconBrush size={16} />}
-            // TODO.generation: Send generation data to the drawer
-            onClick={toggleGenerationDrawer}
+            onClick={() => toggleGenerationDrawer({ imageId })}
             sx={{ flex: 1 }}
           >
             Start Creating

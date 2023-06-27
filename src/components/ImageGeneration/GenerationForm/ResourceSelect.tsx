@@ -67,7 +67,7 @@ export function ResourceSelect({
 
   return (
     <>
-      <Input.Wrapper label={resource?.modelType ?? label} {...inputWrapperProps}>
+      <Input.Wrapper label={label ?? resource?.modelType} {...inputWrapperProps}>
         {!resource ? (
           <div>
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
@@ -76,7 +76,7 @@ export function ResourceSelect({
           </div>
         ) : (
           <Card p="xs">
-            <Stack spacing="xs">
+            <Stack spacing={4}>
               {/* Header */}
               <Group spacing="xs" position="apart">
                 <Text lineClamp={1}>

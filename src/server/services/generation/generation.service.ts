@@ -16,7 +16,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ModelType, Prisma } from '@prisma/client';
-import { generationResourceSelect } from '~/server/selectors/generation.selector';
+import {
+  GenerationResourceSelect,
+  generationResourceSelect,
+} from '~/server/selectors/generation.selector';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
@@ -53,14 +56,7 @@ function mapRequestStatus(label: string): GenerationRequestStatus {
   }
 }
 
-export const getGenerationResource = async ({
-  id,
-}: GetByIdInput): Promise<Generation.Client.Resource> => {
-  const resource = await dbRead.modelVersion.findUnique({
-    where: { id },
-    select: generationResourceSelect,
-  });
-  if (!resource) throw throwNotFoundError();
+function mapGenerationResource(resource: GenerationResourceSelect) {
   const { model, ...x } = resource;
   return {
     id: x.id,
@@ -71,6 +67,17 @@ export const getGenerationResource = async ({
     modelType: model.type,
     baseModel: x.baseModel,
   };
+}
+
+export const getGenerationResource = async ({
+  id,
+}: GetByIdInput): Promise<Generation.Client.Resource> => {
+  const resource = await dbRead.modelVersion.findUnique({
+    where: { id },
+    select: generationResourceSelect,
+  });
+  if (!resource) throw throwNotFoundError();
+  return mapGenerationResource(resource);
 };
 
 const baseModelSets: Array<BaseModel[]> = [
@@ -134,16 +141,11 @@ export const getGenerationResources = async ({
 
   return results
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-    .map(({ model, ...x }) => ({
-      id: x.id,
-      name: x.name,
-      trainedWords: x.trainedWords,
-      modelId: model.id,
-      modelName: model.name,
-      modelType: model.type,
-      baseModel: x.baseModel,
+    .map((resource) => ({
+      ...mapGenerationResource(resource),
       serviceProviders: allServiceProviders.filter(
-        (sp) => (x.modelVersionGenerationCoverage?.serviceProviders ?? []).indexOf(sp.name) !== -1
+        (sp) =>
+          (resource.modelVersionGenerationCoverage?.serviceProviders ?? []).indexOf(sp.name) !== -1
       ),
     }));
 };
@@ -410,6 +412,7 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
     hashes,
     prompt,
     negativePrompt,
+    sampler,
     ...meta
   } = imageMetaSchema.parse(image.meta);
   const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
@@ -436,6 +439,7 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
     prompt,
     negativePrompt,
     clipSkip,
+    sampler: sampler as Sampler,
     ...meta,
     model,
     additionalResources,
