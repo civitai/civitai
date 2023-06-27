@@ -19,6 +19,8 @@ export const useGenerationStore = create<GenerationStore>()(
     setActiveTab: (value) => {
       set((state) => {
         state.activeTab = value;
+        state.modelVersionId = undefined;
+        state.imageId = undefined;
       });
     },
     toggleDrawer: (args) => {

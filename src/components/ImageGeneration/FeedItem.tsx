@@ -9,6 +9,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { ModelType } from '@prisma/client';
 import {
   IconArrowsShuffle,
   IconBolt,
@@ -19,8 +20,10 @@ import {
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useImageGenerationRequest } from '~/components/ImageGeneration/hooks/useImageGenerationState';
+import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Generation } from '~/server/services/generation/generation.types';
+import { useGenerationStore } from '~/store/generation.store';
 
 const tooltipProps = {
   withinPortal: true,
@@ -36,6 +39,17 @@ const tooltipProps = {
 export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClick }: Props) {
   const [opened, { toggle, close }] = useDisclosure();
   const request = useImageGenerationRequest(image.requestId);
+  const setView = useGenerationStore((state) => state.setActiveTab);
+
+  const handleGenerate = () => {
+    imageGenerationFormStorage.set({
+      model: request.resources.find((x) => x.modelType === ModelType.Checkpoint),
+      additionalResources: request.resources.filter((x) => x.modelType !== ModelType.Checkpoint),
+      ...request.params,
+      aspectRatio: `${request.params.width}x${request.params.height}`,
+    });
+    setView('generate');
+  };
 
   return (
     <Paper
@@ -94,7 +108,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
               {opened && (
                 <Group spacing={0} noWrap>
                   <Tooltip {...tooltipProps} label="Generate">
-                    <ActionIcon size="md" p={4} variant="light" radius={0}>
+                    <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
                       <IconPlayerPlayFilled />
                     </ActionIcon>
                   </Tooltip>
