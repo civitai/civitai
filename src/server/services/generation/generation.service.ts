@@ -11,6 +11,7 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
+  throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import { GenerationSchedulers, ModelType, Prisma } from '@prisma/client';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
@@ -277,6 +278,11 @@ export const createGenerationRequest = async ({
       },
     }),
   });
+
+  if (response.status === 429) {
+    // too many requests
+    throwRateLimitError();
+  }
 
   if (!response.ok) {
     const message = await response.json();
