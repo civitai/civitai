@@ -57,10 +57,9 @@ export function AppLayout({ children, showNavbar }: Props) {
             {/* TODO.generation: Move this out of AppLayout so drawer can be opened anywhere */}
             {flags.imageGeneration && (
               <>
-                <GenerationDrawer opened={drawerOpened} onClose={toggleDrawer} />
                 <FloatingActionButton
                   transition="pop"
-                  onClick={toggleDrawer}
+                  onClick={() => toggleDrawer()}
                   mounted={!drawerOpened}
                   px="xs"
                 >

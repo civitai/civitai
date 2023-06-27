@@ -7,6 +7,7 @@ type GenerationStore = {
   imageId?: number;
   activeTab: string;
 
+  setActiveTab: (value: string) => void;
   toggleDrawer: (args?: { imageId?: number; modelVersionId?: number }) => void;
 };
 
@@ -14,6 +15,12 @@ export const useGenerationStore = create<GenerationStore>()(
   immer((set) => ({
     drawerOpened: false,
     activeTab: 'queue',
+
+    setActiveTab: (value) => {
+      set((state) => {
+        state.activeTab = value;
+      });
+    },
     toggleDrawer: (args) => {
       set((state) => {
         if (state.drawerOpened) {

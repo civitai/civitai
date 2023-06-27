@@ -34,7 +34,7 @@ export function ResourceSelect({
   label,
   ...inputWrapperProps
 }: {
-  value?: Generation.Client.Resource;
+  value?: Generation.Client.Resource | null;
   onChange?: (value?: Generation.Client.Resource) => void;
   onRemove?: () => void;
   types?: ModelType[];
@@ -42,6 +42,7 @@ export function ResourceSelect({
   const [opened, setOpened] = useState(false);
   const [strength, setStrength] = useState(value?.strength ?? 1);
   const [resource, setResource] = useState(value);
+  console.log({ value });
 
   useEffect(() => {
     if (!value) return;
@@ -156,7 +157,14 @@ export function ResourceSelectModal({
   };
 
   return (
-    <Modal opened={opened} withCloseButton={false} onClose={onClose} size="sm" padding={0}>
+    <Modal
+      opened={opened}
+      withCloseButton={false}
+      onClose={onClose}
+      size="sm"
+      padding={0}
+      zIndex={400}
+    >
       {opened && (
         <Stack spacing={4}>
           <Stack p="xs">

@@ -35,7 +35,7 @@ import {
 import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
-import { constants } from '~/server/common/constants';
+import { Sampler, constants } from '~/server/common/constants';
 import { FieldArray } from '~/libs/form/components/FieldArray';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 
@@ -45,7 +45,7 @@ const resourceSchema = z
     modelType: z.nativeEnum(ModelType),
     strength: z.number().optional(),
     trainedWords: z.string().array().optional(),
-    baseModel: z.string(),
+    baseModel: z.string().optional(),
   })
   .passthrough();
 
@@ -57,6 +57,8 @@ const schema = generationParamsSchema.extend({
   additionalResources: resourceSchema.array().default([]),
 });
 
+// TODO.generation - add a reset button (not sure what will be reset yet)
+// TODO.generation
 export function Generate({
   onSuccess,
   modelVersionId,
@@ -69,7 +71,9 @@ export function Generate({
   const mobile = useIsMobile({ breakpoint: 'md' });
   const defaultValues = (imageGenerationFormStorage.get() ?? defaultDemoValues) as Schema;
   const [opened, setOpened] = useState(false);
-  const [baseModel, setBaseModel] = useState(defaultValues.model.baseModel);
+  const [baseModel, setBaseModel] = useState(
+    defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
+  );
 
   const setRequests = useImageGenerationStore((state) => state.setRequests);
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
@@ -87,7 +91,9 @@ export function Generate({
 
   useEffect(() => {
     if (!modelQuery.data) return;
-    form.reset({ model: modelQuery.data });
+    const resource = modelQuery.data;
+    if (resource.modelType === ModelType.Checkpoint) form.reset({ model: resource });
+    else form.reset({ additionalResources: [resource] });
   }, [modelQuery.data]); // eslint-disable-line
   // #endregion
 
@@ -256,7 +262,7 @@ export function Generate({
                             size="xs"
                             variant="filled"
                             mr={3}
-                            onClick={() => form.setValue('seed', undefined)}
+                            onClick={() => form.setValue('seed', -1)}
                           >
                             <IconX size={12} />
                           </ActionIcon>
@@ -274,7 +280,7 @@ export function Generate({
 
           <InputNumber name="quantity" label="Quantity" min={0} max={10} />
           <Group>
-            <Button onClick={() => form.reset()} variant="default">
+            <Button onClick={() => form.reset(defaults)} variant="default">
               Reset
             </Button>
             <Button type="submit" loading={isLoading}>
@@ -326,11 +332,15 @@ const steps = [
 const defaults = {
   cfgScale: 7,
   steps: 25,
-  sampler: 'Euler a',
+  sampler: 'Euler a' as Sampler,
   seed: undefined,
   clipSkip: 1,
   quantity: 1,
   aspectRatio: '512x512',
+  prompt: '',
+  negativePrompt: '',
+  model: null,
+  additionalResources: [],
 };
 
 // #region [developement]

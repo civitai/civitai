@@ -419,7 +419,9 @@ export function ModelVersionDetails({
                     {/* {primaryFileDetails} */}
                   </Stack>
                 )}
-                {canGenerate && <GenerateButton iconOnly={displayCivitaiLink} />}
+                {canGenerate && (
+                  <GenerateButton iconOnly={displayCivitaiLink} modelVersionId={version.id} />
+                )}
                 {displayCivitaiLink || canGenerate ? (
                   <Menu position="bottom-end">
                     <Menu.Target>
