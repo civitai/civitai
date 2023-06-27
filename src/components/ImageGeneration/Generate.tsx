@@ -155,28 +155,27 @@ export function Generate({
         imageGenerationFormStorage.set(values);
         form.reset(values);
         const [width, height] = values.aspectRatio.split('x');
-        console.log({ values });
-        // mutate({
-        //   height: Number(height),
-        //   width: Number(width),
-        //   resources: [values.model, ...values.additionalResources].map((resource) => ({
-        //     modelVersionId: resource.id,
-        //     type: resource.modelType,
-        //     strength: resource.strength,
-        //     triggerWord:
-        //       resource.modelType === ModelType.TextualInversion
-        //         ? resource.trainedWords?.[0]
-        //         : undefined,
-        //   })),
-        //   prompt: values.prompt,
-        //   negativePrompt: values.negativePrompt,
-        //   cfgScale: values.cfgScale,
-        //   sampler: values.sampler,
-        //   steps: values.steps,
-        //   seed: values.seed,
-        //   clipSkip: values.clipSkip,
-        //   quantity: values.quantity,
-        // });
+        mutate({
+          height: Number(height),
+          width: Number(width),
+          resources: [values.model, ...values.additionalResources].map((resource) => ({
+            modelVersionId: resource.id,
+            type: resource.modelType,
+            strength: resource.strength,
+            triggerWord:
+              resource.modelType === ModelType.TextualInversion
+                ? resource.trainedWords?.[0]
+                : undefined,
+          })),
+          prompt: values.prompt,
+          negativePrompt: values.negativePrompt,
+          cfgScale: values.cfgScale,
+          sampler: values.sampler,
+          steps: values.steps,
+          seed: values.seed,
+          clipSkip: values.clipSkip,
+          quantity: values.quantity,
+        });
       }}
     >
       <Stack h="100%" spacing={0}>
