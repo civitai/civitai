@@ -367,7 +367,10 @@ export function Generate({
             </Button>
             <Tooltip label="Reset" color="dark" withArrow>
               <Button
-                onClick={() => form.reset(defaults)}
+                onClick={() => {
+                  form.reset(defaults);
+                  imageGenerationFormStorage.set(defaults);
+                }}
                 variant="outline"
                 className={classes.generateButtonReset}
                 px="xs"
