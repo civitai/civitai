@@ -25,6 +25,7 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { withController } from '~/libs/form/hoc/withController';
 import { BaseModel } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
+import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ResourceSelect({
@@ -156,7 +157,7 @@ export function ResourceSelectModal({
   const [debounced] = useDebouncedValue(search, 300);
 
   const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
-    { types, query: debounced, baseModel },
+    { types, query: debounced, ...removeEmpty({ baseModel }) },
     { enabled: debounced.length >= 3 }
   );
 

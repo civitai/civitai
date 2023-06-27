@@ -15,7 +15,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma } from '@prisma/client';
+import { ModelStatus, ModelType, Prisma } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -94,7 +94,7 @@ export const getGenerationResources = async ({
   user,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
   const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [
-    { publishedAt: { not: null } },
+    { status: ModelStatus.Published },
     {
       modelVersionGenerationCoverage: {
         workers: {
