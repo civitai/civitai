@@ -339,7 +339,6 @@ const defaults = {
   aspectRatio: '512x512',
   prompt: '',
   negativePrompt: '',
-  model: null,
   additionalResources: [],
 };
 
