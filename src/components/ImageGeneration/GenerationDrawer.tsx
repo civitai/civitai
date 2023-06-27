@@ -1,11 +1,5 @@
 import { Drawer, DrawerProps, Tabs, createStyles } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
-import {
-  IconBrush,
-  IconListDetails,
-  IconPlayerPlayFilled,
-  IconSlideshow,
-} from '@tabler/icons-react';
+import { IconBrush, IconListDetails, IconSlideshow } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -48,7 +42,7 @@ export function GenerationDrawer() {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { classes } = useStyles();
   const router = useRouter();
-  const result = schema.safeParse(router.query);
+
   const opened = useGenerationStore((state) => state.drawerOpened);
   const toggleDrawer = useGenerationStore((state) => state.toggleDrawer);
   const view = useGenerationStore((state) => state.activeTab);

@@ -10,13 +10,13 @@ import {
   Grid,
   Button,
   ScrollArea,
-  ActionIcon,
   createStyles,
   Card,
   Tooltip,
+  ThemeIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconBook2, IconX } from '@tabler/icons-react';
+import { IconBook2, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
@@ -43,6 +43,7 @@ import { FieldArray } from '~/libs/form/components/FieldArray';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
@@ -78,12 +79,14 @@ export function Generate({
   imageId?: number;
 }) {
   const mobile = useIsMobile({ breakpoint: 'md' });
+  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const defaultValues = (imageGenerationFormStorage.get() ?? defaultDemoValues) as Schema;
   const [opened, setOpened] = useState(false);
   const [baseModel, setBaseModel] = useState(
     defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
   );
+  const isMuted = currentUser?.muted ?? false;
 
   // Handle display of survey after 10 minutes
   if (!localStorage.getItem('generation-first-loaded'))
@@ -142,6 +145,18 @@ export function Generate({
     const baseModel = form.getValues('baseModel');
     if (!baseModel) form.setValue('baseModel', resource.baseModel);
   };
+
+  if (isMuted)
+    return (
+      <Center h="100%" w="75%" mx="auto">
+        <Stack spacing="xl" align="center">
+          <ThemeIcon size="xl" radius="xl" color="yellow">
+            <IconLock />
+          </ThemeIcon>
+          <Text align="center">You cannot create new generations because you have been muted</Text>
+        </Stack>
+      </Center>
+    );
 
   return (
     <Form
