@@ -69,7 +69,7 @@ export function Generate({
   const setRequests = useImageGenerationStore((state) => state.setRequests);
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
     onSuccess: (data) => {
-      setRequests([data]);
+      setRequests([data], true);
       onSuccess?.();
     },
   });

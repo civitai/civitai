@@ -17,6 +17,8 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { useImageGenerationRequest } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Generation } from '~/server/services/generation/generation.types';
 
@@ -31,14 +33,9 @@ const tooltipProps = {
  * - add action to generate image with the same prompt (play icon)
  * - correctly type the image object
  */
-export function FeedItem({
-  image,
-  request,
-  selected,
-  onCheckboxClick,
-  onCreateVariantClick,
-}: Props) {
+export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClick }: Props) {
   const [opened, { toggle, close }] = useDisclosure();
+  const request = useImageGenerationRequest(image.requestId);
 
   return (
     <Paper
@@ -61,14 +58,14 @@ export function FeedItem({
       })}
     >
       <AspectRatio ratio={1}>
-        <EdgeImage src={image.url} width={request.params.width} />
+        <GeneratedImage width={request.params.width} height={request.params.height} image={image} />
       </AspectRatio>
       <Checkbox
         sx={(theme) => ({
           position: 'absolute',
           top: theme.spacing.xs,
           left: theme.spacing.xs,
-          zIndex: 1,
+          zIndex: 3,
         })}
         checked={selected}
         onChange={(event) => {
@@ -86,6 +83,7 @@ export function FeedItem({
             position: 'absolute',
             width: '100%',
             overflow: 'hidden',
+            zIndex: 3,
           })}
         >
           <Card p={0} withBorder>
@@ -149,7 +147,6 @@ export function FeedItem({
 
 type Props = {
   image: Generation.Image;
-  request: Generation.Client.ImageRequest;
   selected: boolean;
   onCheckboxClick: (data: { image: any; checked: boolean }) => void;
   onCreateVariantClick: (image: any) => void;

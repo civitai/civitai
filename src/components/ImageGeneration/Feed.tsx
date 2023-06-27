@@ -32,6 +32,7 @@ import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariants
 
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
 import { useGetGenerationImages } from '~/components/ImageGeneration/hooks/useGetGenerationImages';
+import { useImageGenerationFeed } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type State = {
@@ -60,17 +61,10 @@ export function Feed() {
     variantModalOpened: false,
   });
 
-  const {
-    images,
-    requestData,
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isRefetching,
-    isFetching,
-    isError,
-  } = useGetGenerationImages({ take: 20 });
+  const { feed, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
+    useImageGenerationFeed();
 
+  // infinite paging
   useEffect(() => {
     if (inView && !isFetching && !isError) fetchNextPage?.();
   }, [fetchNextPage, inView, isFetching, isError]);
@@ -129,14 +123,13 @@ export function Feed() {
       </div>
       <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 139px)' : 'calc(100vh - 139px)'}>
         <div className={classes.grid}>
-          {images.map((image) => {
+          {feed.map((image) => {
             const selected = state.selectedItems.includes(image.id);
 
             return (
               <FeedItem
                 key={image.id}
                 image={image}
-                request={requestData[image.requestId]}
                 selected={selected}
                 onCheckboxClick={({ image, checked }) => {
                   if (checked) {
