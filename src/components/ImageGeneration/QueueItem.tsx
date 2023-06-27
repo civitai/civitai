@@ -45,7 +45,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
   const { classes } = useStyles();
   const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
 
-  const item = useImageGenerationStore(useCallback((state) => state.requests[id], []));
+  const item = useImageGenerationStore(useCallback((state) => state.requests[id], [id]));
   const removeRequest = useImageGenerationStore((state) => state.removeRequest);
   const deleteMutation = trpc.generation.deleteRequest.useMutation({
     onSuccess: (response, request) => {
@@ -55,6 +55,8 @@ export function QueueItem({ id, onBoostClick }: Props) {
       console.log({ err });
     },
   });
+
+  if (!item) return null;
 
   const { prompt, ...details } = item.params;
   const detailItems = Object.entries(details).map(([key, value]) => ({
