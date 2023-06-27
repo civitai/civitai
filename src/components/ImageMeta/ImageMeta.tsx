@@ -185,7 +185,6 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
         <Button.Group>
           <Button
             size="xs"
-            color="teal"
             variant="light"
             leftIcon={<IconBrush size={16} />}
             onClick={() => toggleGenerationDrawer({ imageId })}
@@ -195,13 +194,12 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
           </Button>
           <Tooltip
             label={copied ? 'Copied' : 'Copy generation data'}
-            color="gray"
+            color="dark"
             withArrow
             withinPortal
           >
             <Button
               size="xs"
-              color="teal"
               variant="light"
               onClick={() => {
                 copy(encodeMetadata(meta));

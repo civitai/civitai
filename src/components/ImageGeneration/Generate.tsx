@@ -11,6 +11,9 @@ import {
   Button,
   ScrollArea,
   ActionIcon,
+  createStyles,
+  Card,
+  Tooltip,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconBook2, IconX } from '@tabler/icons-react';
@@ -58,8 +61,6 @@ const schema = generationParamsSchema.extend({
   additionalResources: resourceSchema.array().default([]),
 });
 
-// TODO.generation - add a reset button (not sure what will be reset yet)
-// TODO.generation - show the base model, allow removal of base model, removing base model should remove all resources
 export function Generate({
   onSuccess,
   modelVersionId,
@@ -70,6 +71,7 @@ export function Generate({
   imageId?: number;
 }) {
   const mobile = useIsMobile({ breakpoint: 'md' });
+  const { classes } = useStyles();
   const defaultValues = (imageGenerationFormStorage.get() ?? defaultDemoValues) as Schema;
   const [opened, setOpened] = useState(false);
   const [baseModel, setBaseModel] = useState(
@@ -103,6 +105,7 @@ export function Generate({
     if (resource.modelType === ModelType.Checkpoint) form.reset({ model: resource });
     else form.reset({ additionalResources: [resource] });
   }, [modelQuery.data]); // eslint-disable-line
+  console.log({ modelVersionId });
   // #endregion
 
   // #region [generate from image source]
@@ -128,179 +131,275 @@ export function Generate({
   };
 
   return (
-    <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
-      <Form
-        form={form}
-        onSubmit={(values) => {
-          imageGenerationFormStorage.set(values);
-          form.reset(values);
-          const [width, height] = values.aspectRatio.split('x');
-          mutate({
-            height: Number(height),
-            width: Number(width),
-            resources: [values.model, ...values.additionalResources].map((resource) => ({
-              modelVersionId: resource.id,
-              type: resource.modelType,
-              strength: resource.strength,
-              triggerWord:
-                resource.modelType === ModelType.TextualInversion
-                  ? resource.trainedWords?.[0]
-                  : undefined,
-            })),
-            prompt: values.prompt,
-            negativePrompt: values.negativePrompt,
-            cfgScale: values.cfgScale,
-            sampler: values.sampler,
-            steps: values.steps,
-            seed: values.seed,
-            clipSkip: values.clipSkip,
-            quantity: values.quantity,
-          });
-        }}
-      >
-        <Stack>
-          <InputResourceSelect
-            label="Model"
-            name="model"
-            withAsterisk
-            types={[ModelType.Checkpoint]}
-            onChange={(value) => {
-              if (value) setBaseModel(value.baseModel);
-            }}
-          />
-          <FieldArray
-            control={form.control}
-            name="additionalResources"
-            keyName={'uid' as any} // TODO.type fix
-            render={({ fields, append, remove, update }) => (
-              <Stack spacing="xs">
-                {fields.map((item, index) => (
-                  <InputResourceSelect
-                    key={item.id}
-                    name={`additionalResources.${index}`}
+    <Form
+      form={form}
+      style={{ height: '100%' }}
+      onSubmit={(values) => {
+        imageGenerationFormStorage.set(values);
+        form.reset(values);
+        const [width, height] = values.aspectRatio.split('x');
+        mutate({
+          height: Number(height),
+          width: Number(width),
+          resources: [values.model, ...values.additionalResources].map((resource) => ({
+            modelVersionId: resource.id,
+            type: resource.modelType,
+            strength: resource.strength,
+            triggerWord:
+              resource.modelType === ModelType.TextualInversion
+                ? resource.trainedWords?.[0]
+                : undefined,
+          })),
+          prompt: values.prompt,
+          negativePrompt: values.negativePrompt,
+          cfgScale: values.cfgScale,
+          sampler: values.sampler,
+          steps: values.steps,
+          seed: values.seed,
+          clipSkip: values.clipSkip,
+          quantity: values.quantity,
+        });
+      }}
+    >
+      <Stack h="100%" spacing={0}>
+        <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
+          <Stack py="md">
+            <InputResourceSelect
+              label="Model"
+              name="model"
+              withAsterisk
+              types={[ModelType.Checkpoint]}
+              onChange={(value) => {
+                if (value) setBaseModel(value.baseModel);
+              }}
+            />
+            <FieldArray
+              control={form.control}
+              name="additionalResources"
+              keyName={'uid' as any} // TODO.type fix
+              render={({ fields, append, remove, update }) => (
+                <Stack spacing="xs">
+                  {fields.map((item, index) => (
+                    <InputResourceSelect
+                      key={item.id}
+                      name={`additionalResources.${index}`}
+                      types={[ModelType.LORA, ModelType.TextualInversion]}
+                      onRemove={() => remove(index)}
+                      onChange={(value) => {
+                        if (value) update(index, value);
+                      }}
+                    />
+                  ))}
+                  <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
+                    Add Additional Resource
+                  </Button>
+                  <ResourceSelectModal
+                    opened={opened}
+                    onClose={() => setOpened(false)}
+                    title="Select Additional Resource"
                     types={[ModelType.LORA, ModelType.TextualInversion]}
-                    onRemove={() => remove(index)}
-                    onChange={(value) => {
-                      if (value) update(index, value);
-                    }}
+                    onSelect={(value) => append(value)}
+                    notIds={[...fields.map((item) => item.id)]}
+                    baseModel={baseModel}
                   />
-                ))}
-                <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
-                  Add Additional Resource
-                </Button>
-                <ResourceSelectModal
-                  opened={opened}
-                  onClose={() => setOpened(false)}
-                  title="Select Additional Resource"
-                  types={[ModelType.LORA, ModelType.TextualInversion]}
-                  onSelect={(value) => append(value)}
-                  notIds={[...fields.map((item) => item.id)]}
-                  baseModel={baseModel}
-                />
-              </Stack>
-            )}
-          />
-          {/* <Input.Wrapper
-            labelProps={{ sx: { width: '100%' } }}
-            label={
-              <Group position="apart">
-                Prompt
-                <Text variant="link">
-                <Group align="center" spacing={4}>
-                  <span>From Collection</span> <IconBook2 size={16} />
+                </Stack>
+              )}
+            />
+            {/* <Input.Wrapper
+              labelProps={{ sx: { width: '100%' } }}
+              label={
+                <Group position="apart">
+                  Prompt
+                  <Text variant="link">
+                  <Group align="center" spacing={4}>
+                    <span>From Collection</span> <IconBook2 size={16} />
+                  </Group>
+                </Text>
                 </Group>
-              </Text>
-              </Group>
-            }
-          >
-            <MentionExample value={prompt} />
-          </Input.Wrapper> */}
-          <InputTextArea name="prompt" autosize label="Prompt" required />
-          <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
-          <Stack spacing={0}>
-            <Input.Label>Aspect Ratio</Input.Label>
-            <InputSegmentedControl name="aspectRatio" data={aspectRatioControls} />
+              }
+            >
+              <MentionExample value={prompt} />
+            </Input.Wrapper> */}
+            <InputTextArea name="prompt" autosize label="Prompt" required />
+            <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
+            <Stack spacing={0}>
+              <Input.Label>Aspect Ratio</Input.Label>
+              <InputSegmentedControl name="aspectRatio" data={aspectRatioControls} />
+            </Stack>
+
+            {/* ADVANCED */}
+            <Accordion
+              variant="separated"
+              styles={(theme) => ({
+                content: {
+                  padding: 0,
+                },
+                item: {
+                  overflow: 'hidden',
+                  border: 'none',
+                  background: 'transparent',
+                },
+                control: {
+                  padding: 0,
+                  paddingBottom: theme.spacing.xs,
+                },
+              })}
+            >
+              <Accordion.Item value="advanced">
+                <Accordion.Control>
+                  <Divider
+                    label="Advanced"
+                    labelPosition="left"
+                    labelProps={{ size: 'sm', weight: 500 }}
+                  />
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack>
+                    <InputNumber name="steps" label="Quality (Steps)" />
+                    <InputNumber
+                      name="cfgScale"
+                      label="Creativity (CFG Scale)"
+                      step={0.5}
+                      precision={1}
+                    />
+                    <InputSelect
+                      name="sampler"
+                      label="Engine (Sampler)"
+                      data={[...constants.samplers]}
+                    />
+                    {/* <Stack spacing={0}>
+                    <Input.Label>Creativity (CFG Scale)</Input.Label>
+                    <SegmentedControl data={cfgScales} />
+                  </Stack>
+                  <Stack spacing={0}>
+                    <Input.Label>Engine (Sampler)</Input.Label>
+                    <SegmentedControl data={samplers} />
+                  </Stack>
+                  <Stack spacing={0}>
+                    <Input.Label>Quality (Steps)</Input.Label>
+                    <SegmentedControl data={steps} />
+                  </Stack> */}
+                    <Grid>
+                      <Grid.Col span={6}>
+                        <InputNumber
+                          name="seed"
+                          label="Seed"
+                          placeholder="Random"
+                          min={0}
+                          format="default"
+                          hideControls
+                          rightSection={
+                            <ActionIcon
+                              color="gray"
+                              radius="xl"
+                              size="xs"
+                              variant="filled"
+                              mr={3}
+                              onClick={() => form.setValue('seed', -1)}
+                            >
+                              <IconX size={12} />
+                            </ActionIcon>
+                          }
+                        />
+                      </Grid.Col>
+                      <Grid.Col span={6}>
+                        <InputNumber name="clipSkip" label="Clip Skip" min={0} max={10} />
+                      </Grid.Col>
+                    </Grid>
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
           </Stack>
-
-          {/* ADVANCED */}
-          <Accordion variant="separated">
-            <Accordion.Item value="advanced">
-              <Accordion.Control>
-                <Divider label="Advanced" labelPosition="left" labelProps={{ size: 'md' }} />
-              </Accordion.Control>
-              <Accordion.Panel>
-                <Stack>
-                  <InputNumber name="steps" label="Quality (Steps)" />
-                  <InputNumber
-                    name="cfgScale"
-                    label="Creativity (CFG Scale)"
-                    step={0.5}
-                    precision={1}
-                  />
-                  <InputSelect
-                    name="sampler"
-                    label="Engine (Sampler)"
-                    data={[...constants.samplers]}
-                  />
-                  {/* <Stack spacing={0}>
-                  <Input.Label>Creativity (CFG Scale)</Input.Label>
-                  <SegmentedControl data={cfgScales} />
-                </Stack>
-                <Stack spacing={0}>
-                  <Input.Label>Engine (Sampler)</Input.Label>
-                  <SegmentedControl data={samplers} />
-                </Stack>
-                <Stack spacing={0}>
-                  <Input.Label>Quality (Steps)</Input.Label>
-                  <SegmentedControl data={steps} />
-                </Stack> */}
-                  <Grid>
-                    <Grid.Col span={6}>
-                      <InputNumber
-                        name="seed"
-                        label="Seed"
-                        placeholder="Random"
-                        min={0}
-                        format="default"
-                        hideControls
-                        rightSection={
-                          <ActionIcon
-                            color="gray"
-                            radius="xl"
-                            size="xs"
-                            variant="filled"
-                            mr={3}
-                            onClick={() => form.setValue('seed', -1)}
-                          >
-                            <IconX size={12} />
-                          </ActionIcon>
-                        }
-                      />
-                    </Grid.Col>
-                    <Grid.Col span={6}>
-                      <InputNumber name="clipSkip" label="Clip Skip" min={0} max={10} />
-                    </Grid.Col>
-                  </Grid>
-                </Stack>
-              </Accordion.Panel>
-            </Accordion.Item>
-          </Accordion>
-
-          <InputNumber name="quantity" label="Quantity" min={0} max={10} />
-          <Group>
-            <Button onClick={() => form.reset(defaults)} variant="default">
-              Reset
+        </ScrollArea>
+        <Group spacing={0} className={classes.generateButtonContainer} noWrap>
+          <Card withBorder className={classes.generateButtonQuantity} p={0}>
+            <Stack spacing={0}>
+              <Text
+                size="xs"
+                color="dimmed"
+                weight={500}
+                ta="center"
+                className={classes.generateButtonQuantityText}
+              >
+                Quantity
+              </Text>
+              <InputNumber
+                name="quantity"
+                min={1}
+                max={10}
+                className={classes.generateButtonQuantityInput}
+              />
+            </Stack>
+          </Card>
+          <Button
+            type="submit"
+            size="lg"
+            loading={isLoading}
+            className={classes.generateButtonButton}
+          >
+            Generate
+          </Button>
+          <Tooltip label="Reset" color="dark" withArrow>
+            <Button
+              onClick={() => form.reset(defaults)}
+              variant="outline"
+              className={classes.generateButtonReset}
+              px="xs"
+            >
+              <IconX size={20} strokeWidth={3} />
             </Button>
-            <Button type="submit" loading={isLoading}>
-              Go
-            </Button>
-          </Group>
-          {/* TODO.Quantity,Go */}
-        </Stack>
-      </Form>
-    </ScrollArea.Autosize>
+          </Tooltip>
+        </Group>
+      </Stack>
+    </Form>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  generationContainer: {},
+  generateButtonContainer: {
+    width: '100%',
+    justifyContent: 'stretch',
+    alignItems: 'stretch',
+  },
+  generateButtonQuantity: {
+    width: 100,
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  generateButtonQuantityText: {
+    paddingRight: 25,
+  },
+  generateButtonQuantityInput: {
+    marginTop: -20,
+    input: {
+      background: 'transparent',
+      border: 'none',
+      borderTopRightRadius: 0,
+      borderBottomRightRadius: 0,
+      borderTopLeftRadius: 0,
+      textAlign: 'center',
+      paddingRight: 25 + 12,
+      paddingTop: 18,
+      paddingBottom: 6,
+      lineHeight: 1,
+      fontWeight: 500,
+      height: 'auto',
+    },
+  },
+  generateButtonButton: {
+    flex: 1,
+    borderRadius: 0,
+    height: 'auto',
+  },
+
+  generateButtonReset: {
+    borderBottomLeftRadius: 0,
+    borderTopLeftRadius: 0,
+    height: 'auto',
+  },
+}));
 
 const aspectRatioDetails = [
   { label: 'Square', width: 512, height: 512 },
@@ -309,11 +408,11 @@ const aspectRatioDetails = [
 ];
 const aspectRatioControls = aspectRatioDetails.map(({ label, width, height }) => ({
   label: (
-    <Stack spacing={4} py="xs">
+    <Stack spacing={4}>
       <Center>
-        <Paper withBorder sx={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 30 }} />
+        <Paper withBorder sx={{ borderWidth: 2, aspectRatio: `${width}/${height}`, height: 20 }} />
       </Center>
-      {label}
+      <Text size="xs">{label}</Text>
     </Stack>
   ),
   value: `${width}x${height}`,

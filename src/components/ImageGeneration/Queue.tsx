@@ -42,8 +42,8 @@ export function Queue() {
     </Center>
   ) : requestIds.length > 0 ? (
     <>
-      <ScrollArea.Autosize maxHeight={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
-        <Stack>
+      <ScrollArea h="100%" sx={{ marginRight: -16, paddingRight: 16 }}>
+        <Stack py="md">
           {requestIds.map((id) => (
             <QueueItem
               key={id}
@@ -59,7 +59,7 @@ export function Queue() {
             </Center>
           )}
         </Stack>
-      </ScrollArea.Autosize>
+      </ScrollArea>
       {showBoostModal && (
         <BoostModal
           opened={state.opened}
@@ -69,7 +69,7 @@ export function Queue() {
     </>
   ) : (
     <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
-      <Stack spacing="xs" align="center">
+      <Stack spacing="xs" align="center" py="16">
         <IconInbox size={64} stroke={1} />
         <Stack spacing={0}>
           <Text size="md" align="center">

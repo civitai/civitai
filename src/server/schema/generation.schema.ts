@@ -13,7 +13,7 @@ import { auditPrompt } from '~/utils/image-metadata';
 export type GetGenerationResourcesInput = z.infer<typeof getGenerationResourcesSchema>;
 export const getGenerationResourcesSchema = z.object({
   take: z.number().default(10),
-  query: z.string(),
+  query: z.string().optional(),
   types: z.nativeEnum(ModelType).array().optional(),
   notTypes: z.nativeEnum(ModelType).array().optional(),
   ids: z.number().array().optional(),

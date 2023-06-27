@@ -26,6 +26,7 @@ import { withController } from '~/libs/form/hoc/withController';
 import { BaseModel } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ResourceSelect({
@@ -76,9 +77,16 @@ export function ResourceSelect({
 
   // TODO.generation - support unavailable resources as default values. User should be able to see that a resource is unavailable and remove it from 'additional resources'
 
+  const hasTrainedWords = !!value?.trainedWords?.length;
+  const hasStrength = value?.modelType === ModelType.LORA;
+  const hasAdditionalContent = hasTrainedWords || hasStrength;
+
   return (
     <>
-      <Input.Wrapper label={label ?? value?.modelType} {...inputWrapperProps}>
+      <Input.Wrapper
+        label={label ?? getDisplayName(value?.modelType ?? 'Resource')}
+        {...inputWrapperProps}
+      >
         {!value ? (
           <div>
             <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
@@ -86,36 +94,46 @@ export function ResourceSelect({
             </Button>
           </div>
         ) : (
-          <Card p="xs">
-            <Stack spacing={4}>
-              {/* Header */}
+          <Card p="xs" withBorder>
+            <Card.Section withBorder={hasAdditionalContent} p="xs" py={6}>
               <Group spacing="xs" position="apart">
-                <Text lineClamp={1}>
+                <Text lineClamp={1} size="sm" weight={500}>
                   {value.modelName} - {value.name}
                 </Text>
-                <ActionIcon size="xs" variant="subtle" color="red" onClick={handleRemove}>
-                  <IconX />
+                <ActionIcon size="sm" variant="subtle" color="red" onClick={handleRemove}>
+                  <IconX size={20} />
                 </ActionIcon>
               </Group>
-              {/* LORA */}
-              {value.modelType === ModelType.LORA && (
-                <Group spacing="xs">
-                  <Slider
-                    style={{ flex: 1 }}
-                    value={strength}
-                    onChange={handleStrengthChange}
-                    step={0.05}
-                    min={-1}
-                    max={2}
+            </Card.Section>
+            {hasAdditionalContent && (
+              <Stack spacing={6} pt="xs">
+                {/* LORA */}
+                {hasStrength && (
+                  <Group spacing="xs" align="center">
+                    <Text size="xs" weight={500}>
+                      Strength
+                    </Text>
+                    <Slider
+                      style={{ flex: 1 }}
+                      value={strength}
+                      onChange={handleStrengthChange}
+                      marks={[{ value: 0 }, { value: 1 }]}
+                      step={0.05}
+                      min={-1}
+                      max={2}
+                    />
+                    <Text size="xs" w={28} ta="right">{`${strength.toFixed(2)}`}</Text>
+                  </Group>
+                )}
+                {hasTrainedWords && (
+                  <TrainedWords
+                    trainedWords={value.trainedWords}
+                    type={value.modelType}
+                    limit={4}
                   />
-                  <Text style={{ width: 30 }} align="right">{`${strength}`}</Text>
-                </Group>
-              )}
-              {/* TEXTUAL INVERSION */}
-              {value.trainedWords && (
-                <TrainedWords trainedWords={value.trainedWords} type={value.modelType} />
-              )}
-            </Stack>
+                )}
+              </Stack>
+            )}
           </Card>
         )}
       </Input.Wrapper>
@@ -156,10 +174,11 @@ export function ResourceSelectModal({
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
 
-  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery(
-    { types, query: debounced, ...removeEmpty({ baseModel }) },
-    { enabled: debounced.length >= 3 }
-  );
+  const { data = [], isInitialLoading: isLoading } = trpc.generation.getResources.useQuery({
+    types,
+    query: debounced,
+    ...removeEmpty({ baseModel }),
+  });
 
   const handleSelect = (value: Generation.Client.Resource) => {
     onSelect(value);
@@ -202,12 +221,14 @@ export function ResourceSelectModal({
                   p="xs"
                 >
                   <Group position="apart" noWrap>
-                    <Text weight={700} lineClamp={1}>
+                    <Text weight={700} lineClamp={1} size="sm">
                       {resource.modelName}
                     </Text>
+                  </Group>
+                  <Group position="apart">
+                    <Text size="xs">{resource.name}</Text>
                     <Badge>{resource.modelType}</Badge>
                   </Group>
-                  <Text size="sm">{resource.name}</Text>
                 </Stack>
               ))}
           </Stack>

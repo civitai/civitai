@@ -6,7 +6,8 @@ export function formatDate(value: Date, format = 'MMM DD, YYYY') {
 
 export function formatDateMin(value: Date) {
   if (dayjs().isSame(value, 'day')) return dayjs(value).format('h:mma');
-  if (dayjs().isSame(value, 'month')) return dayjs(value).format('D h:mma');
+  if (dayjs().isSame(value, 'week')) return dayjs(value).format('dddd h:mma');
+  if (dayjs().isSame(value, 'month')) return dayjs(value).format('MMM D h:mma');
   if (dayjs().isSame(value, 'year')) return dayjs(value).format('MMM D h:mma');
   return dayjs(value).format('MMM D, YYYY h:mma');
 }

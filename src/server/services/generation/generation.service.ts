@@ -56,6 +56,7 @@ function mapRequestStatus(label: string): GenerationRequestStatus {
   }
 }
 
+type MappedGenerationResource = ReturnType<typeof mapGenerationResource>;
 function mapGenerationResource(resource: GenerationResourceSelect) {
   const { model, ...x } = resource;
   return {
@@ -93,42 +94,45 @@ export const getGenerationResources = async ({
   baseModel,
   user,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
-  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [
-    { status: ModelStatus.Published },
-    {
-      modelVersionGenerationCoverage: {
-        workers: {
-          gt: 0,
-        },
-      },
-    },
-  ];
-  const MODEL_AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
-  if (ids) AND.push({ id: { in: ids } });
-  if (!!types?.length) MODEL_AND.push({ type: { in: types } });
-  if (!!notTypes?.length) MODEL_AND.push({ type: { notIn: notTypes } });
+  const sqlAnd = [Prisma.sql`mv.status = 'Published'`];
+  if (ids) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
+  if (!!types?.length)
+    sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
+  if (!!notTypes?.length)
+    sqlAnd.push(Prisma.sql`m.type != ANY(ARRAY[${Prisma.join(notTypes, ',')}]::"ModelType"[])`);
   if (query) {
-    AND.push({ model: { name: { contains: query, mode: 'insensitive' } } });
+    const pgQuery = '%' + query + '%';
+    sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
   }
   if (baseModel) {
     const baseModelSet = baseModelSets.find((x) => x.includes(baseModel as BaseModel));
-    if (baseModelSet) AND.push({ baseModel: { in: baseModelSet } });
+    if (baseModelSet)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
   }
-  if (!!MODEL_AND.length) AND.push({ model: { AND: MODEL_AND } });
 
-  const results = await dbRead.modelVersion.findMany({
-    take,
-    where: { AND },
-    select: {
-      ...generationResourceSelect,
-      modelVersionGenerationCoverage: {
-        select: {
-          serviceProviders: true,
-        },
-      },
-    },
-    orderBy: { id: 'desc' },
-  });
+  let orderBy = 'mv.index';
+  if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
+
+  const results = await dbRead.$queryRaw<
+    Array<MappedGenerationResource & { index: number; serviceProviders?: string[] }>
+  >`
+    SELECT
+      mv.id,
+      mv.index,
+      mv.name,
+      mv."trainedWords",
+      m.id "modelId",
+      m.name "modelName",
+      m.type "modelType",
+      mv."baseModel",
+      (SELECT mgc."serviceProviders" FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "serviceProviders"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
+    WHERE ${Prisma.join(sqlAnd, ' AND ')}
+    ORDER BY ${Prisma.raw(orderBy)}
+    LIMIT ${take}
+  `;
 
   // It would be preferrable to do a join when fetching the modelVersions
   // Not sure if this is possible wth prisma queries are there is no defined relationship
@@ -139,15 +143,12 @@ export const getGenerationResources = async ({
     },
   });
 
-  return results
-    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-    .map((resource) => ({
-      ...mapGenerationResource(resource),
-      serviceProviders: allServiceProviders.filter(
-        (sp) =>
-          (resource.modelVersionGenerationCoverage?.serviceProviders ?? []).indexOf(sp.name) !== -1
-      ),
-    }));
+  return results.map((resource) => ({
+    ...resource,
+    serviceProviders: allServiceProviders.filter(
+      (sp) => (resource?.serviceProviders ?? []).indexOf(sp.name) !== -1
+    ),
+  }));
 };
 
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
