@@ -43,6 +43,17 @@ import { FieldArray } from '~/libs/form/components/FieldArray';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 
+const supportedSamplers: Sampler[] = [
+  'Euler a',
+  'Euler',
+  'Heun',
+  'LMS',
+  'DDIM',
+  'DPM++ 2M Karras',
+  'DPM2',
+  'DPM2 a',
+];
+
 const resourceSchema = z
   .object({
     id: z.number(),
@@ -105,7 +116,6 @@ export function Generate({
     if (resource.modelType === ModelType.Checkpoint) form.reset({ model: resource });
     else form.reset({ additionalResources: [resource] });
   }, [modelQuery.data]); // eslint-disable-line
-  console.log({ modelVersionId });
   // #endregion
 
   // #region [generate from image source]
@@ -265,7 +275,7 @@ export function Generate({
                     <InputSelect
                       name="sampler"
                       label="Engine (Sampler)"
-                      data={[...constants.samplers]}
+                      data={[...supportedSamplers]}
                     />
                     {/* <Stack spacing={0}>
                     <Input.Label>Creativity (CFG Scale)</Input.Label>
