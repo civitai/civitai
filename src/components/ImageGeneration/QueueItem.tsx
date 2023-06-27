@@ -30,7 +30,7 @@ import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { formatDateMin } from '~/utils/date-helpers';
-import { splitUppercase, titleCase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const statusColors: Record<GenerationRequestStatus, MantineColor> = {
@@ -58,7 +58,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
 
   const { prompt, ...details } = item.params;
   const detailItems = Object.entries(details).map(([key, value]) => ({
-    label: titleCase(splitUppercase(key)),
+    label: titleCase(getDisplayName(key)),
     value: <ContentClamp maxHeight={44}>{value as string}</ContentClamp>,
   }));
 

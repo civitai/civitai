@@ -9,6 +9,7 @@ import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useImageGenerationQueue } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Generation } from '~/server/services/generation/generation.types';
+import { useGenerationStore } from '~/store/generation.store';
 
 type State = {
   selectedItem: Generation.Request | null;
@@ -23,6 +24,7 @@ export function Queue() {
 
   const { requestIds, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
     useImageGenerationQueue();
+  const setActiveTab = useGenerationStore((state) => state.setActiveTab);
 
   // infinite paging
   useEffect(() => {
@@ -77,7 +79,12 @@ export function Queue() {
           </Text>
           <Text size="sm" color="dimmed">
             Try{' '}
-            <Text variant="link" span>
+            <Text
+              variant="link"
+              onClick={() => setActiveTab('generate')}
+              sx={{ cursor: 'pointer' }}
+              span
+            >
               generating
             </Text>{' '}
             new images with our resources

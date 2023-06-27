@@ -24,6 +24,7 @@ export namespace Generation {
     steps: number;
     cfgScale: number;
     seed: number;
+    clipSKip?: number;
   };
 
   export type Asset = {

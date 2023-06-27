@@ -275,6 +275,7 @@ export const createGenerationRequest = async ({
           width: props.width,
           height: props.height,
           seed: props.seed ?? -1,
+          clipSkip: props.clipSkip,
         },
       },
     }),

@@ -38,22 +38,15 @@ import {
 import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
-import { Sampler } from '~/server/common/constants';
+import { constants, Sampler } from '~/server/common/constants';
 import { FieldArray } from '~/libs/form/components/FieldArray';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
-const supportedSamplers: Sampler[] = [
-  'Euler a',
-  'Euler',
-  'Heun',
-  'LMS',
-  'DDIM',
-  'DPM++ 2M Karras',
-  'DPM2',
-  'DPM2 a',
-];
+const supportedSamplers = constants.samplers.filter((sampler) =>
+  ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
+);
 
 const resourceSchema = z
   .object({
