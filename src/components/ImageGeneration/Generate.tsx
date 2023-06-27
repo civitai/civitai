@@ -145,7 +145,7 @@ export function Generate({
     reValidateMode: 'onSubmit',
   });
 
-  const handleResourceChange = (resource: Generation.Client.Resource) => {
+  const handleResourceChange = (resource: Generation.Resource) => {
     const baseModel = form.getValues('baseModel');
     if (!baseModel) form.setValue('baseModel', resource.baseModel);
   };
@@ -227,21 +227,6 @@ export function Generate({
                 </Stack>
               )}
             />
-            {/* <Input.Wrapper
-              labelProps={{ sx: { width: '100%' } }}
-              label={
-                <Group position="apart">
-                  Prompt
-                  <Text variant="link">
-                  <Group align="center" spacing={4}>
-                    <span>From Collection</span> <IconBook2 size={16} />
-                  </Group>
-                </Text>
-                </Group>
-              }
-            >
-              <MentionExample value={prompt} />
-            </Input.Wrapper> */}
             <InputTextArea name="prompt" autosize label="Prompt" withAsterisk />
             <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
             <Stack spacing={0}>
@@ -289,18 +274,6 @@ export function Generate({
                       label="Engine (Sampler)"
                       data={[...supportedSamplers]}
                     />
-                    {/* <Stack spacing={0}>
-                    <Input.Label>Creativity (CFG Scale)</Input.Label>
-                    <SegmentedControl data={cfgScales} />
-                  </Stack>
-                  <Stack spacing={0}>
-                    <Input.Label>Engine (Sampler)</Input.Label>
-                    <SegmentedControl data={samplers} />
-                  </Stack>
-                  <Stack spacing={0}>
-                    <Input.Label>Quality (Steps)</Input.Label>
-                    <SegmentedControl data={steps} />
-                  </Stack> */}
                     <Grid>
                       <Grid.Col span={6}>
                         <InputNumber
@@ -312,18 +285,6 @@ export function Generate({
                           format="default"
                           hideControls
                           clearable
-                          // rightSection={
-                          //   <ActionIcon
-                          //     color="gray"
-                          //     radius="xl"
-                          //     size="xs"
-                          //     variant="filled"
-                          //     mr={3}
-                          //     onClick={() => form.setValue('seed', undefined)}
-                          //   >
-                          //     <IconX size={12} />
-                          //   </ActionIcon>
-                          // }
                         />
                       </Grid.Col>
                       <Grid.Col span={6}>

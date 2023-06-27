@@ -2,7 +2,6 @@ import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
-  getGenerationImagesSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
@@ -10,7 +9,6 @@ import {
   checkResourcesCoverage,
   createGenerationRequest,
   deleteGenerationRequest,
-  getGenerationImages,
   getGenerationRequests,
   getGenerationResource,
   getGenerationResources,
@@ -33,10 +31,6 @@ export const generationRouter = router({
     .input(createGenerationRequestSchema)
     .use(isFlagProtected('imageGeneration'))
     .mutation(({ input, ctx }) => createGenerationRequest({ ...input, userId: ctx.user.id })),
-  getImages: protectedProcedure
-    .input(getGenerationImagesSchema)
-    .use(isFlagProtected('imageGeneration'))
-    .query(({ input, ctx }) => getGenerationImages({ ...input, userId: ctx.user.id })),
   deleteRequest: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))

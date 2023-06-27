@@ -31,7 +31,6 @@ import { useInView } from 'react-intersection-observer';
 import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
-import { useGetGenerationImages } from '~/components/ImageGeneration/hooks/useGetGenerationImages';
 import { useImageGenerationFeed } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';

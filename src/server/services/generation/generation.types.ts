@@ -41,55 +41,46 @@ export namespace Generation {
     additionalNetworks: Record<string, AdditionalNetwork>;
   };
 
-  export namespace Client {
-    export type Resource = AdditionalNetwork & {
-      id: number;
-      name: string;
-      trainedWords: string[];
-      modelId: number;
-      modelName: string;
-      modelType: ModelType;
-      baseModel: string;
-    };
+  export type Resource = AdditionalNetwork & {
+    id: number;
+    name: string;
+    trainedWords: string[];
+    modelId: number;
+    modelName: string;
+    modelType: ModelType;
+    baseModel: string;
+  };
 
-    export type Request = {
-      id: number;
-      createdAt: Date;
-      estimatedCompletionDate: Date;
-      status: GenerationRequestStatus;
-      quantity: number;
-      priority: number;
-      params: Params;
-      resources: Resource[];
-      images?: Image[];
-    };
+  export type Request = {
+    id: number;
+    createdAt: Date;
+    estimatedCompletionDate: Date;
+    status: GenerationRequestStatus;
+    quantity: number;
+    priority: number;
+    params: Params;
+    resources: Resource[];
+    images?: Image[];
+  };
 
-    export type ImageRequest = { params: Params };
-    export type ImageRequestDictionary = Record<string, ImageRequest>;
-    export type Images = {
-      images: Image[];
-      requests: ImageRequestDictionary;
-    };
+  export type Coverage = {
+    assets: AssetCoverageDictionary;
+    assetTypes: AssetTypeCoverageDictionary;
+    schedulers: SchedulerCoverageDictionary;
+  };
 
-    export type Coverage = {
-      assets: AssetCoverageDictionary;
-      assetTypes: AssetTypeCoverageDictionary;
-      schedulers: SchedulerCoverageDictionary;
-    };
+  export type AssetCoverageDictionary = Record<string, ItemCoverage>;
+  export type AssetTypeCoverageDictionary = Record<string, ItemCoverage>;
+  export type SchedulerCoverageDictionary = Record<string, ItemCoverage>;
 
-    export type AssetCoverageDictionary = Record<string, ItemCoverage>;
-    export type AssetTypeCoverageDictionary = Record<string, ItemCoverage>;
-    export type SchedulerCoverageDictionary = Record<string, ItemCoverage>;
+  export type ItemCoverage = {
+    workers: number;
+    serviceProviders: Record<string, ServiceProviderCoverage>;
+  };
 
-    export type ItemCoverage = {
-      workers: number;
-      serviceProviders: Record<string, ServiceProviderCoverage>;
-    };
-
-    export type ServiceProviderCoverage = {
-      workers: number;
-    };
-  }
+  export type ServiceProviderCoverage = {
+    workers: number;
+  };
 
   export namespace Api {
     export type RequestProps = {
@@ -103,11 +94,6 @@ export namespace Generation {
     };
     export type Request = {
       cursor: number;
-      requests: RequestProps[];
-    };
-    export type Images = {
-      cursor: number;
-      images: Image[];
       requests: RequestProps[];
     };
   }

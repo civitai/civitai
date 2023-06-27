@@ -65,12 +65,6 @@ export const createGenerationRequestSchema = generationParamsSchema.extend({
   width: z.number(),
 });
 
-export type GetGenerationImagesInput = z.infer<typeof getGenerationImagesSchema>;
-export const getGenerationImagesSchema = z.object({
-  take: z.number().default(10),
-  cursor: z.number().optional(),
-});
-
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
 export const checkResourcesCoverageSchema = z.object({
   id: z.number(),

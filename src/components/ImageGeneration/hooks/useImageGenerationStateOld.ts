@@ -10,7 +10,7 @@ import {
 import { Generation } from '~/server/services/generation/generation.types';
 import { QS } from '~/utils/qs';
 
-type RequestsDictionary = Record<number, Generation.Client.Request>;
+type RequestsDictionary = Record<number, Generation.Request>;
 
 type ImageGenerationState = {
   requests: RequestsDictionary;
@@ -23,7 +23,7 @@ type ImageGenerationState = {
   };
   create: {
     isLoading: boolean;
-    call: (data: CreateGenerationRequestInput) => Promise<Generation.Client.Request | undefined>;
+    call: (data: CreateGenerationRequestInput) => Promise<Generation.Request | undefined>;
   };
   delete: {
     isLoading: boolean;
@@ -62,7 +62,7 @@ const useImageGenerationStoreOld = createStore<ImageGenerationState>()(
             items,
             nextCursor,
           }: {
-            items: Generation.Client.Request[];
+            items: Generation.Request[];
             nextCursor?: number;
           } = await response.json();
 
@@ -96,7 +96,7 @@ const useImageGenerationStoreOld = createStore<ImageGenerationState>()(
             return;
           }
 
-          const request: Generation.Client.Request = await response.json();
+          const request: Generation.Request = await response.json();
           set((state) => {
             state.create.isLoading = false;
             state.requests[request.id] = request;

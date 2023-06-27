@@ -38,8 +38,8 @@ export function ResourceSelect({
   label,
   ...inputWrapperProps
 }: {
-  value?: Generation.Client.Resource | null;
-  onChange?: (value: Generation.Client.Resource | null) => void;
+  value?: Generation.Resource | null;
+  onChange?: (value: Generation.Resource | null) => void;
   onRemove?: () => void;
   types?: ModelType[];
 } & Omit<InputWrapperProps, 'children' | 'onChange'>) {
@@ -62,7 +62,7 @@ export function ResourceSelect({
     onRemove?.();
   };
 
-  const handleSetResource = (resource: Generation.Client.Resource | null) => {
+  const handleSetResource = (resource: Generation.Resource | null) => {
     // setResource(resource);
     onChange?.(resource);
   };
@@ -172,7 +172,7 @@ export function ResourceSelectModal({
   opened: boolean;
   onClose: () => void;
   title?: string;
-  onSelect: (value: Generation.Client.Resource) => void;
+  onSelect: (value: Generation.Resource) => void;
   types?: ModelType[];
   notIds?: number[];
   baseModel?: string;
@@ -193,7 +193,7 @@ export function ResourceSelectModal({
     }
   );
 
-  const handleSelect = (value: Generation.Client.Resource) => {
+  const handleSelect = (value: Generation.Resource) => {
     onSelect(value);
     onClose();
   };

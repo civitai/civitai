@@ -3,7 +3,6 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
-  GetGenerationImagesInput,
   GetGenerationRequestsInput,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
@@ -71,9 +70,7 @@ function mapGenerationResource(resource: GenerationResourceSelect) {
   };
 }
 
-export const getGenerationResource = async ({
-  id,
-}: GetByIdInput): Promise<Generation.Client.Resource> => {
+export const getGenerationResource = async ({ id }: GetByIdInput): Promise<Generation.Resource> => {
   const resource = await dbRead.modelVersion.findUnique({
     where: { id },
     select: generationResourceSelect,
@@ -95,7 +92,7 @@ export const getGenerationResources = async ({
   baseModel,
   user,
   supported,
-}: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Client.Resource[]> => {
+}: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Resource[]> => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published'`];
   if (ids) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
   if (!!types?.length)
@@ -169,7 +166,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
     select: generationResourceSelect,
   });
 
-  return requests.map((x): Generation.Client.Request => {
+  return requests.map((x): Generation.Request => {
     const { additionalNetworks, ...job } = x.job;
 
     const assets = [x.job.model, ...Object.keys(x.job.additionalNetworks)];
@@ -180,7 +177,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
       resources: assets
-        .map((assetId): Generation.Client.Resource | undefined => {
+        .map((assetId): Generation.Resource | undefined => {
           const modelVersionId = parseModelVersionId(assetId);
           const modelVersion = modelVersions.find((x) => x.id === modelVersionId);
           const network = x.job.additionalNetworks[assetId] ?? {};
@@ -297,37 +294,9 @@ export const createGenerationRequest = async ({
   return formatted;
 };
 
-export const getGenerationImages = async (props: GetGenerationImagesInput & { userId: number }) => {
-  const params = QS.stringify(props);
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/images?${params}`);
-  if (!response.ok) throw new Error(response.statusText);
-  const { cursor, images, requests }: Generation.Api.Images = await response.json();
-
-  // // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
-  // let nextCursor: number | undefined;
-  // if (images.length > props.take) {
-  //   const nextItem = images.pop();
-  //   nextCursor = nextItem?.id;
-  // }
-
-  return {
-    nextCursor: cursor ?? undefined,
-    images,
-    requests: requests.reduce<Generation.Client.ImageRequestDictionary>((acc, request) => {
-      if (!images.find((x) => x.requestId === request.id)) return acc;
-      return {
-        ...acc,
-        [request.id]: {
-          params: request.job.params,
-        },
-      };
-    }, {}),
-  };
-};
-
 export async function refreshGenerationCoverage() {
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/coverage`);
-  const coverage = (await response.json()) as Generation.Client.Coverage;
+  const coverage = (await response.json()) as Generation.Coverage;
 
   const modelVersionCoverage = Object.keys(coverage.assets)
     .map((x) => ({
@@ -403,7 +372,7 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
   if (!image) throw throwNotFoundError();
 
   const resources = await dbRead.$queryRaw<
-    Array<Generation.Client.Resource & { covered: boolean; hash?: string }>
+    Array<Generation.Resource & { covered: boolean; hash?: string }>
   >`
     SELECT
       mv.id,

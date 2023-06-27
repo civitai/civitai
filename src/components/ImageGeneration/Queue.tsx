@@ -11,7 +11,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { Generation } from '~/server/services/generation/generation.types';
 
 type State = {
-  selectedItem: Generation.Client.Request | null;
+  selectedItem: Generation.Request | null;
   opened: boolean;
 };
 

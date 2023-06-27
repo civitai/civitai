@@ -31,7 +31,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
           const ev2 = new Event('input', { bubbles: true });
           inputRef.current?.dispatchEvent(ev2);
           onClear?.();
-          props.onChange?.(null);
+          props.onChange?.(null as any);
         }}
       />
     );

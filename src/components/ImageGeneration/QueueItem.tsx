@@ -222,9 +222,9 @@ export function QueueItem({ id, onBoostClick }: Props) {
 }
 
 type Props = {
-  // item: Generation.Client.Request;
+  // item: Generation.Request;
   id: number;
-  onBoostClick: (item: Generation.Client.Request) => void;
+  onBoostClick: (item: Generation.Request) => void;
 };
 
 const useStyles = createStyles((theme) => ({

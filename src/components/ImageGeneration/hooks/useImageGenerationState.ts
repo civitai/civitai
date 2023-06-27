@@ -7,14 +7,14 @@ import { useCallback, useEffect } from 'react';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/hooks/useGetGenerationRequests';
 import { useDebouncer } from '~/utils/debouncer';
 
-type RequestsDictionary = Record<number, Generation.Client.Request>;
+type RequestsDictionary = Record<number, Generation.Request>;
 
 type ImageGenerationState = {
   ids: number[];
   requests: RequestsDictionary;
   feed: Generation.Image[];
   deletedRequests: number[];
-  setRequests: (requests: Generation.Client.Request[], isNew?: boolean) => void;
+  setRequests: (requests: Generation.Request[], isNew?: boolean) => void;
   removeRequest: (id: number) => void;
 };
 
