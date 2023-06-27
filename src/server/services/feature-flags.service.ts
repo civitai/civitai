@@ -21,7 +21,7 @@ const featureFlags = createTypedDictionary({
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod'],
   stripe: ['mod'],
-  imageGeneration: ['mod'],
+  imageGeneration: ['mod', 'granted'],
 });
 
 // Set flags from ENV
