@@ -38,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { Sampler, constants } from '~/server/common/constants';
 import { FieldArray } from '~/libs/form/components/FieldArray';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
+import { showErrorNotification } from '~/utils/notifications';
 
 const resourceSchema = z
   .object({
@@ -80,6 +81,13 @@ export function Generate({
     onSuccess: (data) => {
       setRequests([data], true);
       onSuccess?.();
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to generate',
+        error: new Error(error.message),
+        reason: 'An unexpected error occurred. Please try again later.',
+      });
     },
   });
 
