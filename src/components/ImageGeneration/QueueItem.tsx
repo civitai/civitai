@@ -59,7 +59,11 @@ export function QueueItem({ id, onBoostClick }: Props) {
   const { prompt, ...details } = item.params;
   const detailItems = Object.entries(details).map(([key, value]) => ({
     label: titleCase(getDisplayName(key)),
-    value: <ContentClamp maxHeight={44}>{value as string}</ContentClamp>,
+    value: (
+      <ContentClamp maxHeight={44} labelSize="xs">
+        {value as string}
+      </ContentClamp>
+    ),
   }));
 
   const status = item.status ?? GenerationRequestStatus.Pending;

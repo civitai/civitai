@@ -95,7 +95,7 @@ export function ModelFiltersDropdown() {
                 ))}
               </Chip.Group>
             )}
-            <Group spacing={4}>
+            <Group spacing={4} mb={4}>
               <Chip
                 checked={filters.earlyAccess}
                 onChange={(checked) => setFilters({ earlyAccess: checked })}

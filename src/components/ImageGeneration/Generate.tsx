@@ -46,6 +46,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { parsePromptMetadata } from '~/utils/image-metadata';
+import { useLocalStorage } from '@mantine/hooks';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
@@ -84,6 +85,10 @@ export function Generate({
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const defaultValues = (imageGenerationFormStorage.get() ?? defaultDemoValues) as Schema;
+  const [showAdvanced, setShowAdvanced] = useLocalStorage({
+    key: 'generation-show-advanced',
+    defaultValue: false,
+  });
   const [opened, setOpened] = useState(false);
   const [baseModel, setBaseModel] = useState(
     defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
@@ -139,6 +144,9 @@ export function Generate({
   useEffect(() => {
     if (!imageId || !imageQuery.data) return;
     imageGenerationFormStorage.set(imageQuery.data);
+    if (!supportedSamplers.includes(imageQuery.data.sampler)) {
+      imageQuery.data.sampler = 'Euler a';
+    }
     form.reset(imageQuery.data);
   }, [imageQuery.data]); // eslint-disable-line
   // #endregion
@@ -316,6 +324,8 @@ export function Generate({
                   paddingBottom: theme.spacing.xs,
                 },
               })}
+              value={showAdvanced ? 'advanced' : null}
+              onChange={(value) => setShowAdvanced(value === 'advanced')}
             >
               <Accordion.Item value="advanced">
                 <Accordion.Control>
