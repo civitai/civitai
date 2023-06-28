@@ -197,7 +197,7 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
 
-function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps) {
+function FloatingActions({ selectCount, onDeselectClick, onDeleteClick }: FloatingActionsProps) {
   return (
     <Transition mounted={selectCount > 0} transition="slide-up">
       {(transitionStyles) => (
@@ -217,6 +217,11 @@ function FloatingActions({ selectCount, onDeselectClick }: FloatingActionsProps)
               <Tooltip label="Deselect all" {...tooltipProps}>
                 <ActionIcon size="md" onClick={onDeselectClick} variant="light">
                   <IconSquareOff size={20} />
+                </ActionIcon>
+              </Tooltip>
+              <Tooltip label="Delete selected" {...tooltipProps}>
+                <ActionIcon size="md" onClick={onDeleteClick} color="red">
+                  <IconTrash size={20} />
                 </ActionIcon>
               </Tooltip>
               <Tooltip label="Post images" {...tooltipProps}>
