@@ -17,7 +17,7 @@ import {
   ActionIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconBook2, IconDice5, IconLock, IconX } from '@tabler/icons-react';
+import { IconArrowAutofitDown, IconBook2, IconDice5, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
@@ -47,6 +47,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { parsePromptMetadata } from '~/utils/image-metadata';
 import { useLocalStorage } from '@mantine/hooks';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
@@ -93,7 +94,7 @@ export function Generate({
   const [baseModel, setBaseModel] = useState(
     defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
   );
-  const [showParsePrompt, setShowParsePrompt] = useState(false);
+  const [showFillForm, setShowFillForm] = useState(false);
   const isMuted = currentUser?.muted ?? false;
 
   // Handle display of survey after 10 minutes
@@ -167,7 +168,31 @@ export function Generate({
 
   const handleGetRandomGenParams = async () => {
     const { data: genData } = await randomQuery.refetch();
-    if (genData) form.reset(genData);
+    const result = imageGenerationSchema.safeParse(genData);
+    if (result.success) {
+      const { sampler, ...rest } = result.data;
+      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+    } else console.error(result.error);
+  };
+
+  const handleParsePrompt = () => {
+    const prompt = form.getValues('prompt');
+    const metadata = parsePromptMetadata(prompt);
+    const result = imageGenerationSchema.safeParse({
+      ...defaults,
+      ...metadata,
+    });
+    if (result.success) {
+      const { sampler, ...rest } = result.data;
+      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+      setShowFillForm(false);
+    } else {
+      console.error(result.error);
+      showErrorNotification({
+        title: 'Unable to parse prompt',
+        error: new Error('We are unable to fill out the form with the provided prompt.'),
+      });
+    }
   };
 
   if (isMuted)
@@ -261,47 +286,49 @@ export function Generate({
                 </Stack>
               )}
             />
-            <InputTextArea
-              name="prompt"
-              label={
-                <>
-                  <Text inherit>Prompt</Text>
-                  {/* {showParsePrompt && (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => {
-                        const prompt = form.getValues('prompt');
-                        const metadata = parsePromptMetadata(prompt);
-                        form.reset(metadata);
-                        setShowParsePrompt(false);
-                      }}
-                      sx={{ order: 3, ml: 4 }}
-                      compact
-                    >
-                      Fill form
-                    </Button>
-                  )}
-                  <Tooltip label="Random" color="dark" withArrow>
-                    <ActionIcon
-                      variant="light"
-                      loading={randomQuery.isFetching}
-                      className={classes.generateButtonRandom}
-                      onClick={handleGetRandomGenParams}
-                    >
-                      <IconDice5 size={20} strokeWidth={2} />
-                    </ActionIcon>
-                  </Tooltip> */}
-                </>
-              }
-              labelProps={{ className: classes.promptInputLabel }}
-              onPaste={(event) => {
-                const text = event.clipboardData.getData('text/plain');
-                if (text && text.includes('Steps:')) setShowParsePrompt(true);
-              }}
-              autosize
-              withAsterisk
-            />
+            <Stack spacing={0}>
+              <InputTextArea
+                name="prompt"
+                label={
+                  <>
+                    <Text inherit>Prompt</Text>
+                    {/* <Tooltip label="Random" color="dark" withArrow>
+                      <ActionIcon
+                        variant="light"
+                        loading={randomQuery.isFetching}
+                        className={classes.generateButtonRandom}
+                        onClick={handleGetRandomGenParams}
+                      >
+                        <IconDice5 size={20} strokeWidth={2} />
+                      </ActionIcon>
+                    </Tooltip> */}
+                  </>
+                }
+                labelProps={{ className: classes.promptInputLabel }}
+                onPaste={(event) => {
+                  const text = event.clipboardData.getData('text/plain');
+                  if (text) setShowFillForm(text.includes('Steps:'));
+                }}
+                onChange={(event) => {
+                  const text = event.target.value;
+                  if (text && !text.includes('Steps:')) setShowFillForm(false);
+                }}
+                styles={{ input: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } }}
+                autosize
+                withAsterisk
+              />
+              {showFillForm && (
+                <Button
+                  variant="light"
+                  onClick={handleParsePrompt}
+                  leftIcon={<IconArrowAutofitDown size={16} />}
+                  sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                  fullWidth
+                >
+                  Apply Parameters
+                </Button>
+              )}
+            </Stack>
             <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
             <Stack spacing={0}>
               <Input.Label>Aspect Ratio</Input.Label>
@@ -491,11 +518,13 @@ const useStyles = createStyles((theme) => ({
   generateButtonRandom: {
     borderRadius: 0,
     height: 'auto',
+    order: 3,
   },
   promptInputLabel: {
     display: 'inline-flex',
     gap: 4,
     marginBottom: 5,
+    alignItems: 'center',
   },
 }));
 

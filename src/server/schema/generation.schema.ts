@@ -44,12 +44,12 @@ export const generationParamsSchema = z.object({
         });
     }),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
-  cfgScale: z.number().min(1).max(30),
+  cfgScale: z.coerce.number().min(1).max(30),
   sampler: z.enum(constants.samplers),
-  steps: z.number().min(1).max(150),
-  seed: z.number().min(-1).max(999999999999999).nullish(),
-  clipSkip: z.number().default(1),
-  quantity: z.number().max(10),
+  steps: z.coerce.number().min(1).max(150),
+  seed: z.coerce.number().min(-1).max(999999999999999).nullish(),
+  clipSkip: z.coerce.number().default(1),
+  quantity: z.coerce.number().max(10),
 });
 
 export const additionalResourceLimit = 10;

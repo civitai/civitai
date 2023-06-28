@@ -362,7 +362,11 @@ export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { u
 
 export const getRandomGenerationData = async () => {
   const imageReaction = await dbRead.imageReaction.findFirst({
-    where: { reaction: { in: ['Like', 'Heart', 'Laugh'] }, user: { isModerator: true } },
+    where: {
+      reaction: { in: ['Like', 'Heart', 'Laugh'] },
+      user: { isModerator: true },
+      image: { meta: { not: Prisma.JsonNull } },
+    },
     select: { imageId: true },
     orderBy: { createdAt: 'desc' },
     skip: Math.floor(Math.random() * 1000),
@@ -405,11 +409,12 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
   `;
 
   const {
-    'Clip skip': clipSkip,
+    'Clip skip': legacyClipSkip,
     hashes,
     prompt,
     negativePrompt,
     sampler,
+    clipSkip = legacyClipSkip,
     ...meta
   } = imageMetaSchema.parse(image.meta);
   const model = resources.find((x) => x.modelType === ModelType.Checkpoint);

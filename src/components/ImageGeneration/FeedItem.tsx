@@ -117,21 +117,25 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
                   </Tooltip>
 
                   <Tooltip {...tooltipProps} label="Create variant">
-                    <ActionIcon
-                      size="md"
-                      p={4}
-                      variant="light"
-                      onClick={() => onCreateVariantClick(image)}
-                      radius={0}
-                      disabled
-                    >
-                      <IconArrowsShuffle />
-                    </ActionIcon>
+                    <span>
+                      <ActionIcon
+                        size="md"
+                        p={4}
+                        variant="light"
+                        onClick={() => onCreateVariantClick(image)}
+                        radius={0}
+                        disabled
+                      >
+                        <IconArrowsShuffle />
+                      </ActionIcon>
+                    </span>
                   </Tooltip>
                   <Tooltip {...tooltipProps} label="Upscale">
-                    <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
-                      <IconWindowMaximize />
-                    </ActionIcon>
+                    <span>
+                      <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
+                        <IconWindowMaximize />
+                      </ActionIcon>
+                    </span>
                   </Tooltip>
                 </Group>
               )}
