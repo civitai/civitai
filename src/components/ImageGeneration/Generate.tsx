@@ -14,9 +14,10 @@ import {
   Card,
   Tooltip,
   ThemeIcon,
+  ActionIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconBook2, IconLock, IconX } from '@tabler/icons-react';
+import { IconBook2, IconDice5, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
@@ -131,6 +132,10 @@ export function Generate({
     { enabled: !!imageId }
   );
 
+  const randomQuery = trpc.generation.getRandomGenerationData.useQuery(undefined, {
+    enabled: false,
+  });
+
   useEffect(() => {
     if (!imageQuery.data) return;
     form.reset(imageQuery.data);
@@ -146,6 +151,11 @@ export function Generate({
   const handleResourceChange = (resource: Generation.Resource) => {
     const baseModel = form.getValues('baseModel');
     if (!baseModel) form.setValue('baseModel', resource.baseModel);
+  };
+
+  const handleGetRandomGenParams = async () => {
+    const { data: genData } = await randomQuery.refetch();
+    if (genData) form.reset(genData);
   };
 
   if (isMuted)
@@ -244,7 +254,7 @@ export function Generate({
               label={
                 <>
                   <Text inherit>Prompt</Text>
-                  {showParsePrompt && (
+                  {/* {showParsePrompt && (
                     <Button
                       variant="outline"
                       size="xs"
@@ -260,6 +270,16 @@ export function Generate({
                       Fill form
                     </Button>
                   )}
+                  <Tooltip label="Random" color="dark" withArrow>
+                    <ActionIcon
+                      variant="light"
+                      loading={randomQuery.isFetching}
+                      className={classes.generateButtonRandom}
+                      onClick={handleGetRandomGenParams}
+                    >
+                      <IconDice5 size={20} strokeWidth={2} />
+                    </ActionIcon>
+                  </Tooltip> */}
                 </>
               }
               labelProps={{ className: classes.promptInputLabel }}
@@ -275,7 +295,6 @@ export function Generate({
               <Input.Label>Aspect Ratio</Input.Label>
               <InputSegmentedControl name="aspectRatio" data={aspectRatioControls} />
             </Stack>
-
             {/* ADVANCED */}
             <Accordion
               variant="separated"
@@ -451,6 +470,11 @@ const useStyles = createStyles((theme) => ({
   generateButtonReset: {
     borderBottomLeftRadius: 0,
     borderTopLeftRadius: 0,
+    height: 'auto',
+  },
+
+  generateButtonRandom: {
+    borderRadius: 0,
     height: 'auto',
   },
   promptInputLabel: {

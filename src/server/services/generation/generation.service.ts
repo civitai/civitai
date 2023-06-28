@@ -360,6 +360,20 @@ export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { u
   if (!deleteResponse.ok) throw throwNotFoundError();
 }
 
+export const getRandomGenerationData = async () => {
+  const imageReaction = await dbRead.imageReaction.findFirst({
+    where: { reaction: { in: ['Like', 'Heart', 'Laugh'] }, user: { isModerator: true } },
+    select: { imageId: true },
+    orderBy: { createdAt: 'desc' },
+    skip: Math.floor(Math.random() * 1000),
+  });
+  if (!imageReaction) throw throwNotFoundError();
+
+  const generationData = await getImageGenerationData({ id: imageReaction.imageId });
+  generationData.seed = undefined;
+  return generationData;
+};
+
 export type GetImageGenerationDataProps = AsyncReturnType<typeof getImageGenerationData>;
 export const getImageGenerationData = async ({ id }: GetByIdInput) => {
   const image = await dbRead.image.findUnique({
