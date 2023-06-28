@@ -487,7 +487,7 @@ const useStyles = createStyles((theme) => ({
 const aspectRatioDetails = [
   { label: 'Square', width: 512, height: 512 },
   { label: 'Landscape', width: 768, height: 512 },
-  { label: 'Portrait', width: 576, height: 768 },
+  { label: 'Portrait', width: 512, height: 768 },
 ];
 const aspectRatioControls = aspectRatioDetails.map(({ label, width, height }) => ({
   label: (
