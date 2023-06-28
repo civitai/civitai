@@ -4,7 +4,7 @@ export function ContentClamp({ children, maxHeight = 200, labelSize = 'sm', ...p
   return (
     <Spoiler
       showLabel={<Text size={labelSize}>Show More</Text>}
-      hideLabel={<Text size={labelSize}>Show More</Text>}
+      hideLabel={<Text size={labelSize}>Hide</Text>}
       maxHeight={maxHeight}
       sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
       {...props}
