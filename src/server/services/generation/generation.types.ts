@@ -50,6 +50,7 @@ export namespace Generation {
     modelName: string;
     modelType: ModelType;
     baseModel: string;
+    covered?: boolean;
   };
 
   export type Request = {

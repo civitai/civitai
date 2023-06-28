@@ -16,10 +16,12 @@ import {
   CloseButton,
   Divider,
   Box,
+  ThemeIcon,
+  HoverCard,
 } from '@mantine/core';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { ModelType } from '@prisma/client';
-import { IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useFormContext } from 'react-hook-form';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -76,11 +78,80 @@ export function ResourceSelect({
   //   }
   // }, [isDirty]); //eslint-disable-line
 
-  // TODO.generation - support unavailable resources as default values. User should be able to see that a resource is unavailable and remove it from 'additional resources'
-
   const hasTrainedWords = !!value?.trainedWords?.length;
   const hasStrength = value?.modelType === ModelType.LORA;
   const hasAdditionalContent = hasTrainedWords || hasStrength;
+  const unavailable = value?.covered === false;
+
+  let ResourceCard = value && (
+    <Card p="xs" withBorder>
+      <Card.Section withBorder={hasAdditionalContent} p="xs" py={6}>
+        <Group spacing="xs">
+          {unavailable && (
+            <ThemeIcon color="red" w="auto" size="sm" px={4}>
+              <Group spacing={4}>
+                <IconAlertTriangle size={16} strokeWidth={3} />
+                <Text size="xs" weight={500}>
+                  Unavailable
+                </Text>
+              </Group>
+            </ThemeIcon>
+          )}
+          <Text lineClamp={1} size="sm" weight={500}>
+            {value.modelName} - {value.name}
+          </Text>
+          <ActionIcon
+            size="sm"
+            variant={unavailable ? 'filled' : 'subtle'}
+            color="red"
+            onClick={handleRemove}
+            ml="auto"
+          >
+            <IconX size={20} />
+          </ActionIcon>
+        </Group>
+      </Card.Section>
+      {hasAdditionalContent && !unavailable && (
+        <Stack spacing={6} pt="xs">
+          {/* LORA */}
+          {hasStrength && (
+            <Group spacing="xs" align="center">
+              <Text size="xs" weight={500}>
+                Strength
+              </Text>
+              <Slider
+                style={{ flex: 1 }}
+                value={strength}
+                onChange={handleStrengthChange}
+                marks={[{ value: 0 }, { value: 1 }]}
+                step={0.05}
+                min={-1}
+                max={2}
+              />
+              <Text size="xs" w={28} ta="right">{`${strength.toFixed(2)}`}</Text>
+            </Group>
+          )}
+          {hasTrainedWords && (
+            <TrainedWords trainedWords={value.trainedWords} type={value.modelType} limit={4} />
+          )}
+        </Stack>
+      )}
+    </Card>
+  );
+
+  if (unavailable && value)
+    ResourceCard = (
+      <HoverCard withArrow shadow="md">
+        <HoverCard.Target>{ResourceCard}</HoverCard.Target>
+        <HoverCard.Dropdown maw={300}>
+          <Text weight={500}>This resource is unavailable</Text>
+          <Text size="xs">
+            {`The resource that you have selected is not available for generation at this
+        time. We're always adding support for more, so check back soon!`}
+          </Text>
+        </HoverCard.Dropdown>
+      </HoverCard>
+    );
 
   return (
     <>
@@ -101,47 +172,7 @@ export function ResourceSelect({
             </Button>
           </div>
         ) : (
-          <Card p="xs" withBorder>
-            <Card.Section withBorder={hasAdditionalContent} p="xs" py={6}>
-              <Group spacing="xs" position="apart">
-                <Text lineClamp={1} size="sm" weight={500}>
-                  {value.modelName} - {value.name}
-                </Text>
-                <ActionIcon size="sm" variant="subtle" color="red" onClick={handleRemove}>
-                  <IconX size={20} />
-                </ActionIcon>
-              </Group>
-            </Card.Section>
-            {hasAdditionalContent && (
-              <Stack spacing={6} pt="xs">
-                {/* LORA */}
-                {hasStrength && (
-                  <Group spacing="xs" align="center">
-                    <Text size="xs" weight={500}>
-                      Strength
-                    </Text>
-                    <Slider
-                      style={{ flex: 1 }}
-                      value={strength}
-                      onChange={handleStrengthChange}
-                      marks={[{ value: 0 }, { value: 1 }]}
-                      step={0.05}
-                      min={-1}
-                      max={2}
-                    />
-                    <Text size="xs" w={28} ta="right">{`${strength.toFixed(2)}`}</Text>
-                  </Group>
-                )}
-                {hasTrainedWords && (
-                  <TrainedWords
-                    trainedWords={value.trainedWords}
-                    type={value.modelType}
-                    limit={4}
-                  />
-                )}
-              </Stack>
-            )}
-          </Card>
+          ResourceCard
         )}
       </Input.Wrapper>
       {!value && (

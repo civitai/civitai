@@ -137,16 +137,20 @@ export function Generate({
   });
 
   useEffect(() => {
-    if (!imageQuery.data) return;
+    if (!imageId || !imageQuery.data) return;
+    imageGenerationFormStorage.set(imageQuery.data);
     form.reset(imageQuery.data);
   }, [imageQuery.data]); // eslint-disable-line
   // #endregion
 
   const form = useForm({
     schema,
-    defaultValues: { ...defaults, ...defaultValues } as any,
+    defaultValues: { ...defaults, ...defaultValues, ...(imageQuery?.data ?? {}) } as any,
     reValidateMode: 'onSubmit',
   });
+
+  const resources = form.watch('additionalResources');
+  const hasUnavailable = resources?.length > 0 && resources.some((x) => x?.covered === false);
 
   const handleResourceChange = (resource: Generation.Resource) => {
     const baseModel = form.getValues('baseModel');
@@ -382,6 +386,7 @@ export function Generate({
             <Button
               type="submit"
               size="lg"
+              disabled={hasUnavailable}
               loading={isLoading}
               className={classes.generateButtonButton}
             >
