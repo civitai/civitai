@@ -4,17 +4,20 @@ import {
   Badge,
   Box,
   Group,
+  HoverCard,
   Indicator,
   LoadingOverlay,
   Menu,
   Rating,
   Stack,
   Text,
+  ThemeIcon,
   createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
 import {
+  IconBrush,
   IconDotsVertical,
   IconDownload,
   IconFlag,
@@ -40,6 +43,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetByCategoryModel } from '~/types/router';
@@ -61,6 +65,7 @@ export function ModelCategoryCard({
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   const [loading, setLoading] = useState(false);
 
@@ -320,41 +325,53 @@ export function ModelCategoryCard({
                 zIndex: 10,
               }}
             >
-              <CivitiaLinkManageButton
-                modelId={id}
-                modelName={name}
-                modelType={data.type}
-                hashes={data.hashes}
-                tooltipProps={{
-                  position: 'right',
-                  transition: 'slide-right',
-                  variant: 'smallRounded',
-                }}
-              >
-                {({ color, onClick, ref, icon }) => (
-                  <ActionIcon
-                    component="button"
-                    ref={ref}
-                    radius="lg"
-                    variant="filled"
-                    size="lg"
-                    color={color}
-                    sx={() => ({
-                      opacity: 0.8,
-                      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-                      transition: 'opacity .25s ease',
-                      position: 'relative',
-
-                      '&:hover': {
-                        opacity: 1,
-                      },
-                    })}
-                    onClick={onClick}
-                  >
-                    {icon}
-                  </ActionIcon>
+              <Group spacing={8}>
+                <CivitiaLinkManageButton
+                  modelId={id}
+                  modelName={name}
+                  modelType={data.type}
+                  hashes={data.hashes}
+                  tooltipProps={{
+                    position: 'right',
+                    transition: 'slide-right',
+                    variant: 'smallRounded',
+                  }}
+                >
+                  {({ color, onClick, ref, icon }) => (
+                    <ActionIcon
+                      component="button"
+                      className={classes.hoverable}
+                      ref={ref}
+                      radius="lg"
+                      variant="filled"
+                      size="lg"
+                      color={color}
+                      onClick={onClick}
+                    >
+                      {icon}
+                    </ActionIcon>
+                  )}
+                </CivitiaLinkManageButton>
+                {features.imageGeneration && data.canGenerate && (
+                  <HoverCard width={200} withArrow>
+                    <HoverCard.Target>
+                      <ThemeIcon className={classes.hoverable} size={38} radius="xl" color="green">
+                        <IconBrush stroke={2.5} size={22} />
+                      </ThemeIcon>
+                    </HoverCard.Target>
+                    <HoverCard.Dropdown>
+                      <Stack spacing={4}>
+                        <Text size="sm" weight="bold">
+                          Available for generation
+                        </Text>
+                        <Text size="sm" color="dimmed">
+                          This resource has versions available for image generation
+                        </Text>
+                      </Stack>
+                    </HoverCard.Dropdown>
+                  </HoverCard>
                 )}
-              </CivitiaLinkManageButton>
+              </Group>
               {data.user.image && (
                 <CivitaiTooltip
                   position="left"
@@ -502,6 +519,16 @@ const useStyles = createStyles((theme) => {
         boxShadow: 'inset 0 0 0px 1px rgba(255,255,255,0.8)',
       },
 
+      '&:hover': {
+        opacity: 1,
+      },
+    },
+
+    hoverable: {
+      opacity: 0.8,
+      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
+      transition: 'opacity .25s ease',
+      position: 'relative',
       '&:hover': {
         opacity: 1,
       },
