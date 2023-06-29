@@ -158,7 +158,9 @@ export const getGenerationResources = async ({
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
   const modelVersionIds = requests
     .map((x) => parseModelVersionId(x.job.model))
-    .concat(requests.flatMap((x) => Object.keys(x.job.additionalNetworks).map(parseModelVersionId)))
+    .concat(
+      requests.flatMap((x) => Object.keys(x.job.additionalNetworks ?? {}).map(parseModelVersionId))
+    )
     .filter((x) => x !== null) as number[];
 
   const modelVersions = await dbRead.modelVersion.findMany({
@@ -167,9 +169,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
   });
 
   return requests.map((x): Generation.Request => {
-    const { additionalNetworks, ...job } = x.job;
+    const { additionalNetworks = {}, ...job } = x.job;
 
-    const assets = [x.job.model, ...Object.keys(x.job.additionalNetworks)];
+    const assets = [x.job.model, ...Object.keys(x.job.additionalNetworks ?? {})];
 
     return {
       id: x.id,
@@ -180,7 +182,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
         .map((assetId): Generation.Resource | undefined => {
           const modelVersionId = parseModelVersionId(assetId);
           const modelVersion = modelVersions.find((x) => x.id === modelVersionId);
-          const network = x.job.additionalNetworks[assetId] ?? {};
+          const network = x.job.additionalNetworks?.[assetId] ?? {};
           if (!modelVersion) return undefined;
           const { model } = modelVersion;
           return {
@@ -353,6 +355,15 @@ export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { u
   });
 
   if (!deleteResponse.ok) throw throwNotFoundError();
+}
+
+export async function deleteGeneratedImage({ id, userId }: GetByIdInput & { userId: number }) {
+  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images/${id}?userId=${userId}`, {
+    method: 'DELETE',
+  });
+  if (!deleteResponse.ok) throw throwNotFoundError();
+
+  return deleteResponse.ok;
 }
 
 export const getRandomGenerationData = async () => {

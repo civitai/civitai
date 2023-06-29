@@ -16,6 +16,7 @@ type ImageGenerationState = {
   deletedRequests: number[];
   setRequests: (requests: Generation.Request[], isNew?: boolean) => void;
   removeRequest: (id: number) => void;
+  removeImage: (opts: { imageId: number; requestId: number }) => void;
 };
 
 export const useImageGenerationStore = create<ImageGenerationState>()(
@@ -23,8 +24,8 @@ export const useImageGenerationStore = create<ImageGenerationState>()(
     immer((set, get) => ({
       ids: [] as number[],
       requests: {},
-      feed: [],
-      deletedRequests: [],
+      feed: [] as Generation.Image[],
+      deletedRequests: [] as number[],
       setRequests: (requests, isNew = false) => {
         const deleted = get().deletedRequests;
         set((state) => {
@@ -59,6 +60,17 @@ export const useImageGenerationStore = create<ImageGenerationState>()(
           state.deletedRequests.push(id);
           // remove request images from feed
           state.feed = [...state.feed.filter((x) => x.requestId !== id)];
+        });
+      },
+      removeImage: ({ imageId, requestId }) => {
+        set((state) => {
+          // Remove image from the feed
+          state.feed = state.feed.filter((x) => x.id !== imageId);
+          if (state.requests[requestId]) {
+            const index =
+              state.requests[requestId].images?.findIndex((x) => x.id === imageId) ?? -1;
+            if (index > -1) state.requests[requestId].images?.splice(index, 1);
+          }
         });
       },
     }))
@@ -113,7 +125,14 @@ export const useImageGenerationQueue = () => {
   );
 
   // set requests from infinite paging data
-  useEffect(() => setRequests(infiniteRequests), [infiniteRequests, setRequests]);
+  // useEffect(() => setRequests(infiniteRequests), [infiniteRequests, setRequests]);
+  useEffect(() => {
+    // set requests when infiniteRequests is different from requests
+    const currentRequests = Object.values(requests);
+    if (infiniteRequests.length !== currentRequests.length) {
+      setRequests(infiniteRequests);
+    }
+  }, [infiniteRequests, setRequests]);
 
   // debounced polling of pending/processing requests
   useEffect(() => {
@@ -123,7 +142,13 @@ export const useImageGenerationQueue = () => {
   }, [requests, debouncer, pollPending]);
 
   // update requests dictionary with polled requests
-  useEffect(() => setRequests(polledRequests), [polledRequests, setRequests]);
+  useEffect(() => {
+    // set requests when infiniteRequests is different from requests
+    const currentRequests = Object.values(requests);
+    if (polledRequests.length !== currentRequests.length) {
+      setRequests(polledRequests);
+    }
+  }, [polledRequests, setRequests]);
 
   return {
     infiniteRequests,
