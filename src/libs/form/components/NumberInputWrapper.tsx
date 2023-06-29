@@ -1,6 +1,6 @@
 import { CloseButton, NumberInput, NumberInputProps } from '@mantine/core';
-import { useMergedRef } from '@mantine/hooks';
-import { forwardRef, useMemo, useRef } from 'react';
+import { useMergedRef, usePrevious } from '@mantine/hooks';
+import { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 type Props = NumberInputProps & {
@@ -10,9 +10,43 @@ type Props = NumberInputProps & {
 };
 
 export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
-  ({ format = 'delimited', clearable, rightSection, onClear, ...props }, ref) => {
+  ({ format = 'delimited', clearable, rightSection, onClear, onChange, ...props }, ref) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const mergedRef = useMergedRef(ref, inputRef);
+    const canReset = useRef(true);
+
+    const handleClearInput = () => {
+      if (!inputRef.current) return;
+
+      // const event = new Event('input', { bubbles: true });
+      // inputRef.current.value = null as any;
+      // inputRef.current.dispatchEvent(event);
+
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set;
+      nativeInputValueSetter?.call(inputRef.current, '');
+
+      const ev2 = new Event('input', { bubbles: true });
+      inputRef.current.dispatchEvent(ev2);
+
+      onClear?.();
+      onChange?.(null as any);
+    };
+
+    // const previousValue = usePrevious(props.value);
+    useEffect(() => {
+      if (props.value === null && canReset.current) {
+        handleClearInput();
+        canReset.current = false;
+      }
+    }, [props.value]) //eslint-disable-line
+
+    const handleChange = (value: number | undefined) => {
+      canReset.current = true;
+      onChange?.(value);
+    };
 
     const closeButton = props.value && (
       <CloseButton
@@ -22,16 +56,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         variant="filled"
         mr={3}
         onClick={() => {
-          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype,
-            'value'
-          )?.set;
-          nativeInputValueSetter?.call(inputRef.current, '');
-
-          const ev2 = new Event('input', { bubbles: true });
-          inputRef.current?.dispatchEvent(ev2);
-          onClear?.();
-          props.onChange?.(null as any);
+          handleClearInput();
         }}
       />
     );
@@ -58,6 +83,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         parser={parser}
         formatter={formatter}
         rightSection={clearable && props.value ? closeButton : rightSection}
+        onChange={handleChange}
         {...props}
       />
     );

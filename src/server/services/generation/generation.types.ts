@@ -1,5 +1,4 @@
 import { ModelType } from '@prisma/client';
-import { BaseModel } from '~/server/common/constants';
 
 export namespace Generation {
   export type AdditionalNetwork = Partial<{
@@ -24,7 +23,7 @@ export namespace Generation {
     steps: number;
     cfgScale: number;
     seed: number;
-    clipSKip?: number;
+    clipSkip: number;
   };
 
   export type Asset = {
@@ -39,7 +38,7 @@ export namespace Generation {
     priority: number;
     model: string;
     params: Params;
-    additionalNetworks: Record<string, AdditionalNetwork>;
+    additionalNetworks: Record<string, AdditionalNetwork> | null;
   };
 
   export type Resource = AdditionalNetwork & {
@@ -50,6 +49,8 @@ export namespace Generation {
     modelName: string;
     modelType: ModelType;
     baseModel: string;
+
+    // navigation props
     covered?: boolean;
   };
 

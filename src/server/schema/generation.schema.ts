@@ -1,6 +1,6 @@
 import { ModelType } from '@prisma/client';
 import { z } from 'zod';
-import { constants } from '~/server/common/constants';
+import { BaseModel, Sampler, constants } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/image-metadata';
 
@@ -17,7 +17,10 @@ export const getGenerationResourcesSchema = z.object({
   types: z.nativeEnum(ModelType).array().optional(),
   notTypes: z.nativeEnum(ModelType).array().optional(),
   ids: z.number().array().optional(),
-  baseModel: z.string().optional(),
+  baseModel: z
+    .string()
+    .refine((val) => constants.baseModels.includes(val as BaseModel))
+    .optional(),
   supported: z.boolean().optional(),
 });
 
@@ -29,7 +32,6 @@ export const getGenerationRequestsSchema = z.object({
   requestId: z.number().array().optional(),
 });
 
-export type GenerationParamsInput = z.infer<typeof generationParamsSchema>;
 export const generationParamsSchema = z.object({
   prompt: z
     .string()
@@ -44,31 +46,50 @@ export const generationParamsSchema = z.object({
         });
     }),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
-  cfgScale: z.number().min(1).max(30),
-  sampler: z.enum(constants.samplers),
-  steps: z.number().min(1).max(150),
-  seed: z.number().min(-1).max(999999999999999).nullish(),
-  clipSkip: z.number().default(1),
-  quantity: z.number().max(10),
+  cfgScale: z.coerce.number().min(1).max(30),
+    sampler: z
+        .string()
+        .refine((val) => constants.samplers.includes(val as Sampler), { message: 'invalid sampler' }),
+  steps: z.coerce.number().min(1).max(150),
+  seed: z.coerce.number().min(-1).max(999999999999999).optional(),
+  clipSkip: z.coerce.number().default(1),
+  quantity: z.coerce.number().max(10),
+});
+
+export const generationResourceSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  trainedWords: z.string().array(),
+  modelId: z.number(),
+  modelName: z.string(),
+  modelType: z.nativeEnum(ModelType),
+
+  // navigation props
+  covered: z.boolean().optional(),
+  baseModel: z.string(),
 });
 
 export const additionalResourceLimit = 10;
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
-export const createGenerationRequestSchema = generationParamsSchema.extend({
+export const createGenerationRequestSchema = z.object({
   resources: z
     .object({
-      modelVersionId: z.number(),
-      type: z.nativeEnum(ModelType),
+      id: z.number(),
+      modelType: z.nativeEnum(ModelType),
       strength: z.number().min(-1).max(2).optional(),
       triggerWord: z.string().optional(),
     })
-    .array()
-    .max(additionalResourceLimit),
-  height: z.number(),
-  width: z.number(),
+        .array().max(additionalResourceLimit),
+  params: generationParamsSchema.extend({ height: z.number(), width: z.number() }),
 });
 
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
 export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
+});
+
+export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
+export const getGenerationDataSchema = z.object({
+  id: z.number(),
+  type: z.enum(['image', 'model']),
 });

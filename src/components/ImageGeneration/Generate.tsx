@@ -14,20 +14,12 @@ import {
   Card,
   Tooltip,
   ThemeIcon,
-  ActionIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconBook2, IconDice5, IconLock, IconX } from '@tabler/icons-react';
+import { IconArrowAutofitDown, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
-import {
-  InputResourceSelect,
-  ResourceSelectModal,
-} from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import MentionExample from '~/components/ImageGeneration/SlateEditor/SlateEditor';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import {
   Form,
   InputNumber,
@@ -36,42 +28,38 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { additionalResourceLimit, generationParamsSchema } from '~/server/schema/generation.schema';
-import { Generation } from '~/server/services/generation/generation.types';
+import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { trpc } from '~/utils/trpc';
 import { constants, Sampler } from '~/server/common/constants';
-import { FieldArray } from '~/libs/form/components/FieldArray';
-import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
+import {
+  formatGenerationFormData,
+  imageGenerationFormStorage,
+  supportedAspectRatios,
+} from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { parsePromptMetadata } from '~/utils/image-metadata';
 import { useLocalStorage } from '@mantine/hooks';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { useGenerationResourceStore } from '~/components/ImageGeneration/GenerationResources/useGenerationResourceStore';
+import { GenerationResources } from '~/components/ImageGeneration/GenerationResources/GenerationResources';
+import { AddGenerationResourceButton } from '~/components/ImageGeneration/GenerationResources/AddGenerationResource';
+import { GetGenerationDataProps } from '~/server/services/generation/generation.service';
+import { GenerationResourceControl } from '~/components/ImageGeneration/GenerationResources/GenerationResourceControl';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
 );
 
-const resourceSchema = z
-  .object({
-    id: z.number(),
-    modelType: z.nativeEnum(ModelType),
-    strength: z.number().optional(),
-    trainedWords: z.string().array().optional(),
-    baseModel: z.string().optional(),
-  })
-  .passthrough();
-
-type Schema = Partial<z.infer<typeof schema>>;
-const schema = generationParamsSchema.extend({
-  model: resourceSchema
-    .nullable()
-    .refine((data) => !!data, { message: 'Please select a model to generate from' }),
+const formSchema = generationParamsSchema.extend({
   aspectRatio: z.string(),
-  baseModel: z.string().optional(),
-  additionalResources: resourceSchema.array().max(additionalResourceLimit).default([]),
+  seed: z.number().nullish(),
 });
 
+// TODO.generation - save form data to localstorage on change
+const ADDITIONAL_RESOURCE_TYPES = [ModelType.LORA, ModelType.TextualInversion];
 export function Generate({
   onSuccess,
   modelVersionId,
@@ -81,27 +69,24 @@ export function Generate({
   modelVersionId?: number;
   imageId?: number;
 }) {
-  const mobile = useIsMobile({ breakpoint: 'md' });
-  const currentUser = useCurrentUser();
   const { classes } = useStyles();
-  const defaultValues = (imageGenerationFormStorage.get() ?? defaultDemoValues) as Schema;
+  const currentUser = useCurrentUser();
+
+  const [showFillForm, setShowFillForm] = useState(false);
+  const isMuted = currentUser?.muted ?? false;
   const [showAdvanced, setShowAdvanced] = useLocalStorage({
     key: 'generation-show-advanced',
     defaultValue: false,
   });
-  const [opened, setOpened] = useState(false);
-  const [baseModel, setBaseModel] = useState(
-    defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
-  );
-  const [showParsePrompt, setShowParsePrompt] = useState(false);
-  const isMuted = currentUser?.muted ?? false;
 
-  // Handle display of survey after 10 minutes
+  // #region [Handle display of survey after 10 minutes]
   if (!localStorage.getItem('generation-first-loaded'))
     localStorage.setItem('generation-first-loaded', Date.now().toString());
   const firstLoaded = parseInt(localStorage.getItem('generation-first-loaded') ?? '0');
   const showSurvey = Date.now() - firstLoaded > 1000 * 60 * 10;
+  // #endregion
 
+  const hasUnavailable = useGenerationResourceStore((state) => state.hasUnavailable);
   const setRequests = useImageGenerationStore((state) => state.setRequests);
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
     onSuccess: (data) => {
@@ -117,24 +102,27 @@ export function Generate({
     },
   });
 
-  // #region [generate from model source]
-  const modelQuery = trpc.generation.getResource.useQuery(
-    { id: modelVersionId ?? 0 },
-    { enabled: !!modelVersionId }
-  );
+  const localValues = imageGenerationFormStorage.get();
+  const form = useForm({
+    schema: formSchema,
+    defaultValues: { ...defaults, ...formatGenerationFormData(localValues?.params ?? {}) },
+    reValidateMode: 'onSubmit',
+  });
+
+  const handleReset = (props: GetGenerationDataProps) => {
+    form.reset({ ...defaults, ...formatGenerationFormData(props.params ?? {}) });
+    useGenerationResourceStore.getState().setResources(props.resources);
+    imageGenerationFormStorage.set(props); // set local storage values
+  };
 
   useEffect(() => {
-    if (!modelQuery.data) return;
-    const resource = modelQuery.data;
-    if (resource.modelType === ModelType.Checkpoint) form.reset({ model: resource });
-    else form.reset({ additionalResources: [resource] });
-  }, [modelQuery.data]); // eslint-disable-line
-  // #endregion
+    useGenerationResourceStore.getState().setResources(localValues?.resources ?? []);
+  }, []); // eslint-disable-line
 
-  // #region [generate from image source]
-  const imageQuery = trpc.generation.getImageGenerationData.useQuery(
-    { id: imageId ?? 0 },
-    { enabled: !!imageId }
+  // #region [default generation data]
+  const { data } = trpc.generation.getGenerationData.useQuery(
+    { type: !!modelVersionId ? 'model' : 'image', id: modelVersionId ?? imageId ?? 0 },
+    { enabled: !!imageId || !!modelVersionId }
   );
 
   const randomQuery = trpc.generation.getRandomGenerationData.useQuery(undefined, {
@@ -142,32 +130,37 @@ export function Generate({
   });
 
   useEffect(() => {
-    if (!imageId || !imageQuery.data) return;
-    imageGenerationFormStorage.set(imageQuery.data);
-    if (!supportedSamplers.includes(imageQuery.data.sampler)) {
-      imageQuery.data.sampler = 'Euler a';
-    }
-    form.reset(imageQuery.data);
-  }, [imageQuery.data]); // eslint-disable-line
+    if (data) handleReset(data);
+  }, [data]); //eslint-disable-line
   // #endregion
-
-  const form = useForm({
-    schema,
-    defaultValues: { ...defaults, ...defaultValues, ...(imageQuery?.data ?? {}) } as any,
-    reValidateMode: 'onSubmit',
-  });
-
-  const resources = form.watch('additionalResources');
-  const hasUnavailable = resources?.length > 0 && resources.some((x) => x?.covered === false);
-
-  const handleResourceChange = (resource: Generation.Resource) => {
-    const baseModel = form.getValues('baseModel');
-    if (!baseModel) form.setValue('baseModel', resource.baseModel);
-  };
 
   const handleGetRandomGenParams = async () => {
     const { data: genData } = await randomQuery.refetch();
-    if (genData) form.reset(genData);
+    const result = imageGenerationSchema.safeParse(genData);
+    if (result.success) {
+      const { sampler, ...rest } = result.data;
+      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+    } else console.error(result.error);
+  };
+
+  const handleParsePrompt = () => {
+    const prompt = form.getValues('prompt');
+    const metadata = parsePromptMetadata(prompt);
+    const result = imageGenerationSchema.safeParse({
+      ...defaults,
+      ...metadata,
+    });
+    if (result.success) {
+      const { sampler, ...rest } = result.data;
+      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+      setShowFillForm(false);
+    } else {
+      console.error(result.error);
+      showErrorNotification({
+        title: 'Unable to parse prompt',
+        error: new Error('We are unable to fill out the form with the provided prompt.'),
+      });
+    }
   };
 
   if (isMuted)
@@ -181,127 +174,101 @@ export function Generate({
         </Stack>
       </Center>
     );
-
   return (
     <Form
       form={form}
       style={{ height: '100%' }}
       onSubmit={(values) => {
-        imageGenerationFormStorage.set(values);
-        form.reset(values);
+        const resources = useGenerationResourceStore.getState().getValidatedResources();
+        if (!resources) return;
         const [width, height] = values.aspectRatio.split('x');
-        mutate({
+        const params = {
+          ...values,
+          seed: values.seed ?? -1,
           height: Number(height),
           width: Number(width),
-          resources: [...(values.model ? [values.model] : []), ...values.additionalResources].map(
-            (resource) => ({
-              modelVersionId: resource.id,
-              type: resource.modelType,
-              strength: resource.strength,
-              triggerWord:
-                resource.modelType === ModelType.TextualInversion
-                  ? resource.trainedWords?.[0]
-                  : undefined,
-            })
-          ),
-          prompt: values.prompt,
-          negativePrompt: values.negativePrompt,
-          cfgScale: values.cfgScale,
-          sampler: values.sampler,
-          steps: values.steps,
-          seed: values.seed,
-          clipSkip: values.clipSkip,
-          quantity: values.quantity,
-        });
+        };
+        imageGenerationFormStorage.set({ resources, params });
+        mutate({ resources, params });
       }}
     >
       <Stack h="100%" spacing={0}>
         <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
           <Stack py="md">
-            <InputResourceSelect
-              label="Model"
-              name="model"
-              withAsterisk
-              types={[ModelType.Checkpoint]}
-              onChange={(value) => {
-                if (value) setBaseModel(value.baseModel);
-              }}
-            />
-            <FieldArray
-              control={form.control}
-              name="additionalResources"
-              keyName={'uid' as any} // TODO.type fix
-              render={({ fields, append, remove, update }) => (
-                <Stack spacing="xs">
-                  {fields.map((item, index) => (
-                    <InputResourceSelect
-                      key={item.id}
-                      name={`additionalResources.${index}`}
-                      types={[ModelType.LORA, ModelType.TextualInversion]}
-                      onRemove={() => remove(index)}
-                      onChange={(value) => {
-                        if (value) update(index, value);
-                      }}
-                    />
-                  ))}
-                  {fields.length < additionalResourceLimit && (
-                    <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
-                      Add Additional Resource
-                    </Button>
-                  )}
-                  <ResourceSelectModal
-                    opened={opened}
-                    onClose={() => setOpened(false)}
-                    title="Select Additional Resource"
-                    types={[ModelType.LORA, ModelType.TextualInversion]}
-                    onSelect={(value) => append(value)}
-                    notIds={[...fields.map((item) => item.id)]}
-                    baseModel={baseModel}
+            {/* Generation Resources */}
+            <GenerationResourceControl type={ModelType.Checkpoint}>
+              {({ errors, type }) => (
+                <Input.Wrapper error={errors?.[0]}>
+                  <GenerationResources type={type} />
+                  <AddGenerationResourceButton
+                    limit={1}
+                    label="Add Model"
+                    types={[ModelType.Checkpoint]}
                   />
-                </Stack>
+                </Input.Wrapper>
               )}
+            </GenerationResourceControl>
+            {ADDITIONAL_RESOURCE_TYPES.map((type) => (
+              <GenerationResourceControl key={type} type={type}>
+                {({ count }) =>
+                  count > 0 ? (
+                    <Input.Wrapper label={getDisplayName(type)}>
+                      <Stack spacing={2}>
+                        <GenerationResources type={type} />
+                      </Stack>
+                    </Input.Wrapper>
+                  ) : null
+                }
+              </GenerationResourceControl>
+            ))}
+            <AddGenerationResourceButton
+              limit={9}
+              label="Add Additional Resource"
+              types={ADDITIONAL_RESOURCE_TYPES}
             />
-            <InputTextArea
-              name="prompt"
-              label={
-                <>
-                  <Text inherit>Prompt</Text>
-                  {/* {showParsePrompt && (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => {
-                        const prompt = form.getValues('prompt');
-                        const metadata = parsePromptMetadata(prompt);
-                        form.reset(metadata);
-                        setShowParsePrompt(false);
-                      }}
-                      sx={{ order: 3, ml: 4 }}
-                      compact
-                    >
-                      Fill form
-                    </Button>
-                  )}
-                  <Tooltip label="Random" color="dark" withArrow>
-                    <ActionIcon
-                      variant="light"
-                      loading={randomQuery.isFetching}
-                      className={classes.generateButtonRandom}
-                      onClick={handleGetRandomGenParams}
-                    >
-                      <IconDice5 size={20} strokeWidth={2} />
-                    </ActionIcon>
-                  </Tooltip> */}
-                </>
-              }
-              labelProps={{ className: classes.promptInputLabel }}
-              onPaste={(event) => {
-                const text = event.clipboardData.getData('text/plain');
-                if (text && text.includes('Steps:')) setShowParsePrompt(true);
-              }}
-              autosize
-              withAsterisk
-            />
+            <Stack spacing={0}>
+              <InputTextArea
+                name="prompt"
+                label={
+                  <>
+                    <Text inherit>Prompt</Text>
+                    {/* <Tooltip label="Random" color="dark" withArrow>
+                      <ActionIcon
+                        variant="light"
+                        loading={randomQuery.isFetching}
+                        className={classes.generateButtonRandom}
+                        onClick={handleGetRandomGenParams}
+                      >
+                        <IconDice5 size={20} strokeWidth={2} />
+                      </ActionIcon>
+                    </Tooltip> */}
+                  </>
+                }
+                labelProps={{ className: classes.promptInputLabel }}
+                onPaste={(event) => {
+                  const text = event.clipboardData.getData('text/plain');
+                  if (text) setShowFillForm(text.includes('Steps:'));
+                }}
+                onChange={(event) => {
+                  const text = event.target.value;
+                  if (text && !text.includes('Steps:')) setShowFillForm(false);
+                }}
+                styles={{ input: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } }}
+                autosize
+                withAsterisk
+              />
+              {showFillForm && (
+                <Button
+                  variant="light"
+                  onClick={handleParsePrompt}
+                  leftIcon={<IconArrowAutofitDown size={16} />}
+                  sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                  fullWidth
+                >
+                  Apply Parameters
+                </Button>
+              )}
+            </Stack>
             <InputTextArea name="negativePrompt" autosize label="Negative Prompt" />
             <Stack spacing={0}>
               <Input.Label>Aspect Ratio</Input.Label>
@@ -404,10 +371,7 @@ export function Generate({
             </Button>
             <Tooltip label="Reset" color="dark" withArrow>
               <Button
-                onClick={() => {
-                  form.reset(defaults);
-                  imageGenerationFormStorage.set(defaults);
-                }}
+                onClick={() => handleReset({ resources: [], params: defaults })}
                 variant="outline"
                 className={classes.generateButtonReset}
                 px="xs"
@@ -491,20 +455,17 @@ const useStyles = createStyles((theme) => ({
   generateButtonRandom: {
     borderRadius: 0,
     height: 'auto',
+    order: 3,
   },
   promptInputLabel: {
     display: 'inline-flex',
     gap: 4,
     marginBottom: 5,
+    alignItems: 'center',
   },
 }));
 
-const aspectRatioDetails = [
-  { label: 'Square', width: 512, height: 512 },
-  { label: 'Landscape', width: 768, height: 512 },
-  { label: 'Portrait', width: 512, height: 768 },
-];
-const aspectRatioControls = aspectRatioDetails.map(({ label, width, height }) => ({
+const aspectRatioControls = supportedAspectRatios.map(({ label, width, height }) => ({
   label: (
     <Stack spacing={4}>
       <Center>
@@ -538,35 +499,10 @@ const defaults = {
   cfgScale: 7,
   steps: 25,
   sampler: 'Euler a' as Sampler,
-  seed: undefined,
+  seed: -1,
   clipSkip: 1,
   quantity: 1,
   aspectRatio: '512x512',
   prompt: '',
   negativePrompt: '',
-  additionalResources: [],
 };
-
-// #region [developement]
-const defaultDemoValues = {
-  // prompt:
-  //   'close up photo of a rabbit, forest, haze, halation, bloom, dramatic atmosphere, centred, rule of thirds, 200mm 1.4f macro shot',
-  // negativePrompt:
-  //   '(semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime:1.4), text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
-  // cfgScale: 7,
-  // steps: 25,
-  // sampler: 'Euler a',
-  // aspectRatio: '768x512',
-  // quantity: 2,
-  // clipSkip: 1,
-  model: {
-    id: 29460,
-    name: 'V2.0',
-    trainedWords: ['analog style', 'modelshoot style', 'nsfw', 'nudity'],
-    modelId: 4201,
-    modelName: 'Realistic Vision V2.0',
-    modelType: ModelType.Checkpoint,
-    baseModel: 'SD 1.5',
-  },
-};
-// #endregion

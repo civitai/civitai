@@ -41,6 +41,7 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   seed: 'Seed',
   Model: 'Model',
   'Clip skip': 'Clip skip',
+  clipSkip: 'Clip skip',
 };
 
 export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Props) {

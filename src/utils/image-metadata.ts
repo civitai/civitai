@@ -78,6 +78,7 @@ const automaticSDKeyMap = new Map<string, string>([
   ['CFG scale', 'cfgScale'],
   ['Sampler', 'sampler'],
   ['Steps', 'steps'],
+  ['Clip skip', 'clipSkip'],
 ]);
 const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
 const automaticSDParser = createMetadataParser(
@@ -196,14 +197,14 @@ export function encodeMetadata(
 const automaticSDEncodeMap = new Map<keyof ImageMetaProps, string>(
   Array.from(automaticSDKeyMap, (a) => a.reverse()) as Iterable<readonly [string, string]>
 );
-function automaticEncoder({ prompt, negativePrompt, resources, ...other }: ImageMetaProps) {
+function automaticEncoder({ prompt, negativePrompt, resources, steps, ...other }: ImageMetaProps) {
   const lines = [prompt];
   if (negativePrompt) lines.push(`Negative prompt: ${negativePrompt}`);
   const fineDetails = [];
-  if (other.steps) fineDetails.push(`Steps: ${other.steps}`);
+  if (steps) fineDetails.push(`Steps: ${steps}`);
   for (const [k, v] of Object.entries(other)) {
     const key = automaticSDEncodeMap.get(k) ?? k;
-    if (key === 'hashes' || key === 'steps') continue;
+    if (key === 'hashes') continue;
     fineDetails.push(`${key}: ${v}`);
   }
   if (fineDetails.length > 0) lines.push(fineDetails.join(', '));

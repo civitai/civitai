@@ -2,13 +2,16 @@ import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
+  getGenerationDataSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
 import {
   checkResourcesCoverage,
   createGenerationRequest,
+  deleteGeneratedImage,
   deleteGenerationRequest,
+  getGenerationData,
   getGenerationRequests,
   getGenerationResource,
   getGenerationResources,
@@ -36,6 +39,10 @@ export const generationRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))
     .mutation(({ input, ctx }) => deleteGenerationRequest({ ...input, userId: ctx.user.id })),
+  deleteImage: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('imageGeneration'))
+    .mutation(({ input, ctx }) => deleteGeneratedImage({ ...input, userId: ctx.user.id })),
   getRandomGenerationData: publicProcedure
     .use(isFlagProtected('imageGeneration'))
     .query(() => getRandomGenerationData()),
@@ -46,4 +53,7 @@ export const generationRouter = router({
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .query(({ input }) => checkResourcesCoverage(input)),
+  getGenerationData: publicProcedure
+    .input(getGenerationDataSchema)
+    .query(({ input }) => getGenerationData(input)),
 });

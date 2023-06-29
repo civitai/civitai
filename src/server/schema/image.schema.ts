@@ -6,7 +6,7 @@ import {
   ReviewReactions,
 } from '@prisma/client';
 import { z } from 'zod';
-import { constants } from '~/server/common/constants';
+import { Sampler, constants } from '~/server/common/constants';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -26,6 +26,7 @@ export const imageGenerationSchema = z.object({
   sampler: undefinedString,
   seed: stringToNumber,
   'Clip skip': z.coerce.number().optional(),
+  clipSkip: z.coerce.number().optional(),
   // resources: z
   //   .object({
   //     name: z.string().optional(),
@@ -36,14 +37,10 @@ export const imageGenerationSchema = z.object({
   //   .passthrough()
   //   .array()
   //   .optional(),
+  hashes: z.record(z.string()).optional(),
 });
 
-export const imageMetaSchema = imageGenerationSchema
-  .extend({
-    hashes: z.record(z.string()),
-  })
-  .partial()
-  .passthrough();
+export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({

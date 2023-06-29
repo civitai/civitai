@@ -16,16 +16,22 @@ import {
   IconBolt,
   IconInfoCircle,
   IconPlayerPlayFilled,
+  IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-import { useImageGenerationRequest } from '~/components/ImageGeneration/hooks/useImageGenerationState';
+import {
+  useImageGenerationRequest,
+  useImageGenerationStore,
+} from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 import { useGenerationStore } from '~/store/generation.store';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -43,14 +49,22 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
   const [opened, { toggle, close }] = useDisclosure();
   const request = useImageGenerationRequest(image.requestId);
   const setView = useGenerationStore((state) => state.setActiveTab);
+  const removeImage = useImageGenerationStore((state) => state.removeImage);
+
+  const deleteImageMutation = trpc.generation.deleteImage.useMutation({
+    onSuccess(_, { id }) {
+      removeImage({ imageId: id, requestId: image.requestId });
+    },
+    onError(err) {
+      showErrorNotification({
+        title: 'Error deleting image',
+        error: new Error(err.message),
+      });
+    },
+  });
 
   const handleGenerate = () => {
-    imageGenerationFormStorage.set({
-      model: request.resources.find((x) => x.modelType === ModelType.Checkpoint),
-      additionalResources: request.resources.filter((x) => x.modelType !== ModelType.Checkpoint),
-      ...request.params,
-      aspectRatio: `${request.params.width}x${request.params.height}`,
-    });
+    imageGenerationFormStorage.set({ resources: request.resources, params: { ...request.params } });
     setView('generate');
   };
 
@@ -115,23 +129,38 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
                       <IconPlayerPlayFilled />
                     </ActionIcon>
                   </Tooltip>
-
-                  <Tooltip {...tooltipProps} label="Create variant">
+                  <Tooltip {...tooltipProps} label="Delete">
                     <ActionIcon
                       size="md"
                       p={4}
-                      variant="light"
-                      onClick={() => onCreateVariantClick(image)}
+                      color="red"
                       radius={0}
-                      disabled
+                      onClick={() => deleteImageMutation.mutate({ id: image.id })}
                     >
-                      <IconArrowsShuffle />
+                      <IconTrash />
                     </ActionIcon>
                   </Tooltip>
+
+                  <Tooltip {...tooltipProps} label="Create variant">
+                    <span>
+                      <ActionIcon
+                        size="md"
+                        p={4}
+                        variant="light"
+                        onClick={() => onCreateVariantClick(image)}
+                        radius={0}
+                        disabled
+                      >
+                        <IconArrowsShuffle />
+                      </ActionIcon>
+                    </span>
+                  </Tooltip>
                   <Tooltip {...tooltipProps} label="Upscale">
-                    <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
-                      <IconWindowMaximize />
-                    </ActionIcon>
+                    <span>
+                      <ActionIcon size="md" p={4} variant="light" radius={0} disabled>
+                        <IconWindowMaximize />
+                      </ActionIcon>
+                    </span>
                   </Tooltip>
                 </Group>
               )}
