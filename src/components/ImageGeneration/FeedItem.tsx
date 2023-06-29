@@ -10,6 +10,7 @@ import {
   TooltipProps,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import { ModelType } from '@prisma/client';
 import {
   IconArrowsShuffle,
@@ -66,6 +67,19 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
   const handleGenerate = () => {
     imageGenerationFormStorage.set({ resources: request.resources, params: { ...request.params } });
     setView('generate');
+  };
+
+  const handleDeleteImage = () => {
+    openConfirmModal({
+      title: 'Delete image',
+      children:
+        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
+      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => deleteImageMutation.mutate({ id: image.id }),
+      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      centered: true,
+    });
   };
 
   return (
@@ -135,7 +149,8 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
                       p={4}
                       color="red"
                       radius={0}
-                      onClick={() => deleteImageMutation.mutate({ id: image.id })}
+                      onClick={handleDeleteImage}
+                      loading={deleteImageMutation.isLoading}
                     >
                       <IconTrash />
                     </ActionIcon>

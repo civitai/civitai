@@ -1,5 +1,6 @@
 import { getByIdSchema } from './../schema/base.schema';
 import {
+  bulkDeleteGeneratedImagesSchema,
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
   getGenerationDataSchema,
@@ -7,6 +8,7 @@ import {
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
 import {
+  bulkDeleteGeneratedImages,
   checkResourcesCoverage,
   createGenerationRequest,
   deleteGeneratedImage,
@@ -43,6 +45,10 @@ export const generationRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))
     .mutation(({ input, ctx }) => deleteGeneratedImage({ ...input, userId: ctx.user.id })),
+  bulkDeleteImages: protectedProcedure
+    .input(bulkDeleteGeneratedImagesSchema)
+    .use(isFlagProtected('imageGeneration'))
+    .mutation(({ input, ctx }) => bulkDeleteGeneratedImages({ ...input, userId: ctx.user.id })),
   getRandomGenerationData: publicProcedure
     .use(isFlagProtected('imageGeneration'))
     .query(() => getRandomGenerationData()),

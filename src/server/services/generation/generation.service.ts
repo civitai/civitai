@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  BulkDeleteGeneratedImagesInput,
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
   GetGenerationDataInput,
@@ -359,6 +360,19 @@ export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { u
 
 export async function deleteGeneratedImage({ id, userId }: GetByIdInput & { userId: number }) {
   const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images/${id}?userId=${userId}`, {
+    method: 'DELETE',
+  });
+  if (!deleteResponse.ok) throw throwNotFoundError();
+
+  return deleteResponse.ok;
+}
+
+export async function bulkDeleteGeneratedImages({
+  ids,
+  userId,
+}: BulkDeleteGeneratedImagesInput & { userId: number }) {
+  const queryString = QS.stringify({ imageId: ids, userId });
+  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images?${queryString}`, {
     method: 'DELETE',
   });
   if (!deleteResponse.ok) throw throwNotFoundError();
