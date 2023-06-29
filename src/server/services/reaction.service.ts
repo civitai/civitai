@@ -1,8 +1,14 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { playfab } from '~/server/playfab/client';
+import {
+  answerMetrics,
+  articleMetrics,
+  imageMetrics,
+  postMetrics,
+  questionMetrics,
+} from '~/server/metrics';
 
 export const toggleReaction = async ({
   entityType,
@@ -89,11 +95,11 @@ const deleteReaction = async ({
   switch (entityType) {
     case 'question':
       await dbWrite.questionReaction.deleteMany({ where: { id } });
-      await queueMetricUpdate('Question', entityId);
+      await questionMetrics.queueUpdate(entityId);
       return;
     case 'answer':
       await dbWrite.answerReaction.deleteMany({ where: { id } });
-      await queueMetricUpdate('Answer', entityId);
+      await answerMetrics.queueUpdate(entityId);
       return;
     case 'commentOld':
       await dbWrite.commentReaction.deleteMany({ where: { id } });
@@ -103,18 +109,18 @@ const deleteReaction = async ({
       return;
     case 'image':
       await dbWrite.imageReaction.deleteMany({ where: { id } });
-      await queueMetricUpdate('Image', entityId);
+      await imageMetrics.queueUpdate(entityId);
       return;
     case 'post':
       await dbWrite.postReaction.deleteMany({ where: { id } });
-      await queueMetricUpdate('Post', entityId);
+      await postMetrics.queueUpdate(entityId);
       return;
     case 'resourceReview':
       await dbWrite.resourceReviewReaction.deleteMany({ where: { id } });
       return;
     case 'article':
       await dbWrite.articleReaction.deleteMany({ where: { id } });
-      await queueMetricUpdate('Article', entityId);
+      await articleMetrics.queueUpdate(entityId);
       return;
     default:
       throw throwBadRequestError();

@@ -13,7 +13,6 @@ import { SessionUser } from 'next-auth';
 
 import { ReviewSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { queueMetricUpdate } from '~/server/jobs/update-metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllReviewsInput,
@@ -25,6 +24,7 @@ import { getAllReviewsSelect } from '~/server/selectors/review.selector';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { ingestNewImages } from '~/server/services/image.service';
 import { playfab } from '~/server/playfab/client';
+import { modelMetrics, userMetrics } from '~/server/metrics';
 
 export const getReviews = <TSelect extends Prisma.ReviewSelect>({
   input: { limit = DEFAULT_PAGE_SIZE, page, cursor, modelId, modelVersionId, userId, sort },
@@ -202,8 +202,8 @@ export const deleteReviewById = async ({ id }: GetByIdInput) => {
     })) ?? {};
 
   await dbWrite.review.delete({ where: { id } });
-  if (modelId) await queueMetricUpdate('Model', modelId);
-  if (model?.userId) await queueMetricUpdate('User', model.userId);
+  if (modelId) await modelMetrics.queueUpdate(modelId);
+  if (model?.userId) await userMetrics.queueUpdate(model.userId);
 };
 
 export const updateReviewById = ({ id, data }: { id: number; data: Prisma.ReviewUpdateInput }) => {
@@ -238,7 +238,7 @@ export const convertReviewToComment = ({
     });
 
     await tx.review.delete({ where: { id } });
-    await queueMetricUpdate('Model', modelId, tx);
+    await modelMetrics.queueUpdate(modelId, tx);
 
     return comment;
   });

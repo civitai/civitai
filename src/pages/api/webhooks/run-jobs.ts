@@ -1,5 +1,3 @@
-import cronParser from 'cron-parser';
-import dayjs from 'dayjs';
 import { z } from 'zod';
 
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
@@ -9,7 +7,6 @@ import { scanFilesJob } from '~/server/jobs/scan-files';
 import { selectFeaturedImages } from '~/server/jobs/select-featured-images';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
-import { updateMetricsJob } from '~/server/jobs/update-metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { redis } from '~/server/redis/client';
@@ -22,7 +19,6 @@ import { disabledVotedTags } from '~/server/jobs/disabled-voted-tags';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { isProd } from '~/env/other';
-import { updateMetricsModelJob } from '~/server/jobs/update-metrics-models';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
@@ -32,11 +28,10 @@ import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
 import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { metricJobs } from '~/server/jobs/update-metrics';
 
 export const jobs: Job[] = [
   scanFilesJob,
-  updateMetricsJob,
-  updateMetricsModelJob,
   processImportsJob,
   sendNotificationsJob,
   sendWebhooksJob,
@@ -60,6 +55,7 @@ export const jobs: Job[] = [
   tempScanFilesMissingHashes,
   processScheduledPublishing,
   refreshImageGenerationCoverage,
+  ...metricJobs,
 ];
 
 const log = createLogger('jobs', 'green');

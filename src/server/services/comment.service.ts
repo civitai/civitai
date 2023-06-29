@@ -4,7 +4,7 @@ import { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { queueMetricUpdate } from '~/server/jobs/update-metrics';
+import { modelMetrics, userMetrics } from '~/server/metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
@@ -151,8 +151,8 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
   const deleted = await dbWrite.comment.delete({ where: { id } });
   if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
 
-  if (modelId) await queueMetricUpdate('Model', modelId);
-  if (model?.userId) await queueMetricUpdate('User', model.userId);
+  if (modelId) await modelMetrics.queueUpdate(modelId);
+  if (model?.userId) await userMetrics.queueUpdate(model.userId);
 
   return deleted;
 };
