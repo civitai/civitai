@@ -39,7 +39,7 @@ export namespace Generation {
     priority: number;
     model: string;
     params: Params;
-    additionalNetworks: Record<string, AdditionalNetwork>;
+    additionalNetworks: Record<string, AdditionalNetwork> | null;
   };
 
   export type Resource = AdditionalNetwork & {
