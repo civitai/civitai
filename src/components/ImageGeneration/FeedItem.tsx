@@ -26,7 +26,7 @@ import {
   useImageGenerationRequest,
   useImageGenerationStore,
 } from '~/components/ImageGeneration/hooks/useImageGenerationState';
-import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
+import { GenerationFormStorage } from '~/components/ImageGeneration/utils';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -65,7 +65,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
   });
 
   const handleGenerate = () => {
-    imageGenerationFormStorage.set({ resources: request.resources, params: { ...request.params } });
+    GenerationFormStorage.set({ resources: request.resources, params: { ...request.params } });
     setView('generate');
   };
 

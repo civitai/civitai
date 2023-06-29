@@ -81,7 +81,11 @@ export const createGenerationRequestSchema = z.object({
     })
     .array()
     .max(additionalResourceLimit),
-  params: generationParamsSchema.extend({ height: z.number(), width: z.number() }),
+  params: generationParamsSchema.extend({
+    height: z.number(),
+    width: z.number(),
+    nsfw: z.boolean(),
+  }),
 });
 
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;

@@ -3,24 +3,32 @@ import {
   generationParamsSchema,
   generationResourceSchema,
 } from '~/server/schema/generation.schema';
-import { GetGenerationDataProps } from '~/server/services/generation/generation.service';
 import { Generation } from '~/server/services/generation/generation.types';
 import { removeEmpty } from '~/utils/object-helpers';
+
 const GENERATION_FORM_KEY = 'generation-form';
-export const imageGenerationFormStorage = {
-  set: (data: GetGenerationDataProps) => {
-    // TODO.generation - allow setting of individual props
-    const parsed = parseGenerationData(data);
-    if (!parsed) return;
-    localStorage.setItem(GENERATION_FORM_KEY, JSON.stringify(data));
-  },
-  get: () => {
+export abstract class GenerationFormStorage {
+  static get = () => {
     try {
       const localValue = localStorage.getItem(GENERATION_FORM_KEY);
       return localValue ? parseGenerationData(JSON.parse(localValue)) : undefined;
     } catch (e) {}
-  },
-};
+  };
+  static set = (data: {
+    params?: Partial<Generation.Params & { nsfw: boolean }>;
+    resources: Generation.Resource[];
+  }) => {
+    const previousData = this.get();
+    // TODO.generation - allow setting of individual props
+    const nsfw = previousData?.params?.nsfw;
+    const parsed = parseGenerationData({
+      ...data,
+      params: data.params ? { ...data.params, nsfw: data.params.nsfw ?? nsfw } : { nsfw },
+    });
+    if (!parsed) return;
+    localStorage.setItem(GENERATION_FORM_KEY, JSON.stringify(parsed));
+  };
+}
 
 const formatGenerationDataSchema = z.object({
   resources: generationResourceSchema.array().default([]),
@@ -28,8 +36,7 @@ const formatGenerationDataSchema = z.object({
     .extend({
       height: z.number(),
       width: z.number(),
-      seed: z.number().optional(),
-      prompt: z.string().optional(),
+      nsfw: z.boolean(),
     })
     .partial()
     .optional(),
@@ -37,8 +44,7 @@ const formatGenerationDataSchema = z.object({
 
 export const parseGenerationData = (data: unknown) => {
   try {
-    const result = formatGenerationDataSchema.parse(data);
-    return result;
+    return formatGenerationDataSchema.parse(data);
   } catch (error: any) {
     console.warn('invalid generation data format');
     console.warn({ error });

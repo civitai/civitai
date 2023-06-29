@@ -257,14 +257,14 @@ const samplersToSchedulers: Record<Sampler, string> = {
 export const createGenerationRequest = async ({
   user,
   resources,
-  params,
+  params: { nsfw, ...params },
 }: CreateGenerationRequestInput & { user: SessionUser }) => {
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
   let negativePrompts = [params.negativePrompt ?? ''];
-  if (!user.showNsfw) negativePrompts = [...safeNegatives, ...negativePrompts];
+  if (!nsfw) negativePrompts = [...safeNegatives, ...negativePrompts]; // tODO - add client nsfw toggle 'enable mature content'
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',

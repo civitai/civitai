@@ -14,9 +14,12 @@ import {
   Card,
   Tooltip,
   ThemeIcon,
+  Checkbox,
+  Switch,
+  ActionIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconArrowAutofitDown, IconLock, IconX } from '@tabler/icons-react';
+import { IconArrowAutofitDown, IconInfoCircle, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
@@ -25,6 +28,7 @@ import {
   InputNumber,
   InputSegmentedControl,
   InputSelect,
+  InputSwitch,
   InputTextArea,
   useForm,
 } from '~/libs/form';
@@ -33,7 +37,7 @@ import { trpc } from '~/utils/trpc';
 import { constants, Sampler } from '~/server/common/constants';
 import {
   formatGenerationFormData,
-  imageGenerationFormStorage,
+  GenerationFormStorage,
   supportedAspectRatios,
 } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
@@ -48,14 +52,17 @@ import { AddGenerationResourceButton } from '~/components/ImageGeneration/Genera
 import { GetGenerationDataProps } from '~/server/services/generation/generation.service';
 import { GenerationResourceControl } from '~/components/ImageGeneration/GenerationResources/GenerationResourceControl';
 import { getDisplayName } from '~/utils/string-helpers';
+import { Generation } from '~/server/services/generation/generation.types';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
 );
 
+type FormProps = z.infer<typeof formSchema>;
 const formSchema = generationParamsSchema.extend({
   aspectRatio: z.string(),
   seed: z.number().nullish(),
+  nsfw: z.boolean(),
 });
 
 // TODO.generation - save form data to localstorage on change
@@ -102,11 +109,14 @@ export function Generate({
     },
   });
 
-  const localValues = imageGenerationFormStorage.get();
-  const [defaultValues, setDefaultValues] = useState({
+  const getDefaultFormValues = (props: Partial<Generation.Params> = {}) => ({
+    nsfw: currentUser?.showNsfw ?? false,
     ...defaults,
-    ...formatGenerationFormData(localValues?.params ?? {}),
+    ...formatGenerationFormData(props),
   });
+
+  const localValues = GenerationFormStorage.get();
+  const [defaultValues, setDefaultValues] = useState(getDefaultFormValues(localValues?.params));
   const form = useForm({
     schema: formSchema,
     reValidateMode: 'onSubmit',
@@ -117,9 +127,9 @@ export function Generate({
   }, [defaultValues]); //eslint-disable-line
 
   const handleReset = (props: GetGenerationDataProps) => {
-    setDefaultValues({ ...defaults, ...formatGenerationFormData(props.params ?? {}) });
+    setDefaultValues(getDefaultFormValues(props.params));
     useGenerationResourceStore.getState().setResources(props.resources);
-    imageGenerationFormStorage.set(props); // set local storage values
+    GenerationFormStorage.set(props); // set local storage values
   };
 
   useEffect(() => {
@@ -195,7 +205,7 @@ export function Generate({
           height: Number(height),
           width: Number(width),
         };
-        imageGenerationFormStorage.set({ resources, params });
+        GenerationFormStorage.set({ resources, params });
         mutate({ resources, params });
       }}
     >
@@ -237,7 +247,7 @@ export function Generate({
               <InputTextArea
                 name="prompt"
                 label={
-                  <>
+                  <Group position="apart">
                     <Text inherit>Prompt</Text>
                     {/* <Tooltip label="Random" color="dark" withArrow>
                       <ActionIcon
@@ -249,8 +259,9 @@ export function Generate({
                         <IconDice5 size={20} strokeWidth={2} />
                       </ActionIcon>
                     </Tooltip> */}
-                  </>
+                  </Group>
                 }
+                placeholder="Prompt"
                 labelProps={{ className: classes.promptInputLabel }}
                 onPaste={(event) => {
                   const text = event.clipboardData.getData('text/plain');
@@ -347,68 +358,91 @@ export function Generate({
           </Stack>
         </ScrollArea>
         <Stack spacing="xs">
-          <Group spacing={0} className={classes.generateButtonContainer} noWrap>
-            <Card withBorder className={classes.generateButtonQuantity} p={0}>
-              <Stack spacing={0}>
-                <Text
-                  size="xs"
-                  color="dimmed"
-                  weight={500}
-                  ta="center"
-                  className={classes.generateButtonQuantityText}
-                >
-                  Quantity
-                </Text>
-                <InputNumber
-                  name="quantity"
-                  min={1}
-                  max={10}
-                  className={classes.generateButtonQuantityInput}
-                />
-              </Stack>
-            </Card>
-            <Button
-              type="submit"
-              size="lg"
-              disabled={hasUnavailable}
-              loading={isLoading}
-              className={classes.generateButtonButton}
-            >
-              Generate
-            </Button>
-            <Tooltip label="Reset" color="dark" withArrow>
-              <Button
-                onClick={() => handleReset({ resources: [], params: defaults })}
-                variant="outline"
-                className={classes.generateButtonReset}
-                px="xs"
-              >
-                <IconX size={20} strokeWidth={3} />
-              </Button>
-            </Tooltip>
-          </Group>
-          {showSurvey && (
-            <DismissibleAlert
-              id="generation-alpha-feedback"
-              title="Share your feedback!"
-              content={
-                <Text>
-                  Thank you for participating in our generation tech test. To help us improve the
-                  service and prioritize feature development, please take a moment to fill out{' '}
+          <Stack spacing="xs">
+            <Group spacing={0} className={classes.generateButtonContainer} noWrap>
+              <Card withBorder className={classes.generateButtonQuantity} p={0}>
+                <Stack spacing={0}>
                   <Text
-                    component="a"
-                    td="underline"
-                    href="https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4"
-                    variant="link"
-                    target="_blank"
+                    size="xs"
+                    color="dimmed"
+                    weight={500}
+                    ta="center"
+                    className={classes.generateButtonQuantityText}
                   >
-                    our survey
+                    Quantity
                   </Text>
-                  .
+                  <InputNumber
+                    name="quantity"
+                    min={1}
+                    max={10}
+                    className={classes.generateButtonQuantityInput}
+                  />
+                </Stack>
+              </Card>
+              <Button
+                type="submit"
+                size="lg"
+                disabled={hasUnavailable}
+                loading={isLoading}
+                className={classes.generateButtonButton}
+              >
+                Generate
+              </Button>
+              <Tooltip label="Reset" color="dark" withArrow>
+                <Button
+                  onClick={() => handleReset({ resources: [], params: defaults })}
+                  variant="outline"
+                  className={classes.generateButtonReset}
+                  px="xs"
+                >
+                  <IconX size={20} strokeWidth={3} />
+                </Button>
+              </Tooltip>
+            </Group>
+            {showSurvey && (
+              <DismissibleAlert
+                id="generation-alpha-feedback"
+                title="Share your feedback!"
+                content={
+                  <Text>
+                    Thank you for participating in our generation tech test. To help us improve the
+                    service and prioritize feature development, please take a moment to fill out{' '}
+                    <Text
+                      component="a"
+                      td="underline"
+                      href="https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4"
+                      variant="link"
+                      target="_blank"
+                    >
+                      our survey
+                    </Text>
+                    .
+                  </Text>
+                }
+              />
+            )}
+          </Stack>
+          <Group spacing="xs">
+            <InputSwitch
+              name="nsfw"
+              size="xs"
+              c="dimmed"
+              label={
+                <Text c="dimmed" component="span" sx={{ lineHeight: 1 }}>
+                  Mature content
                 </Text>
               }
             />
-          )}
+            <Tooltip
+              label="Disabling mature content will reduce, not eliminate, the probability of mature content in generated images"
+              width={300}
+              multiline
+            >
+              <ActionIcon variant="transparent" size="xs">
+                <IconInfoCircle />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
         </Stack>
       </Stack>
     </Form>
