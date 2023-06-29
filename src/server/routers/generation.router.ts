@@ -36,7 +36,7 @@ export const generationRouter = router({
   createRequest: protectedProcedure
     .input(createGenerationRequestSchema)
     .use(isFlagProtected('imageGeneration'))
-    .mutation(({ input, ctx }) => createGenerationRequest({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) => createGenerationRequest({ ...input, user: ctx.user })),
   deleteRequest: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))

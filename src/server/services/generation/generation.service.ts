@@ -41,6 +41,10 @@ export function parseModelVersionId(assetId: string) {
   return null;
 }
 
+// when removing a string from the `safeNegatives` array, add it to the `allSafeNegatives` array
+const safeNegatives = ['(nsfw, nude, naked, cleavage, nipples, navel:1.3)'];
+const allSafeNegatives = [...safeNegatives];
+
 function mapRequestStatus(label: string): GenerationRequestStatus {
   switch (label) {
     case 'Pending':
@@ -170,15 +174,25 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
   });
 
   return requests.map((x): Generation.Request => {
-    const { additionalNetworks = {}, ...job } = x.job;
+    const { additionalNetworks = {}, params, ...job } = x.job;
 
     const assets = [x.job.model, ...Object.keys(x.job.additionalNetworks ?? {})];
+
+    // scrub negative prompt
+    let negativePrompt = params.negativePrompt ?? '';
+    for (const negative of allSafeNegatives) {
+      negativePrompt = negativePrompt.replace(`${negative}, `, '');
+    }
 
     return {
       id: x.id,
       createdAt: x.createdAt,
       estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
+      params: {
+        ...params,
+        negativePrompt,
+      },
       resources: assets
         .map((assetId): Generation.Resource | undefined => {
           const modelVersionId = parseModelVersionId(assetId);
@@ -241,19 +255,22 @@ const samplersToSchedulers: Record<Sampler, string> = {
 };
 
 export const createGenerationRequest = async ({
-  userId,
+  user,
   resources,
   params,
-}: CreateGenerationRequestInput & { userId: number }) => {
+}: CreateGenerationRequestInput & { user: SessionUser }) => {
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
+
+  let negativePrompts = [params.negativePrompt ?? ''];
+  if (!user.showNsfw) negativePrompts = [...safeNegatives, ...negativePrompts];
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      userId,
+      userId: user.id,
       job: {
         model: `@civitai/${checkpoint.id}`,
         quantity: params.quantity,
@@ -266,7 +283,7 @@ export const createGenerationRequest = async ({
           }, {} as { [key: string]: object }),
         params: {
           prompt: params.prompt,
-          negativePrompt: params.negativePrompt,
+          negativePrompt: negativePrompts.join(', '),
           scheduler: samplersToSchedulers[params.sampler as Sampler],
           steps: params.steps,
           cfgScale: params.cfgScale,

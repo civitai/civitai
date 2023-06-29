@@ -325,7 +325,7 @@ export function Generate({
                     />
                     <Grid>
                       <Grid.Col span={6}>
-                        <InputNumber
+                        <InputNumber //TODO - add button in label to give random seed value
                           name="seed"
                           label="Seed"
                           placeholder="Random"
