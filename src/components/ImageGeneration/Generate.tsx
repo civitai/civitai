@@ -14,12 +14,10 @@ import {
   Card,
   Tooltip,
   ThemeIcon,
-  ActionIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconArrowAutofitDown, IconBook2, IconDice5, IconLock, IconX } from '@tabler/icons-react';
+import { IconArrowAutofitDown, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import {
@@ -30,15 +28,13 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { additionalResourceLimit, generationParamsSchema, additionalResourceLimit } from '~/server/schema/generation.schema';
-import { Generation } from '~/server/services/generation/generation.types';
+import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { trpc } from '~/utils/trpc';
 import { constants, Sampler } from '~/server/common/constants';
-import { FieldArray } from '~/libs/form/components/FieldArray';
-import { Sampler } from '~/server/common/constants';
 import {
   formatGenerationFormData,
   imageGenerationFormStorage,
+  supportedAspectRatios,
 } from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -49,7 +45,6 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { useGenerationResourceStore } from '~/components/ImageGeneration/GenerationResources/useGenerationResourceStore';
 import { GenerationResources } from '~/components/ImageGeneration/GenerationResources/GenerationResources';
 import { AddGenerationResourceButton } from '~/components/ImageGeneration/GenerationResources/AddGenerationResource';
-import { removeEmpty } from '~/utils/object-helpers';
 import { GetGenerationDataProps } from '~/server/services/generation/generation.service';
 import { GenerationResourceControl } from '~/components/ImageGeneration/GenerationResources/GenerationResourceControl';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -63,6 +58,7 @@ const formSchema = generationParamsSchema.extend({
   seed: z.number().nullish(),
 });
 
+// TODO.generation - save form data to localstorage on change
 const ADDITIONAL_RESOURCE_TYPES = [ModelType.LORA, ModelType.TextualInversion];
 export function Generate({
   onSuccess,
@@ -73,22 +69,24 @@ export function Generate({
   modelVersionId?: number;
   imageId?: number;
 }) {
-    const { classes } = useStyles();
-    const currentUser = useCurrentUser();
+  const { classes } = useStyles();
+  const currentUser = useCurrentUser();
 
-    const [showFillForm, setShowFillForm] = useState(false);
-    const isMuted = currentUser?.muted ?? false;
-    const [showAdvanced, setShowAdvanced] = useLocalStorage({
-        key: 'generation-show-advanced',
-        defaultValue: false,
-    });
+  const [showFillForm, setShowFillForm] = useState(false);
+  const isMuted = currentUser?.muted ?? false;
+  const [showAdvanced, setShowAdvanced] = useLocalStorage({
+    key: 'generation-show-advanced',
+    defaultValue: false,
+  });
 
-  // Handle display of survey after 10 minutes
+  // #region [Handle display of survey after 10 minutes]
   if (!localStorage.getItem('generation-first-loaded'))
     localStorage.setItem('generation-first-loaded', Date.now().toString());
   const firstLoaded = parseInt(localStorage.getItem('generation-first-loaded') ?? '0');
   const showSurvey = Date.now() - firstLoaded > 1000 * 60 * 10;
+  // #endregion
 
+  const hasUnavailable = useGenerationResourceStore((state) => state.hasUnavailable);
   const setRequests = useImageGenerationStore((state) => state.setRequests);
   const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
     onSuccess: (data) => {
@@ -112,6 +110,7 @@ export function Generate({
   });
 
   const handleReset = (props: GetGenerationDataProps) => {
+    console.log('reset values', { ...defaults, ...formatGenerationFormData(props.params ?? {}) });
     form.reset({ ...defaults, ...formatGenerationFormData(props.params ?? {}) });
     useGenerationResourceStore.getState().setResources(props.resources);
     imageGenerationFormStorage.set(props); // set local storage values
@@ -136,46 +135,46 @@ export function Generate({
   }, [data]); //eslint-disable-line
   // #endregion
 
-    const handleGetRandomGenParams = async () => {
-        const { data: genData } = await randomQuery.refetch();
-        const result = imageGenerationSchema.safeParse(genData);
-        if (result.success) {
-            const { sampler, ...rest } = result.data;
-            form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
-        } else console.error(result.error);
-    };
+  const handleGetRandomGenParams = async () => {
+    const { data: genData } = await randomQuery.refetch();
+    const result = imageGenerationSchema.safeParse(genData);
+    if (result.success) {
+      const { sampler, ...rest } = result.data;
+      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+    } else console.error(result.error);
+  };
 
-    const handleParsePrompt = () => {
-        const prompt = form.getValues('prompt');
-        const metadata = parsePromptMetadata(prompt);
-        const result = imageGenerationSchema.safeParse({
-            ...defaults,
-            ...metadata,
-        });
-        if (result.success) {
-            const { sampler, ...rest } = result.data;
-            form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
-            setShowFillForm(false);
-        } else {
-            console.error(result.error);
-            showErrorNotification({
-                title: 'Unable to parse prompt',
-                error: new Error('We are unable to fill out the form with the provided prompt.'),
-            });
-        }
-    };
+  const handleParsePrompt = () => {
+    const prompt = form.getValues('prompt');
+    const metadata = parsePromptMetadata(prompt);
+    const result = imageGenerationSchema.safeParse({
+      ...defaults,
+      ...metadata,
+    });
+    if (result.success) {
+      const { sampler, ...rest } = result.data;
+      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+      setShowFillForm(false);
+    } else {
+      console.error(result.error);
+      showErrorNotification({
+        title: 'Unable to parse prompt',
+        error: new Error('We are unable to fill out the form with the provided prompt.'),
+      });
+    }
+  };
 
-    if (isMuted)
-        return (
-            <Center h="100%" w="75%" mx="auto">
-                <Stack spacing="xl" align="center">
-                    <ThemeIcon size="xl" radius="xl" color="yellow">
-                        <IconLock />
-                    </ThemeIcon>
-                    <Text align="center">You cannot create new generations because you have been muted</Text>
-                </Stack>
-            </Center>
-        );
+  if (isMuted)
+    return (
+      <Center h="100%" w="75%" mx="auto">
+        <Stack spacing="xl" align="center">
+          <ThemeIcon size="xl" radius="xl" color="yellow">
+            <IconLock />
+          </ThemeIcon>
+          <Text align="center">You cannot create new generations because you have been muted</Text>
+        </Stack>
+      </Center>
+    );
   return (
     <Form
       form={form}
@@ -191,7 +190,8 @@ export function Generate({
           width: Number(width),
         };
         imageGenerationFormStorage.set({ resources, params });
-        mutate({ resources, params });
+        console.log({ resources, params });
+        // mutate({ resources, params });
       }}
     >
       <Stack h="100%" spacing={0}>
@@ -212,7 +212,7 @@ export function Generate({
             </GenerationResourceControl>
             {ADDITIONAL_RESOURCE_TYPES.map((type) => (
               <GenerationResourceControl key={type} type={type}>
-                {({ errors, count }) =>
+                {({ count }) =>
                   count > 0 ? (
                     <Input.Wrapper label={getDisplayName(type)}>
                       <Stack spacing={2}>
@@ -467,12 +467,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const aspectRatioDetails = [
-  { label: 'Square', width: 512, height: 512 },
-  { label: 'Landscape', width: 768, height: 512 },
-  { label: 'Portrait', width: 512, height: 768 },
-];
-const aspectRatioControls = aspectRatioDetails.map(({ label, width, height }) => ({
+const aspectRatioControls = supportedAspectRatios.map(({ label, width, height }) => ({
   label: (
     <Stack spacing={4}>
       <Center>

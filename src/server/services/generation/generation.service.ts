@@ -208,12 +208,6 @@ export const getGenerationRequests = async (
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
   if (!response.ok) throw new Error(response.statusText);
   const { cursor, requests }: Generation.Api.Request = await response.json();
-  // // TODO.generation - nextCursor should be returned from the image generation api, so this will need to be modified when that occurs
-  // let nextCursor: number | undefined;
-  // if (requests.length > props.take) {
-  //   const nextItem = requests.pop();
-  //   nextCursor = nextItem?.id;
-  // }
 
   const items = await formatGenerationRequests(requests);
 
@@ -275,8 +269,8 @@ export const createGenerationRequest = async ({
           cfgScale: params.cfgScale,
           width: params.width,
           height: params.height,
-            seed: params.seed ?? -1,
-            clipSkip: props.clipSkip,
+          seed: params.seed ?? -1,
+          clipSkip: params.clipSkip,
         },
       },
     }),
@@ -514,7 +508,11 @@ const getImageGenerationData2 = async (id: number): Promise<GetGenerationDataPro
     WHERE ir."imageId" = ${id}
   `;
 
-  const { 'Clip skip': clipSkip, ...meta } = imageGenerationSchema.parse(image.meta);
+  const {
+    'Clip skip': legacyClipSkip,
+    clipSkip = legacyClipSkip,
+    ...meta
+  } = imageGenerationSchema.parse(image.meta);
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
@@ -536,6 +534,7 @@ const getImageGenerationData2 = async (id: number): Promise<GetGenerationDataPro
     resources,
     params: {
       ...meta,
+      clipSkip,
       height: image.height ?? undefined,
       width: image.width ?? undefined,
     },

@@ -9,9 +9,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 const GENERATION_FORM_KEY = 'generation-form';
 export const imageGenerationFormStorage = {
   set: (data: GetGenerationDataProps) => {
-    console.log({ data });
+    // TODO.generation - allow setting of individual props
     const parsed = parseGenerationData(data);
-    console.log({ parsed });
     if (!parsed) return;
     localStorage.setItem(GENERATION_FORM_KEY, JSON.stringify(data));
   },
@@ -47,15 +46,23 @@ export const parseGenerationData = (data: unknown) => {
 };
 
 export const formatGenerationFormData = (params: Partial<Generation.Params> | undefined = {}) => {
-  const aspectRatio =
-    params.width && params.height ? `${params.width}x${params.height}` : `512x512`;
-  const seed = params?.seed ?? -1;
+  const { height = 0, width = 0, seed = -1, ...rest } = params;
+  // TODO.generation - grab the closest image dimensions based on aspect ratio
+  const aspectRatio = supportedAspectRatios.some((x) => x.width === width && x.height === height)
+    ? `${width}x${height}`
+    : '512x512';
 
-  const { height, width, ...rest } = params;
-
-  return removeEmpty({
-    ...rest,
-    aspectRatio,
-    seed: seed > -1 ? seed : undefined,
-  });
+  return {
+    ...removeEmpty({
+      ...rest,
+      aspectRatio,
+    }),
+    seed: seed > -1 ? seed : null,
+  };
 };
+
+export const supportedAspectRatios = [
+  { label: 'Square', width: 512, height: 512 },
+  { label: 'Landscape', width: 768, height: 512 },
+  { label: 'Portrait', width: 512, height: 768 },
+];
