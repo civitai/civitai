@@ -16,13 +16,12 @@ import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader } from '~/components/AppLayout/AppHeader';
 import { SideNavigation } from '~/components/AppLayout/SideNavigation';
 import { FloatingActionButton } from '~/components/FloatingActionButton/FloatingActionButton';
-import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useGenerationStore } from '~/store/generation.store';
 
 export function AppLayout({ children, showNavbar }: Props) {
-  const { colorScheme } = useMantineTheme();
+  const theme = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
@@ -36,7 +35,7 @@ export function AppLayout({ children, showNavbar }: Props) {
         padding="md"
         header={!isBanned ? <AppHeader /> : undefined}
         footer={<AppFooter />}
-        className={`theme-${colorScheme}`}
+        className={`theme-${theme.colorScheme}`}
         navbar={showNavbar ? <SideNavigation /> : undefined}
         styles={{
           body: {
@@ -63,7 +62,7 @@ export function AppLayout({ children, showNavbar }: Props) {
                   px="xs"
                 >
                   <Group spacing="xs">
-                    <IconBrush size={20} />
+                    <IconBrush size={20} stroke={2.5} />
                     <Text inherit>Create</Text>
                   </Group>
                 </FloatingActionButton>

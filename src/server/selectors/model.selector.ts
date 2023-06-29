@@ -143,6 +143,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           },
         },
       },
+      modelVersionGenerationCoverage: { select: { workers: true } },
     },
   },
   rank: {

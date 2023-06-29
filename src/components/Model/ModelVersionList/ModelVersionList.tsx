@@ -12,6 +12,7 @@ import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
   IconBan,
+  IconBrush,
   IconChevronLeft,
   IconChevronRight,
   IconClock,
@@ -25,6 +26,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { ModelById } from '~/types/router';
@@ -101,6 +103,7 @@ export function ModelVersionList({
   const { classes, cx, theme } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<State>({
@@ -198,7 +201,21 @@ export function ModelVersionList({
               }
               compact
             >
-              {version.name}
+              <Group spacing={8}>
+                {features.imageGeneration && version.canGenerate && (
+                  <ThemeIcon
+                    title="This version is available for image generation"
+                    color="cyan"
+                    variant="light"
+                    radius="xl"
+                    size="sm"
+                    sx={{ backgroundColor: 'transparent' }}
+                  >
+                    <IconBrush size={16} stroke={2.5} />
+                  </ThemeIcon>
+                )}
+                {version.name}
+              </Group>
             </Button>
           );
 
