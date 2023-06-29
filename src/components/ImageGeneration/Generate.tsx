@@ -103,14 +103,21 @@ export function Generate({
   });
 
   const localValues = imageGenerationFormStorage.get();
+  const [defaultValues, setDefaultValues] = useState({
+    ...defaults,
+    ...formatGenerationFormData(localValues?.params ?? {}),
+  });
   const form = useForm({
     schema: formSchema,
-    defaultValues: { ...defaults, ...formatGenerationFormData(localValues?.params ?? {}) },
     reValidateMode: 'onSubmit',
   });
 
+  useEffect(() => {
+    form.reset({ ...defaultValues });
+  }, [defaultValues]); //eslint-disable-line
+
   const handleReset = (props: GetGenerationDataProps) => {
-    form.reset({ ...defaults, ...formatGenerationFormData(props.params ?? {}) });
+    setDefaultValues({ ...defaults, ...formatGenerationFormData(props.params ?? {}) });
     useGenerationResourceStore.getState().setResources(props.resources);
     imageGenerationFormStorage.set(props); // set local storage values
   };
