@@ -18,27 +18,28 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     const handleClearInput = () => {
       if (!inputRef.current) return;
 
-      const event = new Event('input', { bubbles: true });
-      inputRef.current.value = null as any;
-      inputRef.current.dispatchEvent(event);
+      // const event = new Event('input', { bubbles: true });
+      // inputRef.current.value = null as any;
+      // inputRef.current.dispatchEvent(event);
+
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set;
+      nativeInputValueSetter?.call(inputRef.current, '');
+
+      const ev2 = new Event('input', { bubbles: true });
+      inputRef.current.dispatchEvent(ev2);
 
       onClear?.();
-      onChange?.(undefined);
-
-      // const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-      //   window.HTMLInputElement.prototype,
-      //   'value'
-      // )?.set;
-      // nativeInputValueSetter?.call(inputRef.current, '');
-
-      // const ev2 = new Event('input', { bubbles: true });
-      // inputRef.current.dispatchEvent(ev2);
+      onChange?.(null as any);
     };
 
     // const previousValue = usePrevious(props.value);
     useEffect(() => {
-      if (props.value === null) {
+      if (props.value === null && canReset.current) {
         handleClearInput();
+        canReset.current = false;
       }
     }, [props.value]) //eslint-disable-line
 
@@ -56,8 +57,6 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         mr={3}
         onClick={() => {
           handleClearInput();
-          // onClear?.();
-          // onChange?.(undefined);
         }}
       />
     );
