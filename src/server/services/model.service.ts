@@ -801,6 +801,7 @@ export const getModelsByCategory = async ({
               id: true,
               earlyAccessTimeFrame: true,
               createdAt: true,
+              modelVersionGenerationCoverage: { select: { workers: true } },
             },
           },
           user: { select: simpleUserSelect },
@@ -844,6 +845,8 @@ export const getModelsByCategory = async ({
           const [image] = images.filter((i) => i.modelVersionId === version.id);
           if (!image) return null;
 
+          const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+
           return {
             ...model,
             hashes: hashes.map((hash) => hash.hash.toLowerCase()),
@@ -858,7 +861,7 @@ export const getModelsByCategory = async ({
               model.mode !== ModelModifier.TakenDown
                 ? (image as (typeof images)[0] | undefined)
                 : undefined,
-            // earlyAccess,
+            canGenerate,
           };
         })
         .filter(isDefined),

@@ -133,6 +133,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canDownload =
           model.mode !== ModelModifier.Archived &&
           (!earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator);
+        const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
 
         // sort version files by file type, 'Model' type goes first
         const files = [...version.files].sort((a, b) => {
@@ -159,6 +160,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           hashes,
           earlyAccessDeadline,
           canDownload,
+          canGenerate,
           files: files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
@@ -215,6 +217,7 @@ export const getModelsInfiniteHandler = async ({
           id: true,
           earlyAccessTimeFrame: true,
           createdAt: true,
+          modelVersionGenerationCoverage: { select: { workers: true } },
         },
       },
       user: { select: simpleUserSelect },
@@ -257,6 +260,8 @@ export const getModelsInfiniteHandler = async ({
           (input.user || input.username);
         if (!image && !showImageless) return null;
 
+        const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+
         return {
           ...model,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
@@ -271,7 +276,7 @@ export const getModelsInfiniteHandler = async ({
             model.mode !== ModelModifier.TakenDown
               ? (image as (typeof images)[0] | undefined)
               : undefined,
-          // earlyAccess,
+          canGenerate,
         };
       })
       .filter(isDefined),
@@ -1075,6 +1080,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               id: true,
               earlyAccessTimeFrame: true,
               createdAt: true,
+              modelVersionGenerationCoverage: { select: { workers: true } },
             },
           },
           user: { select: simpleUserSelect },
@@ -1112,6 +1118,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             (user?.isModerator || model.user.id === user?.id) &&
             (modelInput.user || modelInput.username);
           if (!image && !showImageless) return null;
+          const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
 
           return {
             ...model,
@@ -1127,6 +1134,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               model.mode !== ModelModifier.TakenDown
                 ? (image as (typeof images)[0] | undefined)
                 : undefined,
+            canGenerate,
           };
         })
         .filter(isDefined);
