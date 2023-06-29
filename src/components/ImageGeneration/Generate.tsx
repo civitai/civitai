@@ -505,9 +505,9 @@ const steps = [
 const defaults = {
   cfgScale: 7,
   steps: 25,
-  sampler: 'Euler a' as Sampler,
+  sampler: 'DPM++ 2M Karras' as Sampler,
   seed: -1,
-  clipSkip: 1,
+  clipSkip: 2,
   quantity: 1,
   aspectRatio: '512x512',
   prompt: '',
