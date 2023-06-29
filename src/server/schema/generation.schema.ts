@@ -47,9 +47,9 @@ export const generationParamsSchema = z.object({
     }),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30),
-    sampler: z
-        .string()
-        .refine((val) => constants.samplers.includes(val as Sampler), { message: 'invalid sampler' }),
+  sampler: z
+    .string()
+    .refine((val) => constants.samplers.includes(val as Sampler), { message: 'invalid sampler' }),
   steps: z.coerce.number().min(1).max(150),
   seed: z.coerce.number().min(-1).max(999999999999999).optional(),
   clipSkip: z.coerce.number().default(1),
@@ -79,7 +79,8 @@ export const createGenerationRequestSchema = z.object({
       strength: z.number().min(-1).max(2).optional(),
       triggerWord: z.string().optional(),
     })
-        .array().max(additionalResourceLimit),
+    .array()
+    .max(additionalResourceLimit),
   params: generationParamsSchema.extend({ height: z.number(), width: z.number() }),
 });
 
@@ -92,4 +93,9 @@ export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.object({
   id: z.number(),
   type: z.enum(['image', 'model']),
+});
+
+export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedImagesSchema>;
+export const bulkDeleteGeneratedImagesSchema = z.object({
+  ids: z.number().array(),
 });

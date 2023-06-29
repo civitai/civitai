@@ -14,7 +14,9 @@ import {
   createStyles,
   HoverCard,
   TooltipProps,
+  LoadingOverlay,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconCloudUpload,
   IconFilter,
@@ -28,12 +30,16 @@ import {
 } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 
+import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
-import { useImageGenerationFeed } from '~/components/ImageGeneration/hooks/useImageGenerationState';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import {
+  useImageGenerationFeed,
+  useImageGenerationStore,
+} from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { constants } from '~/server/common/constants';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 type State = {
   layout: 'list' | 'grid';
@@ -49,12 +55,11 @@ type State = {
  * - add toggle layout
  * - add infinite scroll
  * - handle variant generation
- * - handle image deletion
  * - handle post images
  */
 export function Feed() {
   const { ref, inView } = useInView();
-  const mobile = useIsMobile({ breakpoint: 'md' });
+  const queryUtils = trpc.useContext();
   const [state, setState] = useState<State>({
     layout: 'grid',
     selectedItems: [],
@@ -63,6 +68,40 @@ export function Feed() {
 
   const { feed, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
     useImageGenerationFeed();
+  const removeImage = useImageGenerationStore((state) => state.removeImage);
+
+  const bulkDeleteImagesMutation = trpc.generation.bulkDeleteImages.useMutation({
+    async onSuccess(_, { ids }) {
+      const images = ids.map((id) => ({
+        id,
+        requestId: feed.find((image) => image.id === id)?.requestId,
+      }));
+      for (const image of images) {
+        if (image.requestId) removeImage({ imageId: image.id, requestId: image.requestId });
+      }
+      await queryUtils.generation.getRequests.invalidate();
+      setState((current) => ({ ...current, selectedItems: [] }));
+    },
+    onError(err) {
+      showErrorNotification({
+        title: 'Error deleting images',
+        error: new Error(err.message),
+      });
+    },
+  });
+
+  const handleDeleteImages = () => {
+    openConfirmModal({
+      title: 'Delete images',
+      children:
+        'Are you sure that you want to delete the selected images? This is a destructive action and cannot be undone.',
+      labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: state.selectedItems }),
+      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      centered: true,
+    });
+  };
 
   // infinite paging
   useEffect(() => {
@@ -176,9 +215,10 @@ export function Feed() {
             selectedItems: [],
           }))
         }
+        onDeleteClick={handleDeleteImages}
         onPostClick={() => console.log('post images')}
         onUpscaleClick={() => console.log('upscale images')}
-        onDeleteClick={() => console.log('delete images')}
+        loading={bulkDeleteImagesMutation.isLoading}
       />
       <CreateVariantsModal
         opened={state.variantModalOpened}
@@ -197,7 +237,12 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
 
-function FloatingActions({ selectCount, onDeselectClick, onDeleteClick }: FloatingActionsProps) {
+function FloatingActions({
+  selectCount,
+  onDeselectClick,
+  onDeleteClick,
+  loading = false,
+}: FloatingActionsProps) {
   return (
     <Transition mounted={selectCount > 0} transition="slide-up">
       {(transitionStyles) => (
@@ -209,6 +254,7 @@ function FloatingActions({ selectCount, onDeselectClick, onDeleteClick }: Floati
           sx={{ position: 'absolute', bottom: 8, left: 8, zIndex: 3 }}
           withBorder
         >
+          <LoadingOverlay visible={loading} loaderProps={{ variant: 'bars', size: 'sm' }} />
           <Stack spacing={6}>
             <Text color="dimmed" size="xs" weight={500} inline>
               {selectCount} selected
@@ -238,11 +284,6 @@ function FloatingActions({ selectCount, onDeselectClick, onDeleteClick }: Floati
                   </ActionIcon>
                 </span>
               </Tooltip>
-              {/* <Tooltip label="Delete images" withinPortal>
-                <ActionIcon size="md" variant="light" color="red">
-                  <IconTrash />
-                </ActionIcon>
-              </Tooltip> */}
             </Group>
           </Stack>
         </Card>
@@ -257,6 +298,7 @@ type FloatingActionsProps = {
   onPostClick: () => void;
   onUpscaleClick: () => void;
   onDeleteClick: () => void;
+  loading?: boolean;
 };
 
 const useStyles = createStyles((theme) => ({
