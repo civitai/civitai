@@ -28,6 +28,9 @@ const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
 const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
+const GenerationResourceModal = dynamic(
+  () => import('~/components/ImageGeneration/GenerationResources/GenerationResourceModal')
+);
 
 const registry = {
   blockModelTags: {
@@ -79,6 +82,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
           onboarding: DynamicOnboardingModal,
           questionsInfo: QuestionsInfoModal,
           generatedImageLightbox: GeneratedImageLightbox,
+          generationResourceModal: GenerationResourceModal,
           'civitai-link-success': CivitaiLinkSuccessModal,
           ...(Object.keys(registry) as Array<keyof typeof registry>).reduce<any>((acc, key) => {
             acc[key] = registry[key].Component;

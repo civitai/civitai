@@ -3,6 +3,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
+  GetGenerationDataInput,
   GetGenerationRequestsInput,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
@@ -15,7 +16,7 @@ import {
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
-import { ModelStatus, ModelType, Prisma } from '@prisma/client';
+import { ModelType, Prisma } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -26,7 +27,7 @@ import { QS } from '~/utils/qs';
 import { env } from '~/env/server.mjs';
 
 import { BaseModel, Sampler } from '~/server/common/constants';
-import { imageMetaSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -56,8 +57,7 @@ function mapRequestStatus(label: string): GenerationRequestStatus {
   }
 }
 
-type MappedGenerationResource = ReturnType<typeof mapGenerationResource>;
-function mapGenerationResource(resource: GenerationResourceSelect) {
+function mapGenerationResource(resource: GenerationResourceSelect): Generation.Resource {
   const { model, ...x } = resource;
   return {
     id: x.id,
@@ -113,7 +113,7 @@ export const getGenerationResources = async ({
   if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
 
   const results = await dbRead.$queryRaw<
-    Array<MappedGenerationResource & { index: number; serviceProviders?: string[] }>
+    Array<Generation.Resource & { index: number; serviceProviders?: string[] }>
   >`
     SELECT
       mv.id,
@@ -245,9 +245,10 @@ const samplersToSchedulers: Record<Sampler, string> = {
 
 export const createGenerationRequest = async ({
   userId,
-  ...props
+  resources,
+  params,
 }: CreateGenerationRequestInput & { userId: number }) => {
-  const checkpoint = props.resources.find((x) => x.type === ModelType.Checkpoint);
+  const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
@@ -257,25 +258,25 @@ export const createGenerationRequest = async ({
     body: JSON.stringify({
       userId,
       job: {
-        model: `@civitai/${checkpoint.modelVersionId}`,
-        quantity: props.quantity,
-        additionalNetworks: props.resources
+        model: `@civitai/${checkpoint.id}`,
+        quantity: params.quantity,
+        additionalNetworks: resources
           .filter((x) => x !== checkpoint)
           .reduce((acc, obj) => {
-            const { modelVersionId, ...rest } = obj;
-            acc[`@civitai/${modelVersionId}`] = rest;
+            const { id, modelType, ...rest } = obj;
+            acc[`@civitai/${id}`] = { type: modelType, ...rest };
             return acc;
           }, {} as { [key: string]: object }),
         params: {
-          prompt: props.prompt,
-          negativePrompt: props.negativePrompt,
-          scheduler: samplersToSchedulers[props.sampler],
-          steps: props.steps,
-          cfgScale: props.cfgScale,
-          width: props.width,
-          height: props.height,
-          seed: props.seed ?? -1,
-          clipSkip: props.clipSkip,
+          prompt: params.prompt,
+          negativePrompt: params.negativePrompt,
+          scheduler: samplersToSchedulers[params.sampler as Sampler],
+          steps: params.steps,
+          cfgScale: params.cfgScale,
+          width: params.width,
+          height: params.height,
+            seed: params.seed ?? -1,
+            clipSkip: props.clipSkip,
         },
       },
     }),
@@ -441,7 +442,7 @@ export const getImageGenerationData = async ({ id }: GetByIdInput) => {
     prompt,
     negativePrompt,
     clipSkip,
-    sampler: sampler as Sampler,
+    sampler: sampler,
     ...meta,
     model,
     additionalResources,
@@ -464,3 +465,79 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
     throw throwDbError(error);
   }
 }
+
+export type GetGenerationDataProps = {
+  params?: Partial<Generation.Params>;
+  resources: Generation.Resource[];
+};
+
+export const getGenerationData = async ({
+  type,
+  id,
+}: GetGenerationDataInput): Promise<GetGenerationDataProps> => {
+  switch (type) {
+    case 'image':
+      return await getImageGenerationData2(id);
+    case 'model':
+      const resource = await getGenerationResource({ id });
+      return { resources: [resource] };
+  }
+};
+
+const getImageGenerationData2 = async (id: number): Promise<GetGenerationDataProps> => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      meta: true,
+      height: true,
+      width: true,
+    },
+  });
+  if (!image) throw throwNotFoundError();
+
+  const resources = await dbRead.$queryRaw<
+    Array<Generation.Resource & { covered: boolean; hash?: string }>
+  >`
+    SELECT
+      mv.id,
+      mv.name,
+      mv."trainedWords",
+      mv."baseModel",
+      m.id "modelId",
+      m.name "modelName",
+      m.type "modelType",
+      ir."hash",
+      EXISTS (SELECT 1 FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "covered"
+    FROM "ImageResource" ir
+    JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
+    JOIN "Model" m on m.id = mv."modelId"
+    WHERE ir."imageId" = ${id}
+  `;
+
+  const { 'Clip skip': clipSkip, ...meta } = imageGenerationSchema.parse(image.meta);
+
+  if (meta.hashes && meta.prompt) {
+    for (const [key, hash] of Object.entries(meta.hashes)) {
+      if (!key.startsWith('lora:')) continue;
+
+      // get the resource that matches the hash
+      const resource = resources.find((x) => x.hash === hash);
+      if (!resource) continue;
+
+      // get everything that matches <key:{number}>
+      const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
+      if (!matches) continue;
+
+      resource.strength = parseFloat(matches[1]);
+    }
+  }
+
+  return {
+    resources,
+    params: {
+      ...meta,
+      height: image.height ?? undefined,
+      width: image.width ?? undefined,
+    },
+  };
+};

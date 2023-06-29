@@ -37,14 +37,10 @@ export const imageGenerationSchema = z.object({
   //   .passthrough()
   //   .array()
   //   .optional(),
+  hashes: z.record(z.string()).optional(),
 });
 
-export const imageMetaSchema = imageGenerationSchema
-  .extend({
-    hashes: z.record(z.string()),
-  })
-  .partial()
-  .passthrough();
+export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({

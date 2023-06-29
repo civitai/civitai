@@ -45,12 +45,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
   const setView = useGenerationStore((state) => state.setActiveTab);
 
   const handleGenerate = () => {
-    imageGenerationFormStorage.set({
-      model: request.resources.find((x) => x.modelType === ModelType.Checkpoint),
-      additionalResources: request.resources.filter((x) => x.modelType !== ModelType.Checkpoint),
-      ...request.params,
-      aspectRatio: `${request.params.width}x${request.params.height}`,
-    });
+    imageGenerationFormStorage.set({ resources: request.resources, params: { ...request.params } });
     setView('generate');
   };
 

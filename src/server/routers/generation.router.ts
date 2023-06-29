@@ -2,6 +2,7 @@ import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
+  getGenerationDataSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
@@ -9,6 +10,7 @@ import {
   checkResourcesCoverage,
   createGenerationRequest,
   deleteGenerationRequest,
+  getGenerationData,
   getGenerationRequests,
   getGenerationResource,
   getGenerationResources,
@@ -46,4 +48,7 @@ export const generationRouter = router({
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .query(({ input }) => checkResourcesCoverage(input)),
+  getGenerationData: publicProcedure
+    .input(getGenerationDataSchema)
+    .query(({ input }) => getGenerationData(input)),
 });

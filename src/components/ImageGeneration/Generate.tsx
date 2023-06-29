@@ -21,13 +21,7 @@ import { IconArrowAutofitDown, IconBook2, IconDice5, IconLock, IconX } from '@ta
 import { useEffect, useState } from 'react';
 import { useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
-import {
-  InputResourceSelect,
-  ResourceSelectModal,
-} from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import MentionExample from '~/components/ImageGeneration/SlateEditor/SlateEditor';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import {
   Form,
   InputNumber,
@@ -36,43 +30,40 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { additionalResourceLimit, generationParamsSchema } from '~/server/schema/generation.schema';
+import { additionalResourceLimit, generationParamsSchema, additionalResourceLimit } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { trpc } from '~/utils/trpc';
 import { constants, Sampler } from '~/server/common/constants';
 import { FieldArray } from '~/libs/form/components/FieldArray';
-import { imageGenerationFormStorage } from '~/components/ImageGeneration/utils';
+import { Sampler } from '~/server/common/constants';
+import {
+  formatGenerationFormData,
+  imageGenerationFormStorage,
+} from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { parsePromptMetadata } from '~/utils/image-metadata';
 import { useLocalStorage } from '@mantine/hooks';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { useGenerationResourceStore } from '~/components/ImageGeneration/GenerationResources/useGenerationResourceStore';
+import { GenerationResources } from '~/components/ImageGeneration/GenerationResources/GenerationResources';
+import { AddGenerationResourceButton } from '~/components/ImageGeneration/GenerationResources/AddGenerationResource';
+import { removeEmpty } from '~/utils/object-helpers';
+import { GetGenerationDataProps } from '~/server/services/generation/generation.service';
+import { GenerationResourceControl } from '~/components/ImageGeneration/GenerationResources/GenerationResourceControl';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
 );
 
-const resourceSchema = z
-  .object({
-    id: z.number(),
-    modelType: z.nativeEnum(ModelType),
-    strength: z.number().optional(),
-    trainedWords: z.string().array().optional(),
-    baseModel: z.string().optional(),
-  })
-  .passthrough();
-
-type Schema = Partial<z.infer<typeof schema>>;
-const schema = generationParamsSchema.extend({
-  model: resourceSchema
-    .nullable()
-    .refine((data) => !!data, { message: 'Please select a model to generate from' }),
+const formSchema = generationParamsSchema.extend({
   aspectRatio: z.string(),
-  baseModel: z.string().optional(),
-  additionalResources: resourceSchema.array().max(additionalResourceLimit).default([]),
+  seed: z.number().nullish(),
 });
 
+const ADDITIONAL_RESOURCE_TYPES = [ModelType.LORA, ModelType.TextualInversion];
 export function Generate({
   onSuccess,
   modelVersionId,
@@ -82,20 +73,15 @@ export function Generate({
   modelVersionId?: number;
   imageId?: number;
 }) {
-  const mobile = useIsMobile({ breakpoint: 'md' });
-  const currentUser = useCurrentUser();
-  const { classes } = useStyles();
-  const defaultValues = (imageGenerationFormStorage.get() ?? defaultDemoValues) as Schema;
-  const [showAdvanced, setShowAdvanced] = useLocalStorage({
-    key: 'generation-show-advanced',
-    defaultValue: false,
-  });
-  const [opened, setOpened] = useState(false);
-  const [baseModel, setBaseModel] = useState(
-    defaultValues.model?.baseModel ?? defaultValues.additionalResources?.[0]?.baseModel
-  );
-  const [showFillForm, setShowFillForm] = useState(false);
-  const isMuted = currentUser?.muted ?? false;
+    const { classes } = useStyles();
+    const currentUser = useCurrentUser();
+
+    const [showFillForm, setShowFillForm] = useState(false);
+    const isMuted = currentUser?.muted ?? false;
+    const [showAdvanced, setShowAdvanced] = useLocalStorage({
+        key: 'generation-show-advanced',
+        defaultValue: false,
+    });
 
   // Handle display of survey after 10 minutes
   if (!localStorage.getItem('generation-first-loaded'))
@@ -118,24 +104,27 @@ export function Generate({
     },
   });
 
-  // #region [generate from model source]
-  const modelQuery = trpc.generation.getResource.useQuery(
-    { id: modelVersionId ?? 0 },
-    { enabled: !!modelVersionId }
-  );
+  const localValues = imageGenerationFormStorage.get();
+  const form = useForm({
+    schema: formSchema,
+    defaultValues: { ...defaults, ...formatGenerationFormData(localValues?.params ?? {}) },
+    reValidateMode: 'onSubmit',
+  });
+
+  const handleReset = (props: GetGenerationDataProps) => {
+    form.reset({ ...defaults, ...formatGenerationFormData(props.params ?? {}) });
+    useGenerationResourceStore.getState().setResources(props.resources);
+    imageGenerationFormStorage.set(props); // set local storage values
+  };
 
   useEffect(() => {
-    if (!modelQuery.data) return;
-    const resource = modelQuery.data;
-    if (resource.modelType === ModelType.Checkpoint) form.reset({ model: resource });
-    else form.reset({ additionalResources: [resource] });
-  }, [modelQuery.data]); // eslint-disable-line
-  // #endregion
+    useGenerationResourceStore.getState().setResources(localValues?.resources ?? []);
+  }, []); // eslint-disable-line
 
-  // #region [generate from image source]
-  const imageQuery = trpc.generation.getImageGenerationData.useQuery(
-    { id: imageId ?? 0 },
-    { enabled: !!imageId }
+  // #region [default generation data]
+  const { data } = trpc.generation.getGenerationData.useQuery(
+    { type: !!modelVersionId ? 'model' : 'image', id: modelVersionId ?? imageId ?? 0 },
+    { enabled: !!imageId || !!modelVersionId }
   );
 
   const randomQuery = trpc.generation.getRandomGenerationData.useQuery(undefined, {
@@ -143,148 +132,101 @@ export function Generate({
   });
 
   useEffect(() => {
-    if (!imageId || !imageQuery.data) return;
-    imageGenerationFormStorage.set(imageQuery.data);
-    if (!supportedSamplers.includes(imageQuery.data.sampler)) {
-      imageQuery.data.sampler = 'Euler a';
-    }
-    form.reset(imageQuery.data);
-  }, [imageQuery.data]); // eslint-disable-line
+    if (data) handleReset(data);
+  }, [data]); //eslint-disable-line
   // #endregion
 
-  const form = useForm({
-    schema,
-    defaultValues: { ...defaults, ...defaultValues, ...(imageQuery?.data ?? {}) } as any,
-    reValidateMode: 'onSubmit',
-  });
+    const handleGetRandomGenParams = async () => {
+        const { data: genData } = await randomQuery.refetch();
+        const result = imageGenerationSchema.safeParse(genData);
+        if (result.success) {
+            const { sampler, ...rest } = result.data;
+            form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+        } else console.error(result.error);
+    };
 
-  const resources = form.watch('additionalResources');
-  const hasUnavailable = resources?.length > 0 && resources.some((x) => x?.covered === false);
+    const handleParsePrompt = () => {
+        const prompt = form.getValues('prompt');
+        const metadata = parsePromptMetadata(prompt);
+        const result = imageGenerationSchema.safeParse({
+            ...defaults,
+            ...metadata,
+        });
+        if (result.success) {
+            const { sampler, ...rest } = result.data;
+            form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
+            setShowFillForm(false);
+        } else {
+            console.error(result.error);
+            showErrorNotification({
+                title: 'Unable to parse prompt',
+                error: new Error('We are unable to fill out the form with the provided prompt.'),
+            });
+        }
+    };
 
-  const handleResourceChange = (resource: Generation.Resource) => {
-    const baseModel = form.getValues('baseModel');
-    if (!baseModel) form.setValue('baseModel', resource.baseModel);
-  };
-
-  const handleGetRandomGenParams = async () => {
-    const { data: genData } = await randomQuery.refetch();
-    const result = imageGenerationSchema.safeParse(genData);
-    if (result.success) {
-      const { sampler, ...rest } = result.data;
-      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
-    } else console.error(result.error);
-  };
-
-  const handleParsePrompt = () => {
-    const prompt = form.getValues('prompt');
-    const metadata = parsePromptMetadata(prompt);
-    const result = imageGenerationSchema.safeParse({
-      ...defaults,
-      ...metadata,
-    });
-    if (result.success) {
-      const { sampler, ...rest } = result.data;
-      form.reset({ ...rest, sampler: (sampler as Sampler) ?? 'Euler a' });
-      setShowFillForm(false);
-    } else {
-      console.error(result.error);
-      showErrorNotification({
-        title: 'Unable to parse prompt',
-        error: new Error('We are unable to fill out the form with the provided prompt.'),
-      });
-    }
-  };
-
-  if (isMuted)
-    return (
-      <Center h="100%" w="75%" mx="auto">
-        <Stack spacing="xl" align="center">
-          <ThemeIcon size="xl" radius="xl" color="yellow">
-            <IconLock />
-          </ThemeIcon>
-          <Text align="center">You cannot create new generations because you have been muted</Text>
-        </Stack>
-      </Center>
-    );
-
+    if (isMuted)
+        return (
+            <Center h="100%" w="75%" mx="auto">
+                <Stack spacing="xl" align="center">
+                    <ThemeIcon size="xl" radius="xl" color="yellow">
+                        <IconLock />
+                    </ThemeIcon>
+                    <Text align="center">You cannot create new generations because you have been muted</Text>
+                </Stack>
+            </Center>
+        );
   return (
     <Form
       form={form}
       style={{ height: '100%' }}
       onSubmit={(values) => {
-        imageGenerationFormStorage.set(values);
-        form.reset(values);
+        const resources = useGenerationResourceStore.getState().getValidatedResources();
+        if (!resources) return;
         const [width, height] = values.aspectRatio.split('x');
-        mutate({
+        const params = {
+          ...values,
+          seed: values.seed ?? -1,
           height: Number(height),
           width: Number(width),
-          resources: [...(values.model ? [values.model] : []), ...values.additionalResources].map(
-            (resource) => ({
-              modelVersionId: resource.id,
-              type: resource.modelType,
-              strength: resource.strength,
-              triggerWord:
-                resource.modelType === ModelType.TextualInversion
-                  ? resource.trainedWords?.[0]
-                  : undefined,
-            })
-          ),
-          prompt: values.prompt,
-          negativePrompt: values.negativePrompt,
-          cfgScale: values.cfgScale,
-          sampler: values.sampler,
-          steps: values.steps,
-          seed: values.seed,
-          clipSkip: values.clipSkip,
-          quantity: values.quantity,
-        });
+        };
+        imageGenerationFormStorage.set({ resources, params });
+        mutate({ resources, params });
       }}
     >
       <Stack h="100%" spacing={0}>
         <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
           <Stack py="md">
-            <InputResourceSelect
-              label="Model"
-              name="model"
-              withAsterisk
-              types={[ModelType.Checkpoint]}
-              onChange={(value) => {
-                if (value) setBaseModel(value.baseModel);
-              }}
-            />
-            <FieldArray
-              control={form.control}
-              name="additionalResources"
-              keyName={'uid' as any} // TODO.type fix
-              render={({ fields, append, remove, update }) => (
-                <Stack spacing="xs">
-                  {fields.map((item, index) => (
-                    <InputResourceSelect
-                      key={item.id}
-                      name={`additionalResources.${index}`}
-                      types={[ModelType.LORA, ModelType.TextualInversion]}
-                      onRemove={() => remove(index)}
-                      onChange={(value) => {
-                        if (value) update(index, value);
-                      }}
-                    />
-                  ))}
-                  {fields.length < additionalResourceLimit && (
-                    <Button onClick={() => setOpened(true)} variant="outline" size="xs" fullWidth>
-                      Add Additional Resource
-                    </Button>
-                  )}
-                  <ResourceSelectModal
-                    opened={opened}
-                    onClose={() => setOpened(false)}
-                    title="Select Additional Resource"
-                    types={[ModelType.LORA, ModelType.TextualInversion]}
-                    onSelect={(value) => append(value)}
-                    notIds={[...fields.map((item) => item.id)]}
-                    baseModel={baseModel}
+            {/* Generation Resources */}
+            <GenerationResourceControl type={ModelType.Checkpoint}>
+              {({ errors, type }) => (
+                <Input.Wrapper error={errors?.[0]}>
+                  <GenerationResources type={type} />
+                  <AddGenerationResourceButton
+                    limit={1}
+                    label="Add Model"
+                    types={[ModelType.Checkpoint]}
                   />
-                </Stack>
+                </Input.Wrapper>
               )}
+            </GenerationResourceControl>
+            {ADDITIONAL_RESOURCE_TYPES.map((type) => (
+              <GenerationResourceControl key={type} type={type}>
+                {({ errors, count }) =>
+                  count > 0 ? (
+                    <Input.Wrapper label={getDisplayName(type)}>
+                      <Stack spacing={2}>
+                        <GenerationResources type={type} />
+                      </Stack>
+                    </Input.Wrapper>
+                  ) : null
+                }
+              </GenerationResourceControl>
+            ))}
+            <AddGenerationResourceButton
+              limit={9}
+              label="Add Additional Resource"
+              types={ADDITIONAL_RESOURCE_TYPES}
             />
             <Stack spacing={0}>
               <InputTextArea
@@ -431,10 +373,7 @@ export function Generate({
             </Button>
             <Tooltip label="Reset" color="dark" withArrow>
               <Button
-                onClick={() => {
-                  form.reset(defaults);
-                  imageGenerationFormStorage.set(defaults);
-                }}
+                onClick={() => handleReset({ resources: [], params: defaults })}
                 variant="outline"
                 className={classes.generateButtonReset}
                 px="xs"
@@ -567,35 +506,10 @@ const defaults = {
   cfgScale: 7,
   steps: 25,
   sampler: 'Euler a' as Sampler,
-  seed: undefined,
+  seed: -1,
   clipSkip: 1,
   quantity: 1,
   aspectRatio: '512x512',
   prompt: '',
   negativePrompt: '',
-  additionalResources: [],
 };
-
-// #region [developement]
-const defaultDemoValues = {
-  // prompt:
-  //   'close up photo of a rabbit, forest, haze, halation, bloom, dramatic atmosphere, centred, rule of thirds, 200mm 1.4f macro shot',
-  // negativePrompt:
-  //   '(semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime:1.4), text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
-  // cfgScale: 7,
-  // steps: 25,
-  // sampler: 'Euler a',
-  // aspectRatio: '768x512',
-  // quantity: 2,
-  // clipSkip: 1,
-  model: {
-    id: 29460,
-    name: 'V2.0',
-    trainedWords: ['analog style', 'modelshoot style', 'nsfw', 'nudity'],
-    modelId: 4201,
-    modelName: 'Realistic Vision V2.0',
-    modelType: ModelType.Checkpoint,
-    baseModel: 'SD 1.5',
-  },
-};
-// #endregion
