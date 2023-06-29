@@ -38,7 +38,6 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     // const previousValue = usePrevious(props.value);
     useEffect(() => {
       if (props.value === null) {
-        console.log('reset');
         handleClearInput();
       }
     }, [props.value]) //eslint-disable-line

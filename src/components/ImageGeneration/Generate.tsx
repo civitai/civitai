@@ -110,7 +110,6 @@ export function Generate({
   });
 
   const handleReset = (props: GetGenerationDataProps) => {
-    console.log('reset values', { ...defaults, ...formatGenerationFormData(props.params ?? {}) });
     form.reset({ ...defaults, ...formatGenerationFormData(props.params ?? {}) });
     useGenerationResourceStore.getState().setResources(props.resources);
     imageGenerationFormStorage.set(props); // set local storage values
@@ -190,8 +189,7 @@ export function Generate({
           width: Number(width),
         };
         imageGenerationFormStorage.set({ resources, params });
-        console.log({ resources, params });
-        // mutate({ resources, params });
+        mutate({ resources, params });
       }}
     >
       <Stack h="100%" spacing={0}>
