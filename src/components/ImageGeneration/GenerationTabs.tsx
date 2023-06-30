@@ -5,7 +5,7 @@ import { Generate } from './Generate';
 import { Queue } from './Queue';
 import { useGenerationPanelControls } from '~/components/ImageGeneration/GenerationPanel';
 
-export default function GenerationDrawer({}) {
+export default function GenerationTabs({}) {
   const { classes } = useStyles();
 
   const view = useGenerationPanelControls((state) => state.view);
