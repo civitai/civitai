@@ -80,7 +80,7 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
       showErrorNotification({
         title: 'Failed to generate',
         error: new Error(error.message),
-        reason: 'An unexpected error occurred. Please try again later.',
+        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
       });
     },
   });
