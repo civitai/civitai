@@ -418,6 +418,7 @@ model ModelVersion {
   trainedWords         String[]
   steps                Int?
   epochs               Int?
+  clipSkip             Int?
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
   publishedAt          DateTime?

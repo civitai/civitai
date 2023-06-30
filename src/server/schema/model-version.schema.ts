@@ -57,6 +57,7 @@ export const modelVersionUpsertSchema2 = z.object({
   }).nullish(),
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),
+  clipSkip: z.number().min(1).max(12).nullish(),
   trainedWords: z.array(z.string()).default([]),
   earlyAccessTimeFrame: z.preprocess(
     (value) => (value ? Number(value) : 0),
