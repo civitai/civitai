@@ -98,7 +98,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CANNY_BUG_BOARD: z.string().optional(),
   NEXT_PUBLIC_CANNY_TOKEN: z.string().optional(),
   NEXT_PUBLIC_CANNY_APP_ID: z.string().optional(),
-  NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.string().url(),
+  NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.string().url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
 });
 

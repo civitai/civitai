@@ -20,6 +20,8 @@ const imageRequests: Record<string, (image: ImageResult) => void> = {};
 let socketPromise: Promise<WebSocket> | undefined;
 let socket: WebSocket | undefined;
 const getSocket = () => {
+  if (!env.NEXT_PUBLIC_PICFINDER_API_KEY || !env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT) return;
+
   if (socketPromise) return socketPromise;
   if (socket) {
     if (socket.readyState === WebSocket.OPEN) return Promise.resolve(socket);
@@ -31,7 +33,7 @@ const getSocket = () => {
 
   let closeTimeout: NodeJS.Timeout;
   socketPromise = new Promise((resolve, reject) => {
-    const newSocket = new WebSocket(env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT);
+    const newSocket = new WebSocket(env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT as string);
 
     // Handle sending API Key
     newSocket.onopen = () => {
@@ -74,7 +76,7 @@ const getSocket = () => {
 const socketRequest = async (request: any) => {
   try {
     const socket = await getSocket();
-    socket.send(JSON.stringify(request));
+    socket?.send(JSON.stringify(request));
   } catch (e) {
     console.error("PicFinder API Error: Couldn't setup connection", e);
   }
