@@ -35,6 +35,7 @@ module.exports = {
     // allows destructuring to ignore fields
     "@typescript-eslint/no-unused-vars": ["warn", { "ignoreRestSiblings": true }],
     "@typescript-eslint/no-namespace": "off",
+    "@typescript-eslint/no-non-null-assertion": "off"
   },
   // settings: {
   //   'import/parsers': {

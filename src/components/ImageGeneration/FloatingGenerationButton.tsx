@@ -1,17 +1,19 @@
 import { Group, Text } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import { FloatingActionButton } from '~/components/FloatingActionButton/FloatingActionButton';
-import { useGenerationStore } from '~/store/generation.store';
+import {
+  generationPanel,
+  useGenerationPanelControls,
+} from '~/components/ImageGeneration/GenerationPanel';
 
 export function FloatingGenerationButton() {
-  const drawerOpened = useGenerationStore((state) => state.drawerOpened);
-  const toggleDrawer = useGenerationStore((state) => state.toggleDrawer);
+  const opened = useGenerationPanelControls((state) => state.opened);
 
   return (
     <FloatingActionButton
       transition="pop"
-      onClick={() => toggleDrawer()}
-      mounted={!drawerOpened}
+      onClick={() => generationPanel.open()}
+      mounted={!opened}
       px="xs"
     >
       <Group spacing="xs">

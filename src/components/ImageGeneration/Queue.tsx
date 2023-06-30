@@ -1,15 +1,15 @@
-import { Alert, Center, Loader, ScrollArea, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, ScrollArea, Stack, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { BoostModal } from '~/components/ImageGeneration/BoostModal';
+import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useImageGenerationQueue } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Generation } from '~/server/services/generation/generation.types';
-import { useGenerationStore } from '~/store/generation.store';
 
 type State = {
   selectedItem: Generation.Request | null;
@@ -24,7 +24,6 @@ export function Queue() {
 
   const { requestIds, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
     useImageGenerationQueue();
-  const setActiveTab = useGenerationStore((state) => state.setActiveTab);
 
   // infinite paging
   useEffect(() => {
@@ -81,7 +80,7 @@ export function Queue() {
             Try{' '}
             <Text
               variant="link"
-              onClick={() => setActiveTab('generate')}
+              onClick={() => generationPanel.setView('generate')}
               sx={{ cursor: 'pointer' }}
               span
             >

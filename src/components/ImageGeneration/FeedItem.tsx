@@ -19,6 +19,7 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import {
   useImageGenerationRequest,
   useImageGenerationStore,
@@ -27,7 +28,6 @@ import generationForm from '~/components/ImageGeneration/utils/generationFormSto
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
-import { useGenerationStore } from '~/store/generation.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -46,7 +46,6 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
 export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClick }: Props) {
   const [opened, { toggle, close }] = useDisclosure();
   const request = useImageGenerationRequest(image.requestId);
-  const setView = useGenerationStore((state) => state.setActiveTab);
   const removeImage = useImageGenerationStore((state) => state.removeImage);
 
   const deleteImageMutation = trpc.generation.deleteImage.useMutation({
@@ -63,7 +62,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
 
   const handleGenerate = () => {
     generationForm.setData(request);
-    setView('generate');
+    generationPanel.setView('generate');
   };
 
   const handleDeleteImage = () => {

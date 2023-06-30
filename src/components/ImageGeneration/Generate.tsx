@@ -48,17 +48,10 @@ import generationForm, {
   supportedAspectRatios,
 } from '~/components/ImageGeneration/utils/generationFormStorage';
 import { supportedSamplers } from '~/server/schema/generation.schema';
+import { useGenerationPanelControls } from '~/components/ImageGeneration/GenerationPanel';
 
 const ADDITIONAL_RESOURCE_TYPES = [ModelType.LORA, ModelType.TextualInversion];
-export function Generate({
-  onSuccess,
-  modelVersionId,
-  imageId,
-}: {
-  onSuccess?: () => void;
-  modelVersionId?: number;
-  imageId?: number;
-}) {
+export function Generate({ onSuccess }: { onSuccess?: () => void }) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
 
@@ -121,10 +114,8 @@ export function Generate({
   }, []); // eslint-disable-line
 
   // #region [default generation data]
-  const { data } = trpc.generation.getGenerationData.useQuery(
-    { type: !!modelVersionId ? 'model' : 'image', id: modelVersionId ?? imageId ?? 0 },
-    { enabled: !!imageId || !!modelVersionId }
-  );
+  const input = useGenerationPanelControls((state) => state.input);
+  const { data } = trpc.generation.getGenerationData.useQuery({ ...input! }, { enabled: !!input });
 
   const randomQuery = trpc.generation.getRandomGenerationData.useQuery(undefined, {
     enabled: false,

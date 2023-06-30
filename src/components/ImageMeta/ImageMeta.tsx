@@ -20,7 +20,7 @@ import { encodeMetadata } from '~/utils/image-metadata';
 import { ImageGenerationProcess, ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useGenerationStore } from '~/store/generation.store';
+import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
 
 type Props = {
   meta: ImageMetaProps;
@@ -46,7 +46,6 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
 
 export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Props) {
   const flags = useFeatureFlags();
-  const toggleGenerationDrawer = useGenerationStore((state) => state.toggleDrawer);
 
   const { copied, copy } = useClipboard();
   const metas = useMemo(() => {
@@ -70,6 +69,7 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
     return { long, medium, short, hasControlNet };
   }, [meta]);
 
+  // TODO.optimize - can we get this data higher up?
   const { data = [] } = trpc.image.getResources.useQuery(
     { id: imageId as number },
     { enabled: flags.imageGeneration && !!imageId }
@@ -188,7 +188,7 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
             size="xs"
             variant="light"
             leftIcon={<IconBrush size={16} />}
-            onClick={() => toggleGenerationDrawer({ imageId })}
+            onClick={() => generationPanel.open({ type: 'image', id: imageId ?? 0 })}
             sx={{ flex: 1 }}
           >
             Start Creating
