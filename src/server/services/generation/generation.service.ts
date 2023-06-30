@@ -42,7 +42,7 @@ export function parseModelVersionId(assetId: string) {
 }
 
 // when removing a string from the `safeNegatives` array, add it to the `allSafeNegatives` array
-const safeNegatives = ['(nsfw, nude, naked, cleavage, nipples, navel:1.3)'];
+const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
 const allSafeNegatives = [...safeNegatives];
 
 function mapRequestStatus(label: string): GenerationRequestStatus {
@@ -176,12 +176,13 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
   return requests.map((x): Generation.Request => {
     const { additionalNetworks = {}, params, ...job } = x.job;
 
-    const assets = [x.job.model, ...Object.keys(x.job.additionalNetworks ?? {})];
+    let assets = [x.job.model, ...Object.keys(x.job.additionalNetworks ?? {})];
 
     // scrub negative prompt
     let negativePrompt = params.negativePrompt ?? '';
-    for (const negative of allSafeNegatives) {
-      negativePrompt = negativePrompt.replace(`${negative}, `, '');
+    for (const { triggerWord, id } of allSafeNegatives) {
+      negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+      assets = assets.filter((x) => x !== `@civitai/${id}`);
     }
 
     return {
@@ -257,43 +258,54 @@ const samplersToSchedulers: Record<Sampler, string> = {
 export const createGenerationRequest = async ({
   userId,
   resources,
-  params: { nsfw, ...params },
+  params: { nsfw, negativePrompt, ...params },
 }: CreateGenerationRequestInput & { userId: number }) => {
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
-  let negativePrompts = [params.negativePrompt ?? ''];
-  if (!nsfw) negativePrompts = [...safeNegatives, ...negativePrompts]; // tODO - add client nsfw toggle 'enable mature content'
+  const additionalNetworks = resources
+    .filter((x) => x !== checkpoint)
+    .reduce((acc, { id, modelType, ...rest }) => {
+      acc[`@civitai/${id}`] = { type: modelType, ...rest };
+      return acc;
+    }, {} as { [key: string]: object });
+
+  const negativePrompts = [negativePrompt ?? ''];
+  if (!nsfw) {
+    for (const { id, triggerWord } of safeNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
+  const generationRequest = {
+    userId,
+    job: {
+      model: `@civitai/${checkpoint.id}`,
+      quantity: params.quantity,
+      additionalNetworks,
+      params: {
+        prompt: params.prompt,
+        negativePrompt: negativePrompts.join(', '),
+        scheduler: samplersToSchedulers[params.sampler as Sampler],
+        steps: params.steps,
+        cfgScale: params.cfgScale,
+        width: params.width,
+        height: params.height,
+        seed: params.seed ?? -1,
+        clipSkip: params.clipSkip,
+      },
+    },
+  };
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userId,
-      job: {
-        model: `@civitai/${checkpoint.id}`,
-        quantity: params.quantity,
-        additionalNetworks: resources
-          .filter((x) => x !== checkpoint)
-          .reduce((acc, obj) => {
-            const { id, modelType, ...rest } = obj;
-            acc[`@civitai/${id}`] = { type: modelType, ...rest };
-            return acc;
-          }, {} as { [key: string]: object }),
-        params: {
-          prompt: params.prompt,
-          negativePrompt: negativePrompts.join(', '),
-          scheduler: samplersToSchedulers[params.sampler as Sampler],
-          steps: params.steps,
-          cfgScale: params.cfgScale,
-          width: params.width,
-          height: params.height,
-          seed: params.seed ?? -1,
-          clipSkip: params.clipSkip,
-        },
-      },
-    }),
+    body: JSON.stringify(generationRequest),
   });
 
   if (response.status === 429) {
