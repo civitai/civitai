@@ -14,14 +14,11 @@ import {
   Card,
   Tooltip,
   ThemeIcon,
-  Checkbox,
-  Switch,
   ActionIcon,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconArrowAutofitDown, IconInfoCircle, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
 import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import {
   Form,
@@ -32,14 +29,8 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { generationParamsSchema } from '~/server/schema/generation.schema';
 import { trpc } from '~/utils/trpc';
 import { constants, Sampler } from '~/server/common/constants';
-import {
-  formatGenerationFormData,
-  GenerationFormStorage,
-  supportedAspectRatios,
-} from '~/components/ImageGeneration/utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -49,23 +40,18 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { useGenerationResourceStore } from '~/components/ImageGeneration/GenerationResources/useGenerationResourceStore';
 import { GenerationResources } from '~/components/ImageGeneration/GenerationResources/GenerationResources';
 import { AddGenerationResourceButton } from '~/components/ImageGeneration/GenerationResources/AddGenerationResource';
-import { GetGenerationDataProps } from '~/server/services/generation/generation.service';
 import { GenerationResourceControl } from '~/components/ImageGeneration/GenerationResources/GenerationResourceControl';
 import { getDisplayName } from '~/utils/string-helpers';
 import { Generation } from '~/server/services/generation/generation.types';
+import generationForm, {
+  generationFormSchema,
+  supportedAspectRatios,
+} from '~/components/ImageGeneration/utils/generationFormStorage';
 
 const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
 );
 
-type FormProps = z.infer<typeof formSchema>;
-const formSchema = generationParamsSchema.extend({
-  aspectRatio: z.string(),
-  seed: z.number().nullish(),
-  nsfw: z.boolean(),
-});
-
-// TODO.generation - save form data to localstorage on change
 const ADDITIONAL_RESOURCE_TYPES = [ModelType.LORA, ModelType.TextualInversion];
 export function Generate({
   onSuccess,
@@ -109,16 +95,17 @@ export function Generate({
     },
   });
 
-  const getDefaultFormValues = (props: Partial<Generation.Params> = {}) => ({
+  const getDefaultFormValues = (props: Generation.DataParams = {}) => ({
     nsfw: currentUser?.showNsfw ?? false,
     ...defaults,
-    ...formatGenerationFormData(props),
+    ...props,
   });
 
-  const localValues = GenerationFormStorage.get();
-  const [defaultValues, setDefaultValues] = useState(getDefaultFormValues(localValues?.params));
+  const [defaultValues, setDefaultValues] = useState(
+    getDefaultFormValues(generationForm.data.params)
+  );
   const form = useForm({
-    schema: formSchema,
+    schema: generationFormSchema,
     reValidateMode: 'onSubmit',
   });
 
@@ -126,14 +113,14 @@ export function Generate({
     form.reset({ ...defaultValues });
   }, [defaultValues]); //eslint-disable-line
 
-  const handleReset = (props: GetGenerationDataProps) => {
-    setDefaultValues(getDefaultFormValues(props.params));
+  const handleReset = (props: Generation.Data) => {
     useGenerationResourceStore.getState().setResources(props.resources);
-    GenerationFormStorage.set(props); // set local storage values
+    const data = generationForm.setData(props);
+    setDefaultValues(getDefaultFormValues(data.params));
   };
 
   useEffect(() => {
-    useGenerationResourceStore.getState().setResources(localValues?.resources ?? []);
+    useGenerationResourceStore.getState().setResources(generationForm.data.resources);
   }, []); // eslint-disable-line
 
   // #region [default generation data]
@@ -150,6 +137,14 @@ export function Generate({
     if (data) handleReset(data);
   }, [data]); //eslint-disable-line
   // #endregion
+
+  useEffect(() => {
+    const subscription = form.watch((value, { name, type }) => {
+      if (type !== 'change' || !name) return;
+      generationForm.setParam(name, value[name]);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const handleGetRandomGenParams = async () => {
     const { data: genData } = await randomQuery.refetch();
@@ -205,7 +200,7 @@ export function Generate({
           height: Number(height),
           width: Number(width),
         };
-        GenerationFormStorage.set({ resources, params });
+        generationForm.setData({ resources, params });
         mutate({ resources, params });
       }}
     >

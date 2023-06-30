@@ -514,15 +514,10 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   }
 }
 
-export type GetGenerationDataProps = {
-  params?: Partial<Generation.Params>;
-  resources: Generation.Resource[];
-};
-
 export const getGenerationData = async ({
   type,
   id,
-}: GetGenerationDataInput): Promise<GetGenerationDataProps> => {
+}: GetGenerationDataInput): Promise<Generation.Data> => {
   switch (type) {
     case 'image':
       return await getImageGenerationData2(id);
@@ -532,7 +527,7 @@ export const getGenerationData = async ({
   }
 };
 
-const getImageGenerationData2 = async (id: number): Promise<GetGenerationDataProps> => {
+const getImageGenerationData2 = async (id: number): Promise<Generation.Data> => {
   const image = await dbRead.image.findUnique({
     where: { id },
     select: {

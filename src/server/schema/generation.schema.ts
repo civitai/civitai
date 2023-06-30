@@ -54,6 +54,9 @@ export const generationParamsSchema = z.object({
   seed: z.coerce.number().min(-1).max(999999999999999).optional(),
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(10),
+  height: z.number(),
+  width: z.number(),
+  nsfw: z.boolean().optional(),
 });
 
 export const generationResourceSchema = z.object({
@@ -81,11 +84,7 @@ export const createGenerationRequestSchema = z.object({
     })
     .array()
     .max(additionalResourceLimit),
-  params: generationParamsSchema.extend({
-    height: z.number(),
-    width: z.number(),
-    nsfw: z.boolean(),
-  }),
+  params: generationParamsSchema,
 });
 
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
