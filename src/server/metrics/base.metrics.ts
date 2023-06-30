@@ -60,8 +60,8 @@ export function createMetricProcessor({
 
       await setLastUpdate();
     },
-    queueUpdate: async (id: number, db?: PrismaClient) => {
-      await (db ?? dbWrite).$executeRaw`
+    queueUpdate: async (id: number) => {
+      await dbWrite.$executeRaw`
         INSERT INTO "MetricUpdateQueue" ("type", "id")
         VALUES (${name}, ${id})
         ON CONFLICT ("type", "id") DO UPDATE SET "createdAt" = NOW()

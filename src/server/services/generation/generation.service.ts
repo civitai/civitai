@@ -255,10 +255,10 @@ const samplersToSchedulers: Record<Sampler, string> = {
 };
 
 export const createGenerationRequest = async ({
-  user,
+  userId,
   resources,
   params: { nsfw, ...params },
-}: CreateGenerationRequestInput & { user: SessionUser }) => {
+}: CreateGenerationRequestInput & { userId: number }) => {
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
@@ -270,7 +270,7 @@ export const createGenerationRequest = async ({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      userId: user.id,
+      userId,
       job: {
         model: `@civitai/${checkpoint.id}`,
         quantity: params.quantity,
