@@ -1,17 +1,13 @@
 import { Button, Group, Text, Tooltip } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
-import {
-  generationPanel,
-  useGenerationPanelControls,
-} from '~/components/ImageGeneration/GenerationPanel';
+import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
 
 export function GenerateButton({ iconOnly, modelVersionId }: Props) {
-  const open = useGenerationPanelControls((state) => state.open);
   const button = (
     <Button
       variant="filled"
       sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
-      onClick={() => open({ type: 'model', id: modelVersionId })}
+      onClick={() => generationPanel.open({ type: 'model', id: modelVersionId })}
     >
       {iconOnly ? (
         <IconBrush size={24} />
