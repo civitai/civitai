@@ -201,7 +201,7 @@ export function ModelVersionList({
               }
               compact
             >
-              <Group spacing={8}>
+              <Group spacing={8} noWrap>
                 {features.imageGeneration && version.canGenerate && (
                   <ThemeIcon
                     title="This version is available for image generation"
