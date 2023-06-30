@@ -29,9 +29,18 @@ export default PublicEndpoint(
           },
           select: {
             modelVersionId: true,
+            hashes: {
+              select: {
+                hash: true,
+              },
+              where: {
+                type: 'SHA256',
+              },
+            },
           },
         })
-      )?.map((x) => x.modelVersionId) ?? [];
+      )?.map((entry) => ({ modelVersionId: entry.modelVersionId, hash: entry.hashes[0].hash })) ??
+      [];
 
     res.status(200).json(ids);
   },
