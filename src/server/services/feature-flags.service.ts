@@ -3,7 +3,7 @@ import { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
 
 /** 'dev' AND ('mod' OR 'public' OR etc...)  */
-const featureAvailability = ['dev', 'mod', 'public', 'founder', 'granted'] as const;
+const featureAvailability = ['dev', 'mod', 'public', 'user', 'founder', 'granted'] as const;
 type FeatureAvailability = (typeof featureAvailability)[number];
 
 const createTypedDictionary = <T extends Record<string, FeatureAvailability[]>>(dictionary: T) =>
@@ -21,7 +21,7 @@ const featureFlags = createTypedDictionary({
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod'],
   stripe: ['mod'],
-  imageGeneration: ['mod', 'founder', 'granted'],
+  imageGeneration: ['user'],
 });
 
 // Set flags from ENV
@@ -52,6 +52,7 @@ export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {
     const roleAccess =
       flags.filter((x) => x !== 'dev').length > 0
         ? (flags.includes('mod') && user?.isModerator) ||
+          (flags.includes('user') && !!user) ||
           flags.includes('public') ||
           (!!user?.tier && flags.includes(user.tier as FeatureAvailability))
         : true;
