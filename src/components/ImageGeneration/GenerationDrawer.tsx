@@ -41,7 +41,6 @@ const useStyles = createStyles((theme) => ({
 export function GenerationDrawer() {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { classes } = useStyles();
-  const router = useRouter();
 
   const opened = useGenerationStore((state) => state.drawerOpened);
   const toggleDrawer = useGenerationStore((state) => state.toggleDrawer);

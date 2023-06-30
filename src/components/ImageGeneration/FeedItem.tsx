@@ -5,13 +5,11 @@ import {
   Card,
   ActionIcon,
   Group,
-  Transition,
   Tooltip,
   TooltipProps,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { ModelType } from '@prisma/client';
 import {
   IconArrowsShuffle,
   IconBolt,
@@ -20,7 +18,6 @@ import {
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import {
   useImageGenerationRequest,
