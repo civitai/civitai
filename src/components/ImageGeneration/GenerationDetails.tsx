@@ -1,4 +1,4 @@
-import { Accordion, Text } from '@mantine/core';
+import { Accordion, AccordionControlProps, Text } from '@mantine/core';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
@@ -7,7 +7,13 @@ import {
 import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
-export function GenerationDetails({ params, label, upsideDown, ...descriptionTableProps }: Props) {
+export function GenerationDetails({
+  params,
+  label,
+  upsideDown,
+  controlProps,
+  ...descriptionTableProps
+}: Props) {
   const detailItems = Object.entries(params).map(([key, value]) => ({
     label: titleCase(getDisplayName(key)),
     value: (
@@ -43,7 +49,7 @@ export function GenerationDetails({ params, label, upsideDown, ...descriptionTab
       })}
     >
       <Accordion.Item value="details">
-        <Accordion.Control>
+        <Accordion.Control {...controlProps}>
           <Text size="sm" weight={500}>
             {label}
           </Text>
@@ -60,4 +66,5 @@ type Props = Omit<DescriptionTableProps, 'items'> & {
   label: string;
   params: Partial<Generation.Params>;
   upsideDown?: boolean;
+  controlProps?: AccordionControlProps;
 };

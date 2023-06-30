@@ -62,6 +62,12 @@ export default function GeneratedImageLightbox({
           params={generationRequest.params}
           labelWidth={150}
           paperProps={{ radius: 0 }}
+          controlProps={{
+            sx: (theme) => ({
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+            }),
+          }}
           upsideDown
         />
       </Box>
