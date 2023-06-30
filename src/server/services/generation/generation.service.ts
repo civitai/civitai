@@ -310,7 +310,7 @@ export const createGenerationRequest = async ({
 
   if (response.status === 429) {
     // too many requests
-    throwRateLimitError();
+    throw throwRateLimitError();
   }
 
   if (!response.ok) {
