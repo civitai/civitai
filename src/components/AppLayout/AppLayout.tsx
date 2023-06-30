@@ -9,25 +9,21 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { IconBan, IconBrush } from '@tabler/icons-react';
+import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader } from '~/components/AppLayout/AppHeader';
 import { SideNavigation } from '~/components/AppLayout/SideNavigation';
-import { FloatingActionButton } from '~/components/FloatingActionButton/FloatingActionButton';
+import { FloatingGenerationButton } from '~/components/ImageGeneration/FloatingGenerationButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useGenerationStore } from '~/store/generation.store';
 
 export function AppLayout({ children, showNavbar }: Props) {
   const theme = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
-
-  const drawerOpened = useGenerationStore((state) => state.drawerOpened);
-  const toggleDrawer = useGenerationStore((state) => state.toggleDrawer);
 
   return (
     <>
@@ -53,21 +49,7 @@ export function AppLayout({ children, showNavbar }: Props) {
         {!isBanned ? (
           <>
             {children}
-            {flags.imageGeneration && (
-              <>
-                <FloatingActionButton
-                  transition="pop"
-                  onClick={() => toggleDrawer()}
-                  mounted={!drawerOpened}
-                  px="xs"
-                >
-                  <Group spacing="xs">
-                    <IconBrush size={20} stroke={2.5} />
-                    <Text inherit>Create</Text>
-                  </Group>
-                </FloatingActionButton>
-              </>
-            )}
+            {flags.imageGeneration && <FloatingGenerationButton />}
           </>
         ) : (
           <Center py="xl">
