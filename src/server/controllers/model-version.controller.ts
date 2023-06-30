@@ -52,6 +52,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         trainedWords: true,
         epochs: true,
         steps: true,
+        clipSkip: true,
         status: true,
         createdAt: true,
         model: {
