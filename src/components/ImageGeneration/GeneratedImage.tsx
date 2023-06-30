@@ -23,8 +23,10 @@ export function GeneratedImage({
     if (!image) return;
     openContextModal({
       modal: 'generatedImageLightbox',
-      size: width + 40,
       zIndex: 400,
+      transitionDuration: 200,
+      fullScreen: true,
+      closeButtonLabel: 'Close lightbox',
       innerProps: {
         width,
         image,
