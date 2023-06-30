@@ -30,7 +30,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
-import { constants, Sampler } from '~/server/common/constants';
+import { Sampler } from '~/server/common/constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -47,10 +47,7 @@ import generationForm, {
   generationFormSchema,
   supportedAspectRatios,
 } from '~/components/ImageGeneration/utils/generationFormStorage';
-
-const supportedSamplers = constants.samplers.filter((sampler) =>
-  ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
-);
+import { supportedSamplers } from '~/server/schema/generation.schema';
 
 const ADDITIONAL_RESOURCE_TYPES = [ModelType.LORA, ModelType.TextualInversion];
 export function Generate({

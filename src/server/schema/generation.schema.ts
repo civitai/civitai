@@ -32,6 +32,10 @@ export const getGenerationRequestsSchema = z.object({
   requestId: z.number().array().optional(),
 });
 
+export const supportedSamplers = constants.samplers.filter((sampler) =>
+  ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
+);
+
 export const generationParamsSchema = z.object({
   prompt: z
     .string()
@@ -49,7 +53,7 @@ export const generationParamsSchema = z.object({
   cfgScale: z.coerce.number().min(1).max(30),
   sampler: z
     .string()
-    .refine((val) => constants.samplers.includes(val as Sampler), { message: 'invalid sampler' }),
+    .refine((val) => supportedSamplers.includes(val as Sampler), { message: 'invalid sampler' }),
   steps: z.coerce.number().min(1).max(150),
   seed: z.coerce.number().min(-1).max(999999999999999).optional(),
   clipSkip: z.coerce.number().default(1),
