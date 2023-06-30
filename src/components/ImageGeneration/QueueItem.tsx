@@ -1,39 +1,32 @@
 import {
-  Accordion,
   ActionIcon,
   Badge,
   Button,
   Card,
   Group,
   HoverCard,
-  Paper,
-  Popover,
   Stack,
   Text,
   ThemeIcon,
-  UnstyledButton,
-  createStyles,
   MantineColor,
   Tooltip,
-  Divider,
+  SimpleGrid,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
-import { useEffect } from 'react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
   useImageGenerationRequest,
   useImageGenerationStore,
 } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { formatDateMin } from '~/utils/date-helpers';
-import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const statusColors: Record<GenerationRequestStatus, MantineColor> = {
@@ -45,7 +38,6 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
 };
 
 export function QueueItem({ id, onBoostClick }: Props) {
-  const { classes } = useStyles();
   const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
 
   const item = useImageGenerationRequest(id);
@@ -60,14 +52,6 @@ export function QueueItem({ id, onBoostClick }: Props) {
   });
 
   const { prompt, ...details } = item.params;
-  const detailItems = Object.entries(details).map(([key, value]) => ({
-    label: titleCase(getDisplayName(key)),
-    value: (
-      <ContentClamp maxHeight={44} labelSize="xs">
-        {value as string}
-      </ContentClamp>
-    ),
-  }));
 
   const status = item.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
@@ -162,7 +146,13 @@ export function QueueItem({ id, onBoostClick }: Props) {
           grouped
         />
         {!failed && !!item.images?.length && (
-          <div className={classes.imageGrid}>
+          <SimpleGrid
+            spacing="xs"
+            breakpoints={[
+              { maxWidth: 'sm', cols: 2 },
+              { minWidth: 'sm', cols: 4 },
+            ]}
+          >
             {item.images.map((image) => (
               <GeneratedImage
                 key={image.id}
@@ -171,7 +161,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
                 image={image}
               />
             ))}
-          </div>
+          </SimpleGrid>
         )}
       </Stack>
       <Card.Section
@@ -181,38 +171,12 @@ export function QueueItem({ id, onBoostClick }: Props) {
           marginRight: -theme.spacing.xs,
         })}
       >
-        <Accordion
-          variant="filled"
-          styles={(theme) => ({
-            content: {
-              padding: 0,
-            },
-            item: {
-              overflow: 'hidden',
-              background: 'transparent',
-            },
-            control: {
-              padding: 6,
-              paddingLeft: theme.spacing.xs + 6,
-              paddingRight: theme.spacing.xs + 6,
-            },
-          })}
-        >
-          <Accordion.Item value="details">
-            <Accordion.Control>
-              <Text size="sm" weight={500}>
-                Additional Details
-              </Text>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <DescriptionTable
-                items={detailItems}
-                labelWidth={150}
-                paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
-              />
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
+        <GenerationDetails
+          label="Additional Details"
+          params={details}
+          labelWidth={150}
+          paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
+        />
       </Card.Section>
       {/* <Card.Section py="xs" inheritPadding>
         <Group position="apart" spacing={8}>
@@ -233,25 +197,3 @@ type Props = {
   id: number;
   onBoostClick: (item: Generation.Request) => void;
 };
-
-const useStyles = createStyles((theme) => ({
-  imageGrid: {
-    display: 'flex',
-    gap: theme.spacing.xs,
-    flexWrap: 'wrap',
-
-    '& > *': {
-      width: 120,
-    },
-  },
-
-  // imageGrid: {
-  //   display: 'grid',
-  //   gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 160px))',
-  //   gap: theme.spacing.xs,
-
-  //   // [`@media(max-width: ${theme.breakpoints.xs}px)`]: {
-  //   //   gridTemplateColumns: '1fr 1fr',
-  //   // },
-  // },
-}));
