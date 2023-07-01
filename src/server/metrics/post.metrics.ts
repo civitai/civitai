@@ -188,6 +188,17 @@ export const postMetrics = createMetricProcessor({
   rank: {
     table: 'PostRank',
     primaryKey: 'postId',
-    indexes: ['reactionCountAllTimeRank'],
+    indexes: [
+      'reactionCountAllTimeRank',
+      'reactionCountDayRank',
+      'reactionCountWeekRank',
+      'reactionCountMonthRank',
+      'reactionCountYearRank',
+      'commentCountAllTimeRank',
+      'commentCountDayRank',
+      'commentCountWeekRank',
+      'commentCountMonthRank',
+      'commentCountYearRank',
+    ],
   },
 });

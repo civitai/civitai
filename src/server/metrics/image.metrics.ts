@@ -178,6 +178,17 @@ export const imageMetrics = createMetricProcessor({
   rank: {
     table: 'ImageRank',
     primaryKey: 'imageId',
-    indexes: ['reactionCountAllTimeRank', 'commentCountAllTimeRank'],
+    indexes: [
+      'reactionCountAllTimeRank',
+      'reactionCountDayRank',
+      'reactionCountWeekRank',
+      'reactionCountMonthRank',
+      'reactionCountYearRank',
+      'commentCountAllTimeRank',
+      'commentCountDayRank',
+      'commentCountWeekRank',
+      'commentCountMonthRank',
+      'commentCountYearRank',
+    ],
   },
 });
