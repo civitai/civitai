@@ -1003,19 +1003,21 @@ export const getAllImages = async ({
 
   let count: number | undefined;
   if (include?.includes('count')) {
-    const whereHash = hashify(queryFrom.text + queryFrom.values);
-    const countCache = await redis.get(`system:image-count:${whereHash}`);
-    if (countCache) count = Number(countCache);
-    else {
-      const [countResult] = await dbRead.$queryRaw<{ count: number }[]>`
-        SELECT COUNT(*) "count"
-        ${queryFrom}
-      `;
-      count = Number(countResult.count);
-      await redis.set(`system:image-count:${whereHash}`, count, {
-        EX: 60 * 5,
-      });
-    }
+    // const whereHash = hashify(queryFrom.text + queryFrom.values);
+    // const countCache = await redis.get(`system:image-count:${whereHash}`);
+    // if (countCache) count = Number(countCache);
+    // else {
+    //   const [countResult] = await dbRead.$queryRaw<{ count: number }[]>`
+    //     SELECT COUNT(*) "count"
+    //     ${queryFrom}
+    //   `;
+    //   count = Number(countResult.count);
+    //   await redis.set(`system:image-count:${whereHash}`, count, {
+    //     EX: 60 * 5,
+    //   });
+    // }
+    // TODO: Restore count logic or remove
+    count = 0;
   }
 
   return {
