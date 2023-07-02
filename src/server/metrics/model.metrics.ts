@@ -16,6 +16,7 @@ export const modelMetrics = createMetricProcessor({
       await refreshModelVersionRank(ctx);
       await refreshModelRank(ctx);
     },
+    refreshInterval: 60 * 1000,
   },
 });
 
@@ -179,18 +180,18 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
       SELECT DISTINCT modelId
       FROM modelEngagements
       WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-      AND type = 'Favorite'
+      AND type = 'Favorite' OR type = 'Delete'
     `,
     format: 'JSONEachRow',
   });
 
-  const effectedModels = (await affectedModelsResponse?.json()) as [
+  const affectedModels = (await affectedModelsResponse?.json()) as [
     {
       modelId: number;
     }
   ];
 
-  const affectedModelsJson = JSON.stringify(effectedModels.map((x) => x.modelId));
+  const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
 
   await db.$executeRaw`
     INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")

@@ -439,6 +439,11 @@ export const toggleFollowUserHandler = async ({
         type: 'Follow',
         targetUserId: input.targetUserId,
       });
+    } else {
+      await ctx.track.userEngagement({
+        type: 'Delete',
+        targetUserId: input.targetUserId,
+      });
     }
   } catch (error) {
     throw throwDbError(error);
@@ -483,6 +488,11 @@ export const toggleHideUserHandler = async ({
         type: 'Hide',
         targetUserId: input.targetUserId,
       });
+    } else {
+      await ctx.track.userEngagement({
+        type: 'Delete',
+        targetUserId: input.targetUserId,
+      });
     }
   } catch (error) {
     throw throwDbError(error);
@@ -504,6 +514,11 @@ export const toggleHideModelHandler = async ({
         type: 'Hide',
         modelId: input.modelId,
       });
+    } else {
+      await ctx.track.modelEngagement({
+        type: 'Delete',
+        modelId: input.modelId,
+      });
     }
   } catch (error) {
     throw throwDbError(error);
@@ -523,6 +538,11 @@ export const toggleFavoriteModelHandler = async ({
     if (result) {
       await ctx.track.modelEngagement({
         type: 'Favorite',
+        modelId: input.modelId,
+      });
+    } else {
+      await ctx.track.modelEngagement({
+        type: 'Delete',
         modelId: input.modelId,
       });
     }
