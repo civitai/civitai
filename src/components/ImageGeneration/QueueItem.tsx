@@ -96,7 +96,7 @@ export function QueueItem({ id }: Props) {
                 </ThemeIcon>
               </Tooltip>
             )}
-            {!pendingProcessing && (
+            {pendingProcessing && (
               <Button.Group>
                 <Button
                   size="xs"

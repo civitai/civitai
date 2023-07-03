@@ -13,6 +13,8 @@ type BoostModalState = {
   setShowBoost: (value: boolean) => void;
 };
 
+// if localStorage becomes an issue with nextjs, maybe try something like this:
+// https://github.com/pmndrs/zustand/issues/1145#issuecomment-1556132781
 export const useBoostModalStore = create<BoostModalState>()(
   persist(
     immer((set, get) => ({
