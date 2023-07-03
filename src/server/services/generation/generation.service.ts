@@ -71,7 +71,8 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelId: model.id,
     modelName: model.name,
     modelType: model.type,
-    baseModel: x.baseModel,
+    //TODO.types: fix type casting
+    baseModel: x.baseModel as string,
   };
 }
 
@@ -208,7 +209,8 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
             modelId: model.id,
             modelName: model.name,
             modelType: model.type,
-            baseModel: modelVersion.baseModel,
+            // TODO.types: fix type casting
+            baseModel: modelVersion.baseModel as string,
             ...network,
           };
         })
