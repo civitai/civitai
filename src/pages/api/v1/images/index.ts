@@ -3,7 +3,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { getAllImages } from '~/server/services/image.service';
@@ -29,8 +28,8 @@ const imagesEndpointSchema = z.object({
   modelVersionId: numericString().optional(),
   imageId: numericString().optional(),
   username: usernameSchema.optional(),
-  period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
-  sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  sort: z.nativeEnum(ImageSort).default(ImageSort.Newest),
   nsfw: z
     .union([z.nativeEnum(NsfwLevel), booleanString()])
     .optional()
@@ -48,6 +47,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
   const { limit, page, ...data } = reqParams.data;
   const { skip } = getPagination(limit, page);
+  if (skip && skip > 100)
+    return res.status(400).json({ error: 'Page is too high. We will add cursor support shortly' });
   const { items, ...metadata } = getPagingData(
     await getAllImages({ ...data, limit, skip, periodMode: 'published', include: ['count'] }),
     limit,
