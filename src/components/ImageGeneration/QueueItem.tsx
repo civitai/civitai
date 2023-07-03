@@ -64,6 +64,7 @@ export function QueueItem({ id }: Props) {
     console.log('boost it', request);
   };
 
+  // TODO - enable this after boosting is ready
   const handleBoostClick = () => {
     if (showBoost) openBoostModal({ request, cb: boost });
     else boost(request);
@@ -106,13 +107,13 @@ export function QueueItem({ id }: Props) {
                 >
                   ETA <Countdown endTime={request.estimatedCompletionDate} />
                 </Button>
-                <HoverCard withArrow position="top" withinPortal>
+                <HoverCard withArrow position="top" withinPortal zIndex={400}>
                   <HoverCard.Target>
                     <Button
                       size="xs"
                       rightIcon={showBoost ? <IconBolt size={16} /> : undefined}
                       compact
-                      onClick={handleBoostClick}
+                      // onClick={handleBoostClick}
                     >
                       Boost
                     </Button>
