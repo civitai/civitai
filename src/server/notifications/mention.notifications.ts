@@ -45,7 +45,7 @@ export const mentionNotifications = createNotificationProcessor({
             'mentionedIn', 'comment',
             'commentId', c.id,
             'threadId', c."threadId",
-            'threadParentId', COALESCE(t."imageId", t."modelId", t."postId", t."questionId", t."answerId", t."reviewId"),
+            'threadParentId', COALESCE(t."imageId", t."modelId", t."postId", t."questionId", t."answerId", t."reviewId", t."articleId"),
             'threadType', CASE
               WHEN t."imageId" IS NOT NULL THEN 'image'
               WHEN t."modelId" IS NOT NULL THEN 'model'
