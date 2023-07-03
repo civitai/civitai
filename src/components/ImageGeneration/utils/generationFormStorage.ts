@@ -1,3 +1,4 @@
+import { unset } from 'lodash-es';
 import { z } from 'zod';
 import {
   generationParamsSchema,
@@ -31,6 +32,14 @@ const formatGenerationDataSchema = z.object({
 
 const parseGenerationData = (data: GenerationDataInput) => {
   try {
+    const results = formatGenerationDataSchema.safeParse(data);
+    if (results.success) return results.data;
+    // remove bad `param` props and and parse again
+    for (const error of results.error.errors) {
+      if (error.path[0] === 'params') {
+        unset(data, error.path);
+      }
+    }
     return formatGenerationDataSchema.parse(data);
   } catch (error: any) {
     console.warn('invalid generation data format');
