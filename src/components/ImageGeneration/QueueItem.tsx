@@ -19,6 +19,7 @@ import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { openBoostModal, useBoostModalStore } from '~/components/ImageGeneration/BoostModal';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -37,10 +38,10 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
   [GenerationRequestStatus.Error]: 'red',
 };
 
-export function QueueItem({ id, onBoostClick }: Props) {
-  const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
+export function QueueItem({ id }: Props) {
+  const showBoost = useBoostModalStore((state) => state.showBoost);
 
-  const item = useImageGenerationRequest(id);
+  const request = useImageGenerationRequest(id);
   const removeRequest = useImageGenerationStore((state) => state.removeRequest);
   const deleteMutation = trpc.generation.deleteRequest.useMutation({
     onSuccess: (response, request) => {
@@ -51,20 +52,29 @@ export function QueueItem({ id, onBoostClick }: Props) {
     },
   });
 
-  const { prompt, ...details } = item.params;
+  const { prompt, ...details } = request.params;
 
-  const status = item.status ?? GenerationRequestStatus.Pending;
+  const status = request.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
     status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
   const succeeded = status === GenerationRequestStatus.Succeeded;
   const failed = status === GenerationRequestStatus.Error;
+
+  const boost = (request: Generation.Request) => {
+    console.log('boost it', request);
+  };
+
+  const handleBoostClick = () => {
+    if (showBoost) openBoostModal({ request, cb: boost });
+    else boost(request);
+  };
 
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
         <Group position="apart">
           <Group spacing={8}>
-            {!!item.images?.length && (
+            {!!request.images?.length && (
               <Tooltip label={status} withArrow color="dark">
                 <ThemeIcon
                   variant={pendingProcessing ? 'filled' : 'light'}
@@ -79,13 +89,13 @@ export function QueueItem({ id, onBoostClick }: Props) {
                   <Group spacing={4}>
                     <IconPhoto size={16} />
                     <Text size="sm" inline weight={500}>
-                      {item.images.length}
+                      {request.images.length}
                     </Text>
                   </Group>
                 </ThemeIcon>
               </Tooltip>
             )}
-            {pendingProcessing && (
+            {!pendingProcessing && (
               <Button.Group>
                 <Button
                   size="xs"
@@ -94,14 +104,15 @@ export function QueueItem({ id, onBoostClick }: Props) {
                   sx={{ pointerEvents: 'none' }}
                   compact
                 >
-                  ETA <Countdown endTime={item.estimatedCompletionDate} />
+                  ETA <Countdown endTime={request.estimatedCompletionDate} />
                 </Button>
                 <HoverCard withArrow position="top" withinPortal>
                   <HoverCard.Target>
                     <Button
                       size="xs"
-                      rightIcon={showBoostModal ? <IconBolt size={16} /> : undefined}
+                      rightIcon={showBoost ? <IconBolt size={16} /> : undefined}
                       compact
+                      onClick={handleBoostClick}
                     >
                       Boost
                     </Button>
@@ -118,7 +129,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
               </Button.Group>
             )}
             <Text size="xs" color="dimmed">
-              {formatDateMin(item.createdAt)}
+              {formatDateMin(request.createdAt)}
             </Text>
           </Group>
           <ActionIcon
@@ -136,7 +147,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
           <Text lh={1.3}>{prompt}</Text>
         </ContentClamp>
         <Collection
-          items={item.resources}
+          items={request.resources}
           limit={3}
           renderItem={(resource: any) => (
             <Badge size="sm">
@@ -145,7 +156,7 @@ export function QueueItem({ id, onBoostClick }: Props) {
           )}
           grouped
         />
-        {!failed && !!item.images?.length && (
+        {!failed && !!request.images?.length && (
           <SimpleGrid
             spacing="xs"
             breakpoints={[
@@ -153,11 +164,11 @@ export function QueueItem({ id, onBoostClick }: Props) {
               { minWidth: 'sm', cols: 4 },
             ]}
           >
-            {item.images.map((image) => (
+            {request.images.map((image) => (
               <GeneratedImage
                 key={image.id}
-                height={item.params.height}
-                width={item.params.width}
+                height={request.params.height}
+                width={request.params.width}
                 image={image}
               />
             ))}
@@ -195,5 +206,4 @@ export function QueueItem({ id, onBoostClick }: Props) {
 type Props = {
   // item: Generation.Request;
   id: number;
-  onBoostClick: (item: Generation.Request) => void;
 };

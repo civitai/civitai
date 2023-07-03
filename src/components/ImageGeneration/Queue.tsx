@@ -1,26 +1,16 @@
 import { Alert, Center, Loader, ScrollArea, Stack, Text } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
-import { BoostModal } from '~/components/ImageGeneration/BoostModal';
 import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useImageGenerationQueue } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { Generation } from '~/server/services/generation/generation.types';
-
-type State = {
-  selectedItem: Generation.Request | null;
-  opened: boolean;
-};
 
 export function Queue() {
   const { ref, inView } = useInView();
   const mobile = useIsMobile({ breakpoint: 'md' });
-  const [state, setState] = useState<State>({ selectedItem: null, opened: false });
-  const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
 
   const { requestIds, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
     useImageGenerationQueue();
@@ -46,13 +36,7 @@ export function Queue() {
       <ScrollArea h="100%" sx={{ marginRight: -16, paddingRight: 16 }}>
         <Stack py="md">
           {requestIds.map((id) => (
-            <QueueItem
-              key={id}
-              id={id}
-              onBoostClick={(item) =>
-                showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined
-              }
-            />
+            <QueueItem key={id} id={id} />
           ))}
           {hasNextPage && !isLoading && !isRefetching && (
             <Center p="xl" ref={ref} sx={{ height: 36 }} mt="md">
@@ -61,12 +45,6 @@ export function Queue() {
           )}
         </Stack>
       </ScrollArea>
-      {showBoostModal && (
-        <BoostModal
-          opened={state.opened}
-          onClose={() => setState({ selectedItem: null, opened: false })}
-        />
-      )}
     </>
   ) : (
     <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
