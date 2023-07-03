@@ -72,6 +72,13 @@ const useStyles = createStyles((theme) => ({
         visibility: 'hidden',
       },
     },
+    hr: {
+      height: '4px',
+      padding: 0,
+      margin: '24px 0',
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
+      border: 0,
+    },
   },
 }));
 

@@ -28,6 +28,7 @@ export function sanitizeHtml(
       'h1',
       'h2',
       'h3',
+      'hr',
     ],
     allowedAttributes: {
       a: ['rel', 'href', 'target'],
