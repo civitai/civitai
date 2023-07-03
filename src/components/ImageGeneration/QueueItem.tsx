@@ -12,7 +12,6 @@ import {
   Tooltip,
   SimpleGrid,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';

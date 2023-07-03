@@ -39,8 +39,10 @@ export const useGenerationPanelControls = create<State>()(
       open: (input) => {
         set((state) => {
           state.opened = true;
-          state.input = input;
-          state.view = 'generate';
+          if (input) {
+            state.input = input;
+            state.view = 'generate';
+          }
         });
       },
       close: () => {

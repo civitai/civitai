@@ -1,6 +1,8 @@
+import OneKeyMap from '@essentials/one-key-map';
+import trieMemoize from 'trie-memoize';
 import { Alert, Center, Loader, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
@@ -14,6 +16,8 @@ export function Queue() {
 
   const { requestIds, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
     useImageGenerationQueue();
+
+  const ids = useDeferredValue(requestIds);
 
   // infinite paging
   useEffect(() => {
@@ -31,12 +35,12 @@ export function Queue() {
     <Center p="xl">
       <Loader />
     </Center>
-  ) : requestIds.length > 0 ? (
+  ) : ids.length > 0 ? (
     <>
       <ScrollArea h="100%" sx={{ marginRight: -16, paddingRight: 16 }}>
         <Stack py="md">
-          {requestIds.map((id) => (
-            <QueueItem key={id} id={id} />
+          {ids.map((id, index) => (
+            <div key={index}>{createRenderElement(QueueItem, index, id)}</div>
           ))}
           {hasNextPage && !isLoading && !isRefetching && (
             <Center p="xl" ref={ref} sx={{ height: 36 }} mt="md">
@@ -71,3 +75,9 @@ export function Queue() {
     </Center>
   );
 }
+
+// supposedly ~5.5x faster than createElement without the memo
+const createRenderElement = trieMemoize(
+  [OneKeyMap, {}, OneKeyMap],
+  (RenderComponent, index, id) => <RenderComponent index={index} id={id} />
+);
