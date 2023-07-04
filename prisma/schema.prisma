@@ -1779,6 +1779,14 @@ model GenerationServiceProvider {
   @@id([name])
 }
 
+model SearchIndexUpdateQueue {
+  type      String
+  id        Int
+  createdAt DateTime @default(now())
+
+  @@id([type, id])
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id
