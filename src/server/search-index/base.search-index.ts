@@ -26,6 +26,9 @@ export function createSearchIndexUpdateProcessor({
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
       if (!shouldUpdate) {
+        console.log(
+          'createSearchIndexUpdateProcessor :: update :: Job does not require updating yet.'
+        );
         return;
       }
 

@@ -3,12 +3,13 @@ import * as searchIndex from '~/server/search-index';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
+  tags: searchIndex.tagsSearchIndex,
 };
 
 export const searchIndexJobs = Object.entries(searchIndexSets).map(([name, searchIndexProcessor]) =>
   createJob(
     `search-index-sync-${name}`,
-    '*/1 * * * *',
+    '*/30 * * * *',
     async () => {
       const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update);
 
