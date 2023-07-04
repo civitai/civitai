@@ -1,22 +1,28 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { client } from '~/server/meilisearch/client';
-import { ModelHashType, ModelModifier, ModelStatus } from '@prisma/client';
+import { ModelHashType, ModelStatus } from '@prisma/client';
 import { EnqueuedTask } from 'meilisearch';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { ModelFileType } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
+import { swapIndex } from '~/server/meilisearch/util';
 
 export const searchIndexSync = createJob('search-index-sync', '33 4 * * *', async () => {
   // Get all models and add to meilisearch index
-  if (!client) return;
+  console.log('searchIndexSync :: Starting search-index-sync');
+  if (!client) {
+    console.log('searchIndexSync :: client is unavailable');
+    return;
+  }
 
   const allTasks = await Promise.all([prepareModelIndex()]);
 });
 
 // TODO: Bring back to 1000
+// TODO: Consider increasing this count. As per MeiliSearch, bigger is better
 const READ_BATCH_SIZE = 10;
 async function prepareModelIndex() {
   if (!client) return;
@@ -26,6 +32,7 @@ async function prepareModelIndex() {
   const allTasks: EnqueuedTask[] = [];
   // TODO: Remove limit condition here. We should fetch until break
   while (offset < READ_BATCH_SIZE) {
+    console.log('prepareModelIndex :: fetching models', offset, READ_BATCH_SIZE);
     const models = await dbWrite.model.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -41,6 +48,7 @@ async function prepareModelIndex() {
         locked: true,
         earlyAccessDeadline: true,
         mode: true,
+        description: true,
         // Joins:
         user: { select: simpleUserSelect },
         modelVersions: {
@@ -66,6 +74,8 @@ async function prepareModelIndex() {
         status: ModelStatus.Published,
       },
     });
+
+    console.log('prepareModelIndex :: models fetched', models);
 
     // Avoids hitting the DB without models data.
     if (models.length === 0) break;
@@ -100,15 +110,20 @@ async function prepareModelIndex() {
       // Removes null models that have no versionIDs
       .filter(isDefined);
 
+    console.log('prepareModelIndex :: models prepared for indexing', indexReadyModels);
+
     modelTasks.push(await client.index('models_new').addDocuments(indexReadyModels));
+
+    console.log('prepareModelIndex :: task pushed to queue');
 
     offset += models.length;
   }
 
+  console.log('prepareModelIndex :: start waitForTasks');
   await client.waitForTasks(modelTasks.map((x) => x.taskUid));
-  const swapTask = await client.swapIndexes([{ indexes: ['models', 'models_new'] }]);
-  await client.waitForTask(swapTask.taskUid);
-  await client.deleteIndex('models_new');
+  console.log('prepareModelIndex :: complete waitForTasks');
+
+  await swapIndex('models', 'models_new');
 
   return allTasks;
 }
