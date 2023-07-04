@@ -20,6 +20,7 @@ const onIndexSetup = async () => {
   }
 
   const index = await getOrCreateIndex(INDEX_NAME);
+  console.log('onIndexSetup :: Index has been gotten or created', index);
 
   if (!index) {
     return;
@@ -33,6 +34,11 @@ const onIndexSetup = async () => {
     'hashes',
   ]);
 
+  console.log(
+    'onIndexSetup :: updateSearchableAttributesTask created',
+    updateSearchableAttributesTask
+  );
+
   /**
    * TODO: Add other sortable fields such as:
    * - Rank
@@ -41,10 +47,14 @@ const onIndexSetup = async () => {
    */
   const sortableFieldsAttributesTask = await index.updateSortableAttributes(['creation_date']);
 
+  console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+
   await client.waitForTasks([
     updateSearchableAttributesTask.taskUid,
     sortableFieldsAttributesTask.taskUid,
   ]);
+
+  console.log('onIndexSetup :: all tasks completed');
 };
 
 const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
