@@ -1,20 +1,25 @@
 import { client } from '~/server/meilisearch/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { ModelHashType, ModelStatus, PrismaClient } from '@prisma/client';
+import { ModelHashType, ModelStatus } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
-import { getOrCreateIndex, swapIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
+import {
+  createSearchIndexUpdateProcessor,
+  SearchIndexRunContext,
+} from '~/server/search-index/base.search-index';
 
 const READ_BATCH_SIZE = 100;
+const INDEX_NAME = 'models';
 const onIndexSetup = async () => {
   if (!client) {
     return;
   }
 
-  const index = await getOrCreateIndex('models');
+  const index = await getOrCreateIndex(INDEX_NAME);
 
   if (!index) {
     return;
@@ -42,21 +47,27 @@ const onIndexSetup = async () => {
   ]);
 };
 
-const onIndexUpdate = async ({
-  db,
-  lastUpdatedAt,
-}: {
-  db: PrismaClient;
-  lastUpdatedAt?: string;
-}) => {
+const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
   if (!client) return;
+
+  // Confirm index setup & working:
+  await onIndexSetup();
 
   let offset = 0;
   const modelTasks: EnqueuedTask[] = [];
 
+  const queuedItems = await db.searchIndexUpdateQueue.findMany({
+    select: {
+      id: true,
+    },
+    where: {
+      type: INDEX_NAME,
+    },
+  });
+
   // TODO: Remove limit condition here. We should fetch until break
   while (offset < READ_BATCH_SIZE) {
-    console.log('prepareModelIndex :: fetching models', offset, READ_BATCH_SIZE);
+    console.log('onIndexUpdate :: fetching models', offset, READ_BATCH_SIZE);
     const models = await db.model.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -113,14 +124,14 @@ const onIndexUpdate = async ({
               },
               {
                 id: {
-                  in: [],
+                  in: queuedItems.map(({ id }) => id),
                 },
               },
             ],
       },
     });
 
-    console.log('prepareModelIndex :: models fetched', models);
+    console.log('onIndexUpdate :: models fetched', models);
 
     // Avoids hitting the DB without models data.
     if (models.length === 0) break;
@@ -155,18 +166,21 @@ const onIndexUpdate = async ({
       // Removes null models that have no versionIDs
       .filter(isDefined);
 
-    console.log('prepareModelIndex :: models prepared for indexing', indexReadyModels);
+    console.log('onIndexUpdate :: models prepared for indexing', indexReadyModels);
 
-    modelTasks.push(await client.index('models_new').addDocuments(indexReadyModels));
+    modelTasks.push(await client.index(`${INDEX_NAME}`).addDocuments(indexReadyModels));
 
-    console.log('prepareModelIndex :: task pushed to queue');
+    console.log('onIndexUpdate :: task pushed to queue');
 
     offset += models.length;
   }
 
-  console.log('prepareModelIndex :: start waitForTasks');
+  console.log('onIndexUpdate :: start waitForTasks');
   await client.waitForTasks(modelTasks.map((x) => x.taskUid));
-  console.log('prepareModelIndex :: complete waitForTasks');
-
-  await swapIndex('models', 'models_new');
+  console.log('onIndexUpdate :: complete waitForTasks');
 };
+
+export default createSearchIndexUpdateProcessor({
+  indexName: INDEX_NAME,
+  onIndexUpdate,
+});
