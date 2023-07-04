@@ -56,6 +56,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
   let offset = 0;
   const modelTasks: EnqueuedTask[] = [];
 
+  // TODO: confirm if the queue can grow big enough that querying without a limit can be a concern.
   const queuedItems = await db.searchIndexUpdateQueue.findMany({
     select: {
       id: true,
@@ -180,7 +181,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
   console.log('onIndexUpdate :: complete waitForTasks');
 };
 
-export default createSearchIndexUpdateProcessor({
+export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_NAME,
   onIndexUpdate,
 });
