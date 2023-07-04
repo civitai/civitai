@@ -169,7 +169,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
 
     console.log('onIndexUpdate :: models prepared for indexing', indexReadyModels);
 
-    modelTasks.push(await client.index(`${INDEX_NAME}`).addDocuments(indexReadyModels));
+    modelTasks.push(await client.index(`${INDEX_NAME}`).updateDocuments(indexReadyModels));
 
     console.log('onIndexUpdate :: task pushed to queue');
 
