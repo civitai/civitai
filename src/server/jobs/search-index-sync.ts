@@ -1,8 +1,13 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { client } from '~/server/meilisearch/client';
-import { ModelStatus } from '@prisma/client';
+import { ModelHashType, ModelModifier, ModelStatus } from '@prisma/client';
 import { EnqueuedTask } from 'meilisearch';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getImagesForModelVersion } from '~/server/services/image.service';
+import { modelHashSelect } from '~/server/selectors/modelHash.selector';
+import { ModelFileType } from '~/server/common/constants';
+import { isDefined } from '~/utils/type-guards';
 
 export const searchIndexSync = createJob('search-index-sync', '33 4 * * *', async () => {
   // Get all models and add to meilisearch index
@@ -11,14 +16,16 @@ export const searchIndexSync = createJob('search-index-sync', '33 4 * * *', asyn
   const allTasks = await Promise.all([prepareModelIndex()]);
 });
 
-const READ_BATCH_SIZE = 1000;
+// TODO: Bring back to 1000
+const READ_BATCH_SIZE = 10;
 async function prepareModelIndex() {
   if (!client) return;
 
   let offset = 0;
   const modelTasks: EnqueuedTask[] = [];
   const allTasks: EnqueuedTask[] = [];
-  while (true) {
+  // TODO: Remove limit condition here. We should fetch until break
+  while (offset < READ_BATCH_SIZE) {
     const models = await dbWrite.model.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -27,37 +34,75 @@ async function prepareModelIndex() {
         name: true,
         type: true,
         nsfw: true,
-        poi: true,
-        checkpointType: true,
+        status: true,
+        createdAt: true,
+        lastVersionAt: true,
+        publishedAt: true,
         locked: true,
-        underAttack: true,
         earlyAccessDeadline: true,
         mode: true,
-        allowNoCredit: true,
-        allowCommercialUse: true,
-        allowDerivatives: true,
-        allowDifferentLicense: true,
-        userId: true,
+        // Joins:
+        user: { select: simpleUserSelect },
+        modelVersions: {
+          orderBy: { index: 'asc' },
+          take: 1,
+          select: {
+            id: true,
+            earlyAccessTimeFrame: true,
+            createdAt: true,
+            modelVersionGenerationCoverage: { select: { workers: true } },
+          },
+        },
+        tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
+        hashes: {
+          select: modelHashSelect,
+          where: {
+            hashType: ModelHashType.SHA256,
+            fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+          },
+        },
       },
       where: {
         status: ModelStatus.Published,
       },
     });
 
+    // Avoids hitting the DB without models data.
     if (models.length === 0) break;
-    offset += models.length;
 
-    modelTasks.push(await client.index('models_new').addDocuments(models));
-    allTasks.push(
-      await client.index('all_new').addDocuments(
-        models.map((m) => ({
-          id: `model:${m.id}`,
-          name: m.name,
-          type: m.type,
-          nsfw: m.nsfw,
-        }))
-      )
-    );
+    const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+    const images = !!modelVersionIds.length
+      ? await getImagesForModelVersion({
+          modelVersionIds,
+        })
+      : [];
+
+    const indexReadyModels = models
+      .map((modelRecord) => {
+        const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+
+        const [modelVersion] = modelVersions;
+
+        if (!modelVersion) {
+          return null;
+        }
+
+        const modelImages = images.filter((image) => image.modelVersionId === modelVersion.id);
+
+        return {
+          ...model,
+          user,
+          images: modelImages,
+          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
+        };
+      })
+      // Removes null models that have no versionIDs
+      .filter(isDefined);
+
+    modelTasks.push(await client.index('models_new').addDocuments(indexReadyModels));
+
+    offset += models.length;
   }
 
   await client.waitForTasks(modelTasks.map((x) => x.taskUid));
