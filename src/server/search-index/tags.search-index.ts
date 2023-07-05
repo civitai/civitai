@@ -7,7 +7,7 @@ import {
 } from '~/server/search-index/base.search-index';
 import { MetricTimeframe } from '@prisma/client';
 
-const READ_BATCH_SIZE = 100;
+const READ_BATCH_SIZE = 1000;
 const INDEX_ID = 'tags';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -69,8 +69,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     },
   });
 
-  // TODO: Remove limit condition here. We should fetch until break
-  while (offset < READ_BATCH_SIZE) {
+  while (true) {
     const tags = await db.tag.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
