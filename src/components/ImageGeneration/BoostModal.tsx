@@ -1,34 +1,10 @@
 import { Button, Checkbox, Group, Paper, Stack, Text } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { ContextModalProps, openContextModal } from '@mantine/modals';
 import { IconBolt, IconExclamationMark } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Generation } from '~/server/services/generation/generation.types';
-
-type BoostModalState = {
-  showBoost: boolean;
-  setShowBoost: (value: boolean) => void;
-};
-
-// if localStorage becomes an issue with nextjs, maybe try something like this:
-// https://github.com/pmndrs/zustand/issues/1145#issuecomment-1556132781
-export const useBoostModalStore = create<BoostModalState>()(
-  persist(
-    immer((set, get) => ({
-      showBoost: true,
-      setShowBoost: (value) =>
-        set((state) => {
-          state.showBoost = value;
-        }),
-    })),
-    {
-      name: 'boost-modal',
-    }
-  )
-);
 
 type BoostModalProps = {
   request: Generation.Request;
@@ -42,7 +18,10 @@ export default function BoostModal2({
 }: ContextModalProps<BoostModalProps>) {
   const hideBoostRef = useRef(false);
   const submittedRef = useRef(false);
-  const setShowBoost = useBoostModalStore((state) => state.setShowBoost);
+  const [, setShowBoost] = useLocalStorage({
+    key: 'show-boost-modal',
+    defaultValue: true,
+  });
 
   const handleSubmit = () => {
     if (submittedRef.current) return; // limit to one submission

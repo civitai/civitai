@@ -24,7 +24,8 @@ export const getGenerationResourcesSchema = z.object({
   supported: z.boolean().optional(),
 });
 
-export type GetGenerationRequestsInput = z.infer<typeof getGenerationRequestsSchema>;
+export type GetGenerationRequestsInput = z.input<typeof getGenerationRequestsSchema>;
+export type GetGenerationRequestsOutput = z.output<typeof getGenerationRequestsSchema>;
 export const getGenerationRequestsSchema = z.object({
   take: z.number().default(10),
   cursor: z.number().optional(),
@@ -40,7 +41,7 @@ export const generationParamsSchema = z.object({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
-    .max(1000, 'Prompt cannot be longer than 1000 characters')
+    .max(1500, 'Prompt cannot be longer than 1000 characters')
     .superRefine((val, ctx) => {
       const { blockedFor, success } = auditPrompt(val);
       if (!success)

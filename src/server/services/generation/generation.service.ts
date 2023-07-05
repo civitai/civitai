@@ -5,7 +5,7 @@ import {
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
   GetGenerationDataInput,
-  GetGenerationRequestsInput,
+  GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
@@ -221,8 +221,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
   });
 };
 
+export type GetGenerationRequestsReturn = AsyncReturnType<typeof getGenerationRequests>;
 export const getGenerationRequests = async (
-  props: GetGenerationRequestsInput & { userId: number }
+  props: GetGenerationRequestsOutput & { userId: number }
 ) => {
   const params = QS.stringify(props);
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
@@ -424,81 +425,9 @@ export const getRandomGenerationData = async () => {
   });
   if (!imageReaction) throw throwNotFoundError();
 
-  const generationData = await getImageGenerationData({ id: imageReaction.imageId });
-  generationData.seed = undefined;
-  return generationData;
-};
-
-export type GetImageGenerationDataProps = AsyncReturnType<typeof getImageGenerationData>;
-export const getImageGenerationData = async ({ id }: GetByIdInput) => {
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      meta: true,
-      height: true,
-      width: true,
-    },
-  });
-  if (!image) throw throwNotFoundError();
-
-  const resources = await dbRead.$queryRaw<
-    Array<Generation.Resource & { covered: boolean; hash?: string }>
-  >`
-    SELECT
-      mv.id,
-      mv.name,
-      mv."trainedWords",
-      m.id "modelId",
-      m.name "modelName",
-      m.type "modelType",
-      ir."hash",
-      EXISTS (SELECT 1 FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "covered"
-    FROM "ImageResource" ir
-    JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
-    JOIN "Model" m on m.id = mv."modelId"
-    WHERE ir."imageId" = ${id}
-  `;
-
-  const {
-    'Clip skip': legacyClipSkip,
-    hashes,
-    prompt,
-    negativePrompt,
-    sampler,
-    clipSkip = legacyClipSkip,
-    ...meta
-  } = imageMetaSchema.parse(image.meta);
-  const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
-  const additionalResources = resources.filter((x) => x.modelType !== ModelType.Checkpoint);
-
-  if (hashes && prompt) {
-    for (const [key, hash] of Object.entries(hashes)) {
-      if (!key.startsWith('lora:')) continue;
-
-      // get the resource that matches the hash
-      const resource = additionalResources.find((x) => x.hash === hash);
-      if (!resource) continue;
-
-      // get everything that matches <key:{number}>
-      const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(prompt);
-      if (!matches) continue;
-
-      resource.strength = parseFloat(matches[1]);
-    }
-  }
-
-  return {
-    hashes,
-    prompt,
-    negativePrompt,
-    clipSkip,
-    sampler: sampler,
-    ...meta,
-    model,
-    additionalResources,
-    height: image.height,
-    width: image.width,
-  };
+  const { params = {} } = await getImageGenerationData(imageReaction.imageId);
+  params.seed = undefined;
+  return params;
 };
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
@@ -522,14 +451,14 @@ export const getGenerationData = async ({
 }: GetGenerationDataInput): Promise<Generation.Data> => {
   switch (type) {
     case 'image':
-      return await getImageGenerationData2(id);
+      return await getImageGenerationData(id);
     case 'model':
       const resource = await getGenerationResource({ id });
       return { resources: [resource] };
   }
 };
 
-const getImageGenerationData2 = async (id: number): Promise<Generation.Data> => {
+const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   const image = await dbRead.image.findUnique({
     where: { id },
     select: {

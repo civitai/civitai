@@ -21,9 +21,7 @@ export const generationFormSchema = generationParamsSchema
   });
 
 const resourcesSchema = generationResourceSchema.array();
-const paramsSchema = generationFormSchema
-  .extend({ prompt: z.string().max(1000).optional() })
-  .partial();
+const paramsSchema = generationFormSchema.extend({ prompt: z.string().optional() }).partial();
 
 const formatGenerationDataSchema = z.object({
   resources: resourcesSchema.default([]),
