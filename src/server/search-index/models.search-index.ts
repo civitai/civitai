@@ -31,7 +31,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'name',
     'description',
     'tags',
-    'username',
+    'user.username',
     'hashes',
   ]);
 
