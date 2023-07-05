@@ -12,7 +12,7 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 
-const READ_BATCH_SIZE = 1000;
+const READ_BATCH_SIZE = 500;
 const INDEX_ID = 'models';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -46,7 +46,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
    * - Likes
    * - Comments count
    */
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes(['creation_date']);
+  const sortableFieldsAttributesTask = await index.updateSortableAttributes(['createdAt']);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
@@ -79,7 +79,12 @@ const onIndexUpdate = async ({
   });
 
   while (true) {
-    console.log(`onIndexUpdate :: fetching ${indexName}`, offset, READ_BATCH_SIZE);
+    console.log(
+      `onIndexUpdate :: fetching starting for ${indexName} range:`,
+      offset,
+      offset + READ_BATCH_SIZE - 1
+    );
+
     const models = await db.model.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -143,7 +148,11 @@ const onIndexUpdate = async ({
       },
     });
 
-    console.log(`onIndexUpdate :: ${indexName} fetched`, models);
+    console.log(
+      `onIndexUpdate :: fetching complete for ${indexName} range:`,
+      offset,
+      offset + READ_BATCH_SIZE - 1
+    );
 
     // Avoids hitting the DB without data.
     if (models.length === 0) break;
@@ -178,11 +187,7 @@ const onIndexUpdate = async ({
       // Removes null models that have no versionIDs
       .filter(isDefined);
 
-    console.log(`onIndexUpdate :: ${indexName} prepared for indexing`, indexReadyModels);
-
     modelTasks.push(await client.index(indexName).updateDocuments(indexReadyModels));
-
-    console.log('onIndexUpdate :: task pushed to queue');
 
     offset += models.length;
   }

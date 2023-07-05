@@ -4,6 +4,8 @@ import * as searchIndex from '~/server/search-index';
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
   tags: searchIndex.tagsSearchIndex,
+  creators: searchIndex.creatorsSearchIndex,
+  articles: searchIndex.articlesSearchIndex,
 };
 
 export const searchIndexJobs = Object.entries(searchIndexSets).map(([name, searchIndexProcessor]) =>

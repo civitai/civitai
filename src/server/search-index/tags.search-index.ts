@@ -69,6 +69,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   });
 
   while (true) {
+    console.log(
+      `onIndexUpdate :: fetching starting for ${indexName} range:`,
+      offset,
+      offset + READ_BATCH_SIZE - 1
+    );
     const tags = await db.tag.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -118,6 +123,12 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       },
     });
 
+    console.log(
+      `onIndexUpdate :: fetching complete for ${indexName} range:`,
+      offset,
+      offset + READ_BATCH_SIZE - 1
+    );
+
     // Avoids hitting the DB without data.
     if (tags.length === 0) break;
 
@@ -132,8 +143,6 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     tagTasks.push(await client.index(`${INDEX_ID}`).updateDocuments(indexReadyRecords));
-
-    console.log('onIndexUpdate :: task pushed to queue');
 
     offset += tags.length;
   }

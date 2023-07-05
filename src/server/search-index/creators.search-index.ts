@@ -32,7 +32,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   );
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
-    'creation_date',
+    'createdAt',
     'rank.ratingAllTimeRank',
     'rank.ratingCountAllTimeRank',
     'rank.followerCountAllTimeRank',
@@ -77,6 +77,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   });
 
   while (true) {
+    console.log(
+      `onIndexUpdate :: fetching starting for ${indexName} range:`,
+      offset,
+      offset + READ_BATCH_SIZE - 1
+    );
     const users = await db.user.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -127,6 +132,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
             ],
       },
     });
+    console.log(
+      `onIndexUpdate :: fetching complete for ${indexName} range:`,
+      offset,
+      offset + READ_BATCH_SIZE - 1
+    );
 
     // Avoids hitting the DB without data.
     if (users.length === 0) break;
@@ -142,8 +152,6 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     tagTasks.push(await client.index(`${INDEX_ID}`).updateDocuments(indexReadyRecords));
-
-    console.log('onIndexUpdate :: task pushed to queue');
 
     offset += users.length;
   }
