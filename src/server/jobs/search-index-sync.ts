@@ -4,7 +4,7 @@ import * as searchIndex from '~/server/search-index';
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
   tags: searchIndex.tagsSearchIndex,
-  creators: searchIndex.creatorsSearchIndex,
+  users: searchIndex.usersSearchIndex,
   articles: searchIndex.articlesSearchIndex,
 };
 

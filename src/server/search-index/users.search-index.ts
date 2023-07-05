@@ -9,7 +9,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 const READ_BATCH_SIZE = 1000;
-const INDEX_ID = 'creators';
+const INDEX_ID = 'users';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -161,7 +161,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   console.log('onIndexUpdate :: complete waitForTasks');
 };
 
-export const creatorsSearchIndex = createSearchIndexUpdateProcessor({
+export const usersSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   swapIndexName: SWAP_INDEX_ID,
   onIndexUpdate,
