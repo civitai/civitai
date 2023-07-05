@@ -1,7 +1,7 @@
 import { client } from '~/server/meilisearch/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { ModelHashType, ModelStatus } from '@prisma/client';
+import { MetricTimeframe, ModelHashType, ModelStatus } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
@@ -46,7 +46,21 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
    * - Likes
    * - Comments count
    */
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes(['createdAt']);
+  const sortableFieldsAttributesTask = await index.updateSortableAttributes([
+    'createdAt',
+    'rank.ratingAllTimeRank',
+    'rank.favoriteCountAllTime',
+    'rank.commentCountAllTime',
+    'rank.favoriteCountAllTimeRank',
+    'rank.ratingCountAllTimeRank',
+    'rank.downloadCountAllTimeRank',
+    'rank.downloadCountAllTime',
+    'metrics.commentCount',
+    'metrics.favoriteCount',
+    'metrics.downloadCount',
+    'metrics.rating',
+    'metrics.ratingCount',
+  ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
@@ -121,6 +135,29 @@ const onIndexUpdate = async ({
             fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
           },
         },
+        rank: {
+          select: {
+            ratingAllTimeRank: true,
+            favoriteCountAllTime: true,
+            commentCountAllTime: true,
+            favoriteCountAllTimeRank: true,
+            ratingCountAllTimeRank: true,
+            downloadCountAllTimeRank: true,
+            downloadCountAllTime: true,
+          },
+        },
+        metrics: {
+          select: {
+            commentCount: true,
+            favoriteCount: true,
+            downloadCount: true,
+            rating: true,
+            ratingCount: true,
+          },
+          where: {
+            timeframe: MetricTimeframe.AllTime,
+          },
+        },
       },
       where: {
         status: ModelStatus.Published,
@@ -166,7 +203,7 @@ const onIndexUpdate = async ({
 
     const indexReadyModels = models
       .map((modelRecord) => {
-        const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+        const { metrics, user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
 
         const [modelVersion] = modelVersions;
 
@@ -182,6 +219,10 @@ const onIndexUpdate = async ({
           images: modelImages,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
+          metrics: {
+            // Flattens metric array
+            ...(metrics[0] || {}),
+          },
         };
       })
       // Removes null models that have no versionIDs
