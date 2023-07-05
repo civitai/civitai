@@ -4,7 +4,6 @@ import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-str
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { scanFilesJob } from '~/server/jobs/scan-files';
-import { selectFeaturedImages } from '~/server/jobs/select-featured-images';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -38,7 +37,6 @@ export const jobs: Job[] = [
   addOnDemandRunStrategiesJob,
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
-  selectFeaturedImages,
   removeDisconnectedImages,
   pushDiscordMetadata,
   applyVotedTags,
