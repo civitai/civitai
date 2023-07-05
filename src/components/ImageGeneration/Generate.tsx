@@ -84,7 +84,6 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
   const form = useForm({
     schema: generationFormSchema,
     reValidateMode: 'onSubmit',
-    defaultValues: defaults,
   });
 
   useEffect(() => {
@@ -172,7 +171,7 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
         const [width, height] = values.aspectRatio.split('x');
         const params = {
           ...values,
-          seed: values.seed ?? -1,
+          seed: values.seed,
           height: Number(height),
           width: Number(width),
         };
@@ -512,7 +511,7 @@ const defaults = {
   cfgScale: 7,
   steps: 25,
   sampler: 'DPM++ 2M Karras' as Sampler,
-  seed: null,
+  seed: undefined,
   clipSkip: 2,
   quantity: 4,
   aspectRatio: '512x512',

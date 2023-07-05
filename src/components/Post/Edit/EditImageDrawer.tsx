@@ -34,6 +34,7 @@ import { IconInfoCircle } from '@tabler/icons-react';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { constants } from '~/server/common/constants';
+import { removeEmpty } from '~/utils/object-helpers';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -100,7 +101,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
     if (!image) return;
-    const meta = { ...(image.meta as z.infer<typeof imageMetaSchema>), ...data.meta };
+    const meta = removeEmpty({ ...(image.meta as z.infer<typeof imageMetaSchema>), ...data.meta });
     const payload = { ...image, ...data, meta };
     mutate(payload, {
       onSuccess: (response) => {

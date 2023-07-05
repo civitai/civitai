@@ -29,6 +29,7 @@ import { env } from '~/env/server.mjs';
 
 import { BaseModel, Sampler } from '~/server/common/constants';
 import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
+import { uniqBy } from 'lodash-es';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -75,15 +76,6 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     baseModel: x.baseModel as string,
   };
 }
-
-export const getGenerationResource = async ({ id }: GetByIdInput): Promise<Generation.Resource> => {
-  const resource = await dbRead.modelVersion.findUnique({
-    where: { id },
-    select: generationResourceSelect,
-  });
-  if (!resource) throw throwNotFoundError();
-  return mapGenerationResource(resource);
-};
 
 const baseModelSets: Array<BaseModel[]> = [
   ['SD 1.4', 'SD 1.5'],
@@ -299,7 +291,7 @@ export const createGenerationRequest = async ({
         cfgScale: params.cfgScale,
         width: params.width,
         height: params.height,
-        seed: params.seed ?? -1,
+        seed: params.seed,
         clipSkip: params.clipSkip,
       },
     },
@@ -453,9 +445,22 @@ export const getGenerationData = async ({
     case 'image':
       return await getImageGenerationData(id);
     case 'model':
-      const resource = await getGenerationResource({ id });
-      return { resources: [resource] };
+      return await getResourceGenerationData({ id });
   }
+};
+
+export const getResourceGenerationData = async ({ id }: GetByIdInput): Promise<Generation.Data> => {
+  const resource = await dbRead.modelVersion.findUnique({
+    where: { id },
+    select: { ...generationResourceSelect, clipSkip: true },
+  });
+  if (!resource) throw throwNotFoundError();
+  return {
+    resources: [mapGenerationResource(resource)],
+    params: {
+      clipSkip: resource.clipSkip ?? undefined,
+    },
+  };
 };
 
 const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
@@ -488,6 +493,8 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     WHERE ir."imageId" = ${id}
   `;
 
+  const deduped = uniqBy(resources, 'id');
+
   const {
     'Clip skip': legacyClipSkip,
     clipSkip = legacyClipSkip,
@@ -511,7 +518,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   }
 
   return {
-    resources,
+    resources: deduped,
     params: {
       ...meta,
       clipSkip,
@@ -519,4 +526,12 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       width: image.width ?? undefined,
     },
   };
+};
+
+export const deleteAllGenerationRequests = async ({ userId }: { userId: number }) => {
+  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?userId=${userId}`, {
+    method: 'DELETE',
+  });
+
+  if (!deleteResponse.ok) throw throwNotFoundError();
 };

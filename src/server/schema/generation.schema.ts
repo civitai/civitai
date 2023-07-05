@@ -37,6 +37,8 @@ export const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
 );
 
+const MAX_SEED = 4294967295;
+export const seedSchema = z.coerce.number().min(-1).max(MAX_SEED).default(-1);
 export const generationParamsSchema = z.object({
   prompt: z
     .string()
@@ -56,7 +58,7 @@ export const generationParamsSchema = z.object({
     .string()
     .refine((val) => supportedSamplers.includes(val as Sampler), { message: 'invalid sampler' }),
   steps: z.coerce.number().min(1).max(150),
-  seed: z.coerce.number().min(-1).max(999999999999999).optional(),
+  seed: seedSchema,
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(10),
   height: z.number(),
