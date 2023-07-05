@@ -5,6 +5,7 @@ export const DaysFromNow = ({ date, withoutSuffix = false }: Props) => {
   const day = dayjs(date);
   const datetime = day.format();
   const isClient = useIsClient();
+
   if (!isClient) return null;
 
   return (

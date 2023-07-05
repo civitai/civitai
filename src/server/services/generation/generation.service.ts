@@ -5,7 +5,7 @@ import {
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
   GetGenerationDataInput,
-  GetGenerationRequestsInput,
+  GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
@@ -221,8 +221,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
   });
 };
 
+export type GetGenerationRequestsReturn = AsyncReturnType<typeof getGenerationRequests>;
 export const getGenerationRequests = async (
-  props: GetGenerationRequestsInput & { userId: number }
+  props: GetGenerationRequestsOutput & { userId: number }
 ) => {
   const params = QS.stringify(props);
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);

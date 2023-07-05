@@ -34,12 +34,11 @@ import { useInView } from 'react-intersection-observer';
 import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
 import {
-  useImageGenerationFeed,
-  useImageGenerationStore,
-} from '~/components/ImageGeneration/hooks/useImageGenerationState';
+  useDeleteGenerationRequestImages,
+  useGetGenerationRequests,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 type State = {
   layout: 'list' | 'grid';
@@ -57,36 +56,26 @@ type State = {
  * - handle variant generation
  * - handle post images
  */
-export function Feed() {
+export function Feed({
+  requests,
+  images: feed,
+  isLoading,
+  fetchNextPage,
+  hasNextPage,
+  isRefetching,
+  isFetching,
+  isError,
+}: ReturnType<typeof useGetGenerationRequests>) {
   const { ref, inView } = useInView();
-  const queryUtils = trpc.useContext();
   const [state, setState] = useState<State>({
     layout: 'grid',
     selectedItems: [],
     variantModalOpened: false,
   });
 
-  const { feed, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
-    useImageGenerationFeed();
-  const removeImage = useImageGenerationStore((state) => state.removeImage);
-
-  const bulkDeleteImagesMutation = trpc.generation.bulkDeleteImages.useMutation({
-    async onSuccess(_, { ids }) {
-      const images = ids.map((id) => ({
-        id,
-        requestId: feed.find((image) => image.id === id)?.requestId,
-      }));
-      for (const image of images) {
-        if (image.requestId) removeImage({ imageId: image.id, requestId: image.requestId });
-      }
-      await queryUtils.generation.getRequests.invalidate();
+  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
+    onSuccess: () => {
       setState((current) => ({ ...current, selectedItems: [] }));
-    },
-    onError(err) {
-      showErrorNotification({
-        title: 'Error deleting images',
-        error: new Error(err.message),
-      });
     },
   });
 
@@ -169,37 +158,45 @@ export function Feed() {
       </div>
       <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
         <div className={classes.grid}>
-          {feed.map((image) => {
-            const selected = state.selectedItems.includes(image.id);
+          {feed
+            .map((image) => {
+              const selected = state.selectedItems.includes(image.id);
+              const request = requests.find((request) =>
+                request.images?.some((x) => x.id === image.id)
+              );
 
-            return (
-              <FeedItem
-                key={image.id}
-                image={image}
-                selected={selected}
-                onCheckboxClick={({ image, checked }) => {
-                  if (checked) {
+              if (!request) return null;
+
+              return (
+                <FeedItem
+                  key={image.id}
+                  image={image}
+                  request={request}
+                  selected={selected}
+                  onCheckboxClick={({ image, checked }) => {
+                    if (checked) {
+                      setState((current) => ({
+                        ...current,
+                        selectedItems: [...current.selectedItems, image.id],
+                      }));
+                    } else {
+                      setState((current) => ({
+                        ...current,
+                        selectedItems: current.selectedItems.filter((id) => id !== image.id),
+                      }));
+                    }
+                  }}
+                  onCreateVariantClick={(image) =>
                     setState((current) => ({
                       ...current,
-                      selectedItems: [...current.selectedItems, image.id],
-                    }));
-                  } else {
-                    setState((current) => ({
-                      ...current,
-                      selectedItems: current.selectedItems.filter((id) => id !== image.id),
-                    }));
+                      variantModalOpened: true,
+                      selectedItems: [image.id],
+                    }))
                   }
-                }}
-                onCreateVariantClick={(image) =>
-                  setState((current) => ({
-                    ...current,
-                    variantModalOpened: true,
-                    selectedItems: [image.id],
-                  }))
-                }
-              />
-            );
-          })}
+                />
+              );
+            })
+            .filter(isDefined)}
           {hasNextPage && !isLoading && !isRefetching && (
             <Center p="xl" ref={ref} sx={{ height: 36, gridColumn: '1/-1' }} mt="md">
               {inView && <Loader />}

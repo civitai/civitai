@@ -1,4 +1,4 @@
-import { useMantineTheme } from '@mantine/core';
+import { useMantineTheme, Stack } from '@mantine/core';
 import { List } from 'masonic';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { CreatorCard } from '~/components/Leaderboard/CreatorCard';
 import { numericString } from '~/utils/zod-helpers';
 import { LeaderboardGetModel } from '~/types/router';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
+import { useEffect, useRef } from 'react';
 
 const schema = z.object({
   position: numericString().optional(),
@@ -22,6 +24,24 @@ export function CreatorList({ data }: { data: LeaderboardGetModel[] }) {
     position = result.data.position;
     leaderboardId = result.data.id;
   }
+
+  // const virtuoso = useRef<VirtuosoHandle>(null);
+  // useEffect(() => {
+  //   console.log('fire', { virtuoso });
+  //   if (!position || !virtuoso.current) return;
+  //   virtuoso.current.scrollToIndex({ index: position, align: 'center', behavior: 'auto' });
+  // }, [position]);
+
+  // return (
+  //   <Virtuoso
+  //     // ref={virtuoso}
+  //     style={{ height: '100%', flex: 1 }}
+  //     data={data}
+  //     components={{ List: Stack }}
+  //     initialTopMostItemIndex={position}
+  //     itemContent={(index, item) => <CreatorCard data={item} index={index} />}
+  //   />
+  // );
 
   return (
     <List
