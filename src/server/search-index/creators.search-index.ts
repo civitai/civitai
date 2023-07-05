@@ -6,9 +6,10 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import { MetricTimeframe } from '@prisma/client';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 const READ_BATCH_SIZE = 1000;
-const INDEX_ID = 'tags';
+const INDEX_ID = 'creators';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -23,7 +24,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const updateSearchableAttributesTask = await index.updateSearchableAttributes(['name']);
+  const updateSearchableAttributesTask = await index.updateSearchableAttributes(['username']);
 
   console.log(
     'onIndexSetup :: updateSearchableAttributesTask created',
@@ -32,11 +33,18 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
     'creation_date',
-    'metrics.postCount',
-    'metrics.articleCount',
+    'rank.ratingAllTimeRank',
+    'rank.ratingCountAllTimeRank',
+    'rank.followerCountAllTimeRank',
+    'rank.favoriteCountAllTimeRank',
+    'rank.answerAcceptCountAllTimeRank',
+    'rank.answerCountAllTimeRank',
+    'rank.downloadCountAllTimeRank',
     'metrics.followerCount',
-    'metrics.modelCount',
-    'metrics.imageCount',
+    'metrics.uploadCount',
+    'metrics.followingCount',
+    'metrics.reviewCount',
+    'metrics.answerAcceptCount',
     'metrics.hiddenCount',
   ]);
 
@@ -69,21 +77,29 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   });
 
   while (true) {
-    const tags = await db.tag.findMany({
+    const users = await db.user.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
       select: {
-        id: true,
-        name: true,
-        nsfw: true,
-        isCategory: true,
+        ...userWithCosmeticsSelect,
+        rank: {
+          select: {
+            ratingAllTimeRank: true,
+            ratingCountAllTimeRank: true,
+            followerCountAllTimeRank: true,
+            favoriteCountAllTimeRank: true,
+            answerAcceptCountAllTimeRank: true,
+            answerCountAllTimeRank: true,
+            downloadCountAllTimeRank: true,
+          },
+        },
         metrics: {
           select: {
-            postCount: true,
-            articleCount: true,
             followerCount: true,
-            modelCount: true,
-            imageCount: true,
+            uploadCount: true,
+            followingCount: true,
+            reviewCount: true,
+            answerAcceptCount: true,
             hiddenCount: true,
           },
           where: {
@@ -92,8 +108,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
         },
       },
       where: {
-        unlisted: false,
-        adminOnly: false,
+        deletedAt: null,
         // if lastUpdatedAt is not provided,
         // this should generate the entirety of the index.
         OR: !lastUpdatedAt
@@ -101,11 +116,6 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
           : [
               {
                 createdAt: {
-                  gt: lastUpdatedAt,
-                },
-              },
-              {
-                updatedAt: {
                   gt: lastUpdatedAt,
                 },
               },
@@ -119,14 +129,14 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     // Avoids hitting the DB without data.
-    if (tags.length === 0) break;
+    if (users.length === 0) break;
 
-    const indexReadyRecords = tags.map((tagRecord) => {
+    const indexReadyRecords = users.map((userRecord) => {
       return {
-        ...tagRecord,
+        ...userRecord,
         metrics: {
           // Flattens metric array
-          ...(tagRecord.metrics[0] || {}),
+          ...(userRecord.metrics[0] || {}),
         },
       };
     });
@@ -135,7 +145,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     console.log('onIndexUpdate :: task pushed to queue');
 
-    offset += tags.length;
+    offset += users.length;
   }
 
   console.log('onIndexUpdate :: start waitForTasks');
@@ -143,7 +153,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   console.log('onIndexUpdate :: complete waitForTasks');
 };
 
-export const tagsSearchIndex = createSearchIndexUpdateProcessor({
+export const creatorsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   swapIndexName: SWAP_INDEX_ID,
   onIndexUpdate,
