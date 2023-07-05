@@ -1,7 +1,7 @@
 import { client } from '~/server/meilisearch/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { ModelHashType, ModelStatus } from '@prisma/client';
+import { ModelHashType, ModelStatus, PrismaClient } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
@@ -13,13 +13,14 @@ import {
 } from '~/server/search-index/base.search-index';
 
 const READ_BATCH_SIZE = 100;
-const INDEX_NAME = 'models';
-const onIndexSetup = async () => {
+const INDEX_ID = 'models';
+const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
+const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
   }
 
-  const index = await getOrCreateIndex(INDEX_NAME);
+  const index = await getOrCreateIndex(indexName);
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
   if (!index) {
@@ -57,11 +58,15 @@ const onIndexSetup = async () => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
+const onIndexUpdate = async ({
+  db,
+  lastUpdatedAt,
+  indexName = INDEX_ID,
+}: SearchIndexRunContext) => {
   if (!client) return;
 
   // Confirm index setup & working:
-  await onIndexSetup();
+  await onIndexSetup({ indexName });
 
   let offset = 0;
   const modelTasks: EnqueuedTask[] = [];
@@ -71,9 +76,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
     select: {
       id: true,
     },
-    where: {
-      type: INDEX_NAME,
-    },
+    where: { type: INDEX_ID },
   });
 
   // TODO: Remove limit condition here. We should fetch until break
@@ -179,7 +182,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
 
     console.log('onIndexUpdate :: models prepared for indexing', indexReadyModels);
 
-    modelTasks.push(await client.index(`${INDEX_NAME}`).updateDocuments(indexReadyModels));
+    modelTasks.push(await client.index(indexName).updateDocuments(indexReadyModels));
 
     console.log('onIndexUpdate :: task pushed to queue');
 
@@ -192,6 +195,8 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
 };
 
 export const modelsSearchIndex = createSearchIndexUpdateProcessor({
-  indexName: INDEX_NAME,
+  indexName: INDEX_ID,
+  swapIndexName: SWAP_INDEX_ID,
   onIndexUpdate,
+  onIndexSetup,
 });

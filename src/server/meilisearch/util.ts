@@ -30,7 +30,13 @@ const getOrCreateIndex = async (indexName: string, options: IndexOptions = {}) =
  * @param {String} swapIndexName The swap index name.
  * @returns {Promise<void>}
  */
-const swapIndex = async (indexName: string, swapIndexName: string) => {
+const swapIndex = async ({
+  indexName,
+  swapIndexName,
+}: {
+  indexName: string;
+  swapIndexName: string;
+}) => {
   if (!client) {
     return;
   }
