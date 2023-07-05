@@ -41,9 +41,9 @@ const swapIndex = async ({
     return;
   }
 
-  // Will swap if index is created. Non-created indexes cannot be swaped.
+  // Will swap if index is created. Non-created indexes cannot be swapped.
   const index = await getOrCreateIndex(indexName);
-  console.log('swapOrCreateIndex :: start swapIndexes');
+  console.log('swapOrCreateIndex :: start swapIndexes from', swapIndexName, 'to', indexName);
   const swapTask = await client.swapIndexes([{ indexes: [indexName, swapIndexName] }]);
   await client.waitForTask(swapTask.taskUid);
   console.log('swapOrCreateIndex :: complete swapIndexes, starting index delete...');

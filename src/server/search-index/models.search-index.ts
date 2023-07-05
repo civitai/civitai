@@ -12,7 +12,7 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 
-const READ_BATCH_SIZE = 500;
+const READ_BATCH_SIZE = 200;
 const INDEX_ID = 'models';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -29,10 +29,10 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const updateSearchableAttributesTask = await index.updateSearchableAttributes([
     'name',
-    'description',
     'tags',
     'user.username',
     'hashes',
+    'description',
   ]);
 
   console.log(
@@ -40,12 +40,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     updateSearchableAttributesTask
   );
 
-  /**
-   * TODO: Add other sortable fields such as:
-   * - Rank
-   * - Likes
-   * - Comments count
-   */
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
     'createdAt',
     'rank.ratingAllTimeRank',

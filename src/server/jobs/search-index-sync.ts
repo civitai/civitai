@@ -1,4 +1,4 @@
-import { createJob } from './job';
+import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 import * as searchIndex from '~/server/search-index';
 
 const searchIndexSets = {
@@ -8,22 +8,37 @@ const searchIndexSets = {
   articles: searchIndex.articlesSearchIndex,
 };
 
-export const searchIndexJobs = Object.entries(searchIndexSets).map(([name, searchIndexProcessor]) =>
-  createJob(
-    `search-index-sync-${name}`,
-    '*/30 * * * *',
-    async () => {
-      const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update);
+export const searchIndexJobs = Object.entries(searchIndexSets)
+  .map(([name, searchIndexProcessor]) => [
+    createJob(
+      `search-index-sync-${name}`,
+      '*/30 * * * *',
+      async () => {
+        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update);
 
-      return {
-        [name]: searchIndexSyncTime,
-      };
-    },
-    {
-      lockExpiration: 30 * 60,
-    }
-  )
-);
+        return {
+          [name]: searchIndexSyncTime,
+        };
+      },
+      {
+        lockExpiration: 30 * 60,
+      }
+    ),
+    createJob(
+      `search-index-sync-${name}-reset`,
+      UNRUNNABLE_JOB_CRON,
+      async () => {
+        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.reset);
+        return {
+          [`${name}-reset`]: searchIndexSyncTime,
+        };
+      },
+      {
+        lockExpiration: 30 * 60,
+      }
+    ),
+  ])
+  .flat();
 
 async function timedExecution<T>(fn: () => Promise<T>) {
   const start = Date.now();

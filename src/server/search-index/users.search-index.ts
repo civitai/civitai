@@ -113,6 +113,9 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
         },
       },
       where: {
+        id: {
+          not: -1,
+        },
         deletedAt: null,
         // if lastUpdatedAt is not provided,
         // this should generate the entirety of the index.
