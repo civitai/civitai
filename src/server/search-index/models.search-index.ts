@@ -29,10 +29,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const updateSearchableAttributesTask = await index.updateSearchableAttributes([
     'name',
-    'tags',
     'user.username',
+    'tags',
     'hashes',
-    'description',
   ]);
 
   console.log(
@@ -58,9 +57,23 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
+  const updateRankingRulesTask = await index.updateRankingRules([
+    'words',
+    'typo',
+    'proximity',
+    'attribute',
+    'rank.ratingAllTimeRank:asc',
+    'rank.downloadCountAllTimeRank:asc',
+    'sort',
+    'exactness',
+  ]);
+
+  console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+
   await client.waitForTasks([
     updateSearchableAttributesTask.taskUid,
     sortableFieldsAttributesTask.taskUid,
+    updateRankingRulesTask.taskUid,
   ]);
 
   console.log('onIndexSetup :: all tasks completed');
@@ -87,6 +100,7 @@ const onIndexUpdate = async ({
   });
 
   while (true) {
+    const fetchStart = Date.now();
     console.log(
       `onIndexUpdate :: fetching starting for ${indexName} range:`,
       offset,
@@ -182,7 +196,9 @@ const onIndexUpdate = async ({
     console.log(
       `onIndexUpdate :: fetching complete for ${indexName} range:`,
       offset,
-      offset + READ_BATCH_SIZE - 1
+      offset + READ_BATCH_SIZE - 1,
+      '- time:',
+      Date.now() - fetchStart
     );
 
     // Avoids hitting the DB without data.
@@ -227,9 +243,10 @@ const onIndexUpdate = async ({
     offset += models.length;
   }
 
+  const waitForTaskTime = Date.now();
   console.log('onIndexUpdate :: start waitForTasks');
   await client.waitForTasks(modelTasks.map((x) => x.taskUid));
-  console.log('onIndexUpdate :: complete waitForTasks');
+  console.log('onIndexUpdate :: complete waitForTasks', '- time:', Date.now() - waitForTaskTime);
 };
 
 export const modelsSearchIndex = createSearchIndexUpdateProcessor({
