@@ -8,13 +8,15 @@ import {
 import { MetricTimeframe } from '@prisma/client';
 
 const READ_BATCH_SIZE = 100;
-const INDEX_NAME = 'tags';
-const onIndexSetup = async () => {
+const INDEX_ID = 'tags';
+const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
+
+const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
   }
 
-  const index = await getOrCreateIndex(INDEX_NAME);
+  const index = await getOrCreateIndex(indexName);
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
   if (!index) {
@@ -48,11 +50,11 @@ const onIndexSetup = async () => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
+const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
   if (!client) return;
 
   // Confirm index setup & working:
-  await onIndexSetup();
+  await onIndexSetup({ indexName });
 
   let offset = 0;
   const tagTasks: EnqueuedTask[] = [];
@@ -63,13 +65,12 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
       id: true,
     },
     where: {
-      type: INDEX_NAME,
+      type: INDEX_ID,
     },
   });
 
   // TODO: Remove limit condition here. We should fetch until break
   while (offset < READ_BATCH_SIZE) {
-    console.log(`onIndexUpdate :: fetching ${INDEX_NAME}`, offset, READ_BATCH_SIZE);
     const tags = await db.tag.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -119,12 +120,9 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
       },
     });
 
-    console.log(`onIndexUpdate :: ${INDEX_NAME} fetched`, tags);
-
     // Avoids hitting the DB without data.
     if (tags.length === 0) break;
 
-    console.log(`onIndexUpdate :: ${INDEX_NAME} prepared for indexing`, tags);
     const indexReadyRecords = tags.map((tagRecord) => {
       return {
         ...tagRecord,
@@ -135,7 +133,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
       };
     });
 
-    tagTasks.push(await client.index(`${INDEX_NAME}`).updateDocuments(indexReadyRecords));
+    tagTasks.push(await client.index(`${INDEX_ID}`).updateDocuments(indexReadyRecords));
 
     console.log('onIndexUpdate :: task pushed to queue');
 
@@ -148,6 +146,8 @@ const onIndexUpdate = async ({ db, lastUpdatedAt }: SearchIndexRunContext) => {
 };
 
 export const tagsSearchIndex = createSearchIndexUpdateProcessor({
-  indexName: INDEX_NAME,
+  indexName: INDEX_ID,
+  swapIndexName: SWAP_INDEX_ID,
   onIndexUpdate,
+  onIndexSetup,
 });

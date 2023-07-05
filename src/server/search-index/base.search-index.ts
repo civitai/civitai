@@ -45,6 +45,11 @@ export function createSearchIndexUpdateProcessor({
         where: { type: indexName, createdAt: { lt: new Date() } },
       });
     },
+    /**
+     * Resets an entire index by using its swap counterpart.
+     * The goal here is to ensure we keep the  existing search index during the
+     * reset process.
+     */
     async reset() {
       // First, setup and init both indexes - Swap requires both indexes to be created:
       await onIndexSetup({ indexName });

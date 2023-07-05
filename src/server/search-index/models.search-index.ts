@@ -1,7 +1,7 @@
 import { client } from '~/server/meilisearch/client';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { ModelHashType, ModelStatus, PrismaClient } from '@prisma/client';
+import { ModelHashType, ModelStatus } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
@@ -81,7 +81,7 @@ const onIndexUpdate = async ({
 
   // TODO: Remove limit condition here. We should fetch until break
   while (offset < READ_BATCH_SIZE) {
-    console.log('onIndexUpdate :: fetching models', offset, READ_BATCH_SIZE);
+    console.log(`onIndexUpdate :: fetching ${indexName}`, offset, READ_BATCH_SIZE);
     const models = await db.model.findMany({
       skip: offset,
       take: READ_BATCH_SIZE,
@@ -145,9 +145,9 @@ const onIndexUpdate = async ({
       },
     });
 
-    console.log('onIndexUpdate :: models fetched', models);
+    console.log(`onIndexUpdate :: ${indexName} fetched`, models);
 
-    // Avoids hitting the DB without models data.
+    // Avoids hitting the DB without data.
     if (models.length === 0) break;
 
     const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
@@ -180,7 +180,7 @@ const onIndexUpdate = async ({
       // Removes null models that have no versionIDs
       .filter(isDefined);
 
-    console.log('onIndexUpdate :: models prepared for indexing', indexReadyModels);
+    console.log(`onIndexUpdate :: ${indexName} prepared for indexing`, indexReadyModels);
 
     modelTasks.push(await client.index(indexName).updateDocuments(indexReadyModels));
 
