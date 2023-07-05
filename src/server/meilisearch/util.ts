@@ -1,14 +1,20 @@
 import { IndexOptions, MeiliSearchErrorInfo } from 'meilisearch';
 import { client } from '~/server/meilisearch/client';
 
-const getOrCreateIndex = async (indexName: string, options: IndexOptions = {}) => {
+const getOrCreateIndex = async (indexName: string, options?: IndexOptions) => {
   if (!client) {
     return null;
   }
 
   try {
     // Will swap if index is created.
-    return await client.getIndex(indexName);
+    const index = await client.getIndex(indexName);
+
+    if (options) {
+      await index.update(options);
+    }
+
+    return index;
   } catch (e) {
     const meiliSearchError = e as MeiliSearchErrorInfo;
 
