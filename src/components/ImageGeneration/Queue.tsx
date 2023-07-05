@@ -41,7 +41,7 @@ export function Queue({
     </Center>
   ) : !!requests?.length ? (
     <>
-      <Virtuoso
+      {/* <Virtuoso
         style={{
           height: '100%',
         }}
@@ -50,8 +50,8 @@ export function Queue({
           List: Stack,
         }}
         itemContent={(index, request) => createRenderElement(QueueItem, request.id, request)}
-      />
-      {/* <ScrollArea h="100%" sx={{ marginRight: -16, paddingRight: 16 }}>
+      /> */}
+      <ScrollArea h="100%" sx={{ marginRight: -16, paddingRight: 16 }}>
         <Stack py="md">
           {requests.map((request, index) => (
             <div key={request.id}>{createRenderElement(QueueItem, request.id, request)}</div>
@@ -62,7 +62,7 @@ export function Queue({
             </Center>
           )}
         </Stack>
-      </ScrollArea> */}
+      </ScrollArea>
     </>
   ) : (
     <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
