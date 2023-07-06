@@ -24,8 +24,8 @@ export type NumberSliderProps = Omit<InputWrapperProps, 'children'> & {
 export function NumberSlider({
   value,
   onChange,
-  min,
-  max,
+  min = 0,
+  max = 100,
   step,
   precision: initialPrecision,
   sliderProps,
@@ -36,6 +36,7 @@ export function NumberSlider({
   const numberRef = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(false);
   const [_value, setValue] = useState(value);
+  const [computedWidth, setComputedWidth] = useState<string>();
 
   const handleChange = (value?: number) => {
     if (value !== _value) {
@@ -71,10 +72,14 @@ export function NumberSlider({
 
   useEffect(() => {
     if (!focused) {
-      console.log({ value: numberRef.current?.value });
       setValue(value);
     }
   }, [value, precision]);
+
+  useEffect(() => {
+    if (!numberRef.current) return;
+    setComputedWidth(getComputedWidth(numberRef.current, min, max, precision));
+  }, [min, max, precision]);
 
   return (
     <Input.Wrapper {...inputWrapperProps} className={cx(classes.fill, inputWrapperProps.className)}>
@@ -90,7 +95,7 @@ export function NumberSlider({
           onChange={handleChange}
           onBlur={handleSliderBlur}
           onFocus={handleSliderFocus}
-          label={(value) => (precision ? value.toFixed(value) : value)}
+          label={(value) => (precision ? value.toFixed(precision) : value)}
         />
         <NumberInput
           ref={numberRef}
@@ -98,11 +103,7 @@ export function NumberSlider({
           className={cx(classes.number, numberProps?.className)}
           style={{
             ...numberProps?.style,
-            minWidth:
-              numberProps?.style?.minWidth ??
-              (numberRef.current
-                ? getComputedWidth(numberRef.current, _value, precision)
-                : undefined),
+            minWidth: numberProps?.style?.minWidth ?? computedWidth,
           }}
           min={min}
           max={max}
@@ -118,9 +119,10 @@ export function NumberSlider({
   );
 }
 
-const getComputedWidth = (elem: HTMLInputElement, value?: number, precision?: number) => {
-  if (!value) return;
-  const stringValue = (precision ? value.toFixed(precision) : value).toString();
+const getComputedWidth = (elem: HTMLInputElement, min: number, max: number, precision?: number) => {
+  const stringValue = [min, max]
+    .map((x) => (precision ? x.toFixed(precision) : x.toString()))
+    .sort((a, b) => b.length - a.length)[0];
   let ch = stringValue.length;
   if (stringValue.includes('.')) ch = ch - 0.75;
   const computed = getComputedStyle(elem);

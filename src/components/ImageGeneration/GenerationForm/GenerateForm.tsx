@@ -35,6 +35,7 @@ export function GenerateForm({ form }: { form: UseFormReturn<GenerateFormModel> 
             <Group position="apart">
               <InputNumberSlider
                 name="steps"
+                label="Steps"
                 min={1}
                 max={150}
                 sliderProps={sharedSliderProps}
@@ -42,6 +43,7 @@ export function GenerateForm({ form }: { form: UseFormReturn<GenerateFormModel> 
               />
               <InputNumberSlider
                 name="cfgScale"
+                label="CFG Scale"
                 min={1}
                 max={30}
                 step={0.5}
@@ -50,6 +52,17 @@ export function GenerateForm({ form }: { form: UseFormReturn<GenerateFormModel> 
                 numberProps={sharedNumberProps}
               />
             </Group>
+            <InputNumberSlider
+              name="clipSkip"
+              label="Clip Skip"
+              min={0}
+              max={10}
+              sliderProps={{
+                ...sharedSliderProps,
+                marks: clipSkipMarks,
+              }}
+              numberProps={sharedNumberProps}
+            />
           </Stack>
         </Card>
         <Card>
@@ -64,3 +77,7 @@ export function GenerateForm({ form }: { form: UseFormReturn<GenerateFormModel> 
     </Form>
   );
 }
+
+const clipSkipMarks = Array(10)
+  .fill(0)
+  .map((_, index) => ({ value: index + 1 }));
