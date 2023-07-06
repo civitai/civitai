@@ -1,4 +1,4 @@
-import { NsfwLevel, Prisma, TagTarget } from '@prisma/client';
+import { NsfwLevel, Prisma, SearchIndexUpdateQueueAction, TagTarget } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
@@ -14,6 +14,7 @@ import {
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
+import { tagsSearchIndex } from '~/server/search-index';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -482,6 +483,13 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
     DELETE FROM "Tag"
     WHERE ${tagSelector} IN (${tagIn})
   `);
+
+  // TODO.lrojas: Support tag names for deletion
+  if (isTagIds) {
+    await tagsSearchIndex.queueUpdate(
+      castedTags.map((id) => ({ id: id as number, action: SearchIndexUpdateQueueAction.Delete }))
+    );
+  }
 };
 
 export const getTypeCategories = async ({
