@@ -24,7 +24,8 @@ export const getGenerationResourcesSchema = z.object({
   supported: z.boolean().optional(),
 });
 
-export type GetGenerationRequestsInput = z.infer<typeof getGenerationRequestsSchema>;
+export type GetGenerationRequestsInput = z.input<typeof getGenerationRequestsSchema>;
+export type GetGenerationRequestsOutput = z.output<typeof getGenerationRequestsSchema>;
 export const getGenerationRequestsSchema = z.object({
   take: z.number().default(10),
   cursor: z.number().optional(),
@@ -36,11 +37,13 @@ export const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
 );
 
+const MAX_SEED = 4294967295;
+export const seedSchema = z.coerce.number().min(-1).max(MAX_SEED).default(-1);
 export const generationParamsSchema = z.object({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
-    .max(1000, 'Prompt cannot be longer than 1000 characters')
+    .max(1500, 'Prompt cannot be longer than 1000 characters')
     .superRefine((val, ctx) => {
       const { blockedFor, success } = auditPrompt(val);
       if (!success)
@@ -55,7 +58,7 @@ export const generationParamsSchema = z.object({
     .string()
     .refine((val) => supportedSamplers.includes(val as Sampler), { message: 'invalid sampler' }),
   steps: z.coerce.number().min(1).max(150),
-  seed: z.coerce.number().min(-1).max(999999999999999).optional(),
+  seed: seedSchema,
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(10),
   height: z.number(),

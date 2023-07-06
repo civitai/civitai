@@ -149,6 +149,7 @@ export default function Pricing() {
                       benefits={[
                         { content: 'Unique Donator badge' },
                         { content: 'Unique nameplate color' },
+                        { content: 'Unique Discord role for 30 days' },
                       ]}
                     />
                     <DonateButton>

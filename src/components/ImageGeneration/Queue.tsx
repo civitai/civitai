@@ -1,29 +1,27 @@
+import OneKeyMap from '@essentials/one-key-map';
+import trieMemoize from 'trie-memoize';
 import { Alert, Center, Loader, ScrollArea, Stack, Text } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import { IconInbox } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useDeferredValue, useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 
-import { BoostModal } from '~/components/ImageGeneration/BoostModal';
 import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
-import { useImageGenerationQueue } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { Generation } from '~/server/services/generation/generation.types';
+import { Virtuoso } from 'react-virtuoso';
+import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 
-type State = {
-  selectedItem: Generation.Request | null;
-  opened: boolean;
-};
-
-export function Queue() {
+export function Queue({
+  requests,
+  isLoading,
+  fetchNextPage,
+  hasNextPage,
+  isRefetching,
+  isFetching,
+  isError,
+}: ReturnType<typeof useGetGenerationRequests>) {
   const { ref, inView } = useInView();
   const mobile = useIsMobile({ breakpoint: 'md' });
-  const [state, setState] = useState<State>({ selectedItem: null, opened: false });
-  const [showBoostModal] = useLocalStorage({ key: 'show-boost-modal', defaultValue: true });
-
-  const { requestIds, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching, isError } =
-    useImageGenerationQueue();
 
   // infinite paging
   useEffect(() => {
@@ -41,18 +39,22 @@ export function Queue() {
     <Center p="xl">
       <Loader />
     </Center>
-  ) : requestIds.length > 0 ? (
+  ) : !!requests?.length ? (
     <>
+      {/* <Virtuoso
+        style={{
+          height: '100%',
+        }}
+        data={requests}
+        components={{
+          List: Stack,
+        }}
+        itemContent={(index, request) => createRenderElement(QueueItem, request.id, request)}
+      /> */}
       <ScrollArea h="100%" sx={{ marginRight: -16, paddingRight: 16 }}>
         <Stack py="md">
-          {requestIds.map((id) => (
-            <QueueItem
-              key={id}
-              id={id}
-              onBoostClick={(item) =>
-                showBoostModal ? setState({ selectedItem: item, opened: true }) : undefined
-              }
-            />
+          {requests.map((request, index) => (
+            <div key={request.id}>{createRenderElement(QueueItem, request.id, request)}</div>
           ))}
           {hasNextPage && !isLoading && !isRefetching && (
             <Center p="xl" ref={ref} sx={{ height: 36 }} mt="md">
@@ -61,12 +63,6 @@ export function Queue() {
           )}
         </Stack>
       </ScrollArea>
-      {showBoostModal && (
-        <BoostModal
-          opened={state.opened}
-          onClose={() => setState({ selectedItem: null, opened: false })}
-        />
-      )}
     </>
   ) : (
     <Center h={mobile ? 'calc(90vh - 87px)' : 'calc(100vh - 87px)'}>
@@ -93,3 +89,9 @@ export function Queue() {
     </Center>
   );
 }
+
+// supposedly ~5.5x faster than createElement without the memo
+const createRenderElement = trieMemoize(
+  [OneKeyMap, {}, WeakMap],
+  (RenderComponent, index, request) => <RenderComponent index={index} request={request} />
+);

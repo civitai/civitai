@@ -20,16 +20,11 @@ import {
 } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
-import {
-  useImageGenerationRequest,
-  useImageGenerationStore,
-} from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import generationForm from '~/components/ImageGeneration/utils/generationFormStorage';
+import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -43,22 +38,16 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
  * - add action to generate image with the same prompt (play icon)
  * - correctly type the image object
  */
-export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClick }: Props) {
+export function FeedItem({
+  image,
+  request,
+  selected,
+  onCheckboxClick,
+  onCreateVariantClick,
+}: Props) {
   const [opened, { toggle, close }] = useDisclosure();
-  const request = useImageGenerationRequest(image.requestId);
-  const removeImage = useImageGenerationStore((state) => state.removeImage);
 
-  const deleteImageMutation = trpc.generation.deleteImage.useMutation({
-    onSuccess(_, { id }) {
-      removeImage({ imageId: id, requestId: image.requestId });
-    },
-    onError(err) {
-      showErrorNotification({
-        title: 'Error deleting image',
-        error: new Error(err.message),
-      });
-    },
-  });
+  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
     generationForm.setData(request);
@@ -72,7 +61,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
         'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
       confirmProps: { color: 'red' },
-      onConfirm: () => deleteImageMutation.mutate({ id: image.id }),
+      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
     });
@@ -99,7 +88,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
       })}
     >
       <AspectRatio ratio={1}>
-        <GeneratedImage width={request.params.width} height={request.params.height} image={image} />
+        <GeneratedImage request={request} image={image} />
       </AspectRatio>
       <Checkbox
         sx={(theme) => ({
@@ -146,7 +135,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
                       color="red"
                       radius={0}
                       onClick={handleDeleteImage}
-                      loading={deleteImageMutation.isLoading}
+                      loading={bulkDeleteImagesMutation.isLoading}
                     >
                       <IconTrash />
                     </ActionIcon>
@@ -201,6 +190,7 @@ export function FeedItem({ image, selected, onCheckboxClick, onCreateVariantClic
 
 type Props = {
   image: Generation.Image;
+  request: Generation.Request;
   selected: boolean;
   onCheckboxClick: (data: { image: any; checked: boolean }) => void;
   onCreateVariantClick: (image: any) => void;
