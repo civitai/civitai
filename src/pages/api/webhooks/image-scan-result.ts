@@ -67,6 +67,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     }
     return res.status(200).json({ ok: true });
   } catch (e: any) {
+    if (e.message === 'Image not found') return res.status(404).send({ error: e.message });
     return res.status(400).send({ error: e.message });
   }
 });

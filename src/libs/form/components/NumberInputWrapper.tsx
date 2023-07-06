@@ -1,4 +1,4 @@
-import { CloseButton, NumberInput, NumberInputProps } from '@mantine/core';
+import { CloseButton, Group, NumberInput, NumberInputProps } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -46,7 +46,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         onClick={() => {
           handleClearInput();
           onClear?.();
-          onChange?.(null as any);
+          onChange?.(undefined);
         }}
       />
     );
@@ -73,6 +73,14 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         parser={parser}
         formatter={formatter}
         rightSection={showCloseButton ? closeButton : rightSection}
+        // rightSection={
+        //   showCloseButton || rightSection ? (
+        //     <Group>
+        //       {showCloseButton && closeButton}
+        //       {rightSection}
+        //     </Group>
+        //   ) : null
+        // }
         onChange={handleChange}
         value={value}
         {...props}

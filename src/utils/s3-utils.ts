@@ -163,7 +163,7 @@ type GetObjectOptions = {
 };
 
 const buckets = [env.S3_UPLOAD_BUCKET, env.S3_SETTLED_BUCKET];
-const keyParser = new RegExp(`https:\\/\\/([\\w\\-]*)\\.?${env.CF_ACCOUNT_ID}.*?\\/(.+)`, 'i');
+const keyParser = /https:\/\/[A-Za-z0-9]+\.?.*?\/(imported\/.+|\d+\/.+)/i;
 export function parseKey(key: string) {
   if (env.S3_FORCE_PATH_STYLE) {
     // e.g. key: https://s3.region.s3originsite.com/bucket/key
@@ -173,7 +173,7 @@ export function parseKey(key: string) {
   }
   // e.g. key: https://bucket.s3.region.s3originsite.com/key
   let bucket = null;
-  if (key.startsWith('http')) [, bucket, key] = keyParser.exec(key) ?? [, null, key];
+  if (key.startsWith('http')) [bucket, key] = keyParser.exec(key) ?? [null, key];
   for (const b of buckets) {
     if (!key.startsWith(b + '/')) continue;
     bucket = b;

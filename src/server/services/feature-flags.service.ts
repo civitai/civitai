@@ -19,7 +19,7 @@ const featureFlags = createTypedDictionary({
   articles: ['public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
-  civitaiLink: ['mod'],
+  civitaiLink: ['mod', 'founder'],
   stripe: ['mod'],
   imageGeneration: ['user'],
 });
@@ -49,13 +49,14 @@ export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {
     const flags = featureFlags[key];
     const devRequirement = flags.includes('dev') ? isDev : flags.length > 0;
     const grantedAccess = flags.includes('granted') ? !!user?.permissions?.includes(key) : false;
-    const roleAccess =
-      flags.filter((x) => x !== 'dev').length > 0
-        ? (flags.includes('mod') && user?.isModerator) ||
-          (flags.includes('user') && !!user) ||
-          flags.includes('public') ||
-          (!!user?.tier && flags.includes(user.tier as FeatureAvailability))
-        : true;
+
+    const roles = flags.filter((x) => x !== 'dev');
+    let roleAccess = roles.length === 0 || roles.includes('public');
+    if (!roleAccess && roles.length !== 0 && !!user) {
+      if (roles.includes('user')) roleAccess = true;
+      else if (roles.includes('mod') && user.isModerator) roleAccess = true;
+      else if (user.tier && roles.includes(user.tier as FeatureAvailability)) roleAccess = true;
+    }
 
     acc[key] = devRequirement && (grantedAccess || roleAccess);
 

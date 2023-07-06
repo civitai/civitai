@@ -189,8 +189,8 @@ export function AssociateModels({
         </Center>
       ) : (
         <Stack spacing={0}>
-          <Text align="right">
-            {associatedResources.length}/{limit}
+          <Text align="right" color="dimmed" size="xs">
+            You can select {limit - associatedResources.length} more resources
           </Text>
           {!!associatedResources.length ? (
             <DndContext
@@ -202,36 +202,43 @@ export function AssociateModels({
                 items={associatedResources.map(({ item }) => item.id)}
                 strategy={verticalListSortingStrategy}
               >
-                <Stack spacing="xs">
+                <Stack spacing={4}>
                   {associatedResources.map((association) => (
                     <SortableItem key={association.item.id} id={association.item.id}>
-                      <Card withBorder p="xs">
+                      <Card withBorder pl={4} pr={6} pt={4} pb={6}>
                         <Group position="apart">
-                          <Group align="center">
+                          <Group align="center" spacing="xs">
                             <IconGripVertical />
-                            <Stack spacing="xs">
+                            <Stack spacing={4}>
                               <Text size="md" lineClamp={2}>
                                 {'name' in association.item
                                   ? association.item.name
                                   : association.item.title}
                               </Text>
-                              <Group spacing="xs">
-                                <Badge>
+                              <Group spacing={4}>
+                                <Badge size="xs">
                                   {'type' in association.item ? association.item.type : 'Article'}
                                 </Badge>
-                                <Badge leftSection={<IconUser size={12} />}>
-                                  {association.item.user.username}
+                                <Badge size="xs" pl={4}>
+                                  <Group spacing={2}>
+                                    <IconUser size={12} strokeWidth={2.5} />
+                                    {association.item.user.username}
+                                  </Group>
                                 </Badge>
-                                {association.item.nsfw && <Badge color="red">NSFW</Badge>}
+                                {association.item.nsfw && (
+                                  <Badge color="red" size="xs">
+                                    NSFW
+                                  </Badge>
+                                )}
                               </Group>
                             </Stack>
                           </Group>
                           <ActionIcon
-                            variant="filled"
+                            variant="outline"
                             color="red"
                             onClick={() => handleRemove(association.item.id)}
                           >
-                            <IconTrash />
+                            <IconTrash size={20} />
                           </ActionIcon>
                         </Group>
                       </Card>
@@ -260,14 +267,27 @@ export function AssociateModels({
 }
 
 type SearchItemProps = SelectItemProps & { item: AssociatedResourceModel; nsfw: boolean };
-const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(({ value, nsfw, ...props }, ref) => {
-  return (
-    <Box ref={ref} {...props}>
-      <Group noWrap spacing="xs">
-        <Text lineClamp={1}>{value}</Text>
-        {nsfw && <Badge color="red">NSFW</Badge>}
-      </Group>
-    </Box>
-  );
-});
+const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
+  ({ value, item, nsfw, ...props }, ref) => {
+    return (
+      <Box ref={ref} {...props}>
+        <Group noWrap spacing="xs">
+          <Stack spacing={0}>
+            <Text lineClamp={1} lh={1}>
+              {value}
+            </Text>
+            <Text size="xs" color="dimmed" lineClamp={1} lh={1}>
+              by {item.user.username}
+            </Text>
+          </Stack>
+          {nsfw && (
+            <Badge color="red" ml="auto">
+              NSFW
+            </Badge>
+          )}
+        </Group>
+      </Box>
+    );
+  }
+);
 SearchItem.displayName = 'SearchItem';
