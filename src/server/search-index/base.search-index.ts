@@ -60,6 +60,11 @@ export function createSearchIndexUpdateProcessor({
 
       // Finally, perform the swap:
       await swapIndex({ indexName, swapIndexName });
+
+      // Clear update queue since our index should be brand new:
+      await dbWrite.searchIndexUpdateQueue.deleteMany({
+        where: { type: indexName, createdAt: { lt: new Date() } },
+      });
     },
     // TODO.lrojas94: add queue type so we can delete from the queue.
     async queueUpdate(
