@@ -17,7 +17,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const index = await getOrCreateIndex(indexName);
+  const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
   if (!index) {

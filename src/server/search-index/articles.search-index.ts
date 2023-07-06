@@ -6,7 +6,6 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import { MetricTimeframe } from '@prisma/client';
-import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 
 const READ_BATCH_SIZE = 1000;
@@ -18,7 +17,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const index = await getOrCreateIndex(indexName);
+  const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
   if (!index) {

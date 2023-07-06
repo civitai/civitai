@@ -1,5 +1,5 @@
 import { client } from '~/server/meilisearch/client';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { MetricTimeframe, ModelHashType, ModelStatus } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
@@ -11,6 +11,7 @@ import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
+import { getCategoryTags } from '~/server/services/system-cache';
 
 const READ_BATCH_SIZE = 200;
 const INDEX_ID = 'models';
@@ -20,7 +21,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const index = await getOrCreateIndex(indexName);
+  const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
   if (!index) {
@@ -58,12 +59,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
   const updateRankingRulesTask = await index.updateRankingRules([
+    // TODO: keep playing with ranking rules.
     'words',
     'typo',
     'proximity',
-    'attribute',
     'rank.ratingAllTimeRank:asc',
     'rank.downloadCountAllTimeRank:asc',
+    'attribute',
     'sort',
     'exactness',
   ]);
@@ -99,6 +101,9 @@ const onIndexUpdate = async ({
     where: { type: INDEX_ID },
   });
 
+  const modelCategories = await getCategoryTags('model');
+  const modelCategoriesIds = modelCategories.map((category) => category.id);
+
   while (true) {
     const fetchStart = Date.now();
     console.log(
@@ -122,9 +127,10 @@ const onIndexUpdate = async ({
         locked: true,
         earlyAccessDeadline: true,
         mode: true,
-        description: true,
         // Joins:
-        user: { select: simpleUserSelect },
+        user: {
+          select: userWithCosmeticsSelect,
+        },
         modelVersions: {
           orderBy: { index: 'asc' },
           take: 1,
@@ -205,6 +211,7 @@ const onIndexUpdate = async ({
     if (models.length === 0) break;
 
     const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+    // TODO: add image tags here.
     const images = !!modelVersionIds.length
       ? await getImagesForModelVersion({
           modelVersionIds,
@@ -222,10 +229,14 @@ const onIndexUpdate = async ({
         }
 
         const modelImages = images.filter((image) => image.modelVersionId === modelVersion.id);
+        const category = tagsOnModels.find((tagOnModel) =>
+          modelCategoriesIds.includes(tagOnModel.tag.id)
+        );
 
         return {
           ...model,
           user,
+          category,
           images: modelImages,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
