@@ -1,7 +1,13 @@
 import { client } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { MetricTimeframe, ModelHashType, ModelStatus } from '@prisma/client';
+import {
+  MetricTimeframe,
+  ModelHashType,
+  ModelStatus,
+  PrismaClient,
+  SearchIndexUpdateQueueAction,
+} from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
@@ -75,6 +81,33 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
 };
 
+const onDocumentsCleanup = async ({ db }: { db: PrismaClient }) => {
+  if (!client) {
+    return;
+  }
+
+  const queuedItemsToDelete = await db.searchIndexUpdateQueue.findMany({
+    select: {
+      id: true,
+    },
+    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Delete },
+  });
+
+  const itemIds = queuedItemsToDelete.map((queuedItem) => queuedItem.id);
+
+  // Only care for main index ID here. Technically, if this was working as a reset and using a SWAP,
+  // we wouldn't encounter delete items.
+  const index = await getOrCreateIndex(INDEX_ID);
+
+  if (!index) {
+    // If for some reason we don't get an index, abort the entire process
+    return;
+  }
+
+  const task = await index.deleteDocuments(itemIds);
+  await client.waitForTask(task.taskUid);
+};
+
 const onIndexUpdate = async ({
   db,
   lastUpdatedAt,
@@ -84,6 +117,8 @@ const onIndexUpdate = async ({
 
   // Confirm index setup & working:
   await onIndexSetup({ indexName });
+  // Cleanup documents that require deletion:
+  await onDocumentsCleanup({ db });
 
   let offset = 0;
   const modelTasks: EnqueuedTask[] = [];
@@ -92,7 +127,7 @@ const onIndexUpdate = async ({
     select: {
       id: true,
     },
-    where: { type: INDEX_ID },
+    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Update },
   });
 
   const modelCategories = await getCategoryTags('model');

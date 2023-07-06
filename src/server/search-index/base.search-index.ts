@@ -2,6 +2,7 @@ import { getJobDate } from '~/server/jobs/job';
 import { dbWrite } from '~/server/db/client';
 import { PrismaClient } from '@prisma/client';
 import { swapIndex } from '~/server/meilisearch/util';
+import { SearchIndexUpdateQueueAction } from '@prisma/client';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 
@@ -25,7 +26,6 @@ export function createSearchIndexUpdateProcessor({
         `searchIndex:${indexName.toLowerCase()}`
       );
       const ctx = { db: dbWrite, lastUpdatedAt, indexName };
-
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 
@@ -62,11 +62,14 @@ export function createSearchIndexUpdateProcessor({
       await swapIndex({ indexName, swapIndexName });
     },
     // TODO.lrojas94: add queue type so we can delete from the queue.
-    async queueUpdate(id: number) {
+    async queueUpdate(
+      id: number,
+      action: SearchIndexUpdateQueueAction = SearchIndexUpdateQueueAction.Update
+    ) {
       await dbWrite.$executeRaw`
-        INSERT INTO "SearchIndexUpdateQueue" ("type", "id")
-        VALUES (${indexName}, ${id})
-        ON CONFLICT ("type", "id") DO UPDATE SET "createdAt" = NOW()
+        INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
+        VALUES (${indexName}, ${id}, ${action})
+        ON CONFLICT ("type", "id", "action") DO UPDATE SET "createdAt" = NOW()
       `;
     },
   };
