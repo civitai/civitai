@@ -211,28 +211,35 @@ const onIndexUpdate = async ({
         })
       : [];
 
-    // Get tags for each image:
-    const imagesWithTags = await Promise.all(
-      images.map(async (image) => {
-        const imageTags = await db.tagsOnImage.findMany({
+    const imageIds = images.map((image) => image.id);
+    // Performs a single DB request:
+    const tagsOnImages = await db.tagsOnImage.findMany({
+      select: {
+        imageId: true,
+        tag: {
           select: {
-            tag: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
+            id: true,
+            name: true,
           },
-          where: {
-            imageId: image.id,
-          },
-        });
-        return {
-          ...image,
-          tags: imageTags.map((imageTag) => imageTag.tag.name),
-        };
-      })
-    );
+        },
+      },
+      where: {
+        imageId: {
+          in: imageIds,
+        },
+      },
+    });
+
+    // Get tags for each image:
+    const imagesWithTags = images.map((image) => {
+      const imageTags = tagsOnImages
+        .filter((tagOnImage) => tagOnImage.imageId)
+        .map((tagOnImage) => tagOnImage.tag.name);
+      return {
+        ...image,
+        tags: imageTags,
+      };
+    });
 
     const indexReadyRecords = models
       .map((modelRecord) => {
