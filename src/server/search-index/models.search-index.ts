@@ -218,6 +218,7 @@ const onIndexUpdate = async ({
     const images = !!modelVersionIds.length
       ? await getImagesForModelVersion({
           modelVersionIds,
+          imagesPerVersion: 10,
         })
       : [];
 

@@ -1,4 +1,10 @@
-import { ArticleEngagementType, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
+import {
+  ArticleEngagementType,
+  MetricTimeframe,
+  Prisma,
+  SearchIndexUpdateQueueAction,
+  TagTarget,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
@@ -21,6 +27,7 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { isDefined } from '~/utils/type-guards';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
+import { articlesSearchIndex } from '~/server/search-index';
 
 export const getArticles = async ({
   limit,
@@ -302,6 +309,18 @@ export const upsertArticle = async ({
     });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
+    if (article && !article.publishedAt) {
+      // If it was unpublished, need to remove it from the queue.
+      if (!article.publishedAt) {
+        await articlesSearchIndex.queueUpdate(id, SearchIndexUpdateQueueAction.Delete);
+      }
+
+      // If tags changed, need to set is so it updates the queue.
+      if (tags) {
+        await articlesSearchIndex.queueUpdate(id, SearchIndexUpdateQueueAction.Update);
+      }
+    }
+
     return article;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -313,6 +332,8 @@ export const deleteArticleById = async ({ id }: GetByIdInput) => {
   try {
     const article = await dbWrite.article.delete({ where: { id } });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+    await articlesSearchIndex.queueUpdate(id, SearchIndexUpdateQueueAction.Delete);
 
     return article;
   } catch (error) {

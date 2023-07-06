@@ -8,8 +8,8 @@ import {
 import { MetricTimeframe } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
-const READ_BATCH_SIZE = 1000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
+const READ_BATCH_SIZE = 10000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = 'users';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
