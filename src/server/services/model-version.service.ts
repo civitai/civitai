@@ -94,59 +94,85 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
 };
 
-export const upsertModelVersion = async ({
-  id,
-  modelId,
-  ...data
-}: ModelVersionUpsertInput & { meta?: Prisma.ModelVersionCreateInput['meta'] }) => {
-  if (!id) {
-    // if it's a new version, we set it at the top of the list
-    // and increment the index of all other versions
-    const existingVersions = await dbRead.modelVersion.findMany({ where: { modelId } });
-
-    const currentVersionIndex = existingVersions.length > 0 ? existingVersions[0].index ?? -1 : -1;
-    const newVersionIndex = currentVersionIndex + 1;
-
-    const updatedVersions = existingVersions.map((version) => {
-      const parsedIndex = Number(version.index);
-
-      if (parsedIndex === 0) {
-        return { ...version, index: newVersionIndex };
-      } else if (parsedIndex >= newVersionIndex) {
-        return { ...version, index: parsedIndex + 1 };
-      } else {
-        return version;
-      }
+export const upsertModelVersion = async (
+  data: ModelVersionUpsertInput & { meta?: Prisma.ModelVersionCreateInput['meta'] }
+) => {
+  if (!data.id) {
+    const existingVersions = await dbRead.modelVersion.findMany({
+      where: { modelId: data.modelId },
+      select: { id: true },
+      orderBy: { index: 'asc' },
     });
-
     const [version] = await dbWrite.$transaction([
-      // create the new version
       dbWrite.modelVersion.create({
         data: {
           ...data,
           index: 0,
-          modelId,
         },
       }),
-      // update the index of all other versions
-      ...updatedVersions.map(({ id, index }) =>
-        dbWrite.modelVersion.update({
-          where: { id },
-          data: { index: index as number },
-        })
+      ...existingVersions.map(({ id }, index) =>
+        dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
+    return version;
+  } else {
+    console.log({ data });
+    const version = await dbWrite.modelVersion.update({
+      where: { id: data.id },
+      data,
+    });
 
     return version;
   }
 
-  // Otherwise, we just update the version
-  const version = await dbWrite.modelVersion.update({
-    where: { id },
-    data,
-  });
+  // if (!id) {
+  //   // if it's a new version, we set it at the top of the list
+  //   // and increment the index of all other versions
+  //   const existingVersions = await dbRead.modelVersion.findMany({ where: { modelId } });
 
-  return version;
+  //   const currentVersionIndex = existingVersions.length > 0 ? existingVersions[0].index ?? -1 : -1;
+  //   const newVersionIndex = currentVersionIndex + 1;
+
+  //   const updatedVersions = existingVersions.map((version) => {
+  //     const parsedIndex = Number(version.index);
+
+  //     if (parsedIndex === 0) {
+  //       return { ...version, index: newVersionIndex };
+  //     } else if (parsedIndex >= newVersionIndex) {
+  //       return { ...version, index: parsedIndex + 1 };
+  //     } else {
+  //       return version;
+  //     }
+  //   });
+
+  //   const [version] = await dbWrite.$transaction([
+  //     // create the new version
+  //     dbWrite.modelVersion.create({
+  //       data: {
+  //         ...data,
+  //         index: 0,
+  //         modelId,
+  //       },
+  //     }),
+  //     // update the index of all other versions
+  //     ...updatedVersions.map(({ id, index }) =>
+  //       dbWrite.modelVersion.update({
+  //         where: { id },
+  //         data: { index: index as number },
+  //       })
+  //     ),
+  //   ]);
+
+  //   return version;
+  // }
+
+  // // Otherwise, we just update the version
+  // const version = await dbWrite.modelVersion.update({
+  //   where: { id },
+  //   data,
+  // });
+
+  // return version;
 };
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {

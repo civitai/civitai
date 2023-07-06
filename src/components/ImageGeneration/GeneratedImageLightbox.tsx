@@ -5,11 +5,8 @@ import { ContextModalProps } from '@mantine/modals';
 import { useState } from 'react';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import {
-  useImageGenerationFeed,
-  useImageGenerationRequest,
-} from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
+import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { Generation } from '~/server/services/generation/generation.types';
 
 const TRANSITION_DURATION = 200;
@@ -18,14 +15,13 @@ export default function GeneratedImageLightbox({
   innerProps,
 }: ContextModalProps<{
   image: Generation.Image;
-  width: number;
+  request: Generation.Request;
 }>) {
-  const { image } = innerProps;
-  const { feed } = useImageGenerationFeed();
+  const { image, request } = innerProps;
+  const { images: feed } = useGetGenerationRequests();
 
   const initialSlide = feed.findIndex((item) => item.id === image.id);
   const [currentSlide, setCurrentSlide] = useState<number>(initialSlide);
-  const generationRequest = useImageGenerationRequest(feed[currentSlide]?.requestId);
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   useAnimationOffsetEffect(embla, TRANSITION_DURATION);
@@ -51,7 +47,7 @@ export default function GeneratedImageLightbox({
         {feed.map((item) => (
           <Carousel.Slide key={item.id} sx={{ height: 'calc(100vh - 84px)' }}>
             <Center h="100%">
-              <EdgeImage src={item.url} width={generationRequest.params.width} />
+              <EdgeImage src={item.url} width={request.params.width} />
             </Center>
           </Carousel.Slide>
         ))}
@@ -59,7 +55,7 @@ export default function GeneratedImageLightbox({
       <Box sx={{ position: 'fixed', bottom: 0, right: 0, width: '100%', maxWidth: 450 }}>
         <GenerationDetails
           label="Generation Details"
-          params={generationRequest.params}
+          params={request.params}
           labelWidth={150}
           paperProps={{ radius: 0 }}
           controlProps={{

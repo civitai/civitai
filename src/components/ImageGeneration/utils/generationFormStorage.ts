@@ -1,9 +1,12 @@
+import { unset } from 'lodash-es';
 import { z } from 'zod';
 import {
   generationParamsSchema,
   generationResourceSchema,
+  seedSchema,
 } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
+import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const GENERATION_FORM_KEY = 'generation-form';
@@ -16,13 +19,11 @@ export const generationFormSchema = generationParamsSchema
   .omit({ height: true, width: true, seed: true })
   .extend({
     aspectRatio: z.string(),
-    seed: z.number().nullish(),
+    seed: seedSchema.optional(),
   });
 
 const resourcesSchema = generationResourceSchema.array();
-const paramsSchema = generationFormSchema
-  .extend({ prompt: z.string().max(1000).optional() })
-  .partial();
+const paramsSchema = generationFormSchema.extend({ prompt: z.string().optional() }).partial();
 
 const formatGenerationDataSchema = z.object({
   resources: resourcesSchema.default([]),
@@ -31,6 +32,14 @@ const formatGenerationDataSchema = z.object({
 
 const parseGenerationData = (data: GenerationDataInput) => {
   try {
+    const results = formatGenerationDataSchema.safeParse(data);
+    if (results.success) return results.data;
+    // remove bad `param` props and and parse again
+    for (const error of results.error.errors) {
+      if (error.path[0] === 'params') {
+        unset(data, error.path);
+      }
+    }
     return formatGenerationDataSchema.parse(data);
   } catch (error: any) {
     console.warn('invalid generation data format');
@@ -38,19 +47,19 @@ const parseGenerationData = (data: GenerationDataInput) => {
   }
 };
 
-// TODO.generation - grab the closest image dimensions based on aspect ratio
-const formatGenerationParams = <T extends Generation.DataParams>(
+const formatGenerationParams = <T extends Partial<Generation.Params>>(
   params: Partial<T>
 ): FormParams => {
-  const { height = 0, width = 0, ...rest } = params;
-  const seed = params.seed ?? -1;
-  const aspectRatio = supportedAspectRatios.some((x) => x.width === width && x.height === height)
-    ? `${width}x${height}`
-    : '512x512';
+  const { height = 512, width = 512, ...rest } = params;
+  const aspectRatios = supportedAspectRatios.map((x) => x.width / x.height);
+  const closest = findClosest(aspectRatios, width / height);
+  const index = aspectRatios.indexOf(closest);
+  const supported = supportedAspectRatios[index] ?? { width: 512, height: 512 };
+  const aspectRatio = `${supported.width}x${supported.height}`;
 
   // remove all all empty props except `seed` so that the input can clear when resetting the generation form
   const formatted = removeEmpty({ ...rest, aspectRatio });
-  return { ...formatted, seed: seed > -1 ? seed : null };
+  return { ...formatted, seed: params.seed };
 };
 
 export const supportedAspectRatios = [

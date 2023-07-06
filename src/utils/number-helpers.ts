@@ -79,3 +79,9 @@ export function numberWithCommas(value: number | string | undefined) {
 export function isNumeric(value?: unknown) {
   return !isNaN(Number(value));
 }
+
+export const findClosest = (array: number[], target: number) => {
+  return array.reduce((a, b) => {
+    return Math.abs(b - target) < Math.abs(a - target) ? b : a;
+  });
+};

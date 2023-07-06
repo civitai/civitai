@@ -24,7 +24,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
           await setLastSent(now);
         }
       });
-      await Promise.all(promises);
+      await Promise.allSettled(promises);
     }
     log('sent notifications');
 
