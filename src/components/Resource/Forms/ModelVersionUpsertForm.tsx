@@ -91,6 +91,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     if (isDirty || !version?.id) {
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
+        clipSkip: data.clipSkip ?? null,
+        epochs: data.epochs ?? null,
+        steps: data.steps ?? null,
         modelId: model?.id ?? -1,
         earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
         trainedWords: skipTrainedWords ? [] : trainedWords,
@@ -262,7 +265,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           <Stack spacing={4}>
             <Divider label="Usage Tips" />
             <InputNumber
-              name="Clip Skip"
+              name="clipSkip"
               label="Recommended Clip Skip"
               placeholder="Clip Skip"
               min={1}

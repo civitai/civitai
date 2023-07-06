@@ -69,6 +69,7 @@ const meta: PlanMeta[] = [
       },
       { content: 'Unique Supporter Tier badge' },
       { content: 'Unique nameplate color' },
+      { content: 'Unique Discord role' },
       {
         content: 'More coming soon!',
         icon: <IconCirclePlus size={benefitIconSize} />,

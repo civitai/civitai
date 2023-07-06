@@ -1,15 +1,22 @@
-import { Tabs, createStyles } from '@mantine/core';
+import { Tabs, createStyles, Badge } from '@mantine/core';
 import { IconBrush, IconListDetails, IconSlideshow } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Generate } from './Generate';
 import { Queue } from './Queue';
 import { useGenerationPanelControls } from '~/components/ImageGeneration/GenerationPanel';
+import {
+  useGetGenerationRequests,
+  usePollGenerationRequests,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 
 export default function GenerationTabs({}) {
   const { classes } = useStyles();
 
   const view = useGenerationPanelControls((state) => state.view);
   const setView = useGenerationPanelControls((state) => state.setView);
+
+  const result = useGetGenerationRequests({}, { enabled: view !== 'generate' });
+  const pendingProcessingCount = usePollGenerationRequests(result.requests);
 
   return (
     <Tabs
@@ -24,10 +31,10 @@ export default function GenerationTabs({}) {
         <Generate onSuccess={() => setView('queue')} />
       </Tabs.Panel>
       <Tabs.Panel value="queue" py={0}>
-        <Queue />
+        <Queue {...result} />
       </Tabs.Panel>
       <Tabs.Panel value="feed" py={0}>
-        <Feed />
+        <Feed {...result} />
       </Tabs.Panel>
 
       <Tabs.List grow>
@@ -35,7 +42,12 @@ export default function GenerationTabs({}) {
           Generate
         </Tabs.Tab>
         <Tabs.Tab value="queue" icon={<IconListDetails size={16} />}>
-          Queue
+          Queue{' '}
+          {pendingProcessingCount > 0 && (
+            <Badge color="red" variant="filled" size="xs">
+              {pendingProcessingCount}
+            </Badge>
+          )}
         </Tabs.Tab>
         <Tabs.Tab value="feed" icon={<IconSlideshow size={16} />}>
           Feed

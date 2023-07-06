@@ -107,7 +107,7 @@ const resourceSchema = z
     [ModelType.Checkpoint]: generationResourceSchema
       .array()
       .min(1, 'A model checkpoint is required')
-      .max(1),
+      .max(1, 'Only one model checkpoint can be used'),
     // [ModelType.LORA]: generationResourceSchema.extend({ strength: z.number().min(2) }),
   })
   .passthrough();

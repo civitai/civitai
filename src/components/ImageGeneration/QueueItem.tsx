@@ -12,22 +12,19 @@ import {
   Tooltip,
   SimpleGrid,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { openBoostModal, useBoostModalStore } from '~/components/ImageGeneration/BoostModal';
+import { openBoostModal } from '~/components/ImageGeneration/BoostModal';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
-import {
-  useImageGenerationRequest,
-  useImageGenerationStore,
-} from '~/components/ImageGeneration/hooks/useImageGenerationState';
+import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { formatDateMin } from '~/utils/date-helpers';
-import { trpc } from '~/utils/trpc';
 
 const statusColors: Record<GenerationRequestStatus, MantineColor> = {
   [GenerationRequestStatus.Pending]: 'gray',
@@ -37,19 +34,10 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
   [GenerationRequestStatus.Error]: 'red',
 };
 
-export function QueueItem({ id }: Props) {
-  const showBoost = useBoostModalStore((state) => state.showBoost);
+export function QueueItem({ request }: Props) {
+  const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
 
-  const request = useImageGenerationRequest(id);
-  const removeRequest = useImageGenerationStore((state) => state.removeRequest);
-  const deleteMutation = trpc.generation.deleteRequest.useMutation({
-    onSuccess: (response, request) => {
-      removeRequest(request.id);
-    },
-    onError: (err) => {
-      console.log({ err });
-    },
-  });
+  const deleteMutation = useDeleteGenerationRequest();
 
   const { prompt, ...details } = request.params;
 
@@ -135,7 +123,7 @@ export function QueueItem({ id }: Props) {
           <ActionIcon
             color="red"
             size="md"
-            onClick={() => deleteMutation.mutate({ id })}
+            onClick={() => deleteMutation.mutate({ id: request.id })}
             disabled={deleteMutation.isLoading}
           >
             <IconX size={20} />
@@ -165,12 +153,7 @@ export function QueueItem({ id }: Props) {
             ]}
           >
             {request.images.map((image) => (
-              <GeneratedImage
-                key={image.id}
-                height={request.params.height}
-                width={request.params.width}
-                image={image}
-              />
+              <GeneratedImage key={image.id} image={image} request={request} />
             ))}
           </SimpleGrid>
         )}
@@ -204,6 +187,6 @@ export function QueueItem({ id }: Props) {
 }
 
 type Props = {
-  // item: Generation.Request;
-  id: number;
+  request: Generation.Request;
+  // id: number;
 };
