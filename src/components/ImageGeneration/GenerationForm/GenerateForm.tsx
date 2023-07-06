@@ -1,4 +1,4 @@
-import { Card, Group, NumberInputProps, SliderProps, Stack, Text } from '@mantine/core';
+import { Card, Group, NumberInputProps, SliderProps, Stack, Text, Button } from '@mantine/core';
 import { UseFormReturn } from 'react-hook-form';
 import { Form, InputNumberSlider, InputSwitch, InputTextArea } from '~/libs/form';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
@@ -13,7 +13,7 @@ const sharedNumberProps: NumberInputProps = {
 
 export function GenerateForm({ form }: { form: UseFormReturn<GenerateFormModel> }) {
   return (
-    <Form form={form}>
+    <Form form={form} onSubmit={(data) => console.log({ data })}>
       <Stack>
         <Card>
           <Stack>
@@ -56,6 +56,9 @@ export function GenerateForm({ form }: { form: UseFormReturn<GenerateFormModel> 
           <Stack>
             <Text>TODO.hires</Text>
           </Stack>
+        </Card>
+        <Card>
+          <Button type="submit">Submit</Button>
         </Card>
       </Stack>
     </Form>
