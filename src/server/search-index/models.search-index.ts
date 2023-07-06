@@ -14,6 +14,7 @@ import {
 import { getCategoryTags } from '~/server/services/system-cache';
 
 const READ_BATCH_SIZE = 200;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
 const INDEX_ID = 'models';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -31,8 +32,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const updateSearchableAttributesTask = await index.updateSearchableAttributes([
     'name',
     'user.username',
-    'tags',
+    'category.id',
     'hashes',
+    'tags',
   ]);
 
   console.log(
@@ -60,25 +62,17 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const updateRankingRulesTask = await index.updateRankingRules([
     // TODO: keep playing with ranking rules.
+    'attribute',
+    'rank.ratingAllTimeRank:asc',
+    'rank.downloadCountAllTimeRank:asc',
     'words',
     'typo',
     'proximity',
-    'rank.ratingAllTimeRank:asc',
-    'rank.downloadCountAllTimeRank:asc',
-    'attribute',
     'sort',
     'exactness',
   ]);
 
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
-
-  await client.waitForTasks([
-    updateSearchableAttributesTask.taskUid,
-    sortableFieldsAttributesTask.taskUid,
-    updateRankingRulesTask.taskUid,
-  ]);
-
-  console.log('onIndexSetup :: all tasks completed');
 };
 
 const onIndexUpdate = async ({
@@ -218,7 +212,7 @@ const onIndexUpdate = async ({
         })
       : [];
 
-    const indexReadyModels = models
+    const indexReadyRecords = models
       .map((modelRecord) => {
         const { metrics, user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
 
@@ -237,6 +231,7 @@ const onIndexUpdate = async ({
           ...model,
           user,
           category,
+          modelVersion,
           images: modelImages,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
@@ -249,7 +244,11 @@ const onIndexUpdate = async ({
       // Removes null models that have no versionIDs
       .filter(isDefined);
 
-    modelTasks.push(await client.index(indexName).updateDocuments(indexReadyModels));
+    const tasks = await client
+      .index(`${INDEX_ID}`)
+      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+
+    modelTasks.push(...tasks);
 
     offset += models.length;
   }
