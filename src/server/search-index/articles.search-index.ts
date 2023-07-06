@@ -1,5 +1,5 @@
 import { client } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
 import {
   createSearchIndexUpdateProcessor,
@@ -72,6 +72,10 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
   // Confirm index setup & working:
   await onIndexSetup({ indexName });
+  // Cleanup documents that require deletion:
+  // Always pass INDEX_ID here, not index name, as pending to delete will
+  // always use this name.
+  await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
 
   let offset = 0;
   const tagTasks: EnqueuedTask[] = [];

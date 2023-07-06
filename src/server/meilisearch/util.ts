@@ -1,5 +1,6 @@
 import { IndexOptions, MeiliSearchErrorInfo } from 'meilisearch';
 import { client } from '~/server/meilisearch/client';
+import { PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 
 const getOrCreateIndex = async (indexName: string, options?: IndexOptions) => {
   if (!client) {
@@ -58,4 +59,41 @@ const swapIndex = async ({
   return index;
 };
 
-export { swapIndex, getOrCreateIndex };
+const onSearchIndexDocumentsCleanup = async ({
+  db,
+  indexName,
+}: {
+  db: PrismaClient;
+  indexName: string;
+}) => {
+  if (!client) {
+    return;
+  }
+
+  const queuedItemsToDelete = await db.searchIndexUpdateQueue.findMany({
+    select: {
+      id: true,
+    },
+    where: { type: indexName, action: SearchIndexUpdateQueueAction.Delete },
+  });
+
+  const itemIds = queuedItemsToDelete.map((queuedItem) => queuedItem.id);
+
+  if (itemIds.length === 0) {
+    return;
+  }
+
+  // Only care for main index ID here. Technically, if this was working as a reset and using a SWAP,
+  // we wouldn't encounter delete items.
+  const index = await getOrCreateIndex(indexName);
+
+  if (!index) {
+    // If for some reason we don't get an index, abort the entire process
+    return;
+  }
+
+  const task = await index.deleteDocuments(itemIds);
+  await client.waitForTask(task.taskUid);
+};
+
+export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup };
