@@ -3,6 +3,7 @@ import { GenerateFormModel, generateFormSchema } from '~/server/schema/generatio
 import { zodResolver } from '@hookform/resolvers/zod';
 import { GenerateForm } from '~/components/ImageGeneration/GenerationForm/GenerateForm';
 import { Card, Stack, Button, Group } from '@mantine/core';
+import { useEffect } from 'react';
 
 export function Generate2() {
   const form = useForm<GenerateFormModel>({
@@ -11,6 +12,16 @@ export function Generate2() {
     defaultValues,
     shouldUnregister: true,
   });
+
+  useEffect(() => {
+    const subscription = form.watch((value, { name, type }) => {
+      // do things with the form here (remove values, add values)
+      console.log({ value, name, type });
+
+      // reset emits an empty value object (value = {})
+    });
+    return () => subscription.unsubscribe();
+  }, []); //eslint-disable-line
 
   return (
     <Stack>
@@ -25,6 +36,9 @@ export function Generate2() {
               Steps +
             </Button>
           </Group>
+          <Button onClick={() => form.reset({ prompt: 'this is a test', clipSkip: 3 })}>
+            Reset With Prompt
+          </Button>
         </Stack>
       </Card>
     </Stack>

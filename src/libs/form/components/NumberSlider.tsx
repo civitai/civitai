@@ -39,10 +39,11 @@ export function NumberSlider({
   const [computedWidth, setComputedWidth] = useState<string>();
 
   const handleChange = (value?: number) => {
-    if (value !== _value) {
-      setValue(value);
-      onChange?.(value);
-    }
+    setValue(value);
+  };
+
+  const handleDragEnd = (value?: number) => {
+    onChange?.(value);
   };
 
   const precision = useMemo(
@@ -96,6 +97,7 @@ export function NumberSlider({
           onBlur={handleSliderBlur}
           onFocus={handleSliderFocus}
           label={(value) => (precision ? value.toFixed(precision) : value)}
+          onChangeEnd={handleDragEnd}
         />
         <NumberInput
           ref={numberRef}
