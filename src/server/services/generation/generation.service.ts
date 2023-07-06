@@ -277,6 +277,12 @@ export const createGenerationRequest = async ({
     }
   }
 
+  if (params.vae) {
+    additionalNetworks[`@civitai/${params.vae}`] = {
+      type: ModelType.VAE,
+    };
+  }
+
   const generationRequest = {
     userId,
     job: {

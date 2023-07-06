@@ -64,6 +64,7 @@ export const generationParamsSchema = z.object({
   height: z.number(),
   width: z.number(),
   nsfw: z.boolean().optional(),
+  vae: z.number().optional(),
 });
 
 export const generationResourceSchema = z.object({

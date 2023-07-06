@@ -91,7 +91,13 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
   }, [defaultValues]); //eslint-disable-line
 
   const handleReset = (props: Generation.Data) => {
-    useGenerationResourceStore.getState().setResources(props.resources);
+    useGenerationResourceStore
+      .getState()
+      .setResources(
+        props.resources.filter((x) =>
+          [ModelType.Checkpoint, ...ADDITIONAL_RESOURCE_TYPES].includes(x.modelType as any)
+        )
+      );
     const data = generationForm.setData(props);
     setDefaultValues(getDefaultFormValues(data.params));
   };
