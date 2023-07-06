@@ -14,7 +14,7 @@ import {
 import { getCategoryTags } from '~/server/services/system-cache';
 
 const READ_BATCH_SIZE = 1000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 50;
 const INDEX_ID = 'models';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -61,7 +61,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
   const updateRankingRulesTask = await index.updateRankingRules([
-    // TODO: keep playing with ranking rules.
+    // TODO.lrojas94: keep playing with ranking rules.
     'attribute',
     'rank.ratingAllTimeRank:asc',
     'rank.downloadCountAllTimeRank:asc',
@@ -213,27 +213,29 @@ const onIndexUpdate = async ({
 
     const imageIds = images.map((image) => image.id);
     // Performs a single DB request:
-    const tagsOnImages = await db.tagsOnImage.findMany({
-      select: {
-        imageId: true,
-        tag: {
+    const tagsOnImages = !imageIds.length
+      ? []
+      : await db.tagsOnImage.findMany({
           select: {
-            id: true,
-            name: true,
+            imageId: true,
+            tag: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
           },
-        },
-      },
-      where: {
-        imageId: {
-          in: imageIds,
-        },
-      },
-    });
+          where: {
+            imageId: {
+              in: imageIds,
+            },
+          },
+        });
 
     // Get tags for each image:
     const imagesWithTags = images.map((image) => {
       const imageTags = tagsOnImages
-        .filter((tagOnImage) => tagOnImage.imageId)
+        .filter((tagOnImage) => tagOnImage.imageId === image.id)
         .map((tagOnImage) => tagOnImage.tag.name);
       return {
         ...image,
@@ -251,9 +253,6 @@ const onIndexUpdate = async ({
           return null;
         }
 
-        const modelImages = imagesWithTags.filter(
-          (image) => image.modelVersionId === modelVersion.id
-        );
         const category = tagsOnModels.find((tagOnModel) =>
           modelCategoriesIds.includes(tagOnModel.tag.id)
         );
@@ -263,7 +262,6 @@ const onIndexUpdate = async ({
           user,
           category,
           modelVersion,
-          images: modelImages,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
           metrics: {
@@ -275,11 +273,41 @@ const onIndexUpdate = async ({
       // Removes null models that have no versionIDs
       .filter(isDefined);
 
-    const tasks = await client
+    const indexRecordsWithImages = models
+      .map((modelRecord) => {
+        const { modelVersions, ...model } = modelRecord;
+        const [modelVersion] = modelVersions;
+
+        if (!modelVersion) {
+          return null;
+        }
+
+        const modelImages = imagesWithTags.filter(
+          (image) => image.modelVersionId === modelVersion.id
+        );
+
+        return {
+          id: model.id,
+          images: modelImages,
+        };
+      })
+      // Removes null models that have no versionIDs
+      .filter(isDefined);
+
+    const baseTasks = await client
       .index(indexName)
       .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
 
-    modelTasks.push(...tasks);
+    console.log('onIndexUpdate :: base tasks have been added');
+
+    const imagesTasks = await client
+      .index(indexName)
+      .updateDocumentsInBatches(indexRecordsWithImages, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+
+    console.log('onIndexUpdate :: image tasks have been added');
+
+    modelTasks.push(...baseTasks);
+    modelTasks.push(...imagesTasks);
 
     offset += models.length;
   }

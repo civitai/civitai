@@ -61,7 +61,7 @@ export function createSearchIndexUpdateProcessor({
       // Finally, perform the swap:
       await swapIndex({ indexName, swapIndexName });
     },
-    // TODO: add queue type so we can delete from the queue.
+    // TODO.lrojas94: add queue type so we can delete from the queue.
     async queueUpdate(id: number) {
       await dbWrite.$executeRaw`
         INSERT INTO "SearchIndexUpdateQueue" ("type", "id")
