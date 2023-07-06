@@ -175,7 +175,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     const tasks = await client
-      .index(`${INDEX_ID}`)
+      .index(indexName)
       .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
 
     imageTasks.push(...tasks);

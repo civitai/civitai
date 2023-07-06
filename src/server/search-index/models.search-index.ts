@@ -13,7 +13,7 @@ import {
 } from '~/server/search-index/base.search-index';
 import { getCategoryTags } from '~/server/services/system-cache';
 
-const READ_BATCH_SIZE = 200;
+const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
 const INDEX_ID = 'models';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
@@ -205,12 +205,34 @@ const onIndexUpdate = async ({
     if (models.length === 0) break;
 
     const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
-    // TODO: add image tags here.
     const images = !!modelVersionIds.length
       ? await getImagesForModelVersion({
           modelVersionIds,
         })
       : [];
+
+    // Get tags for each image:
+    const imagesWithTags = await Promise.all(
+      images.map(async (image) => {
+        const imageTags = await db.tagsOnImage.findMany({
+          select: {
+            tag: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+          where: {
+            imageId: image.id,
+          },
+        });
+        return {
+          ...image,
+          tags: imageTags.map((imageTag) => imageTag.tag.name),
+        };
+      })
+    );
 
     const indexReadyRecords = models
       .map((modelRecord) => {
@@ -222,7 +244,9 @@ const onIndexUpdate = async ({
           return null;
         }
 
-        const modelImages = images.filter((image) => image.modelVersionId === modelVersion.id);
+        const modelImages = imagesWithTags.filter(
+          (image) => image.modelVersionId === modelVersion.id
+        );
         const category = tagsOnModels.find((tagOnModel) =>
           modelCategoriesIds.includes(tagOnModel.tag.id)
         );
@@ -245,7 +269,7 @@ const onIndexUpdate = async ({
       .filter(isDefined);
 
     const tasks = await client
-      .index(`${INDEX_ID}`)
+      .index(indexName)
       .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
 
     modelTasks.push(...tasks);
