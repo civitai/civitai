@@ -9,23 +9,24 @@ export const articleMetrics = createMetricProcessor({
     // --------------------------------------------
     const viewedArticlesResponse = await ch.query({
       query: `
-        WITH affected AS
-        (
-            SELECT DISTINCT entityId
-            FROM uniqueViews
-            WHERE type = 'ArticleView'
-            AND time >= parseDateTimeBestEffortOrNull('${lastUpdate}')
-        )
-        SELECT
-            uv.entityId as entityId,
-            SUM(if(uv.time >= subtractDays(now(), 1), 1, null)) AS viewsDay,
-            SUM(if(uv.time >= subtractDays(now(), 7), 1, null)) AS viewsWeek,
-            SUM(if(uv.time >= subtractMonths(now(), 1), 1, null)) AS viewsMonth,
-            SUM(if(uv.time >= subtractYears(now(), 1), 1, null)) AS viewsYear,
-            COUNT() AS viewsAll
-        FROM affected a
-        JOIN uniqueViews uv ON a.entityId = uv.entityId
-        GROUP BY uv.entityId
+      SELECT
+        a.entityId AS entityId,
+        SUM(if(uv.time >= subtractDays(now(), 1), 1, null)) AS viewsDay,
+        SUM(if(uv.time >= subtractDays(now(), 7), 1, null)) AS viewsWeek,
+        SUM(if(uv.time >= subtractMonths(now(), 1), 1, null)) AS viewsMonth,
+        SUM(if(uv.time >= subtractYears(now(), 1), 1, null)) AS viewsYear,
+        COUNT() AS viewsAll
+      FROM uniqueViews uv
+      JOIN (
+        SELECT entityId
+        FROM uniqueViews
+        WHERE type = 'ArticleView'
+          AND time >= parseDateTimeBestEffortOrNull(
+            '${lastUpdate}'
+          )
+        GROUP BY entityId
+      ) a ON a.entityId = uv.entityId
+      GROUP BY a.entityId
       `,
       format: 'JSONEachRow',
     });

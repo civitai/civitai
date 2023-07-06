@@ -19,7 +19,6 @@ import {
 import { ModelType } from '@prisma/client';
 import { IconArrowAutofitDown, IconInfoCircle, IconLock, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { useImageGenerationStore } from '~/components/ImageGeneration/hooks/useImageGenerationState';
 import {
   Form,
   InputNumber,
@@ -49,6 +48,7 @@ import generationForm, {
 } from '~/components/ImageGeneration/utils/generationFormStorage';
 import { supportedSamplers } from '~/server/schema/generation.schema';
 import { useGenerationPanelControls } from '~/components/ImageGeneration/GenerationPanel';
+import { useCreateGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
 
 const ADDITIONAL_RESOURCE_TYPES = [ModelType.LORA, ModelType.TextualInversion];
 export function Generate({ onSuccess }: { onSuccess?: () => void }) {
@@ -70,20 +70,7 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
   // #endregion
 
   const hasUnavailable = useGenerationResourceStore((state) => state.hasUnavailable);
-  const setRequests = useImageGenerationStore((state) => state.setRequests);
-  const { mutate, isLoading } = trpc.generation.createRequest.useMutation({
-    onSuccess: (data) => {
-      setRequests([data], true);
-      onSuccess?.();
-    },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to generate',
-        error: new Error(error.message),
-        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-      });
-    },
-  });
+  const { mutateAsync, isLoading } = useCreateGenerationRequest();
 
   const getDefaultFormValues = (props: Generation.DataParams = {}) => ({
     nsfw: currentUser?.showNsfw ?? false,
@@ -178,18 +165,19 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
     <Form
       form={form}
       style={{ height: '100%' }}
-      onSubmit={(values) => {
+      onSubmit={async (values) => {
         const resources = useGenerationResourceStore.getState().getValidatedResources();
         if (!resources) return;
         const [width, height] = values.aspectRatio.split('x');
         const params = {
           ...values,
-          seed: values.seed ?? -1,
+          seed: values.seed,
           height: Number(height),
           width: Number(width),
         };
         generationForm.setData({ resources, params });
-        mutate({ resources, params });
+        await mutateAsync({ resources, params });
+        onSuccess?.();
       }}
     >
       <Stack h="100%" spacing={0}>
@@ -523,7 +511,7 @@ const defaults = {
   cfgScale: 7,
   steps: 25,
   sampler: 'DPM++ 2M Karras' as Sampler,
-  seed: -1,
+  seed: undefined,
   clipSkip: 2,
   quantity: 4,
   aspectRatio: '512x512',
