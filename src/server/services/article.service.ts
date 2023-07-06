@@ -312,12 +312,16 @@ export const upsertArticle = async ({
     if (article && !article.publishedAt) {
       // If it was unpublished, need to remove it from the queue.
       if (!article.publishedAt) {
-        await articlesSearchIndex.queueUpdate(id, SearchIndexUpdateQueueAction.Delete);
+        await articlesSearchIndex.queueUpdate([
+          { id, action: SearchIndexUpdateQueueAction.Delete },
+        ]);
       }
 
       // If tags changed, need to set is so it updates the queue.
       if (tags) {
-        await articlesSearchIndex.queueUpdate(id, SearchIndexUpdateQueueAction.Update);
+        await articlesSearchIndex.queueUpdate([
+          { id, action: SearchIndexUpdateQueueAction.Update },
+        ]);
       }
     }
 
@@ -333,7 +337,7 @@ export const deleteArticleById = async ({ id }: GetByIdInput) => {
     const article = await dbWrite.article.delete({ where: { id } });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
-    await articlesSearchIndex.queueUpdate(id, SearchIndexUpdateQueueAction.Delete);
+    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     return article;
   } catch (error) {
