@@ -8,6 +8,7 @@ import {
   useGetGenerationRequests,
   usePollGenerationRequests,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { Generate2 } from '~/components/ImageGeneration/Generate2';
 
 export default function GenerationTabs({}) {
   const { classes } = useStyles();
@@ -28,7 +29,8 @@ export default function GenerationTabs({}) {
       inverted
     >
       <Tabs.Panel value="generate" pt={0}>
-        <Generate onSuccess={() => setView('queue')} />
+        <Generate2 />
+        {/* <Generate onSuccess={() => setView('queue')} /> */}
       </Tabs.Panel>
       <Tabs.Panel value="queue" py={0}>
         <Queue {...result} />

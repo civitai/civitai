@@ -79,6 +79,34 @@ export const generationResourceSchema = z.object({
   baseModel: z.string(),
 });
 
+export type GenerateFormModel = z.infer<typeof generateFormSchema>;
+export const generateFormSchema = z.object({
+  resources: generationResourceSchema.array(),
+  prompt: z
+    .string()
+    .nonempty('Prompt cannot be empty')
+    .max(1500, 'Prompt cannot be longer than 1000 characters')
+    .superRefine((val, ctx) => {
+      const { blockedFor, success } = auditPrompt(val);
+      if (!success)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Blocked for: ${blockedFor.join(', ')}`,
+        });
+    }),
+  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
+  cfgScale: z.coerce.number().min(1).max(30),
+  sampler: z
+    .string()
+    .refine((val) => supportedSamplers.includes(val as Sampler), { message: 'invalid sampler' }),
+  steps: z.coerce.number().min(1).max(150),
+  seed: seedSchema,
+  clipSkip: z.coerce.number().default(1),
+  quantity: z.coerce.number().max(10),
+  aspectRatio: z.string(),
+  nsfw: z.boolean().optional(),
+});
+
 export const additionalResourceLimit = 10;
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
 export const createGenerationRequestSchema = z.object({
