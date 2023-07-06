@@ -1,10 +1,17 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { ImageIngestionStatus, Prisma, TagTarget, TagType } from '@prisma/client';
+import {
+  ImageIngestionStatus,
+  Prisma,
+  SearchIndexUpdateQueueAction,
+  TagTarget,
+  TagType,
+} from '@prisma/client';
 import { auditMetaData } from '~/utils/image-metadata';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
+import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 
 const tagCache: Record<string, number> = {};
 
@@ -166,8 +173,21 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
 
   const image = await dbWrite.image.findUnique({
     where: { id },
-    select: { id: true, meta: true },
+    select: {
+      id: true,
+      meta: true,
+      imagesOnModels: {
+        select: {
+          modelVersion: {
+            select: {
+              modelId: true,
+            },
+          },
+        },
+      },
+    },
   });
+
   if (!image) throw new Error('Image not found');
 
   try {
@@ -241,6 +261,14 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
 
     // Set nsfw level
     await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
+
+    // add model to searchIndex queue since new image has been scanned
+    if (image.imagesOnModels && data.ingestion === ImageIngestionStatus.Scanned) {
+      const modelId = image.imagesOnModels.modelVersion.modelId;
+      await modelsSearchIndex.queueUpdate([
+        { id: modelId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+    }
   } catch (e: any) {
     throw new Error(e.message);
   }
