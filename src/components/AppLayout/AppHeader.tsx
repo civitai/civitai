@@ -6,6 +6,7 @@ import {
   Burger,
   Button,
   createStyles,
+  Divider,
   Grid,
   Group,
   Header,
@@ -25,11 +26,12 @@ import {
   IconCrown,
   IconHeart,
   IconHistory,
+  IconInfoSquareRounded,
   IconLogout,
   IconMoonStars,
   IconPalette,
   IconPlus,
-  IconInfoSquareRounded,
+  IconSearch,
   IconSettings,
   IconSun,
   IconUpload,
@@ -42,22 +44,24 @@ import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 
+import { IconPhotoUp } from '@tabler/icons-react';
+import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
+import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
+import { UploadTracker } from '~/components/Resource/UploadTracker';
+import { SearchBar } from '~/components/SearchBar/SearchBar';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
-import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
-import { ModerationNav } from '~/components/Moderation/ModerationNav';
-import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
-import { IconPhotoUp } from '@tabler/icons-react';
+import { openSpotlight } from '@mantine/spotlight';
 
 const HEADER_HEIGHT = 70;
 
@@ -418,11 +422,13 @@ export function AppHeader() {
             <SupportButton />
           </Group>
         </Grid.Col>
-        <Grid.Col span={6} md={5}>
+        {/* <Grid.Col span={6} md={5}>
           <ListSearch onSearch={() => closeBurger()} />
-        </Grid.Col>
+        </Grid.Col> */}
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="xs" align="center">
+            <SearchBar />
+            <Divider orientation="vertical" />
             {!currentUser ? (
               <Button
                 component={NextLink}
@@ -496,6 +502,9 @@ export function AppHeader() {
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
+            <ActionIcon onClick={() => openSpotlight()}>
+              <IconSearch />
+            </ActionIcon>
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             <Burger

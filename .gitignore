@@ -42,4 +42,7 @@ yarn-error.log*
 /postgres
 /redis
 /minio
+
+# Meilisearch
 /meilisearch
+/data.ms/
