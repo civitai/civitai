@@ -8,6 +8,7 @@ import {
 import { MetricTimeframe } from '@prisma/client';
 
 const READ_BATCH_SIZE = 1000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
 const INDEX_ID = 'tags';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -146,7 +147,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       };
     });
 
-    tagTasks.push(await client.index(`${INDEX_ID}`).updateDocuments(indexReadyRecords));
+    const tasks = await client
+      .index(indexName)
+      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+
+    tagTasks.push(...tasks);
 
     offset += tags.length;
   }

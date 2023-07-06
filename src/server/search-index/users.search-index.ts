@@ -9,6 +9,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 const READ_BATCH_SIZE = 1000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
 const INDEX_ID = 'users';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -69,7 +70,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
 
   let offset = 0;
-  const tagTasks: EnqueuedTask[] = [];
+  const userTasks: EnqueuedTask[] = [];
 
   const queuedItems = await db.searchIndexUpdateQueue.findMany({
     select: {
@@ -158,13 +159,17 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       };
     });
 
-    tagTasks.push(await client.index(`${INDEX_ID}`).updateDocuments(indexReadyRecords));
+    const tasks = await client
+      .index(indexName)
+      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+
+    userTasks.push(...tasks);
 
     offset += users.length;
   }
 
   console.log('onIndexUpdate :: start waitForTasks');
-  await client.waitForTasks(tagTasks.map((task) => task.taskUid));
+  await client.waitForTasks(userTasks.map((task) => task.taskUid));
   console.log('onIndexUpdate :: complete waitForTasks');
 };
 
