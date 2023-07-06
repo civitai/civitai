@@ -294,12 +294,7 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
                 <Accordion.Panel>
                   <Stack>
                     <InputNumber name="steps" label="Quality (Steps)" min={1} max={150} />
-                    <InputNumber
-                      name="cfgScale"
-                      label="Creativity (CFG Scale)"
-                      step={0.5}
-                      precision={1}
-                    />
+                    <InputNumber name="cfgScale" label="Creativity (CFG Scale)" step={0.5} />
                     <InputSelect
                       name="sampler"
                       label="Engine (Sampler)"

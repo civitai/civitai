@@ -90,6 +90,7 @@ export function NumberSlider({
           onChange={handleChange}
           onBlur={handleSliderBlur}
           onFocus={handleSliderFocus}
+          label={(value) => (precision ? value.toFixed(value) : value)}
         />
         <NumberInput
           ref={numberRef}
