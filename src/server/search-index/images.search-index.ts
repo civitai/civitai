@@ -38,13 +38,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
     'createdAt',
-    'rank.likeCountAllTimeRank',
-    'rank.commentCountAllTimeRank',
-    'rank.cryCountAllTimeRank',
-    'rank.dislikeCountAllTimeRank',
-    'rank.heartCountAllTimeRank',
-    'rank.laughCountAllTimeRank',
-    'rank.reactionCountAllTimeRank',
     'metric.commentCount',
     'metric.laughCount',
     'metric.heartCount',
@@ -101,17 +94,6 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
           select: {
             id: true,
             username: true,
-          },
-        },
-        rank: {
-          select: {
-            commentCountAllTimeRank: true,
-            cryCountAllTimeRank: true,
-            dislikeCountAllTimeRank: true,
-            heartCountAllTimeRank: true,
-            laughCountAllTimeRank: true,
-            likeCountAllTimeRank: true,
-            reactionCountAllTimeRank: true,
           },
         },
         metrics: {

@@ -49,13 +49,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
     'createdAt',
-    'rank.ratingAllTimeRank',
-    'rank.favoriteCountAllTime',
-    'rank.commentCountAllTime',
-    'rank.favoriteCountAllTimeRank',
-    'rank.ratingCountAllTimeRank',
-    'rank.downloadCountAllTimeRank',
-    'rank.downloadCountAllTime',
     'metrics.commentCount',
     'metrics.favoriteCount',
     'metrics.downloadCount',
@@ -151,17 +144,6 @@ const onIndexUpdate = async ({
           where: {
             hashType: ModelHashType.SHA256,
             fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-          },
-        },
-        rank: {
-          select: {
-            ratingAllTimeRank: true,
-            favoriteCountAllTime: true,
-            commentCountAllTime: true,
-            favoriteCountAllTimeRank: true,
-            ratingCountAllTimeRank: true,
-            downloadCountAllTimeRank: true,
-            downloadCountAllTime: true,
           },
         },
         metrics: {

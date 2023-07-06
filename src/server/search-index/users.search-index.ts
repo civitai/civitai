@@ -34,13 +34,17 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
     'createdAt',
-    'rank.ratingAllTimeRank',
-    'rank.ratingCountAllTimeRank',
-    'rank.followerCountAllTimeRank',
-    'rank.favoriteCountAllTimeRank',
-    'rank.answerAcceptCountAllTimeRank',
-    'rank.answerCountAllTimeRank',
-    'rank.downloadCountAllTimeRank',
+    'stats.ratingAllTime',
+    'stats.ratingCountAllTime',
+    'stats.downloadCountAllTime',
+    'stats.favoriteCountAllTime',
+    'stats.followerCountAllTime',
+    'stats.answerAcceptCountAllTime',
+    'stats.answerCountAllTime',
+    'stats.followingCountAllTime',
+    'stats.hiddenCountAllTime',
+    'stats.reviewCountAllTime',
+    'stats.uploadCountAllTime',
     'metrics.followerCount',
     'metrics.uploadCount',
     'metrics.followingCount',
@@ -50,11 +54,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
-
-  await client.waitForTasks([
-    updateSearchableAttributesTask.taskUid,
-    sortableFieldsAttributesTask.taskUid,
-  ]);
 
   console.log('onIndexSetup :: all tasks completed');
 };
@@ -92,15 +91,19 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       take: READ_BATCH_SIZE,
       select: {
         ...userWithCosmeticsSelect,
-        rank: {
+        stats: {
           select: {
-            ratingAllTimeRank: true,
-            ratingCountAllTimeRank: true,
-            followerCountAllTimeRank: true,
-            favoriteCountAllTimeRank: true,
-            answerAcceptCountAllTimeRank: true,
-            answerCountAllTimeRank: true,
-            downloadCountAllTimeRank: true,
+            ratingAllTime: true,
+            ratingCountAllTime: true,
+            downloadCountAllTime: true,
+            favoriteCountAllTime: true,
+            followerCountAllTime: true,
+            answerAcceptCountAllTime: true,
+            answerCountAllTime: true,
+            followingCountAllTime: true,
+            hiddenCountAllTime: true,
+            reviewCountAllTime: true,
+            uploadCountAllTime: true,
           },
         },
         metrics: {
@@ -111,6 +114,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
             reviewCount: true,
             answerAcceptCount: true,
             hiddenCount: true,
+            answerCount: true,
           },
           where: {
             timeframe: MetricTimeframe.AllTime,
