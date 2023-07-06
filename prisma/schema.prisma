@@ -1779,12 +1779,18 @@ model GenerationServiceProvider {
   @@id([name])
 }
 
+enum SearchIndexUpdateQueueAction {
+  Update
+  Delete
+}
+
 model SearchIndexUpdateQueue {
   type      String
   id        Int
   createdAt DateTime @default(now())
+  action    SearchIndexUpdateQueueAction @default(Update)
 
-  @@id([type, id])
+  @@id([type, id, action])
 }
 
 /// @view
