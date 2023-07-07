@@ -38,11 +38,16 @@ export function NumberSlider({
   const [_value, setValue] = useState(value);
   const [computedWidth, setComputedWidth] = useState<string>();
 
-  const handleChange = (value?: number) => {
+  const handleSliderChange = (value?: number) => {
     setValue(value);
   };
 
   const handleDragEnd = (value?: number) => {
+    onChange?.(value);
+  };
+
+  const handleInputChange = (value?: number) => {
+    setValue(value);
     onChange?.(value);
   };
 
@@ -82,6 +87,8 @@ export function NumberSlider({
     setComputedWidth(getComputedWidth(numberRef.current, min, max, precision));
   }, [min, max, precision]);
 
+  console.log({ value, _value });
+
   return (
     <Input.Wrapper {...inputWrapperProps} className={cx(classes.fill, inputWrapperProps.className)}>
       <Group spacing="xs">
@@ -93,7 +100,7 @@ export function NumberSlider({
           step={step}
           precision={precision}
           value={_value}
-          onChange={handleChange}
+          onChange={handleSliderChange}
           onBlur={handleSliderBlur}
           onFocus={handleSliderFocus}
           label={(value) => (precision ? value.toFixed(precision) : value)}
@@ -112,7 +119,7 @@ export function NumberSlider({
           step={step}
           precision={precision}
           value={_value}
-          onChange={handleChange}
+          onChange={handleInputChange}
           onBlur={handleInputBlur}
           onFocus={handleInputFocus}
         />
