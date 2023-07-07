@@ -55,7 +55,7 @@ import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { SearchBar } from '~/components/SearchBar/SearchBar';
+import { QuickSearch } from '~/components/QuickSearch/QuickSearch';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -427,7 +427,7 @@ export function AppHeader() {
         </Grid.Col> */}
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="xs" align="center">
-            <SearchBar />
+            <QuickSearch />
             <Divider orientation="vertical" />
             {!currentUser ? (
               <Button

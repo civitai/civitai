@@ -1,28 +1,22 @@
-import { Group, Image, Text, ThemeIcon, UnstyledButton, createStyles } from '@mantine/core';
+import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
 import { useOs } from '@mantine/hooks';
-import {
-  SpotlightAction,
-  SpotlightProvider,
-  openSpotlight,
-  registerSpotlightActions,
-} from '@mantine/spotlight';
+import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { TagMetric } from '@prisma/client';
-import { IconHash, IconSearch, IconUser } from '@tabler/icons-react';
+import { IconSearch } from '@tabler/icons-react';
 import Router from 'next/router';
-import { useEffect } from 'react';
 import {
+  Configure,
   Index,
   InstantSearch,
   InstantSearchApi,
+  SearchBoxProps,
   useInstantSearch,
   useSearchBox,
 } from 'react-instantsearch-hooks-web';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client.mjs';
-import { isDefined } from '~/utils/type-guards';
 
 import { CustomSpotlightAction } from './CustomSpotlightAction';
+import { useDebouncer } from '~/utils/debouncer';
 
 const searchClient = instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, undefined, {
   primaryKey: 'id',
@@ -50,18 +44,16 @@ const useStyles = createStyles((theme) => ({
 }));
 
 function prepareModelActions(hits: InstantSearchApi['results']['hits']): SpotlightAction[] {
-  return hits.map(({ id, name, images, ...hit }) => {
-    const coverImage = images.at(0);
+  return hits.map((hit) => {
+    const coverImage = hit.images.at(0);
 
     return {
       ...hit,
-      id,
-      title: name,
+      id: hit.id,
+      title: hit.name,
       group: 'models',
-      description: hit.tags.join(', '),
-      keywords: hit.user.username,
       image: coverImage,
-      onTrigger: () => Router.push(`/models/${id}`),
+      onTrigger: () => Router.push(`/models/${hit.id}`),
     };
   });
 }
@@ -77,57 +69,52 @@ function prepareUserActions(hits: InstantSearchApi['results']['hits']): Spotligh
   }));
 }
 
-const mapTagMetricsToLabel = {
-  modelCount: 'Models',
-  imageCount: 'Images',
-  articleCount: 'Articles',
-  postCount: 'Posts',
-} as const;
-type TagMetricTarget = keyof typeof mapTagMetricsToLabel;
-
-function prepareTagActions(hits: InstantSearchApi['results']['hits']): SpotlightAction[] {
-  return hits.map((hit) => {
-    const counts = Object.entries(hit.metrics as Pick<TagMetric, TagMetricTarget>)
-      .map(([key, value]) =>
-        mapTagMetricsToLabel[key as TagMetricTarget] && value > 0
-          ? `${mapTagMetricsToLabel[key as TagMetricTarget]}: ${value.toLocaleString()}`
-          : null
-      )
-      .filter(isDefined)
-      .join(', ');
-
-    return {
-      id: hit.id,
-      title: hit.name,
-      description: counts,
-      group: 'tags',
-      icon: (
-        <ThemeIcon variant="light" size="xl" radius="xl">
-          <IconHash />
-        </ThemeIcon>
-      ),
-      onTrigger: () => Router.push('/?tag=' + encodeURIComponent(hit.name)),
-    };
-  });
+function prepareArticleActions(hits: InstantSearchApi['results']['hits']): SpotlightAction[] {
+  return hits.map((hit) => ({
+    ...hit,
+    id: hit.id,
+    title: hit.title,
+    image: hit.cover,
+    group: 'articles',
+    onTrigger: () => Router.push(`/articles/${hit.id}`),
+  }));
 }
 
-function InnerSearch() {
+function prepareTagActions(hits: InstantSearchApi['results']['hits']): SpotlightAction[] {
+  return hits.map((hit) => ({
+    ...hit,
+    id: hit.id,
+    title: hit.name,
+    group: 'tags',
+    onTrigger: () => Router.push('/?tag=' + encodeURIComponent(hit.name)),
+  }));
+}
+
+function InnerSearch(props: SearchBoxProps) {
   const os = useOs();
   const { classes } = useStyles();
-  const { refine } = useSearchBox();
+  const { refine } = useSearchBox(props);
   const { scopedResults } = useInstantSearch();
+  const debouncer = useDebouncer(300);
   let actions: SpotlightAction[] = [];
 
   if (scopedResults && scopedResults.length > 0) {
-    const shouldUpdate = scopedResults.some((scope) => scope.results.nbHits > 0);
+    actions = scopedResults.flatMap((scope) => {
+      if (!scope.results || scope.results.nbHits === 0) return [];
 
-    if (shouldUpdate) {
-      const [modelsScope, usersScope, imagesScope, tagsScope] = scopedResults;
-      const modelActions = prepareModelActions(modelsScope.results.hits);
-      const userActions = prepareUserActions(usersScope.results.hits);
-      const tagActions = prepareTagActions(tagsScope.results.hits);
-      actions = [...modelActions, ...userActions, ...tagActions];
-    }
+      switch (scope.indexId) {
+        case 'models':
+          return prepareModelActions(scope.results.hits);
+        case 'users':
+          return prepareUserActions(scope.results.hits);
+        case 'articles':
+          return prepareArticleActions(scope.results.hits);
+        case 'tags':
+          return prepareTagActions(scope.results.hits);
+        default:
+          return [];
+      }
+    });
   }
 
   return (
@@ -135,11 +122,11 @@ function InnerSearch() {
       actions={actions}
       searchIcon={<IconSearch size={18} />}
       actionComponent={CustomSpotlightAction}
-      searchPlaceholder="Search models, images, articles, tags, users"
+      searchPlaceholder="Search models, users, articles, tags"
       nothingFoundMessage="Nothing found"
-      onQueryChange={refine}
+      onQueryChange={(query) => debouncer(() => refine(query))}
+      filter={(_, actions) => actions}
       limit={20}
-      highlightQuery
     >
       <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
         <Group position="apart" noWrap>
@@ -156,12 +143,13 @@ function InnerSearch() {
   );
 }
 
-export function SearchBar() {
+export function QuickSearch() {
   return (
     <InstantSearch indexName="models" searchClient={searchClient}>
-      <Index indexName="creators" />
-      <Index indexName="images" />
+      <Index indexName="users" />
+      <Index indexName="articles" />
       <Index indexName="tags" />
+      <Configure hitsPerPage={5} />
       <InnerSearch />
     </InstantSearch>
   );
