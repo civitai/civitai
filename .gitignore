@@ -42,6 +42,10 @@ yarn-error.log*
 /postgres
 /redis
 /minio
-/meilisearch
 
+# Meilisearch
+/meilisearch
+/data.ms/
+
+# WebStorm
 .idea
