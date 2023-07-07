@@ -2,7 +2,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { ImageIngestionStatus, Prisma, TagTarget, TagType } from '@prisma/client';
-import { auditMetaData } from '~/utils/image-metadata';
+import { auditMetaData } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
 
