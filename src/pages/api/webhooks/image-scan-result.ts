@@ -8,7 +8,7 @@ import {
   TagTarget,
   TagType,
 } from '@prisma/client';
-import { auditMetaData } from '~/utils/image-metadata';
+import { auditMetaData } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
 import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
