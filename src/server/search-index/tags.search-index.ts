@@ -32,7 +32,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   );
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
-    'creation_date',
+    'createdAt',
     'metrics.postCount',
     'metrics.articleCount',
     'metrics.followerCount',
@@ -87,6 +87,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
         name: true,
         nsfw: true,
         isCategory: true,
+        createdAt: true,
         metrics: {
           select: {
             postCount: true,
