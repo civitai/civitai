@@ -309,7 +309,7 @@ export const upsertArticle = async ({
     });
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
-    if (article && !article.publishedAt) {
+    if (article) {
       // If it was unpublished, need to remove it from the queue.
       if (!article.publishedAt) {
         await articlesSearchIndex.queueUpdate([
