@@ -183,7 +183,7 @@ function UserSpotlightAction({
     <Group spacing="md" noWrap>
       {image ? (
         <Image
-          src={getEdgeUrl(image, { width: 32 })}
+          src={getEdgeUrl(image, { width: 96 })}
           alt={title}
           width={32}
           height={32}
