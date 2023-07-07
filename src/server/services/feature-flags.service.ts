@@ -22,6 +22,7 @@ const featureFlags = createTypedDictionary({
   civitaiLink: ['mod', 'founder'],
   stripe: ['mod'],
   imageGeneration: ['user'],
+  enhancedSearch: ['mod', 'granted'],
 });
 
 // Set flags from ENV

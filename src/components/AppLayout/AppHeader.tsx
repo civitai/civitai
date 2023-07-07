@@ -62,6 +62,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { openSpotlight } from '@mantine/spotlight';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const HEADER_HEIGHT = 70;
 
@@ -180,6 +181,7 @@ export function AppHeader() {
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const router = useRouter();
+  const features = useFeatureFlags();
 
   const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
@@ -422,12 +424,14 @@ export function AppHeader() {
             <SupportButton />
           </Group>
         </Grid.Col>
-        {/* <Grid.Col span={6} md={5}>
-          <ListSearch onSearch={() => closeBurger()} />
-        </Grid.Col> */}
+        {!features.enhancedSearch && (
+          <Grid.Col span={6} md={5}>
+            <ListSearch onSearch={() => closeBurger()} />
+          </Grid.Col>
+        )}
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="xs" align="center">
-            <QuickSearch />
+            {features.enhancedSearch && <QuickSearch />}
             <Divider orientation="vertical" />
             {!currentUser ? (
               <Button
@@ -502,9 +506,11 @@ export function AppHeader() {
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
-            <ActionIcon onClick={() => openSpotlight()}>
-              <IconSearch />
-            </ActionIcon>
+            {features.enhancedSearch && (
+              <ActionIcon onClick={() => openSpotlight()}>
+                <IconSearch />
+              </ActionIcon>
+            )}
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             <Burger
