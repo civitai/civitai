@@ -6,11 +6,11 @@ const metricSets = {
   users: [metrics.userMetrics],
   images: [metrics.imageMetrics],
   other: [
-    metrics.answerMetrics,
+    // metrics.answerMetrics,
     metrics.articleMetrics,
-    metrics.postMetrics,
-    metrics.questionMetrics,
-    metrics.tagMetrics,
+    // metrics.postMetrics,
+    // metrics.questionMetrics,
+    // metrics.tagMetrics,
   ],
 };
 
