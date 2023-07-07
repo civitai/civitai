@@ -1,69 +1,48 @@
-import { createJob } from './job';
-import { dbWrite } from '~/server/db/client';
-import { client } from '~/server/meilisearch/client';
-import { ModelStatus } from '@prisma/client';
-import { EnqueuedTask } from 'meilisearch';
+import { createJob, UNRUNNABLE_JOB_CRON } from './job';
+import * as searchIndex from '~/server/search-index';
 
-export const searchIndexSync = createJob('search-index-sync', '33 4 * * *', async () => {
-  // Get all models and add to meilisearch index
-  if (!client) return;
+const searchIndexSets = {
+  models: searchIndex.modelsSearchIndex,
+  tags: searchIndex.tagsSearchIndex,
+  users: searchIndex.usersSearchIndex,
+  articles: searchIndex.articlesSearchIndex,
+  images: searchIndex.imagesSearchIndex,
+};
 
-  const allTasks = await Promise.all([prepareModelIndex()]);
-});
+export const searchIndexJobs = Object.entries(searchIndexSets)
+  .map(([name, searchIndexProcessor]) => [
+    createJob(
+      `search-index-sync-${name}`,
+      '*/30 * * * *',
+      async () => {
+        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update);
 
-const READ_BATCH_SIZE = 1000;
-async function prepareModelIndex() {
-  if (!client) return;
-
-  let offset = 0;
-  const modelTasks: EnqueuedTask[] = [];
-  const allTasks: EnqueuedTask[] = [];
-  while (true) {
-    const models = await dbWrite.model.findMany({
-      skip: offset,
-      take: READ_BATCH_SIZE,
-      select: {
-        id: true,
-        name: true,
-        type: true,
-        nsfw: true,
-        poi: true,
-        checkpointType: true,
-        locked: true,
-        underAttack: true,
-        earlyAccessDeadline: true,
-        mode: true,
-        allowNoCredit: true,
-        allowCommercialUse: true,
-        allowDerivatives: true,
-        allowDifferentLicense: true,
-        userId: true,
+        return {
+          [name]: searchIndexSyncTime,
+        };
       },
-      where: {
-        status: ModelStatus.Published,
+      {
+        lockExpiration: 30 * 60,
+      }
+    ),
+    createJob(
+      `search-index-sync-${name}-reset`,
+      UNRUNNABLE_JOB_CRON,
+      async () => {
+        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.reset);
+        return {
+          [`${name}-reset`]: searchIndexSyncTime,
+        };
       },
-    });
+      {
+        lockExpiration: 30 * 60,
+      }
+    ),
+  ])
+  .flat();
 
-    if (models.length === 0) break;
-    offset += models.length;
-
-    modelTasks.push(await client.index('models_new').addDocuments(models));
-    allTasks.push(
-      await client.index('all_new').addDocuments(
-        models.map((m) => ({
-          id: `model:${m.id}`,
-          name: m.name,
-          type: m.type,
-          nsfw: m.nsfw,
-        }))
-      )
-    );
-  }
-
-  await client.waitForTasks(modelTasks.map((x) => x.taskUid));
-  const swapTask = await client.swapIndexes([{ indexes: ['models', 'models_new'] }]);
-  await client.waitForTask(swapTask.taskUid);
-  await client.deleteIndex('models_new');
-
-  return allTasks;
+async function timedExecution<T>(fn: () => Promise<T>) {
+  const start = Date.now();
+  await fn();
+  return Date.now() - start;
 }
