@@ -87,7 +87,7 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
   );
 
   const canCreate = flags.imageGeneration && !!resourceCoverage;
-  if (meta.comfy) generationProcess = 'comfy';
+  if (meta.comfy) generationProcess = ImageGenerationProcess.comfy;
 
   return (
     <Stack spacing="xs">
