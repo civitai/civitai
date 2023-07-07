@@ -46,3 +46,6 @@ yarn-error.log*
 # Meilisearch
 /meilisearch
 /data.ms/
+
+# WebStorm
+.idea
