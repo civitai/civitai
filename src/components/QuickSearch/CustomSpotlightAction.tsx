@@ -33,6 +33,7 @@ import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 const actions = {
   models: ModelSpotlightAction,
@@ -181,7 +182,13 @@ function UserSpotlightAction({
   return (
     <Group spacing="md" noWrap>
       {image ? (
-        <Image src={image} alt={title} width={32} height={32} radius="xl" />
+        <Image
+          src={getEdgeUrl(image, { width: 32 })}
+          alt={title}
+          width={32}
+          height={32}
+          radius="xl"
+        />
       ) : (
         <ThemeIcon variant="light" size={32} radius="xl">
           <IconUser size={18} stroke={2.5} />
