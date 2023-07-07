@@ -5,11 +5,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { PostEditDetail, PostEditImage } from '~/server/controllers/post.controller';
 import { devtools } from 'zustand/middleware';
 import { loadImage, blurHashImage } from '~/utils/blurhash';
-import { getMetadata, auditMetaData } from '~/utils/image-metadata';
+import { auditMetaData } from '~/utils/metadata/audit';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { PostImage } from '~/server/selectors/post.selector';
+import { getMetadata } from '~/utils/metadata';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
