@@ -1,5 +1,8 @@
 import dayjs from 'dayjs';
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { modelsSearchIndex } from '~/server/search-index';
+import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { uniq } from 'lodash-es';
 
 export const modelMetrics = createMetricProcessor({
   name: 'Model',
@@ -9,7 +12,22 @@ export const modelMetrics = createMetricProcessor({
     const shouldFullRefresh = ctx.lastUpdate.getDate() !== new Date().getDate();
     if (shouldFullRefresh) ctx.lastUpdate = dayjs(ctx.lastUpdate).subtract(1.5, 'day').toDate();
 
-    for (const processor of modelMetricProcessors) await processor(ctx);
+    const updatedModelIds: Array<number> = [];
+
+    for (const processor of modelMetricProcessors) {
+      const processorUpdatedModelIds = await processor(ctx);
+      if (processorUpdatedModelIds && processorUpdatedModelIds.length > 0) {
+        updatedModelIds.push(...processorUpdatedModelIds);
+      }
+    }
+
+    const uniqueModelIds = uniq(updatedModelIds);
+
+    if (uniqueModelIds.length > 0) {
+      await modelsSearchIndex.queueUpdate(
+        uniqueModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+    }
   },
   rank: {
     async refresh(ctx) {
@@ -28,6 +46,36 @@ const modelMetricProcessors = [
   updateVersionCommentMetrics,
   updateModelMetrics,
 ];
+
+async function getAffectedModelIdsFromModelVersionIds({
+  affectedModelVersionIds,
+  db,
+}: {
+  affectedModelVersionIds: Array<number>;
+  db: PrismaClient;
+}): Promise<Array<number>> {
+  const batchSize = 500;
+  const batchCount = Math.ceil(affectedModelVersionIds.length / batchSize);
+  const affectedModelIds: Array<number> = [];
+
+  for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
+    const batch = affectedModelVersionIds.slice(
+      batchNumber * batchSize,
+      batchNumber * batchSize + batchSize
+    );
+
+    const batchAffectedModels: Array<{ modelId: number }> =
+      await db.$queryRaw`SELECT "modelId" FROM "ModelVersion" WHERE "id" IN (${Prisma.join(
+        batch
+      )});`;
+
+    const batchAffectedModelIds = batchAffectedModels.map(({ modelId }) => modelId);
+
+    affectedModelIds.push(...batchAffectedModelIds);
+  }
+
+  return affectedModelIds;
+}
 
 async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
@@ -106,6 +154,16 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
         SET "downloadCount" = EXCLUDED."downloadCount";
     `;
   }
+
+  if (affectedModelVersions.length > 0) {
+    // Get affected models from version IDs:
+    const affectedModelVersionIds = affectedModelVersions.map(
+      ({ modelVersionId }) => modelVersionId
+    );
+    return getAffectedModelIdsFromModelVersionIds({ affectedModelVersionIds, db });
+  }
+
+  return [];
 }
 
 async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
@@ -171,6 +229,16 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
     GROUP BY rr."modelVersionId", tf.timeframe
     ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
   `;
+
+  if (affectedModelVersions.length > 0) {
+    // Get affected models from version IDs:
+    const affectedModelVersionIds = affectedModelVersions.map(
+      ({ modelVersionId }) => modelVersionId
+    );
+    return getAffectedModelIdsFromModelVersionIds({ affectedModelVersionIds, db });
+  }
+
+  return [];
 }
 
 async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
@@ -222,6 +290,8 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
     GROUP BY mv.id, tf.timeframe
     ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "favoriteCount" = EXCLUDED."favoriteCount";
   `;
+
+  return affectedModels.map(({ modelId }) => modelId);
 }
 
 async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
@@ -273,6 +343,8 @@ async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcess
     GROUP BY mv.id, tf.timeframe
     ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "commentCount" = EXCLUDED."commentCount";
   `;
+
+  return affectedModels.map(({ modelId }) => modelId);
 }
 
 async function updateModelMetrics({ db }: MetricProcessorRunContext) {
@@ -285,6 +357,8 @@ async function updateModelMetrics({ db }: MetricProcessorRunContext) {
     ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET  "downloadCount" = EXCLUDED."downloadCount", rating = EXCLUDED.rating, "ratingCount" = EXCLUDED."ratingCount", "favoriteCount" = EXCLUDED."favoriteCount", "commentCount" = EXCLUDED."commentCount";
   `;
+
+  return [];
 }
 // #endregion
 
