@@ -26,7 +26,7 @@ export const createModelFileDownloadUrl = ({
 };
 
 export function getImageGenerationProcess(meta: Prisma.JsonObject): ImageGenerationProcess {
-  if (meta['comfy'] != null) return ImageGenerationProcess.comfy;
+  // if (meta['comfy'] != null) return ImageGenerationProcess.comfy; // Enable this after the search migration is complete
 
   const denoiseStrength = meta['Denoise strength'] ?? meta['Denoising strength'] != null;
   const hiresFixed =
