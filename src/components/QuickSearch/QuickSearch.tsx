@@ -18,9 +18,11 @@ import { env } from '~/env/client.mjs';
 import { CustomSpotlightAction } from './CustomSpotlightAction';
 import { useDebouncer } from '~/utils/debouncer';
 
-const searchClient = instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, undefined, {
-  primaryKey: 'id',
-});
+const searchClient = instantMeiliSearch(
+  env.NEXT_PUBLIC_SEARCH_HOST as string,
+  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  { primaryKey: 'id' }
+);
 
 const useStyles = createStyles((theme) => ({
   searchBar: {
