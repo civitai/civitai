@@ -4,7 +4,6 @@ import { SessionUser } from 'next-auth';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { isTag } from '~/server/schema/tag.schema';
-import { getNeedsReview } from '~/utils/image-metadata';
 
 import { getReactionsSelectV2 } from './reaction.selector';
 import { simpleTagSelect } from './tag.selector';

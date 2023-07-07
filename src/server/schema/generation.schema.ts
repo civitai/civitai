@@ -2,7 +2,7 @@ import { ModelType } from '@prisma/client';
 import { z } from 'zod';
 import { BaseModel, Sampler, constants } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
-import { auditPrompt } from '~/utils/image-metadata';
+import { auditPrompt } from '~/utils/metadata/audit';
 
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -64,6 +64,7 @@ export const generationParamsSchema = z.object({
   height: z.number(),
   width: z.number(),
   nsfw: z.boolean().optional(),
+  vae: z.number().optional(),
 });
 
 export const generationResourceSchema = z.object({

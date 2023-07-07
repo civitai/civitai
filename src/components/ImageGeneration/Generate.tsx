@@ -33,7 +33,7 @@ import { Sampler } from '~/server/common/constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { parsePromptMetadata } from '~/utils/image-metadata';
+import { parsePromptMetadata } from '~/utils/metadata';
 import { useLocalStorage } from '@mantine/hooks';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { useGenerationResourceStore } from '~/components/ImageGeneration/GenerationResources/useGenerationResourceStore';
@@ -91,7 +91,13 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
   }, [defaultValues]); //eslint-disable-line
 
   const handleReset = (props: Generation.Data) => {
-    useGenerationResourceStore.getState().setResources(props.resources);
+    useGenerationResourceStore
+      .getState()
+      .setResources(
+        props.resources.filter((x) =>
+          [ModelType.Checkpoint, ...ADDITIONAL_RESOURCE_TYPES].includes(x.modelType as any)
+        )
+      );
     const data = generationForm.setData(props);
     setDefaultValues(getDefaultFormValues(data.params));
   };
@@ -130,9 +136,9 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
     } else console.error(result.error);
   };
 
-  const handleParsePrompt = () => {
+  const handleParsePrompt = async () => {
     const prompt = form.getValues('prompt');
-    const metadata = parsePromptMetadata(prompt);
+    const metadata = await parsePromptMetadata(prompt);
     const result = imageGenerationSchema.safeParse({
       ...defaults,
       ...metadata,

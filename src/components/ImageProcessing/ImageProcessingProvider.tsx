@@ -1,7 +1,8 @@
 import { createContext, useContext, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
-import { auditMetaData, detectNsfwImage, getMetadata } from '~/utils/image-metadata';
+import { auditMetaData } from '~/utils/metadata/audit';
+import { getMetadata } from '~/utils/metadata';
 import {
   AnalysisMessage,
   ErrorMessage,
@@ -139,7 +140,7 @@ const handleNsfw = (data: AnalysisMessage) => {
   const cb = callbackQueue[data.uuid];
   if (cb) {
     const processing = processingQueue[data.uuid];
-    const nsfw = detectNsfwImage(data.analysis as any);
+    const nsfw = false; // Deprecated
     const auditResult = auditMetaData(processing.meta, nsfw);
     const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
     const payload = {

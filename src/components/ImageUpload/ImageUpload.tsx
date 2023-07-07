@@ -53,7 +53,6 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SimpleTag } from '~/server/selectors/tag.selector';
-import { getNeedsReview } from '~/utils/image-metadata';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -305,7 +304,7 @@ function UploadedImage({
   const showLoading = image.status && !isError && !isComplete && !isBlocked;
   const needsReview = useMemo(() => {
     if (image.id || image.status !== 'complete') return false;
-    return getNeedsReview({ analysis: image.analysis });
+    return false; // Deprecated
   }, [image.id, image.analysis, image.status]);
 
   return (

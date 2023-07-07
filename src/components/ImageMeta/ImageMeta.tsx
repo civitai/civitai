@@ -16,11 +16,11 @@ import {
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconBrush } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { encodeMetadata } from '~/utils/image-metadata';
 import { ImageGenerationProcess, ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
+import { encodeMetadata } from '~/utils/metadata';
 
 type Props = {
   meta: ImageMetaProps;
@@ -29,7 +29,7 @@ type Props = {
 };
 type MetaDisplay = {
   label: string;
-  value: string;
+  value: React.ReactNode;
 };
 
 const labelDictionary: Record<keyof ImageMetaProps, string> = {
@@ -42,12 +42,12 @@ const labelDictionary: Record<keyof ImageMetaProps, string> = {
   Model: 'Model',
   'Clip skip': 'Clip skip',
   clipSkip: 'Clip skip',
+  scheduler: 'Scheduler',
 };
 
 export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Props) {
   const flags = useFeatureFlags();
 
-  const { copied, copy } = useClipboard();
   const metas = useMemo(() => {
     const long: MetaDisplay[] = [];
     const short: MetaDisplay[] = [];
@@ -65,7 +65,13 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
         medium.push({ label, value });
       else short.push({ label, value });
     }
-    const hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
+
+    let hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
+    if (meta.comfy) {
+      medium.push({ label: 'Workflow', value: <ComfyNodes meta={meta} /> });
+      hasControlNet = (meta.controlNets as string[])?.length > 0;
+    }
+
     return { long, medium, short, hasControlNet };
   }, [meta]);
 
@@ -80,6 +86,8 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
     { id: resourceId as number },
     { enabled: flags.imageGeneration && !!resourceId }
   );
+
+  const canCreate = flags.imageGeneration && !!resourceCoverage;
 
   return (
     <Stack spacing="xs">
@@ -116,13 +124,17 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
             {label === 'Prompt' && (
               <>
                 <Badge size="xs" radius="sm">
-                  {generationProcess === 'txt2imgHiRes' ? 'txt2img + Hi-Res' : generationProcess}
+                  {meta.comfy
+                    ? 'Comfy'
+                    : generationProcess === 'txt2imgHiRes'
+                    ? 'txt2img + Hi-Res'
+                    : generationProcess}
                   {metas.hasControlNet && ' + ControlNet'}
                 </Badge>
               </>
             )}
             {(label === 'Prompt' || label === 'Negative prompt') && (
-              <CopyButton value={value}>
+              <CopyButton value={value as string}>
                 {({ copied, copy }) => (
                   <Tooltip label={`Copy ${label.toLowerCase()}`} color="dark" withArrow>
                     <ActionIcon
@@ -182,7 +194,7 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
           </Group>
         ))}
       </SimpleGrid>
-      {resourceCoverage ? (
+      {canCreate ? (
         <Button.Group>
           <Button
             size="xs"
@@ -193,37 +205,60 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
           >
             Start Creating
           </Button>
-          <Tooltip
-            label={copied ? 'Copied' : 'Copy generation data'}
-            color="dark"
-            withArrow
-            withinPortal
-          >
-            <Button
-              size="xs"
-              variant="light"
-              onClick={() => {
-                copy(encodeMetadata(meta));
-              }}
-            >
-              {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-            </Button>
-          </Tooltip>
+          <GenerationDataButton meta={meta} iconOnly />
         </Button.Group>
       ) : (
-        <Button
-          size="xs"
-          color={copied ? 'teal' : 'blue'}
-          variant="light"
-          leftIcon={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-          onClick={() => {
-            copy(encodeMetadata(meta));
-          }}
-        >
-          {copied ? 'Copied' : 'Copy Generation Data'}
-        </Button>
+        <GenerationDataButton meta={meta} />
       )}
     </Stack>
+  );
+}
+
+function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
+  const { copied, copy } = useClipboard();
+  const workflow = (meta.comfy as any).workflow;
+  return (
+    <Group
+      onClick={() => copy(JSON.stringify(workflow))}
+      spacing={4}
+      sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
+    >
+      {workflow.nodes.length} Nodes
+      {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+    </Group>
+  );
+}
+
+function GenerationDataButton({
+  meta,
+  iconOnly = false,
+}: {
+  meta: ImageMetaProps;
+  iconOnly?: boolean;
+}) {
+  const { copied, copy } = useClipboard();
+  const label = copied ? 'Copied' : 'Copy Generation Data';
+  const button = (
+    <Button
+      size="xs"
+      color={copied ? 'teal' : 'blue'}
+      variant="light"
+      onClick={() => {
+        copy(encodeMetadata(meta));
+      }}
+    >
+      <Group spacing={4}>
+        {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+        {!iconOnly && label}
+      </Group>
+    </Button>
+  );
+
+  if (!iconOnly) return button;
+  return (
+    <Tooltip label={label} color="dark" withArrow withinPortal>
+      {button}
+    </Tooltip>
   );
 }
 

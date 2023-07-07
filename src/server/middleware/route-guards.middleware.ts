@@ -2,13 +2,17 @@ import { SessionUser } from 'next-auth';
 import { NextRequest } from 'next/server';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
 import { pathToRegexp } from 'path-to-regexp';
+import { isProd } from '~/env/other';
 
 const routeGuards: RouteGuard[] = [];
 addRouteGuard({
   matcher: ['/moderator/:path*'],
   canAccess: ({ user }) => user?.isModerator,
 });
-
+addRouteGuard({
+  matcher: ['/testing/:path*'],
+  canAccess: () => !isProd,
+});
 //#region Logic
 
 type RouteGuard = {
