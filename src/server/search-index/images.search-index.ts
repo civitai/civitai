@@ -48,11 +48,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
-  await client.waitForTasks([
-    updateSearchableAttributesTask.taskUid,
-    sortableFieldsAttributesTask.taskUid,
-  ]);
-
   console.log('onIndexSetup :: all tasks completed');
 };
 

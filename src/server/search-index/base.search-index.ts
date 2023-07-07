@@ -66,14 +66,24 @@ export function createSearchIndexUpdateProcessor({
       });
     },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+      if (!items.length) {
+        return;
+      }
+
       console.log(
         `createSearchIndexUpdateProcessor :: ${indexName} :: queueUpdate :: Called with ${items.length} items`
       );
 
-      await dbWrite.$executeRaw`
+      const batchSize = 500;
+      const batchCount = Math.ceil(items.length / batchSize);
+
+      for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
+        const batch = items.slice(batchNumber * batchSize, batchNumber * batchSize + batchSize);
+
+        await dbWrite.$executeRaw`
         INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
         VALUES ${Prisma.join(
-          items.map(
+          batch.map(
             ({ id, action }) =>
               Prisma.sql`(${indexName}, ${id}, ${
                 action || SearchIndexUpdateQueueAction.Update
@@ -82,6 +92,7 @@ export function createSearchIndexUpdateProcessor({
         )} 
         ON CONFLICT ("type", "id", "action") DO UPDATE SET "createdAt" = NOW()
       `;
+      }
     },
   };
 }
