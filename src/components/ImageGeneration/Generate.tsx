@@ -182,8 +182,9 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
           width: Number(width),
         };
         generationForm.setData({ resources, params });
-        await mutateAsync({ resources, params });
-        onSuccess?.();
+        console.log({ resources, params });
+        // await mutateAsync({ resources, params });
+        // onSuccess?.();
       }}
     >
       <Stack h="100%" spacing={0}>

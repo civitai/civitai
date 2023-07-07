@@ -74,6 +74,7 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelType: model.type,
     //TODO.types: fix type casting
     baseModel: x.baseModel as string,
+    strength: model.type === ModelType.LORA ? 1 : undefined,
   };
 }
 
@@ -147,6 +148,7 @@ export const getGenerationResources = async ({
 
   return results.map((resource) => ({
     ...resource,
+    strength: resource.modelType === ModelType.LORA ? 1 : undefined,
     serviceProviders: allServiceProviders.filter(
       (sp) => (resource?.serviceProviders ?? []).indexOf(sp.name) !== -1
     ),
@@ -261,6 +263,10 @@ export const createGenerationRequest = async ({
 
   const additionalNetworks = resources
     .filter((x) => x !== checkpoint)
+    .map((x) => {
+      if (x.modelType === ModelType.LORA && !x.strength) x.strength = 1;
+      return x;
+    })
     .reduce((acc, { id, modelType, ...rest }) => {
       acc[`@civitai/${id}`] = { type: modelType, ...rest };
       return acc;
