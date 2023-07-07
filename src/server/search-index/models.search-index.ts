@@ -62,7 +62,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     // TODO.lrojas94: keep playing with ranking rules.
     'attribute',
     'metrics.rating:desc',
-    'metrics.downloadCount:asc',
+    'metrics.downloadCount:desc',
     'words',
     'typo',
     'proximity',
