@@ -17,7 +17,7 @@ import {
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma } from '@prisma/client';
+import { ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -30,6 +30,7 @@ import { env } from '~/env/server.mjs';
 import { BaseModel, baseModelSets, Sampler } from '~/server/common/constants';
 import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -74,6 +75,7 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelType: model.type,
     //TODO.types: fix type casting
     baseModel: x.baseModel as string,
+    strength: model.type === ModelType.LORA ? 1 : undefined,
   };
 }
 
@@ -144,6 +146,7 @@ export const getGenerationResources = async ({
 
   return results.map((resource) => ({
     ...resource,
+    strength: resource.modelType === ModelType.LORA ? 1 : undefined,
     serviceProviders: allServiceProviders.filter(
       (sp) => (resource?.serviceProviders ?? []).indexOf(sp.name) !== -1
     ),
@@ -258,6 +261,10 @@ export const createGenerationRequest = async ({
 
   const additionalNetworks = resources
     .filter((x) => x !== checkpoint)
+    .map((x) => {
+      if (x.modelType === ModelType.LORA && !x.strength) x.strength = 1;
+      return x;
+    })
     .reduce((acc, { id, modelType, ...rest }) => {
       acc[`@civitai/${id}`] = { type: modelType, ...rest };
       return acc;
@@ -332,6 +339,8 @@ export async function refreshGenerationCoverage() {
     }))
     .filter((x) => x.modelVersionId !== null);
 
+  const modelVersionIds = modelVersionCoverage.map((data) => data.modelVersionId);
+
   const values = modelVersionCoverage
     .map(
       (data) =>
@@ -351,6 +360,26 @@ export async function refreshGenerationCoverage() {
     SET "workers" = EXCLUDED."workers",
         "serviceProviders" = EXCLUDED."serviceProviders";
   `);
+
+  const updatedModels = await dbRead.modelVersion.findMany({
+    distinct: ['modelId'],
+    select: {
+      modelId: true,
+    },
+    where: {
+      id: {
+        in: modelVersionIds,
+      },
+    },
+  });
+
+  // Queue all updated models for re-indexation:
+  await modelsSearchIndex.queueUpdate(
+    updatedModels.map(({ modelId }) => ({
+      id: modelId,
+      action: SearchIndexUpdateQueueAction.Update,
+    }))
+  );
 
   // const serviceProviders = [];
   // for (const schedulerEntry of Object.entries(coverage.schedulers)) {

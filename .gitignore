@@ -39,6 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 
-postgres/data
-redis/data
-minio/
+/postgres
+/redis
+/minio
+
+# Meilisearch
+/meilisearch
+/data.ms/
+
+# WebStorm
+.idea

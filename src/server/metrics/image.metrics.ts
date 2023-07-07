@@ -1,9 +1,11 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
+import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
   async update({ db, lastUpdate }) {
-    await db.$executeRaw`
+    const recentEngagementSubquery = Prisma.sql`
     WITH recent_engagements AS
       (
         SELECT
@@ -24,7 +26,11 @@ export const imageMetrics = createMetricProcessor({
           "id"
         FROM "MetricUpdateQueue"
         WHERE type = 'Image'
-      ),
+      )
+      `;
+
+    await db.$executeRaw`
+    ${recentEngagementSubquery},
       -- Get all affected users
       affected AS
       (
@@ -169,6 +175,19 @@ export const imageMetrics = createMetricProcessor({
       ON CONFLICT ("imageId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
   `;
+
+    const affectedImages: Array<{ id: number }> = await db.$queryRaw`
+      ${recentEngagementSubquery}
+      SELECT DISTINCT
+            i.id  
+      FROM recent_engagements r
+      JOIN "Image" i ON i.id = r.id
+      WHERE r.id IS NOT NULL
+    `;
+
+    await imagesSearchIndex.queueUpdate(
+      affectedImages.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   },
   async clearDay({ db }) {
     await db.$executeRaw`

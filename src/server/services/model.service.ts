@@ -12,6 +12,7 @@ import {
   ModelStatus,
   ModelType,
   Prisma,
+  SearchIndexUpdateQueueAction,
   TagTarget,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -55,6 +56,7 @@ import { prepareFile } from '~/utils/file-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -401,7 +403,7 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
-export const upsertModel = ({
+export const upsertModel = async ({
   id,
   tagsOnModels,
   userId,
@@ -431,7 +433,11 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
           : undefined,
       },
     });
-  else
+  else {
+    if (tagsOnModels) {
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    }
+
     return dbWrite.model.update({
       select: { id: true, nsfw: true },
       where: { id },
@@ -463,6 +469,7 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
           : undefined,
       },
     });
+  }
 };
 
 export const createModel = async ({
@@ -597,6 +604,8 @@ export const publishModelById = async ({
         });
       }
 
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
       return model;
     },
     { timeout: 10000 }
@@ -648,6 +657,9 @@ export const unpublishModelById = async ({
         },
         data: { publishedAt: null },
       });
+
+      // Remove this model from search index as it's been unpublished.
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
       return updatedModel;
     },

@@ -47,3 +47,6 @@ export async function getJobDate(key: string, defaultValue?: Date) {
 
   return [date, set] as const;
 }
+
+// Set on Feb. 31st which will never come.
+export const UNRUNNABLE_JOB_CRON = '0 0 5 31 2 ?';
