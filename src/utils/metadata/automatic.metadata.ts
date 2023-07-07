@@ -27,6 +27,7 @@ const excludedKeys = [
   'comfy',
   'upscalers',
   'models',
+  'controlNets',
   'denoise',
 ];
 // #endregion

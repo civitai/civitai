@@ -11,6 +11,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const models: string[] = [];
     const upscalers: string[] = [];
     const vaes: string[] = [];
+    const controlNets: string[] = [];
     const additionalResources: AdditionalResource[] = [];
     for (const node of Object.values(data)) {
       for (const [key, value] of Object.entries(node.inputs)) {
@@ -37,6 +38,9 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       if (node.class_type == 'UpscaleModelLoader') upscalers.push(node.inputs.model_name as string);
 
       if (node.class_type == 'VAELoader') vaes.push(node.inputs.vae_name as string);
+
+      if (node.class_type == 'ControlNetLoader')
+        controlNets.push(node.inputs.control_net_name as string);
     }
 
     const initialSamplerNode =
@@ -57,11 +61,18 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       upscalers,
       vaes,
       additionalResources,
+      controlNets,
       comfy: {
         prompt: JSON.parse(exif.prompt),
         workflow: JSON.parse(exif.workflow),
       },
     };
+
+    // Handle control net apply
+    if (initialSamplerNode.positive.class_type === 'ControlNetApply') {
+      const conditioningNode = initialSamplerNode.positive.inputs.conditioning as ComfyNode;
+      metadata.prompt = conditioningNode.inputs.text as string;
+    }
 
     // Map to automatic1111 terms for compatibility
     a1111Compatability(metadata);

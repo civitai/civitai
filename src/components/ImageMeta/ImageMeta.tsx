@@ -65,10 +65,11 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
         medium.push({ label, value });
       else short.push({ label, value });
     }
-    const hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
 
+    let hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
     if (meta.comfy) {
       medium.push({ label: 'Workflow', value: <ComfyNodes meta={meta} /> });
+      hasControlNet = (meta.controlNets as string[])?.length > 0;
     }
 
     return { long, medium, short, hasControlNet };
@@ -87,7 +88,6 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
   );
 
   const canCreate = flags.imageGeneration && !!resourceCoverage;
-  if (meta.comfy) generationProcess = ImageGenerationProcess.comfy;
 
   return (
     <Stack spacing="xs">
@@ -124,7 +124,11 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
             {label === 'Prompt' && (
               <>
                 <Badge size="xs" radius="sm">
-                  {generationProcess === 'txt2imgHiRes' ? 'txt2img + Hi-Res' : generationProcess}
+                  {meta.comfy
+                    ? 'Comfy'
+                    : generationProcess === 'txt2imgHiRes'
+                    ? 'txt2img + Hi-Res'
+                    : generationProcess}
                   {metas.hasControlNet && ' + ControlNet'}
                 </Badge>
               </>
