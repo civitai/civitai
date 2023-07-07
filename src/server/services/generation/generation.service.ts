@@ -352,7 +352,7 @@ export async function refreshGenerationCoverage() {
         "serviceProviders" = EXCLUDED."serviceProviders";
   `);
 
-  const updatedModels = await dbWrite.modelVersion.findMany({
+  const updatedModels = await dbRead.modelVersion.findMany({
     distinct: ['modelId'],
     select: {
       modelId: true,
