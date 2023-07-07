@@ -28,6 +28,7 @@ import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metr
 import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { metricJobs } from '~/server/jobs/update-metrics';
+import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -54,6 +55,7 @@ export const jobs: Job[] = [
   processScheduledPublishing,
   refreshImageGenerationCoverage,
   ...metricJobs,
+  ...searchIndexJobs,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -1,5 +1,7 @@
 import { chunk } from 'lodash';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
+import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { articlesSearchIndex } from '~/server/search-index';
 
 export const articleMetrics = createMetricProcessor({
   name: 'Article',
@@ -74,7 +76,7 @@ export const articleMetrics = createMetricProcessor({
     // Update Other Metrics from DB
     // --------------------------------------------
 
-    await db.$executeRaw`
+    const recentEngagementSubquery = Prisma.sql`
     WITH recent_engagements AS
     (
       SELECT
@@ -102,7 +104,11 @@ export const articleMetrics = createMetricProcessor({
         "id"
       FROM "MetricUpdateQueue"
       WHERE type = 'Article'
-    ),
+    )
+    `;
+
+    await db.$executeRaw`
+    ${recentEngagementSubquery},
     -- Get all affected
     affected AS
     (
@@ -112,7 +118,6 @@ export const articleMetrics = createMetricProcessor({
         JOIN "Article" a ON a.id = r.id
         WHERE r.id IS NOT NULL
     )
-
     -- upsert metrics for all affected
     -- perform a one-pass table scan producing all metrics for all affected
     INSERT INTO "ArticleMetric" ("articleId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "favoriteCount", "hideCount")
@@ -287,6 +292,19 @@ export const articleMetrics = createMetricProcessor({
     ON CONFLICT ("articleId", timeframe) DO UPDATE
       SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "favoriteCount" = EXCLUDED."favoriteCount", "hideCount" = EXCLUDED."hideCount";
   `;
+
+    const affectedArticles: Array<{ id: number }> = await db.$queryRaw`
+      ${recentEngagementSubquery}
+      SELECT DISTINCT
+            a.id
+      FROM recent_engagements r
+      JOIN "Article" a ON a.id = r.id
+      WHERE r.id IS NOT NULL
+    `;
+
+    await articlesSearchIndex.queueUpdate(
+      affectedArticles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   },
   async clearDay({ db }) {
     await db.$executeRaw`

@@ -4,6 +4,7 @@ import {
   ArticleEngagementType,
   ModelEngagementType,
   Prisma,
+  SearchIndexUpdateQueueAction,
   TagEngagementType,
 } from '@prisma/client';
 
@@ -28,6 +29,7 @@ import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { getSystemPermissions } from '~/server/services/system-cache';
+import { usersSearchIndex } from '~/server/search-index';
 // import { createCannyToken } from '~/server/canny/canny';
 
 // const xprisma = prisma.$extends({
@@ -377,6 +379,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
       data: { deletedAt: new Date(), email: null, username: null },
     }),
   ]);
+
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
   await invalidateSession(id);
 
   // Cancel their subscription
