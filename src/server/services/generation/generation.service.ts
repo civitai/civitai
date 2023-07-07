@@ -17,7 +17,7 @@ import {
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma } from '@prisma/client';
+import { ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -30,6 +30,7 @@ import { env } from '~/env/server.mjs';
 import { BaseModel, Sampler } from '~/server/common/constants';
 import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -329,6 +330,8 @@ export async function refreshGenerationCoverage() {
     }))
     .filter((x) => x.modelVersionId !== null);
 
+  const modelVersionIds = modelVersionCoverage.map((data) => data.modelVersionId);
+
   const values = modelVersionCoverage
     .map(
       (data) =>
@@ -348,6 +351,26 @@ export async function refreshGenerationCoverage() {
     SET "workers" = EXCLUDED."workers",
         "serviceProviders" = EXCLUDED."serviceProviders";
   `);
+
+  const updatedModels = await dbWrite.modelVersion.findMany({
+    distinct: ['modelId'],
+    select: {
+      modelId: true,
+    },
+    where: {
+      id: {
+        in: modelVersionIds,
+      },
+    },
+  });
+
+  // Queue all updated models for re-indexation:
+  await modelsSearchIndex.queueUpdate(
+    updatedModels.map(({ modelId }) => ({
+      id: modelId,
+      action: SearchIndexUpdateQueueAction.Update,
+    }))
+  );
 
   // const serviceProviders = [];
   // for (const schedulerEntry of Object.entries(coverage.schedulers)) {
