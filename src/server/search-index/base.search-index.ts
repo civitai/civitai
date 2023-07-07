@@ -66,12 +66,18 @@ export function createSearchIndexUpdateProcessor({
       });
     },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+      console.log(
+        `createSearchIndexUpdateProcessor :: ${indexName} :: queueUpdate :: Called with ${items.length} items`
+      );
+
       await dbWrite.$executeRaw`
         INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
         VALUES ${Prisma.join(
           items.map(
             ({ id, action }) =>
-              Prisma.sql`(${indexName}, ${id}, ${action || SearchIndexUpdateQueueAction.Update})`
+              Prisma.sql`(${indexName}, ${id}, ${
+                action || SearchIndexUpdateQueueAction.Update
+              }::"SearchIndexUpdateQueueAction")`
           )
         )} 
         ON CONFLICT ("type", "id", "action") DO UPDATE SET "createdAt" = NOW()
