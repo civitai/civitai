@@ -142,6 +142,12 @@ export const POST_IMAGE_LIMIT = 20;
 export const CAROUSEL_LIMIT = 20;
 
 export type BaseModel = (typeof constants.baseModels)[number];
+export const baseModelSets: Record<string, BaseModel[]> = {
+  SD1: ['SD 1.4', 'SD 1.5'],
+  SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
+  SDXL: ['SDXL 0.9'],
+};
+
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
 
