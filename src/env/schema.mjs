@@ -86,6 +86,7 @@ export const serverSchema = z.object({
   AXIOM_DATASTREAM: z.string().optional(),
   SEARCH_HOST: z.string().url().optional(),
   SEARCH_API_KEY: z.string().optional(),
+  PODNAME: z.string().optional()
 });
 
 /**
