@@ -103,7 +103,9 @@ const onFetchItemsToIndex = async ({
   console.log(
     `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
     offset,
-    offset + READ_BATCH_SIZE - 1
+    offset + READ_BATCH_SIZE - 1,
+    ' filters:',
+    whereOr
   );
   const models = await db.model.findMany({
     take: READ_BATCH_SIZE,
@@ -163,9 +165,11 @@ const onFetchItemsToIndex = async ({
   });
 
   console.log(
-    `onIndexUpdate :: fetching complete for ${indexName} range:`,
+    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
     offset,
-    offset + READ_BATCH_SIZE - 1
+    offset + READ_BATCH_SIZE - 1,
+    'filters:',
+    whereOr
   );
 
   // Avoids hitting the DB without data.
