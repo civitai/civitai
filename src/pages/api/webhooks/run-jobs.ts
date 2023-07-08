@@ -60,6 +60,7 @@ export const jobs: Job[] = [
 ];
 
 const log = createLogger('jobs', 'green');
+const pod = env.PODNAME;
 
 export default WebhookEndpoint(async (req, res) => {
   const { run: runJob } = querySchema.parse(req.query);
@@ -72,7 +73,7 @@ export default WebhookEndpoint(async (req, res) => {
   if (await isLocked(name)) return res.status(200).json({ ok: true, error: 'Job already running' });
 
   const jobStart = Date.now();
-  const axiom = req.log.with({ scope: 'job', name, pod: env.PODNAME });
+  const axiom = req.log.with({ scope: 'job', name, pod });
   let result: MixedObject | void;
   try {
     log(`${name} starting`);
@@ -81,11 +82,11 @@ export default WebhookEndpoint(async (req, res) => {
     result = await run();
     log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
     axiom.info('success', { duration: Date.now() - jobStart });
-    res.status(200).json({ ok: true, pod: env.PODNAME, result: result ?? null });
-  } catch (e) {
-    log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, e);
-    axiom.error(`failed`, { duration: Date.now() - jobStart, error: e });
-    res.status(500).json({ ok: false, pod: env.PODNAME, error: e });
+    res.status(200).json({ ok: true, pod, result: result ?? null });
+  } catch (error) {
+    log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, error);
+    axiom.error(`failed`, { duration: Date.now() - jobStart, error });
+    res.status(500).json({ ok: false, pod, error });
   } finally {
     await unlock(name);
   }
