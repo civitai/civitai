@@ -32,21 +32,29 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   );
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
+    'metrics.modelCount',
+    'metrics.imageCount',
     'createdAt',
     'metrics.postCount',
     'metrics.articleCount',
     'metrics.followerCount',
-    'metrics.modelCount',
-    'metrics.imageCount',
     'metrics.hiddenCount',
+  ]);
+
+  const updateRankingRulesTask = await index.updateRankingRules([
+    'attribute',
+    'metrics.modelCount:desc',
+    'metrics.imageCount:desc',
+    'words',
+    'typo',
+    'proximity',
+    'sort',
+    'exactness',
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
-  await client.waitForTasks([
-    updateSearchableAttributesTask.taskUid,
-    sortableFieldsAttributesTask.taskUid,
-  ]);
+  console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
 
   console.log('onIndexSetup :: all tasks completed');
 };

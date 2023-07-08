@@ -61,6 +61,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const updateRankingRulesTask = await index.updateRankingRules([
     // TODO.lrojas94: keep playing with ranking rules.
     'attribute',
+    'nsfw:asc',
     'metrics.downloadCount:desc',
     'metrics.rating:desc',
     'words',
@@ -71,6 +72,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ]);
 
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+
+  const updateFilterableAttributesTask = await index.updateFilterableAttributes(['nsfw']);
+
+  console.log(
+    'onIndexSetup :: updateFilterableAttributesTask created',
+    updateFilterableAttributesTask
+  );
 };
 
 const onIndexUpdate = async ({

@@ -9,7 +9,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 
 const READ_BATCH_SIZE = 1000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 25;
 const INDEX_ID = 'articles';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
