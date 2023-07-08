@@ -1,16 +1,5 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-
-const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
-  return {
-    model: `/models/${threadParentId}?modal=commentThread&threadId=${details.threadId}&highlight=${details.commentId}`,
-    image: `/images/${threadParentId}?highlight=${details.commentId}`,
-    post: `/posts/${threadParentId}?highlight=${details.commentId}#comments`,
-    article: `/articles/${threadParentId}?highlight=${details.commentId}#comments`,
-    // review: '/models/'
-    // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
-    // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
-  }[threadType as string] as string;
-};
+import { threadUrlMap } from '~/server/notifications/comment.notifications';
 
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
@@ -66,7 +55,6 @@ export const mentionNotifications = createNotificationProcessor({
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
-          AND t."reviewId" IS NULL
 
         UNION
 
