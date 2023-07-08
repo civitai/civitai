@@ -61,6 +61,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const updateRankingRulesTask = await index.updateRankingRules([
     // TODO.lrojas94: keep playing with ranking rules.
     'attribute',
+    'nsfw:asc',
     'metrics.downloadCount:desc',
     'metrics.rating:desc',
     'words',
