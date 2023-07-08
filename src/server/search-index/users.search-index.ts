@@ -33,9 +33,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   );
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
-    'createdAt',
     'stats.ratingAllTime',
     'stats.ratingCountAllTime',
+    'createdAt',
     'stats.downloadCountAllTime',
     'stats.favoriteCountAllTime',
     'stats.followerCountAllTime',
@@ -54,6 +54,20 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+
+  const updateRankingRulesTask = await index.updateRankingRules([
+    'attribute',
+    'metrics.followerCount:desc',
+    'stats.ratingAllTime:desc',
+    'stats.ratingCountAllTime:desc',
+    'words',
+    'typo',
+    'proximity',
+    'sort',
+    'exactness',
+  ]);
+
+  console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
 
   console.log('onIndexSetup :: all tasks completed');
 };

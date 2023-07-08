@@ -1,5 +1,6 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SDResource, createMetadataProcessor } from '~/utils/metadata/base.metadata';
+import { unescape } from 'lodash';
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
@@ -42,14 +43,15 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       p.innerHTML = generationDetails;
       p.remove();
       generationDetails = p.innerHTML;
+      console.log({ generationDetails });
     } else if (exif?.parameters) {
       generationDetails = exif.parameters;
     }
 
     if (generationDetails) {
-      exif.generationDetails = generationDetails;
       generationDetails = generationDetails.replace('UNICODE', '').replace(/�/g, '');
       generationDetails = unescape(generationDetails);
+      exif.generationDetails = generationDetails;
       return generationDetails.includes('Steps: ');
     }
     return false;

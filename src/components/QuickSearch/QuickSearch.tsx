@@ -47,7 +47,17 @@ const useStyles = createStyles((theme) => ({
 
 function prepareModelActions(hits: InstantSearchApi['results']['hits']): SpotlightAction[] {
   return hits.map((hit) => {
-    const coverImage = hit.images.at(0);
+    // TODO.clientsideFiltering modify this to use the user's tag preferences
+    let coverImage = hit.images.at(0);
+    for (const image of hit.images) {
+      if (coverImage.nsfw === 'None') break;
+      if (image.nsfw === 'None') {
+        coverImage = image;
+        break;
+      } else if (image.nsfw === 'Safe' && coverImage.nsfw !== 'Safe') {
+        coverImage = image;
+      }
+    }
 
     return {
       ...hit,
@@ -88,7 +98,7 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
     id: hit.id,
     title: hit.name,
     group: 'tags',
-    onTrigger: () => Router.push('/?tag=' + encodeURIComponent(hit.name)),
+    onTrigger: () => Router.push('/tag/' + encodeURIComponent(hit.name)),
   }));
 }
 
@@ -129,6 +139,11 @@ function InnerSearch(props: SearchBoxProps) {
       onQueryChange={(query) => debouncer(() => refine(query))}
       filter={(_, actions) => actions}
       limit={20}
+      styles={(theme) => ({
+        inner: {
+          paddingTop: 70,
+        },
+      })}
     >
       <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
         <Group position="apart" noWrap>

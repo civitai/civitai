@@ -18,6 +18,9 @@ import {
 } from '~/server/search-index/base.search-index';
 import { getCategoryTags } from '~/server/services/system-cache';
 
+const RATING_BAYESIAN_M = 3.5;
+const RATING_BAYESIAN_C = 10;
+
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 50;
 const INDEX_ID = 'models';
@@ -40,6 +43,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'category.id',
     'hashes',
     'tags',
+    'triggerWords',
   ]);
 
   console.log(
@@ -59,10 +63,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
   const updateRankingRulesTask = await index.updateRankingRules([
-    // TODO.lrojas94: keep playing with ranking rules.
     'attribute',
-    'metrics.downloadCount:desc',
-    'metrics.rating:desc',
+    'nsfw:asc',
+    'metrics.weightedRating:desc',
     'words',
     'typo',
     'proximity',
@@ -71,6 +74,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ]);
 
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+
+  const updateFilterableAttributesTask = await index.updateFilterableAttributes(['nsfw']);
+
+  console.log(
+    'onIndexSetup :: updateFilterableAttributesTask created',
+    updateFilterableAttributesTask
+  );
 };
 
 const onIndexUpdate = async ({
@@ -136,6 +146,7 @@ const onIndexUpdate = async ({
             earlyAccessTimeFrame: true,
             createdAt: true,
             modelVersionGenerationCoverage: { select: { workers: true } },
+            trainedWords: true,
           },
         },
         tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
@@ -238,7 +249,13 @@ const onIndexUpdate = async ({
 
     const indexReadyRecords = models
       .map((modelRecord) => {
-        const { metrics, user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+        const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+
+        const metrics = modelRecord.metrics[0] || {};
+
+        const weightedRating =
+          (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
+          (metrics.ratingCount + RATING_BAYESIAN_C);
 
         const [modelVersion] = modelVersions;
 
@@ -255,11 +272,14 @@ const onIndexUpdate = async ({
           user,
           category,
           modelVersion,
+          triggerWords: [
+            ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
+          ],
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
           metrics: {
-            // Flattens metric array
-            ...(metrics[0] || {}),
+            ...metrics,
+            weightedRating,
           },
         };
       })
