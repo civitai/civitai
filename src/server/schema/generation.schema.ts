@@ -82,7 +82,8 @@ export const generationResourceSchema = z.object({
 
 export type GenerateFormModel = z.infer<typeof generateFormSchema>;
 export const generateFormSchema = z.object({
-  resources: generationResourceSchema.array(),
+  model: generationResourceSchema,
+  resources: generationResourceSchema.array().default([]),
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')

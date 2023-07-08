@@ -10,7 +10,7 @@ import {
 } from '@mantine/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-export type NumberSliderProps = Omit<InputWrapperProps, 'children'> & {
+export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
   onChange?: (value?: number) => void;
   min: number;
@@ -86,8 +86,6 @@ export function NumberSlider({
     if (!numberRef.current) return;
     setComputedWidth(getComputedWidth(numberRef.current, min, max, precision));
   }, [min, max, precision]);
-
-  console.log({ value, _value });
 
   return (
     <Input.Wrapper {...inputWrapperProps} className={cx(classes.fill, inputWrapperProps.className)}>

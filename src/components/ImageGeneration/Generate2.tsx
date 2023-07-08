@@ -7,7 +7,7 @@ import { useEffect } from 'react';
 
 export function Generate2() {
   const form = useForm<GenerateFormModel>({
-    resolver: zodResolver(generateFormSchema.partial()),
+    resolver: zodResolver(generateFormSchema),
     mode: 'onSubmit',
     defaultValues,
     shouldUnregister: true,
@@ -16,8 +16,7 @@ export function Generate2() {
   useEffect(() => {
     const subscription = form.watch((value, { name, type }) => {
       // do things with the form here (remove values, add values)
-      console.log({ value, name, type });
-
+      // console.log({ value, name, type });
       // reset emits an empty value object (value = {})
     });
     return () => subscription.unsubscribe();

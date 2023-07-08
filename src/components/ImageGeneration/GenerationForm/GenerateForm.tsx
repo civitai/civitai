@@ -8,16 +8,36 @@ import {
   Button,
   CardProps,
 } from '@mantine/core';
+import { ModelType } from '@prisma/client';
+import { useEffect } from 'react';
 import { UseFormReturn } from 'react-hook-form';
+import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { Form, InputNumberSlider, InputSwitch, InputTextArea } from '~/libs/form';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export function GenerateForm({ form }: { form: UseFormReturn<GenerateFormModel> }) {
+  useEffect(() => {
+    const subscription = form.watch((value, { name, type }) => {
+      // do things with the form here (remove values, add values)
+      // console.log({ value, name, type });
+      // reset emits an empty value object (value = {})
+    });
+    return () => subscription.unsubscribe();
+  }, []); //eslint-disable-line
+
   return (
     <Form form={form} onSubmit={(data) => console.log({ data })}>
       <Stack>
         <Card {...sharedCardProps}>
           <Stack>
+            <InputResourceSelect
+              name="model"
+              type={ModelType.Checkpoint}
+              label="Model"
+              buttonLabel="Add Model"
+              withAsterisk
+            />
             {/* TODO.resources */}
             <InputTextArea name="prompt" label="Prompt" withAsterisk />
             <InputTextArea name="negativePrompt" label="Negative Prompt" />
