@@ -23,6 +23,7 @@ import {
   IconMessageCircle2,
   IconMoodSmile,
   IconPhoto,
+  IconPhotoOff,
   IconUpload,
   IconUser,
   IconUsers,
@@ -112,22 +113,28 @@ function ModelSpotlightAction({
           borderRadius: '10px',
         }}
       >
-        {nsfw || image.nsfw !== 'None' ? (
-          <MediaHash {...image} cropFocus="top" />
+        {image ? (
+          nsfw || image.nsfw !== 'None' ? (
+            <MediaHash {...image} cropFocus="top" />
+          ) : (
+            <EdgeImage
+              src={image.url}
+              name={image.name ?? image.id.toString()}
+              width={450}
+              style={{
+                minWidth: '100%',
+                minHeight: '100%',
+                objectFit: 'cover',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+              }}
+            />
+          )
         ) : (
-          <EdgeImage
-            src={image.url}
-            name={image.name ?? image.id.toString()}
-            width={450}
-            style={{
-              minWidth: '100%',
-              minHeight: '100%',
-              objectFit: 'cover',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-            }}
-          />
+          <ThemeIcon variant="light" size={64} radius={0}>
+            <IconPhotoOff size={32} />
+          </ThemeIcon>
         )}
       </Center>
       {/* <ImageGuard
