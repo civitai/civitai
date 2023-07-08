@@ -14,6 +14,7 @@ import {
 import { SpotlightActionProps } from '@mantine/spotlight';
 import {
   IconBookmark,
+  IconBox,
   IconBrush,
   IconDownload,
   IconEye,
@@ -21,6 +22,7 @@ import {
   IconHeart,
   IconMessageCircle2,
   IconMoodSmile,
+  IconPhoto,
   IconUpload,
   IconUser,
   IconUsers,
@@ -101,7 +103,34 @@ function ModelSpotlightAction({
 
   return (
     <Group spacing="md" align="flex-start" noWrap>
-      <ImageGuard
+      <Center
+        sx={{
+          width: 64,
+          height: 64,
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius: '10px',
+        }}
+      >
+        {nsfw || image.nsfw !== 'None' ? (
+          <MediaHash {...image} cropFocus="top" />
+        ) : (
+          <EdgeImage
+            src={image.url}
+            name={image.name ?? image.id.toString()}
+            width={450}
+            style={{
+              minWidth: '100%',
+              minHeight: '100%',
+              objectFit: 'cover',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+            }}
+          />
+        )}
+      </Center>
+      {/* <ImageGuard
         images={[image]}
         render={(image) => (
           <Center
@@ -121,20 +150,27 @@ function ModelSpotlightAction({
                 src={image.url}
                 name={image.name ?? image.id.toString()}
                 width={450}
-                style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}
+                style={{
+                  minWidth: '100%',
+                  minHeight: '100%',
+                  objectFit: 'cover',
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                }}
               />
             </ImageGuard.Safe>
           </Center>
         )}
-      />
+      /> */}
       <Stack spacing={4} sx={{ flex: '1 !important' }}>
         <Group spacing={8}>
           <Highlight size="md" highlight={query.split(' ')}>
             {title}
           </Highlight>
           {features.imageGeneration && !!modelVersion.modelVersionGenerationCoverage?.workers && (
-            <ThemeIcon color="green" variant="filled" radius="xl">
-              <IconBrush size={16} stroke={2.5} />
+            <ThemeIcon color="green" variant="filled" radius="xl" size="sm">
+              <IconBrush size={12} stroke={2.5} />
             </ThemeIcon>
           )}
         </Group>
@@ -242,8 +278,11 @@ function TagSpotlightAction({
           {title}
         </Highlight>
         <Group spacing={4}>
-          <IconBadge size="xs" color="dark" icon={undefined}>
-            Models: {abbreviateNumber(metrics.modelCount)}
+          <IconBadge size="xs" color="dark" icon={<IconBox size={12} stroke={2.5} />}>
+            {abbreviateNumber(metrics.modelCount)} Models
+          </IconBadge>
+          <IconBadge size="xs" color="dark" icon={<IconPhoto size={12} stroke={2.5} />}>
+            {abbreviateNumber(metrics.imageCount)} Images
           </IconBadge>
         </Group>
       </Stack>

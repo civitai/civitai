@@ -43,6 +43,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'category.id',
     'hashes',
     'tags',
+    'triggerWords',
   ]);
 
   console.log(
@@ -63,6 +64,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const updateRankingRulesTask = await index.updateRankingRules([
     'attribute',
+    'nsfw:asc',
     'metrics.weightedRating:desc',
     'words',
     'typo',
@@ -72,6 +74,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ]);
 
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+
+  const updateFilterableAttributesTask = await index.updateFilterableAttributes(['nsfw']);
+
+  console.log(
+    'onIndexSetup :: updateFilterableAttributesTask created',
+    updateFilterableAttributesTask
+  );
 };
 
 const onIndexUpdate = async ({
@@ -137,6 +146,7 @@ const onIndexUpdate = async ({
             earlyAccessTimeFrame: true,
             createdAt: true,
             modelVersionGenerationCoverage: { select: { workers: true } },
+            trainedWords: true,
           },
         },
         tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
@@ -262,6 +272,9 @@ const onIndexUpdate = async ({
           user,
           category,
           modelVersion,
+          triggerWords: [
+            ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
+          ],
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
           metrics: {
