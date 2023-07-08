@@ -149,7 +149,7 @@ function InnerSearch(props: SearchBoxProps) {
         <Group position="apart" noWrap>
           <Group spacing={8} noWrap>
             <IconSearch size={16} />
-            <Text color="dimmed">Search civitai</Text>
+            <Text color="dimmed">Search</Text>
           </Group>
           <Text className={classes.keyboardIndicator} size="xs" color="dimmed">
             {os === 'macos' ? '⌘ + K' : 'Ctrl + K'}

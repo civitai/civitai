@@ -399,20 +399,21 @@ export default function ModelDetailsV2({
   }, [id]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
-  if (!model) return <NotFound />;
 
-  const deleted = !!model && !!model.deletedAt && model.status === ModelStatus.Deleted;
-  if (!!model.deletedAt && !isOwner && !isModerator) {
-    if (model.deletedBy !== model.user.id) return <NotFound />;
-    else
-      return (
-        <Center p="xl">
-          <Alert>
-            <Text size="lg">This resource has been removed by its owner</Text>
-          </Alert>
-        </Center>
-      );
-  }
+  // Handle missing and deleted models
+  const modelDoesntExist = !model;
+  const modelDeleted = !!model && !!model.deletedAt && model.status === ModelStatus.Deleted;
+  const modelNotVisible =
+    model && !isOwner && !isModerator && model.status !== ModelStatus.Published;
+  if (modelDeleted && !isOwner && !isModerator)
+    return (
+      <Center p="xl">
+        <Alert>
+          <Text size="lg">This resource has been removed by its owner</Text>
+        </Alert>
+      </Center>
+    );
+  if (modelDoesntExist || (modelDeleted && !isModerator) || modelNotVisible) return <NotFound />;
 
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
@@ -539,7 +540,7 @@ export default function ModelDetailsV2({
                         Unpublish
                       </Menu.Item>
                     )}
-                    {currentUser && isModerator && deleted && (
+                    {currentUser && isModerator && modelDeleted && (
                       <Menu.Item
                         icon={<IconRecycle size={14} stroke={1.5} />}
                         color="green"
@@ -569,7 +570,7 @@ export default function ModelDetailsV2({
                         </Menu.Item>
                       </>
                     )}
-                    {currentUser && isOwner && !deleted && (
+                    {currentUser && isOwner && !modelDeleted && (
                       <>
                         <Menu.Item
                           color={theme.colors.red[6]}
@@ -694,15 +695,15 @@ export default function ModelDetailsV2({
                 />
               </Group>
             </Stack>
-            {(model.status === ModelStatus.Unpublished || deleted) && (
+            {(model.status === ModelStatus.Unpublished || modelDeleted) && (
               <Alert color="red">
                 <Group spacing="xs" noWrap align="flex-start">
                   <ThemeIcon color="red">
                     <IconExclamationMark />
                   </ThemeIcon>
                   <Text size="md">
-                    This model has been {deleted ? 'deleted' : 'unpublished'} and is not visible to
-                    the community.
+                    This model has been {modelDeleted ? 'deleted' : 'unpublished'} and is not
+                    visible to the community.
                   </Text>
                 </Group>
               </Alert>
