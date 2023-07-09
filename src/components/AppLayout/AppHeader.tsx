@@ -431,8 +431,12 @@ export function AppHeader() {
         )}
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="xs" align="center">
-            {features.enhancedSearch && <QuickSearch />}
-            <Divider orientation="vertical" />
+            {features.enhancedSearch && (
+              <>
+                <QuickSearch />
+                <Divider orientation="vertical" />
+              </>
+            )}
             {!currentUser ? (
               <Button
                 component={NextLink}
