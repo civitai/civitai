@@ -2,7 +2,6 @@ import dayjs from 'dayjs';
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { modelsSearchIndex } from '~/server/search-index';
 import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
-import { uniq } from 'lodash-es';
 
 export const modelMetrics = createMetricProcessor({
   name: 'Model',
@@ -12,20 +11,16 @@ export const modelMetrics = createMetricProcessor({
     const shouldFullRefresh = ctx.lastUpdate.getDate() !== new Date().getDate();
     if (shouldFullRefresh) ctx.lastUpdate = dayjs(ctx.lastUpdate).subtract(1.5, 'day').toDate();
 
-    const updatedModelIds: Array<number> = [];
+    const updatedModelIds = new Set<number>();
 
     for (const processor of modelMetricProcessors) {
       const processorUpdatedModelIds = await processor(ctx);
-      if (processorUpdatedModelIds && processorUpdatedModelIds.length > 0) {
-        updatedModelIds.push(...processorUpdatedModelIds);
-      }
+      processorUpdatedModelIds.forEach((id) => updatedModelIds.add(id));
     }
 
-    const uniqueModelIds = uniq(updatedModelIds);
-
-    if (uniqueModelIds.length > 0) {
+    if (updatedModelIds.size > 0) {
       await modelsSearchIndex.queueUpdate(
-        uniqueModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        [...updatedModelIds].map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
     }
   },
@@ -261,6 +256,13 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
 
   const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
 
+  const sqlAnd = [Prisma.sql`f.type = 'Favorite'`];
+  // Conditionally pass the affected models to the query if there are less than 1000 of them
+  if (affectedModels.length < 1000)
+    sqlAnd.push(
+      Prisma.sql`f."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)`
+    );
+
   await db.$executeRaw`
     INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")
     SELECT
@@ -280,8 +282,7 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
             f."modelId",
             f."createdAt"
         FROM "ModelEngagement" f
-        WHERE f.type = 'Favorite'
-        AND f."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)
+        WHERE ${Prisma.join(sqlAnd, ` AND `)}
     ) f
     JOIN "ModelVersion" mv ON f."modelId" = mv."modelId"
     CROSS JOIN (
