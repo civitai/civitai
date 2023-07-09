@@ -27,6 +27,7 @@ import {
   IconUpload,
   IconUser,
   IconUsers,
+  IconSearch,
 } from '@tabler/icons-react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -72,9 +73,7 @@ export function CustomSpotlightAction({
   const { classes, cx } = useStyles(undefined, { styles, classNames, name: 'Spotlight' });
   const { group, ...actionProps } = action;
 
-  const ActionItem = actions[group as ActionType];
-
-  if (!ActionItem) return null;
+  const ActionItem = actions[group as ActionType] ?? DefaultSpotlightAction;
 
   return (
     <UnstyledButton
@@ -86,6 +85,27 @@ export function CustomSpotlightAction({
     >
       <ActionItem {...actionProps} query={query} />
     </UnstyledButton>
+  );
+}
+
+function DefaultSpotlightAction({
+  title,
+  description,
+}: SpotlightActionProps['action'] & { query: string }) {
+  return (
+    <Group spacing="md" noWrap>
+      <ThemeIcon size={32} radius="xl" variant="light">
+        <IconSearch size={18} stroke={2.5} />
+      </ThemeIcon>
+      <Stack spacing={0} sx={{ flexGrow: 1 }}>
+        <Text>{title}</Text>
+        {description && (
+          <Text size="sm" color="dimmed" lh={1.1}>
+            {description}
+          </Text>
+        )}
+      </Stack>
+    </Group>
   );
 }
 

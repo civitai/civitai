@@ -26,7 +26,7 @@ export function SettingsCard() {
   if (!user) return null;
 
   return (
-    <Card withBorder>
+    <Card withBorder id="settings">
       <Stack>
         <Title order={2}>Browsing Settings</Title>
         <Divider label="Image Preferences" mb={-12} />

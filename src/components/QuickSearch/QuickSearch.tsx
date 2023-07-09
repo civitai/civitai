@@ -1,5 +1,5 @@
 import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
-import { useOs } from '@mantine/hooks';
+import { useDebouncedValue, useOs } from '@mantine/hooks';
 import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
@@ -16,7 +16,8 @@ import {
 import { env } from '~/env/client.mjs';
 
 import { CustomSpotlightAction } from './CustomSpotlightAction';
-import { useDebouncer } from '~/utils/debouncer';
+import { ActionsWrapper } from './ActionsWrapper';
+import { useEffect, useState } from 'react';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -27,7 +28,7 @@ const searchClient = instantMeiliSearch(
 const useStyles = createStyles((theme) => ({
   searchBar: {
     padding: `4px 5px 4px 12px`,
-    borderRadius: theme.radius.md,
+    borderRadius: theme.radius.sm,
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
     border: `1px solid ${
       theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
@@ -107,9 +108,12 @@ function InnerSearch(props: SearchBoxProps) {
   const { classes } = useStyles();
   const { refine } = useSearchBox(props);
   const { scopedResults } = useInstantSearch();
-  const debouncer = useDebouncer(300);
-  let actions: SpotlightAction[] = [];
+  const [query, setQuery] = useState<string>('');
+  const [debouncedQuery] = useDebouncedValue(query, 300);
 
+  useEffect(() => refine(debouncedQuery), [refine, debouncedQuery]);
+
+  let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
     actions = scopedResults.flatMap((scope) => {
       if (!scope.results || scope.results.nbHits === 0) return [];
@@ -129,6 +133,16 @@ function InnerSearch(props: SearchBoxProps) {
     });
   }
 
+  if (query.length > 0) {
+    actions.unshift({
+      id: 'old-search',
+      group: 'search',
+      title: 'Perform old search',
+      description: 'Search for models using the old search system',
+      onTrigger: () => Router.push(`/?query=${query}`),
+    });
+  }
+
   return (
     <SpotlightProvider
       actions={actions}
@@ -136,7 +150,8 @@ function InnerSearch(props: SearchBoxProps) {
       actionComponent={CustomSpotlightAction}
       searchPlaceholder="Search models, users, articles, tags"
       nothingFoundMessage="Nothing found"
-      onQueryChange={(query) => debouncer(() => refine(query))}
+      actionsWrapperComponent={ActionsWrapper}
+      onQueryChange={setQuery}
       filter={(_, actions) => actions}
       limit={20}
       styles={(theme) => ({
