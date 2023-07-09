@@ -98,13 +98,10 @@ const onSearchIndexDocumentsCleanup = async ({
   await client.waitForTask(task.taskUid);
 };
 
-const waitForTasksWithRetries = async ({
-  taskUids,
-  remainingRetries = WAIT_FOR_TASKS_MAX_RETRIES,
-}: {
-  taskUids: number[];
-  remainingRetries: number;
-}): Promise<Task[]> => {
+const waitForTasksWithRetries = async (
+  taskUids: number[],
+  remainingRetries: number = WAIT_FOR_TASKS_MAX_RETRIES
+): Promise<Task[]> => {
   if (!client) {
     return [];
   }
@@ -114,13 +111,15 @@ const waitForTasksWithRetries = async ({
   }
 
   try {
+    // Attempt to increase a little the timeOutMs every time such that
+    // if the issue is a long queue, we can account for it:
     const timeOutMs = 5000 * (1 + WAIT_FOR_TASKS_MAX_RETRIES - remainingRetries);
     const tasks = await client.waitForTasks(taskUids, { timeOutMs });
 
     return tasks;
   } catch (e) {
     if (e instanceof MeiliSearchTimeOutError) {
-      return waitForTasksWithRetries({ taskUids, remainingRetries: remainingRetries - 1 });
+      return waitForTasksWithRetries(taskUids, remainingRetries - 1);
     }
 
     throw e;
