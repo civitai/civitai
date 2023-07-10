@@ -18,6 +18,18 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         if (Array.isArray(value)) node.inputs[key] = data[value[0]];
       }
 
+      if (node.class_type == 'KSamplerAdvanced') {
+        const simplifiedNode = { ...node.inputs };
+
+        const stepsNode = simplifiedNode.steps as ComfyNode;
+        simplifiedNode.steps = stepsNode.inputs.Value as number;
+
+        const cfgNode = simplifiedNode.cfg as ComfyNode;
+        simplifiedNode.cfg = cfgNode.inputs.Value as number;
+
+        samplerNodes.push(simplifiedNode as SamplerNode);
+      }
+
       if (node.class_type == 'KSampler') samplerNodes.push(node.inputs as SamplerNode);
 
       if (node.class_type == 'LoraLoader') {
@@ -47,8 +59,8 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ?? samplerNodes[0];
 
     const metadata: ImageMetaProps = {
-      prompt: initialSamplerNode.positive.inputs.text as string,
-      negativePrompt: initialSamplerNode.negative.inputs.text as string,
+      prompt: getPromptText(initialSamplerNode.positive),
+      negativePrompt: getPromptText(initialSamplerNode.negative),
       cfgScale: initialSamplerNode.cfg,
       steps: initialSamplerNode.steps,
       seed: initialSamplerNode.seed,
@@ -99,6 +111,16 @@ function a1111Compatability(metadata: ImageMetaProps) {
   if (models.length > 0) {
     metadata.Model = models[0].replace(/\.[^/.]+$/, '');
   }
+}
+
+function getPromptText(node: ComfyNode) {
+  if (node.inputs?.text) return node.inputs.text as string;
+  if (node.inputs?.text_g) {
+    if (!node.inputs?.text_l || node.inputs?.text_l === node.inputs?.text_g)
+      return node.inputs.text_g as string;
+    return `${node.inputs.text_g}, ${node.inputs.text_l}`;
+  }
+  return '';
 }
 
 // #region [types]
