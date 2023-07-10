@@ -6,6 +6,7 @@ import {
   UserActivityType,
   ModelModifier,
   MetricTimeframe,
+  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
@@ -77,6 +78,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { getArticles } from '~/server/services/article.service';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -489,6 +491,8 @@ export const deleteModelHandler = async ({
     const model = await deleteModel({ id, userId: ctx.user.id });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',
       modelId: model.id,
@@ -783,6 +787,10 @@ export const restoreModelHandler = async ({
     const model = await restoreModelById({ ...input });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
+    await modelsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) error;
@@ -843,6 +851,11 @@ export const reorderModelVersionsHandler = async ({
         },
       },
     });
+
+    await modelsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     return model;

@@ -1,6 +1,7 @@
 import { Card, Divider, Group, Select, Stack, Switch, Title } from '@mantine/core';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
@@ -11,6 +12,7 @@ const validModelFormats = constants.modelFileFormats.filter((format) => format !
 export function SettingsCard() {
   const user = useCurrentUser();
   const utils = trpc.useContext();
+  const { toggles } = useFeatureFlags();
 
   const { mutate, isLoading } = trpc.user.update.useMutation({
     async onSuccess() {
@@ -24,7 +26,7 @@ export function SettingsCard() {
   if (!user) return null;
 
   return (
-    <Card withBorder>
+    <Card withBorder id="settings">
       <Stack>
         <Title order={2}>Browsing Settings</Title>
         <Divider label="Image Preferences" mb={-12} />
@@ -99,6 +101,21 @@ export function SettingsCard() {
             disabled={isLoading}
           />
         </Group>
+        {toggles.available.length > 0 && (
+          <>
+            <Divider label="Early Access Features" mb={-12} />
+            {toggles.available.map((feature) => (
+              <Switch
+                name={feature.key}
+                key={feature.key}
+                label={feature.displayName}
+                checked={toggles.values[feature.key]}
+                onChange={(e) => toggles.set(feature.key, e.target.checked)}
+                description={feature.description}
+              />
+            ))}
+          </>
+        )}
       </Stack>
     </Card>
   );

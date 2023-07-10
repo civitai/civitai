@@ -9,6 +9,7 @@ import {
   ReportStatus,
   ReviewReaction,
   ReviewReactions,
+  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
@@ -52,6 +53,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { deleteObject } from '~/utils/s3-utils';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { logToDb } from '~/utils/logging';
+import { imagesSearchIndex } from '~/server/search-index';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -331,6 +333,10 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
     if (isProd && image && !imageUrlInUse({ url: image.url, id }))
       await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
 
+    if (image) {
+      await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    }
+
     return await dbWrite.image.delete({ where: { id } });
   } catch {
     // Ignore errors
@@ -338,7 +344,7 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
 };
 
 // consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
-export const updateImageById = <TSelect extends Prisma.ImageSelect>({
+export const updateImageById = async <TSelect extends Prisma.ImageSelect>({
   id,
   select,
   data,
@@ -347,7 +353,13 @@ export const updateImageById = <TSelect extends Prisma.ImageSelect>({
   data: Prisma.ImageUpdateArgs['data'];
   select: TSelect;
 }) => {
-  return dbWrite.image.update({ where: { id }, data, select });
+  const image = await dbWrite.image.update({ where: { id }, data, select });
+
+  if (image.tosViolation) {
+    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  }
+
+  return image;
 };
 
 export const moderateImages = async ({
@@ -366,6 +378,10 @@ export const moderateImages = async ({
     } else {
       await dbWrite.image.deleteMany({ where: { id: { in: ids } } });
     }
+
+    await imagesSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+    );
   } else {
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },

@@ -17,7 +17,7 @@ import {
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma } from '@prisma/client';
+import { ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -27,9 +27,10 @@ import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
 import { env } from '~/env/server.mjs';
 
-import { BaseModel, Sampler } from '~/server/common/constants';
+import { BaseModel, baseModelSets, Sampler } from '~/server/common/constants';
 import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
+import { modelsSearchIndex } from '~/server/search-index';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -78,10 +79,7 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
   };
 }
 
-const baseModelSets: Array<BaseModel[]> = [
-  ['SD 1.4', 'SD 1.5'],
-  ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-];
+const baseModelSetsArray = Object.values(baseModelSets);
 export const getGenerationResources = async ({
   take,
   query,
@@ -103,7 +101,7 @@ export const getGenerationResources = async ({
     sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
   }
   if (baseModel) {
-    const baseModelSet = baseModelSets.find((x) => x.includes(baseModel as BaseModel));
+    const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
     if (baseModelSet)
       sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
   }
@@ -341,6 +339,8 @@ export async function refreshGenerationCoverage() {
     }))
     .filter((x) => x.modelVersionId !== null);
 
+  const modelVersionIds = modelVersionCoverage.map((data) => data.modelVersionId);
+
   const values = modelVersionCoverage
     .map(
       (data) =>
@@ -360,6 +360,26 @@ export async function refreshGenerationCoverage() {
     SET "workers" = EXCLUDED."workers",
         "serviceProviders" = EXCLUDED."serviceProviders";
   `);
+
+  const updatedModels = await dbRead.modelVersion.findMany({
+    distinct: ['modelId'],
+    select: {
+      modelId: true,
+    },
+    where: {
+      id: {
+        in: modelVersionIds,
+      },
+    },
+  });
+
+  // Queue all updated models for re-indexation:
+  await modelsSearchIndex.queueUpdate(
+    updatedModels.map(({ modelId }) => ({
+      id: modelId,
+      action: SearchIndexUpdateQueueAction.Update,
+    }))
+  );
 
   // const serviceProviders = [];
   // for (const schedulerEntry of Object.entries(coverage.schedulers)) {

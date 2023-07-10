@@ -1,9 +1,11 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
+import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { imagesSearchIndex, tagsSearchIndex } from '~/server/search-index';
 
 export const tagMetrics = createMetricProcessor({
   name: 'Tag',
   async update({ db, lastUpdate }) {
-    await db.$executeRaw`
+    const recentEngagementSubquery = Prisma.sql`
     -- Get all engagements that have happened since then that affect metrics
     WITH recent_engagements AS
     (
@@ -34,7 +36,11 @@ export const tagMetrics = createMetricProcessor({
         "id"
       FROM "MetricUpdateQueue"
       WHERE type = 'Tag'
-    ),
+    )
+    `;
+
+    await db.$executeRaw`
+    ${recentEngagementSubquery},
     -- Get all affected
     affected AS
     (
@@ -199,6 +205,19 @@ export const tagMetrics = createMetricProcessor({
     ON CONFLICT ("tagId", timeframe) DO UPDATE
       SET "followerCount" = EXCLUDED."followerCount", "modelCount" = EXCLUDED."modelCount", "hiddenCount" = EXCLUDED."hiddenCount", "postCount" = EXCLUDED."postCount", "imageCount" = EXCLUDED."imageCount", "articleCount" = EXCLUDED."articleCount";
   `;
+
+    const affectedTags: Array<{ id: number }> = await db.$queryRaw`
+      ${recentEngagementSubquery}
+        SELECT DISTINCT
+            t.id
+        FROM recent_engagements r
+        JOIN "Tag" t ON t.id = r.id
+        WHERE r.id IS NOT NULL
+    `;
+
+    await tagsSearchIndex.queueUpdate(
+      affectedTags.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   },
   async clearDay({ db }) {
     await db.$executeRaw`

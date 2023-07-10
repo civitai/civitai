@@ -84,6 +84,9 @@ export const serverSchema = z.object({
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),
+  SEARCH_HOST: z.string().url().optional(),
+  SEARCH_API_KEY: z.string().optional(),
+  PODNAME: z.string().optional()
 });
 
 /**
@@ -103,6 +106,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CANNY_APP_ID: z.string().optional(),
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.string().url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
+  NEXT_PUBLIC_SEARCH_HOST: z.string().url().optional(),
+  NEXT_PUBLIC_SEARCH_CLIENT_KEY: z.string().optional(),
 });
 
 /**
@@ -123,4 +128,6 @@ export const clientEnv = {
   NEXT_PUBLIC_CANNY_APP_ID: process.env.NEXT_PUBLIC_CANNY_APP_ID,
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: process.env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT,
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,
+  NEXT_PUBLIC_SEARCH_HOST: process.env.NEXT_PUBLIC_SEARCH_HOST,
+  NEXT_PUBLIC_SEARCH_CLIENT_KEY: process.env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
 };

@@ -35,7 +35,7 @@ import { MaintenanceMode } from '~/components/MaintenanceMode/MaintenanceMode';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import type { FeatureFlags } from '~/server/services/feature-flags.service';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { FreezeProvider, RoutedContextProvider2 } from '~/providers/RoutedContextProvider';
 import { isDev, isMaintenanceMode } from '~/env/other';
@@ -67,7 +67,7 @@ type CustomAppProps = {
   colorScheme: ColorScheme;
   cookies: CookiesContext;
   filters: CookiesState;
-  flags: FeatureFlags;
+  flags: FeatureAccess;
   isMaintenanceMode: boolean | undefined;
 }>;
 
