@@ -81,7 +81,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
 
-  const updateFilterableAttributesTask = await index.updateFilterableAttributes(['nsfw']);
+  const updateFilterableAttributesTask = await index.updateFilterableAttributes(['nsfw', 'type']);
 
   console.log(
     'onIndexSetup :: updateFilterableAttributesTask created',
