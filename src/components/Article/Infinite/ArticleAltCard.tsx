@@ -105,20 +105,22 @@ export function ArticleAltCard({ data }: Props) {
             </CivitaiTooltip>
           )}
           <Stack className={classes.content} spacing={6} p="xs">
-            <Text lineClamp={2}>{title}</Text>
+            <Text size={14} weight={500} color="white" lineClamp={2} lh={1.2}>
+              {title}
+            </Text>
             <Group position="apart">
               <Group spacing={4}>
-                <IconBadge icon={<IconBookmark size={14} />} color="dark">
+                <IconBadge icon={<IconBookmark size={14} />} className={classes.statBadge}>
                   <Text size="xs">{abbreviateNumber(favoriteCount)}</Text>
                 </IconBadge>
-                <IconBadge icon={<IconMoodSmile size={14} />} color="dark">
+                <IconBadge icon={<IconMoodSmile size={14} />} className={classes.statBadge}>
                   <Text size="xs">{abbreviateNumber(reactionCount)}</Text>
                 </IconBadge>
-                <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
+                <IconBadge icon={<IconMessageCircle2 size={14} />} className={classes.statBadge}>
                   <Text size="xs">{abbreviateNumber(commentCount)}</Text>
                 </IconBadge>
               </Group>
-              <IconBadge icon={<IconEye size={14} />} color="dark">
+              <IconBadge icon={<IconEye size={14} />} className={classes.statBadge}>
                 <Text size="xs">{abbreviateNumber(viewCount)}</Text>
               </IconBadge>
             </Group>
@@ -160,6 +162,11 @@ const useStyles = createStyles((theme) => ({
     }),
     backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+  },
+
+  statBadge: {
+    background: 'rgba(212,212,212,0.2)',
+    color: 'white',
   },
 
   userAvatar: {
