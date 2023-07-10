@@ -154,11 +154,12 @@ function InnerSearch(props: SearchBoxProps) {
       onQueryChange={setQuery}
       filter={(_, actions) => actions}
       limit={20}
-      styles={(theme) => ({
+      styles={() => ({
         inner: {
           paddingTop: 70,
         },
       })}
+      cleanQueryOnClose={false}
     >
       <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
         <Group position="apart" noWrap>
