@@ -137,8 +137,8 @@ function InnerSearch(props: SearchBoxProps) {
     actions.unshift({
       id: 'old-search',
       group: 'search',
-      title: 'Perform old search',
-      description: 'Search for models using the old search system',
+      title: 'Keyword search',
+      description: 'Search for models using the keywords you entered',
       onTrigger: () => Router.push(`/?query=${query}&view=feed`),
     });
   }
