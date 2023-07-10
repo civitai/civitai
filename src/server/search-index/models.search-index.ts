@@ -5,6 +5,7 @@ import {
   MetricTimeframe,
   ModelHashType,
   ModelStatus,
+  Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
@@ -96,7 +97,7 @@ const onFetchItemsToIndex = async ({
 }: {
   db: PrismaClient;
   indexName: string;
-  whereOr?: object;
+  whereOr?: Prisma.Enumerable<Prisma.ModelWhereInput>;
   skip?: number;
   take?: number;
 }) => {
@@ -164,7 +165,7 @@ const onFetchItemsToIndex = async ({
     },
     where: {
       status: ModelStatus.Published,
-      OR: whereOr || undefined,
+      OR: whereOr,
     },
   });
 
