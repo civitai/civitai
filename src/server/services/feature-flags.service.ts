@@ -96,6 +96,7 @@ function createFeatureFlags<T extends Record<string, FeatureFlag | FeatureAvaila
     const override = envOverrides[key as FeatureFlagKey];
     if (override) features[key as keyof T].availability = override;
   }
+
   return features;
 }
 

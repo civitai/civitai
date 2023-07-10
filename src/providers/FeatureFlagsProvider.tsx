@@ -18,10 +18,24 @@ export const useFeatureFlags = () => {
       {}
     ),
   });
+
   const featuresWithToggled = useMemo(() => {
     return Object.keys(features).reduce((acc, key) => {
-      const hasFeature = features[key as keyof FeatureAccess];
-      const isToggled = toggled[key as keyof FeatureAccess];
+      const featureAccessKey = key as keyof FeatureAccess;
+      const hasFeature = features[featureAccessKey];
+      const featureIsToggleable = toggleableFeatures.find(
+        (toggleableFeature) => toggleableFeature.key === key
+      );
+
+      // Non toggleable features will rely on our standard feature flag settings:
+      if (!featureIsToggleable) {
+        return {
+          ...acc,
+          [key]: hasFeature,
+        };
+      }
+
+      const isToggled = toggled[featureAccessKey];
       return { ...acc, [key]: hasFeature && isToggled } as FeatureAccess;
     }, {} as FeatureAccess);
   }, [features, toggled]);
