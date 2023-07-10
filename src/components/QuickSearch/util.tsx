@@ -1,6 +1,6 @@
 import { isDefined } from '~/utils/type-guards';
 
-type FilterIndex = 'models' | 'users' | 'tags' | 'articles';
+export type FilterIndex = 'models' | 'users' | 'tags' | 'articles';
 type MatchedFilter = {
   indexName: FilterIndex;
   attribute: string;
@@ -99,7 +99,7 @@ const getFiltersByIndexName = (indexName: string, matchedFilters: MatchedFilter[
 
       return matches.map((match) => `${attribute}=${match}`).join(' AND ');
     })
-    .filter((item) => !!item)
+    .filter(isDefined)
     .join(' AND ');
 };
 

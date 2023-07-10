@@ -17,12 +17,13 @@ import { env } from '~/env/client.mjs';
 
 import { CustomSpotlightAction } from './CustomSpotlightAction';
 import { ActionsWrapper } from './ActionsWrapper';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import {
   applyQueryMatchers,
   getFiltersByIndexName,
   hasForceUniqueQueryAttribute,
 } from '~/components/QuickSearch/util';
+import { useSearchStore } from '~/components/QuickSearch/search.store';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -111,10 +112,11 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
 function InnerSearch(props: SearchBoxProps) {
   const os = useOs();
   const { classes } = useStyles();
-  const { scopedResults, results, ...other } = useInstantSearch();
+  const { scopedResults } = useInstantSearch();
 
   const { refine } = useSearchBox(props);
-  const [query, setQuery] = useState<string>('');
+  const query = useSearchStore((state) => state.query);
+  const setQuery = useSearchStore((state) => state.setQuery);
   const [debouncedQuery] = useDebouncedValue(query, 300);
 
   const { updatedQuery, matchedFilters } = applyQueryMatchers(debouncedQuery);
@@ -147,7 +149,7 @@ function InnerSearch(props: SearchBoxProps) {
       group: 'search',
       title: 'Keyword search',
       description: 'Search for models using the keywords you entered',
-      onTrigger: () => Router.push(`/?query=${query}&view=feed`),
+      onTrigger: () => Router.push(`/?query=${updatedQuery}&view=feed`),
     });
   }
 
@@ -158,7 +160,6 @@ function InnerSearch(props: SearchBoxProps) {
 
     if (uniqueQueryAttributeMatched) {
       const { indexName } = uniqueQueryAttributeMatched;
-
       const filters = getFiltersByIndexName(indexName, matchedFilters);
 
       return (
@@ -199,12 +200,13 @@ function InnerSearch(props: SearchBoxProps) {
       <SpotlightProvider
         actions={actions}
         searchIcon={<IconSearch size={18} />}
+        searchInputProps={{ value: query, defaultValue: query }}
         actionComponent={CustomSpotlightAction}
         actionsWrapperComponent={ActionsWrapper}
         searchPlaceholder="Search models, users, articles, tags"
         nothingFoundMessage="Nothing found"
         onQueryChange={setQuery}
-        highlightQuery={false}
+        cleanQueryOnClose={false}
         filter={(_, actions) => actions}
         limit={20}
         styles={() => ({
@@ -212,7 +214,6 @@ function InnerSearch(props: SearchBoxProps) {
           spotlight: { overflow: 'hidden' },
           actions: { overflow: 'auto', maxHeight: 'calc(100vh - 17rem)' },
         })}
-        cleanQueryOnClose={false}
       >
         <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
           <Group position="apart" noWrap>

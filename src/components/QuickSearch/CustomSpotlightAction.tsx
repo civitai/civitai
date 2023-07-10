@@ -8,7 +8,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  UnstyledButton,
   createStyles,
 } from '@mantine/core';
 import { SpotlightActionProps, useSpotlight } from '@mantine/spotlight';
@@ -24,21 +23,22 @@ import {
   IconMoodSmile,
   IconPhoto,
   IconPhotoOff,
+  IconSearch,
   IconUpload,
   IconUser,
   IconUsers,
-  IconSearch,
 } from '@tabler/icons-react';
+import Link from 'next/link';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { applyQueryMatchers } from '~/components/QuickSearch/util';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import Link from 'next/link';
 
 const actions = {
   models: {
@@ -90,16 +90,17 @@ export function CustomSpotlightAction({
   const { classes } = useStyles({ hovered }, { styles, classNames, name: 'Spotlight' });
   const { closeSpotlight } = useSpotlight();
   const { group, ...actionProps } = action;
+  const { updatedQuery } = applyQueryMatchers(query);
 
   const { Component: ActionItem, getHref } = actions[group as ActionType] ?? {
     Component: DefaultSpotlightAction,
-    getHref: () => `/?query=${query}&view=feed`,
+    getHref: () => `/?query=${updatedQuery}&view=feed`,
   };
 
   return (
     <Link href={getHref(action)} passHref>
       <a className={classes.action} onClick={closeSpotlight}>
-        <ActionItem {...actionProps} query={query} />
+        <ActionItem {...actionProps} query={updatedQuery} />
       </a>
     </Link>
   );
