@@ -200,18 +200,19 @@ function InnerSearch(props: SearchBoxProps) {
         actions={actions}
         searchIcon={<IconSearch size={18} />}
         actionComponent={CustomSpotlightAction}
+        actionsWrapperComponent={ActionsWrapper}
         searchPlaceholder="Search models, users, articles, tags"
         nothingFoundMessage="Nothing found"
-        actionsWrapperComponent={ActionsWrapper}
         onQueryChange={setQuery}
         highlightQuery={false}
         filter={(_, actions) => actions}
         limit={20}
-        styles={(theme) => ({
-          inner: {
-            paddingTop: 70,
-          },
+        styles={() => ({
+          inner: { paddingTop: 70 },
+          spotlight: { overflow: 'hidden' },
+          actions: { overflow: 'auto', maxHeight: 'calc(100vh - 17rem)' },
         })}
+        cleanQueryOnClose={false}
       >
         <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
           <Group position="apart" noWrap>
