@@ -12,19 +12,11 @@ import {
 import {
   ImageIngestionStatus,
   MetricTimeframe,
-  ModelHashType,
-  ModelStatus,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { imageSelect } from '~/server/selectors/image.selector';
-import { getCategoryTags } from '~/server/services/system-cache';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { ModelFileType } from '~/server/common/constants';
-import { getImagesForModelVersion } from '~/server/services/image.service';
-import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
