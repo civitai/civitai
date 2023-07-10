@@ -155,9 +155,9 @@ function InnerSearch(props: SearchBoxProps) {
       filter={(_, actions) => actions}
       limit={20}
       styles={() => ({
-        inner: {
-          paddingTop: 70,
-        },
+        inner: { paddingTop: 70 },
+        root: { overflow: 'hidden' },
+        actions: { overflow: 'auto', maxHeight: 'calc(100vh - 14rem)' },
       })}
       cleanQueryOnClose={false}
     >

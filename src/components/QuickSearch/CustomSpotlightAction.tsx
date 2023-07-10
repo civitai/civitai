@@ -93,7 +93,7 @@ export function CustomSpotlightAction({
 
   const { Component: ActionItem, getHref } = actions[group as ActionType] ?? {
     Component: DefaultSpotlightAction,
-    getHref: () => `/?query=${query}`,
+    getHref: () => `/?query=${query}&view=feed`,
   };
 
   return (

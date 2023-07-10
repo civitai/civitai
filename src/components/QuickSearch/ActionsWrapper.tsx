@@ -4,7 +4,7 @@ import { closeSpotlight } from '@mantine/spotlight';
 
 export function ActionsWrapper({ children }: { children: React.ReactNode }) {
   return (
-    <div>
+    <>
       <Group
         px={15}
         py="xs"
@@ -32,6 +32,6 @@ export function ActionsWrapper({ children }: { children: React.ReactNode }) {
         </Anchor>
       </Group>
       {children}
-    </div>
+    </>
   );
 }
