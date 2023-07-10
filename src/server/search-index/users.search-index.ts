@@ -102,7 +102,7 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
-  const tags = await db.user.findMany({
+  const users = await db.user.findMany({
     skip: offset,
     take: READ_BATCH_SIZE,
     select: {
@@ -155,11 +155,11 @@ const onFetchItemsToIndex = async ({
   );
 
   // Avoids hitting the DB without data.
-  if (tags.length === 0) {
+  if (users.length === 0) {
     return [];
   }
 
-  const indexReadyRecords = tags.map((tagRecord) => {
+  const indexReadyRecords = users.map((tagRecord) => {
     return {
       ...tagRecord,
       metrics: {
