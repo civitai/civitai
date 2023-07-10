@@ -1,6 +1,8 @@
-import { IndexOptions, MeiliSearchErrorInfo } from 'meilisearch';
+import { IndexOptions, MeiliSearchErrorInfo, MeiliSearchTimeOutError, Task } from 'meilisearch';
 import { client } from '~/server/meilisearch/client';
 import { PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+
+const WAIT_FOR_TASKS_MAX_RETRIES = 3;
 
 const getOrCreateIndex = async (indexName: string, options?: IndexOptions) => {
   if (!client) {
@@ -96,4 +98,32 @@ const onSearchIndexDocumentsCleanup = async ({
   await client.waitForTask(task.taskUid);
 };
 
-export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup };
+const waitForTasksWithRetries = async (
+  taskUids: number[],
+  remainingRetries: number = WAIT_FOR_TASKS_MAX_RETRIES
+): Promise<Task[]> => {
+  if (!client) {
+    return [];
+  }
+
+  if (remainingRetries === 0) {
+    throw new MeiliSearchTimeOutError('');
+  }
+
+  try {
+    // Attempt to increase a little the timeOutMs every time such that
+    // if the issue is a long queue, we can account for it:
+    const timeOutMs = 5000 * (1 + WAIT_FOR_TASKS_MAX_RETRIES - remainingRetries);
+    const tasks = await client.waitForTasks(taskUids, { timeOutMs });
+
+    return tasks;
+  } catch (e) {
+    if (e instanceof MeiliSearchTimeOutError) {
+      return waitForTasksWithRetries(taskUids, remainingRetries - 1);
+    }
+
+    throw e;
+  }
+};
+
+export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup, waitForTasksWithRetries };

@@ -5,10 +5,16 @@ import {
   MetricTimeframe,
   ModelHashType,
   ModelStatus,
+  Prisma,
+  PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
-import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
+import {
+  getOrCreateIndex,
+  onSearchIndexDocumentsCleanup,
+  waitForTasksWithRetries,
+} from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
@@ -83,6 +89,254 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   );
 };
 
+const onFetchItemsToIndex = async ({
+  db,
+  whereOr,
+  indexName,
+  ...queryProps
+}: {
+  db: PrismaClient;
+  indexName: string;
+  whereOr?: Prisma.Enumerable<Prisma.ModelWhereInput>;
+  skip?: number;
+  take?: number;
+}) => {
+  const modelCategories = await getCategoryTags('model');
+  const modelCategoriesIds = modelCategories.map((category) => category.id);
+
+  const offset = queryProps.skip || 0;
+  console.log(
+    `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
+    offset,
+    offset + READ_BATCH_SIZE - 1,
+    ' filters:',
+    whereOr
+  );
+  const models = await db.model.findMany({
+    take: READ_BATCH_SIZE,
+    ...queryProps,
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      status: true,
+      createdAt: true,
+      lastVersionAt: true,
+      publishedAt: true,
+      locked: true,
+      earlyAccessDeadline: true,
+      mode: true,
+      // Joins:
+      user: {
+        select: userWithCosmeticsSelect,
+      },
+      modelVersions: {
+        orderBy: { index: 'asc' },
+        take: 1,
+        select: {
+          id: true,
+          earlyAccessTimeFrame: true,
+          createdAt: true,
+          modelVersionGenerationCoverage: { select: { workers: true } },
+          trainedWords: true,
+        },
+      },
+      tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
+      hashes: {
+        select: modelHashSelect,
+        where: {
+          hashType: ModelHashType.SHA256,
+          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+        },
+      },
+      metrics: {
+        select: {
+          commentCount: true,
+          favoriteCount: true,
+          downloadCount: true,
+          rating: true,
+          ratingCount: true,
+        },
+        where: {
+          timeframe: MetricTimeframe.AllTime,
+        },
+      },
+    },
+    where: {
+      status: ModelStatus.Published,
+      OR: whereOr,
+    },
+  });
+
+  console.log(
+    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
+    offset,
+    offset + READ_BATCH_SIZE - 1,
+    'filters:',
+    whereOr
+  );
+
+  // Avoids hitting the DB without data.
+  if (models.length === 0) {
+    return {
+      indexReadyRecords: [],
+      indexRecordsWithImages: [],
+    };
+  }
+
+  const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+  const images = !!modelVersionIds.length
+    ? await getImagesForModelVersion({
+        modelVersionIds,
+        imagesPerVersion: 10,
+      })
+    : [];
+
+  const imageIds = images.map((image) => image.id);
+  // Performs a single DB request:
+  const tagsOnImages = !imageIds.length
+    ? []
+    : await db.tagsOnImage.findMany({
+        select: {
+          imageId: true,
+          tag: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        where: {
+          imageId: {
+            in: imageIds,
+          },
+        },
+      });
+
+  // Get tags for each image:
+  const imagesWithTags = images.map((image) => {
+    const imageTags = tagsOnImages
+      .filter((tagOnImage) => tagOnImage.imageId === image.id)
+      .map((tagOnImage) => tagOnImage.tag.name);
+    return {
+      ...image,
+      tags: imageTags,
+    };
+  });
+
+  const indexReadyRecords = models
+    .map((modelRecord) => {
+      const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+
+      const metrics = modelRecord.metrics[0] || {};
+
+      const weightedRating =
+        (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
+        (metrics.ratingCount + RATING_BAYESIAN_C);
+
+      const [modelVersion] = modelVersions;
+
+      if (!modelVersion) {
+        return null;
+      }
+
+      const category = tagsOnModels.find((tagOnModel) =>
+        modelCategoriesIds.includes(tagOnModel.tag.id)
+      );
+
+      return {
+        ...model,
+        user,
+        category,
+        modelVersion,
+        triggerWords: [
+          ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
+        ],
+        hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
+        metrics: {
+          ...metrics,
+          weightedRating,
+        },
+      };
+    })
+    // Removes null models that have no versionIDs
+    .filter(isDefined);
+
+  const indexRecordsWithImages = models
+    .map((modelRecord) => {
+      const { modelVersions, ...model } = modelRecord;
+      const [modelVersion] = modelVersions;
+
+      if (!modelVersion) {
+        return null;
+      }
+
+      const modelImages = imagesWithTags.filter(
+        (image) => image.modelVersionId === modelVersion.id
+      );
+
+      return {
+        id: model.id,
+        images: modelImages,
+      };
+    })
+    // Removes null models that have no versionIDs
+    .filter(isDefined);
+
+  return {
+    indexReadyRecords,
+    indexRecordsWithImages,
+  };
+};
+
+const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {
+  const queuedItems = await db.searchIndexUpdateQueue.findMany({
+    select: {
+      id: true,
+    },
+    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Update },
+  });
+
+  console.log(
+    'onUpdateQueueProcess :: A total of ',
+    queuedItems.length,
+    ' have been updated and will be re-indexed'
+  );
+
+  const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
+
+  const itemsToIndex: Awaited<ReturnType<typeof onFetchItemsToIndex>> = {
+    indexReadyRecords: [],
+    indexRecordsWithImages: [],
+  };
+
+  for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
+    const batch = queuedItems.slice(
+      batchNumber * READ_BATCH_SIZE,
+      batchNumber * READ_BATCH_SIZE + READ_BATCH_SIZE
+    );
+
+    const itemIds = batch.map(({ id }) => id);
+
+    const { indexReadyRecords, indexRecordsWithImages } = await onFetchItemsToIndex({
+      db,
+      indexName,
+      whereOr: {
+        id: {
+          in: itemIds,
+        },
+      },
+    });
+
+    itemsToIndex.indexReadyRecords.push(...indexReadyRecords);
+    itemsToIndex.indexRecordsWithImages.push(...indexRecordsWithImages);
+  }
+
+  return itemsToIndex;
+};
+
 const onIndexUpdate = async ({
   db,
   lastUpdatedAt,
@@ -98,214 +352,67 @@ const onIndexUpdate = async ({
   // always use this name.
   await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
 
-  let offset = 0;
   const modelTasks: EnqueuedTask[] = [];
 
-  const queuedItems = await db.searchIndexUpdateQueue.findMany({
-    select: {
-      id: true,
-    },
-    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Update },
-  });
+  if (lastUpdatedAt) {
+    // Only if this is an update (NOT a reset or first run) will we care for queued items:
 
-  const modelCategories = await getCategoryTags('model');
-  const modelCategoriesIds = modelCategories.map((category) => category.id);
+    // Update whatever items we have on the queue.
+    // Do it on batches, since it's possible that there are far more items than we expect:
+    const {
+      indexReadyRecords: updateIndexReadyRecords,
+      indexRecordsWithImages: updateIndexRecordsWithImages,
+    } = await onUpdateQueueProcess({
+      db,
+      indexName,
+    });
 
+    if (updateIndexReadyRecords.length > 0) {
+      const updateBaseTasks = await client
+        .index(indexName)
+        .updateDocumentsInBatches(updateIndexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+
+      console.log('onIndexUpdate :: base tasks for updated items have been added');
+      modelTasks.push(...updateBaseTasks);
+    }
+
+    if (updateIndexRecordsWithImages.length > 0) {
+      const updateImageTasks = await client
+        .index(indexName)
+        .updateDocumentsInBatches(updateIndexRecordsWithImages, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+
+      console.log('onIndexUpdate :: image tasks for updated items have been added');
+
+      modelTasks.push(...updateImageTasks);
+    }
+  }
+
+  // Now, we can tackle new additions
+  let offset = 0;
   while (true) {
-    const fetchStart = Date.now();
-    console.log(
-      `onIndexUpdate :: fetching starting for ${indexName} range:`,
-      offset,
-      offset + READ_BATCH_SIZE - 1
-    );
-
-    const models = await db.model.findMany({
+    const { indexReadyRecords, indexRecordsWithImages } = await onFetchItemsToIndex({
+      db,
+      indexName,
       skip: offset,
-      take: READ_BATCH_SIZE,
-      select: {
-        id: true,
-        name: true,
-        type: true,
-        nsfw: true,
-        status: true,
-        createdAt: true,
-        lastVersionAt: true,
-        publishedAt: true,
-        locked: true,
-        earlyAccessDeadline: true,
-        mode: true,
-        // Joins:
-        user: {
-          select: userWithCosmeticsSelect,
-        },
-        modelVersions: {
-          orderBy: { index: 'asc' },
-          take: 1,
-          select: {
-            id: true,
-            earlyAccessTimeFrame: true,
-            createdAt: true,
-            modelVersionGenerationCoverage: { select: { workers: true } },
-            trainedWords: true,
-          },
-        },
-        tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
-        hashes: {
-          select: modelHashSelect,
-          where: {
-            hashType: ModelHashType.SHA256,
-            fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-          },
-        },
-        metrics: {
-          select: {
-            commentCount: true,
-            favoriteCount: true,
-            downloadCount: true,
-            rating: true,
-            ratingCount: true,
-          },
-          where: {
-            timeframe: MetricTimeframe.AllTime,
-          },
-        },
-      },
-      where: {
-        status: ModelStatus.Published,
-        // if lastUpdatedAt is not provided,
-        // this should generate the entirety of the index.
-        OR: !lastUpdatedAt
-          ? undefined
-          : [
-              {
-                createdAt: {
-                  gt: lastUpdatedAt,
-                },
-              },
-              {
-                updatedAt: {
-                  gt: lastUpdatedAt,
-                },
-              },
-              {
-                id: {
-                  in: queuedItems.map(({ id }) => id),
-                },
-              },
-            ],
-      },
-    });
-
-    console.log(
-      `onIndexUpdate :: fetching complete for ${indexName} range:`,
-      offset,
-      offset + READ_BATCH_SIZE - 1,
-      '- time:',
-      Date.now() - fetchStart
-    );
-
-    // Avoids hitting the DB without data.
-    if (models.length === 0) break;
-
-    const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
-    const images = !!modelVersionIds.length
-      ? await getImagesForModelVersion({
-          modelVersionIds,
-          imagesPerVersion: 10,
-        })
-      : [];
-
-    const imageIds = images.map((image) => image.id);
-    // Performs a single DB request:
-    const tagsOnImages = !imageIds.length
-      ? []
-      : await db.tagsOnImage.findMany({
-          select: {
-            imageId: true,
-            tag: {
-              select: {
-                id: true,
-                name: true,
+      whereOr: lastUpdatedAt
+        ? [
+            {
+              createdAt: {
+                gt: lastUpdatedAt,
               },
             },
-          },
-          where: {
-            imageId: {
-              in: imageIds,
+            {
+              updatedAt: {
+                gt: lastUpdatedAt,
+              },
             },
-          },
-        });
-
-    // Get tags for each image:
-    const imagesWithTags = images.map((image) => {
-      const imageTags = tagsOnImages
-        .filter((tagOnImage) => tagOnImage.imageId === image.id)
-        .map((tagOnImage) => tagOnImage.tag.name);
-      return {
-        ...image,
-        tags: imageTags,
-      };
+          ]
+        : undefined,
     });
 
-    const indexReadyRecords = models
-      .map((modelRecord) => {
-        const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
-
-        const metrics = modelRecord.metrics[0] || {};
-
-        const weightedRating =
-          (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
-          (metrics.ratingCount + RATING_BAYESIAN_C);
-
-        const [modelVersion] = modelVersions;
-
-        if (!modelVersion) {
-          return null;
-        }
-
-        const category = tagsOnModels.find((tagOnModel) =>
-          modelCategoriesIds.includes(tagOnModel.tag.id)
-        );
-
-        return {
-          ...model,
-          user,
-          category,
-          modelVersion,
-          triggerWords: [
-            ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
-          ],
-          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-          tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
-          metrics: {
-            ...metrics,
-            weightedRating,
-          },
-        };
-      })
-      // Removes null models that have no versionIDs
-      .filter(isDefined);
-
-    const indexRecordsWithImages = models
-      .map((modelRecord) => {
-        const { modelVersions, ...model } = modelRecord;
-        const [modelVersion] = modelVersions;
-
-        if (!modelVersion) {
-          return null;
-        }
-
-        const modelImages = imagesWithTags.filter(
-          (image) => image.modelVersionId === modelVersion.id
-        );
-
-        return {
-          id: model.id,
-          images: modelImages,
-        };
-      })
-      // Removes null models that have no versionIDs
-      .filter(isDefined);
+    if (indexReadyRecords.length === 0 && indexRecordsWithImages.length === 0) {
+      break;
+    }
 
     const baseTasks = await client
       .index(indexName)
@@ -322,12 +429,12 @@ const onIndexUpdate = async ({
     modelTasks.push(...baseTasks);
     modelTasks.push(...imagesTasks);
 
-    offset += models.length;
+    offset += indexReadyRecords.length;
   }
 
   const waitForTaskTime = Date.now();
   console.log('onIndexUpdate :: start waitForTasks');
-  await client.waitForTasks(modelTasks.map((x) => x.taskUid));
+  await waitForTasksWithRetries(modelTasks.map((x) => x.taskUid));
   console.log('onIndexUpdate :: complete waitForTasks', '- time:', Date.now() - waitForTaskTime);
 };
 

@@ -1,5 +1,9 @@
 import { client } from '~/server/meilisearch/client';
-import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
+import {
+  getOrCreateIndex,
+  onSearchIndexDocumentsCleanup,
+  waitForTasksWithRetries,
+} from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
 import {
   createSearchIndexUpdateProcessor,
@@ -165,7 +169,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   }
 
   console.log('onIndexUpdate :: start waitForTasks');
-  await client.waitForTasks(imageTasks.map((task) => task.taskUid));
+  await waitForTasksWithRetries(imageTasks.map((task) => task.taskUid));
   console.log('onIndexUpdate :: complete waitForTasks');
 };
 
