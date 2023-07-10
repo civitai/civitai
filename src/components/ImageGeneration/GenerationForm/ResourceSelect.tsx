@@ -39,31 +39,30 @@ function ResourceSelect({
   };
 
   return (
-    <>
-      <Input.Wrapper {...inputWrapperProps}>
-        {!value ? (
-          <div>
-            <Button
-              leftIcon={<IconPlus />}
-              fullWidth
-              onClick={() =>
-                openResourceSelectModal({
-                  title: buttonLabel,
-                  baseModel: baseModels?.[0],
-                  types: [type],
-                  onSelect: handleAdd,
-                })
-              }
-              {...buttonProps}
-            >
-              {buttonLabel}
-            </Button>
-          </div>
-        ) : (
-          <ResourceSelectCard resource={value} onUpdate={handleUpdate} onRemove={handleRemove} />
-        )}
-      </Input.Wrapper>
-    </>
+    <Input.Wrapper {...inputWrapperProps}>
+      {!value ? (
+        <div>
+          <Button
+            variant="default"
+            leftIcon={<IconPlus size={18} />}
+            fullWidth
+            onClick={() =>
+              openResourceSelectModal({
+                title: buttonLabel,
+                baseModel: baseModels?.[0],
+                types: [type],
+                onSelect: handleAdd,
+              })
+            }
+            {...buttonProps}
+          >
+            {buttonLabel}
+          </Button>
+        </div>
+      ) : (
+        <ResourceSelectCard resource={value} onUpdate={handleUpdate} onRemove={handleRemove} />
+      )}
+    </Input.Wrapper>
   );
 }
 

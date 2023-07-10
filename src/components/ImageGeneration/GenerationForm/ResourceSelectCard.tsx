@@ -21,7 +21,7 @@ export const ResourceSelectCard = ({
 
   return (
     <Card p="xs" withBorder>
-      <Card.Section withBorder={hasAdditionalContent} p="xs" py={6}>
+      <Stack spacing={6}>
         <Group spacing="xs" position="apart">
           {unavailable && (
             <ThemeIcon color="red" w="auto" size="sm" px={4}>
@@ -37,44 +37,39 @@ export const ResourceSelectCard = ({
             {resource.modelName} - {resource.name}
           </Text>
           {onRemove && (
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              color="red"
-              onClick={() => onRemove(resource.id)}
-            >
+            <ActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
               <IconX size={20} />
             </ActionIcon>
           )}
         </Group>
-      </Card.Section>
-      {hasAdditionalContent && !unavailable && (
-        <Stack spacing={6} pt="xs">
-          {/* LORA */}
-          {hasStrength && onUpdate && (
-            <Group spacing="xs" align="center">
-              <Text size="xs" weight={500}>
-                Strength
-              </Text>
-              <NumberSlider
-                value={resource.strength}
-                onChange={(strength) => onUpdate({ ...resource, strength })}
-                min={-1}
-                max={2}
-                step={0.05}
-                sliderProps={{ marks: [{ value: 0 }, { value: 1 }] }}
+        {hasAdditionalContent && !unavailable && (
+          <>
+            {/* LORA */}
+            {hasStrength && onUpdate && (
+              <Group spacing="xs" align="center">
+                <Text size="xs" weight={500}>
+                  Strength
+                </Text>
+                <NumberSlider
+                  value={resource.strength}
+                  onChange={(strength) => onUpdate({ ...resource, strength })}
+                  min={-1}
+                  max={2}
+                  step={0.05}
+                  sliderProps={{ marks: [{ value: 0 }, { value: 1 }] }}
+                />
+              </Group>
+            )}
+            {hasTrainedWords && (
+              <TrainedWords
+                trainedWords={resource.trainedWords}
+                type={resource.modelType}
+                limit={4}
               />
-            </Group>
-          )}
-          {hasTrainedWords && (
-            <TrainedWords
-              trainedWords={resource.trainedWords}
-              type={resource.modelType}
-              limit={4}
-            />
-          )}
-        </Stack>
-      )}
+            )}
+          </>
+        )}
+      </Stack>
     </Card>
   );
 };

@@ -37,7 +37,7 @@ export const supportedSamplers = constants.samplers.filter((sampler) =>
   ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(sampler)
 );
 
-const MAX_SEED = 4294967295;
+export const MAX_SEED = 4294967295;
 export const seedSchema = z.coerce.number().min(-1).max(MAX_SEED).default(-1);
 export const generationParamsSchema = z.object({
   prompt: z
@@ -84,6 +84,7 @@ export type GenerateFormModel = z.infer<typeof generateFormSchema>;
 export const generateFormSchema = z.object({
   model: generationResourceSchema,
   resources: generationResourceSchema.array().default([]),
+  vae: generationResourceSchema.optional(),
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
@@ -104,7 +105,7 @@ export const generateFormSchema = z.object({
   steps: z.coerce.number().min(1).max(150),
   seed: seedSchema,
   clipSkip: z.coerce.number().default(1),
-  quantity: z.coerce.number().max(10),
+  quantity: z.coerce.number().max(10).default(1),
   aspectRatio: z.string(),
   nsfw: z.boolean().optional(),
 });
