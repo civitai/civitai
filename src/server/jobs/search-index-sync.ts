@@ -13,7 +13,7 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
   .map(([name, searchIndexProcessor], index) => [
     createJob(
       `search-index-sync-${name}`,
-      `*/${5 + index} * * * *`,
+      `*/5 * * * *`,
       async () => {
         const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update);
 
