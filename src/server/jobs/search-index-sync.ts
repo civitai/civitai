@@ -10,7 +10,7 @@ const searchIndexSets = {
 };
 
 export const searchIndexJobs = Object.entries(searchIndexSets)
-  .map(([name, searchIndexProcessor], index) => [
+  .map(([name, searchIndexProcessor]) => [
     createJob(
       `search-index-sync-${name}`,
       `*/5 * * * *`,
