@@ -113,8 +113,6 @@ const onFetchItemsToIndex = async ({
       scannedAt: {
         not: null,
       },
-      // if lastUpdatedAt is not provided,
-      // this should generate the entirety of the index.
       OR: whereOr,
     },
   });
