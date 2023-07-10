@@ -18,7 +18,11 @@ import { env } from '~/env/client.mjs';
 import { CustomSpotlightAction } from './CustomSpotlightAction';
 import { ActionsWrapper } from './ActionsWrapper';
 import { useEffect, useState } from 'react';
-import { applyQueryMatchers, getFiltersByIndexName } from '~/components/QuickSearch/util';
+import {
+  applyQueryMatchers,
+  getFiltersByIndexName,
+  hasForceUniqueQueryAttribute,
+} from '~/components/QuickSearch/util';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -149,22 +153,48 @@ function InnerSearch(props: SearchBoxProps) {
 
   const modelsFilter = getFiltersByIndexName('models', matchedFilters);
 
+  const renderIndexes = () => {
+    const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
+
+    if (uniqueQueryAttributeMatched) {
+      const { indexName } = uniqueQueryAttributeMatched;
+
+      const filters = getFiltersByIndexName(indexName, matchedFilters);
+
+      return (
+        <>
+          <Configure hitsPerPage={0} />
+          <Index indexName={indexName}>
+            <Configure filters={filters} hitsPerPage={20} />
+          </Index>
+        </>
+      );
+    }
+
+    return (
+      <>
+        {/*  hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
+        <Configure hitsPerPage={0} />
+        <Index indexName="models">
+          <Configure filters={modelsFilter} hitsPerPage={5} />
+        </Index>
+        <Index indexName="users">
+          <Configure hitsPerPage={5} />
+        </Index>
+        <Index indexName="articles">
+          <Configure hitsPerPage={5} />
+        </Index>
+        <Index indexName="tags">
+          <Configure hitsPerPage={5} />
+        </Index>
+      </>
+    );
+  };
+
   return (
     <>
       {/*  hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
-      <Configure hitsPerPage={0} />
-      <Index indexName="models">
-        <Configure filters={modelsFilter} hitsPerPage={5} />
-      </Index>
-      <Index indexName="users">
-        <Configure hitsPerPage={5} />
-      </Index>
-      <Index indexName="articles">
-        <Configure hitsPerPage={5} />
-      </Index>
-      <Index indexName="tags">
-        <Configure hitsPerPage={5} />
-      </Index>
+      {renderIndexes()}
 
       <SpotlightProvider
         actions={actions}
@@ -174,6 +204,7 @@ function InnerSearch(props: SearchBoxProps) {
         nothingFoundMessage="Nothing found"
         actionsWrapperComponent={ActionsWrapper}
         onQueryChange={setQuery}
+        highlightQuery={false}
         filter={(_, actions) => actions}
         limit={20}
         styles={(theme) => ({
