@@ -139,7 +139,7 @@ function InnerSearch(props: SearchBoxProps) {
       group: 'search',
       title: 'Perform old search',
       description: 'Search for models using the old search system',
-      onTrigger: () => Router.push(`/?query=${query}`),
+      onTrigger: () => Router.push(`/?query=${query}&view=feed`),
     });
   }
 
