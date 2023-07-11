@@ -1,15 +1,5 @@
 import React from 'react';
-import {
-  Chip,
-  Group,
-  Anchor,
-  Badge,
-  Stack,
-  Text,
-  createStyles,
-  HoverCard,
-  Accordion,
-} from '@mantine/core';
+import { Chip, Group, Anchor, Badge, Stack, Text, createStyles, Accordion } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
 import { useSearchStore } from '~/components/QuickSearch/search.store';
@@ -73,25 +63,13 @@ export function ActionsWrapper({ children }: Props) {
         </Text>
         <Chip.Group value={quickSearchFilter} spacing="xs" onChange={setQuickSearchFilter}>
           {filterOptions.map((option) => {
-            const Wrapper =
-              option === quickSearchFilter && availableFilters.length > 0
-                ? ({ children }: { children: React.ReactNode }) => (
-                    <HoverCard width={200} withArrow>
-                      <HoverCard.Target>{children}</HoverCard.Target>
-                      <HoverCard.Dropdown></HoverCard.Dropdown>
-                    </HoverCard>
-                  )
-                : ({ children }: { children: React.ReactNode }) => <>{children}</>;
-
             return (
-              <Wrapper>
-                <Chip key={option} classNames={classes} value={option} radius="sm">
-                  <Group spacing={4} noWrap>
-                    {option !== 'all' ? filterIcons[option] : null}
-                    {titleCase(option)}
-                  </Group>
-                </Chip>
-              </Wrapper>
+              <Chip key={option} classNames={classes} value={option} radius="sm">
+                <Group spacing={4} noWrap>
+                  {option !== 'all' ? filterIcons[option] : null}
+                  {titleCase(option)}
+                </Group>
+              </Chip>
             );
           })}
         </Chip.Group>
