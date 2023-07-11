@@ -37,7 +37,7 @@ const filters: MatchedFilter[] = [
     matchRegexp: /(?<=t:)\w+/,
     matches: [],
     label: 't:<type>',
-    description: "Filters by model's type",
+    description: 'Filters by model type',
   },
   {
     indexName: 'models',
@@ -46,7 +46,7 @@ const filters: MatchedFilter[] = [
     matchRegexp: /(?<=s:)\w+/,
     matches: [],
     label: 's:<true|false>',
-    description: 'Display NSFW or NON-NSFW only',
+    description: 'Display SFW or NSFW only',
   },
   {
     filterId: 'models',

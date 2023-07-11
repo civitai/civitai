@@ -1,26 +1,26 @@
-import React, { forwardRef } from 'react';
 import {
-  Chip,
-  Group,
+  Accordion,
   Anchor,
   Badge,
+  Chip,
+  Group,
+  ScrollArea,
   Stack,
   Text,
   createStyles,
-  Accordion,
-  ScrollArea,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
+import { IconPlus } from '@tabler/icons-react';
+import React, { forwardRef } from 'react';
 import { useSearchStore } from '~/components/QuickSearch/search.store';
 import {
   FilterIdentifier,
+  FilterIndex,
   filterIcons,
   getAvailableFiltersByIndexName,
-  FilterIndex,
 } from '~/components/QuickSearch/util';
 import { titleCase } from '~/utils/string-helpers';
-import { IconPlus } from '@tabler/icons-react';
 
 const filterOptions: FilterIdentifier[] = ['all', 'models', 'users', 'tags', 'articles'];
 
@@ -48,12 +48,29 @@ const useStyles = createStyles((theme, _, getRef) => {
 });
 const useAccordionStyles = createStyles((theme) => {
   return {
+    item: {
+      paddingLeft: 15,
+      paddingRight: 15,
+      paddingBottom: theme.spacing.xs,
+    },
     panel: {
       [theme.fn.smallerThan('md')]: {
         position: 'absolute',
+        left: 0,
         background: theme.colors.gray[theme.fn.primaryShade()],
         zIndex: 10,
         width: '100%',
+      },
+    },
+    control: {
+      padding: 4,
+      '&:hover': {
+        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
+      },
+    },
+    chevron: {
+      '&[data-rotate]': {
+        transform: 'rotate(45deg)',
       },
     },
   };
@@ -61,7 +78,7 @@ const useAccordionStyles = createStyles((theme) => {
 
 const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => {
   const { classes } = useStyles();
-  const { classes: accordionClasse } = useAccordionStyles();
+  const { classes: accordionClasses } = useAccordionStyles();
   const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
   const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
 
@@ -70,71 +87,70 @@ const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => 
   );
 
   return (
-    <div ref={ref}>
-      <Stack
-        px={15}
-        py="xs"
-        spacing={4}
-        sx={(theme) => ({
-          borderTop: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-          }`,
-        })}
-      >
-        <Text size="xs" color="dimmed" inline>
-          Filter Results
-        </Text>
-        <ScrollArea type="never" viewportProps={{ style: { overflowY: 'hidden' } }}>
-          <Chip.Group value={quickSearchFilter} spacing="xs" onChange={setQuickSearchFilter} noWrap>
-            {filterOptions.map((option) => {
-              return (
-                <Chip key={option} classNames={classes} value={option} radius="sm">
-                  <Group spacing={4} noWrap>
-                    {option !== 'all' ? filterIcons[option] : null}
-                    {titleCase(option)}
-                  </Group>
-                </Chip>
-              );
-            })}
-          </Chip.Group>
-        </ScrollArea>
-      </Stack>
-
-      {quickSearchFilter !== 'all' && availableFilters.length > 0 && (
-        <Accordion
-          classNames={accordionClasse}
-          chevron={<IconPlus size="1rem" />}
-          styles={{
-            chevron: {
-              '&[data-rotate]': {
-                transform: 'rotate(45deg)',
-              },
-            },
-          }}
+    <>
+      <div ref={ref}>
+        <Stack
+          spacing={4}
+          py="xs"
+          px={15}
+          sx={(theme) => ({
+            borderTop: `1px solid ${
+              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+            }`,
+          })}
         >
-          <Accordion.Item value="filters">
-            <Accordion.Control>Available filters:</Accordion.Control>
-            <Accordion.Panel>
-              <Stack spacing={4}>
-                <Text size="xs">
-                  You add these values to your query to improve the accuracy of your search
-                </Text>
-                {availableFilters.map((filter) => (
-                  <Stack key={filter.label} spacing={1}>
-                    <Text size="sm" color="gold">
-                      {filter.label}
-                    </Text>
-                    <Text size="sm" color="dimmed">
-                      {filter.description}
-                    </Text>
-                  </Stack>
-                ))}
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
-      )}
-
+          <Text size="xs" color="dimmed" inline>
+            Filter Results
+          </Text>
+          <ScrollArea type="never" viewportProps={{ style: { overflowY: 'hidden' } }}>
+            <Chip.Group
+              value={quickSearchFilter}
+              spacing="xs"
+              onChange={setQuickSearchFilter}
+              noWrap
+            >
+              {filterOptions.map((option) => {
+                return (
+                  <Chip key={option} classNames={classes} value={option} radius="sm">
+                    <Group spacing={4} noWrap>
+                      {option !== 'all' ? filterIcons[option] : null}
+                      {titleCase(option)}
+                    </Group>
+                  </Chip>
+                );
+              })}
+            </Chip.Group>
+          </ScrollArea>
+        </Stack>
+        {quickSearchFilter !== 'all' && availableFilters.length > 0 && (
+          <Accordion
+            classNames={accordionClasses}
+            chevron={<IconPlus size="1rem" />}
+            variant="filled"
+          >
+            <Accordion.Item value="filters">
+              <Accordion.Control>Available filters</Accordion.Control>
+              <Accordion.Panel>
+                <Stack spacing={4}>
+                  <Text size="xs">
+                    You can further refine your search by adding these values to your query.
+                  </Text>
+                  {availableFilters.map((filter) => (
+                    <Stack key={filter.label} spacing={1}>
+                      <Text size="sm" color="gold">
+                        {filter.label}
+                      </Text>
+                      <Text size="sm" color="dimmed">
+                        {filter.description}
+                      </Text>
+                    </Stack>
+                  ))}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        )}
+      </div>
       {children}
       <Group
         spacing="xs"
@@ -163,7 +179,7 @@ const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => 
           Opt-out
         </Anchor>
       </Group>
-    </div>
+    </>
   );
 });
 

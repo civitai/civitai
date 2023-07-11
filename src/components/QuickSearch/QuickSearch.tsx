@@ -1,10 +1,10 @@
 import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
-import { useDebouncedValue, useOs } from '@mantine/hooks';
+import { useDebouncedValue, useElementSize, useOs } from '@mantine/hooks';
 import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
 import Router from 'next/router';
-import { forwardRef, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   Configure,
   Index,
@@ -122,6 +122,7 @@ function InnerSearch(props: SearchBoxProps) {
   const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
 
   const [debouncedQuery] = useDebouncedValue(query, 300);
+  const { ref, height } = useElementSize();
 
   const { updatedQuery, matchedFilters } = applyQueryMatchers(debouncedQuery, [quickSearchFilter]);
   const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
@@ -220,6 +221,13 @@ function InnerSearch(props: SearchBoxProps) {
     }
   };
 
+  // Wrap it in useMemo to avoid re-rendering the component on every render
+  const ActionsWrapperComponent = useMemo(
+    // eslint-disable-next-line react/display-name
+    () => (props: { children: React.ReactNode }) => <ActionsWrapper {...props} ref={ref} />,
+    [ref]
+  );
+
   return (
     <>
       {/* hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
@@ -229,17 +237,24 @@ function InnerSearch(props: SearchBoxProps) {
         actions={actions}
         searchIcon={filterIcons[quickSearchFilter]}
         actionComponent={CustomSpotlightAction}
-        actionsWrapperComponent={(props) => <ActionsWrapper {...props} />}
+        actionsWrapperComponent={ActionsWrapperComponent}
         searchPlaceholder="Search models, users, articles, tags"
         nothingFoundMessage="Nothing found"
         onQueryChange={handleQueryChange}
         cleanQueryOnClose={false}
         filter={(_, actions) => actions}
         limit={20}
-        styles={() => ({
+        styles={(theme) => ({
           inner: { paddingTop: 50 },
           spotlight: { overflow: 'hidden' },
-          actions: { overflow: 'auto', height: '55vh' },
+          actions: {
+            overflow: 'auto',
+            height: '55vh',
+
+            [theme.fn.smallerThan('sm')]: {
+              height: `calc(100vh - ${height + 137}px)`,
+            },
+          },
         })}
       >
         <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
