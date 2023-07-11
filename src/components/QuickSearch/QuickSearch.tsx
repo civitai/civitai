@@ -199,7 +199,7 @@ function InnerSearch(props: SearchBoxProps) {
     setQuery(value);
 
     // Set filter based on first character of the query
-    if (value.length > 1 || quickSearchFilter !== 'all') {
+    if (value.length > 1) {
       return;
     }
 
@@ -215,7 +215,7 @@ function InnerSearch(props: SearchBoxProps) {
     ) {
       // setQuery('');
       setQuickSearchFilter(queryUniqueQueryAttributeMatched.filterId);
-    } else {
+    } else if (!value || quickSearchFilter !== 'all') {
       setQuickSearchFilter('all');
     }
   };
@@ -227,9 +227,7 @@ function InnerSearch(props: SearchBoxProps) {
 
       <SpotlightProvider
         actions={actions}
-        searchIcon={
-          quickSearchFilter !== 'all' ? filterIcons[quickSearchFilter] : <IconSearch size={18} />
-        }
+        searchIcon={filterIcons[quickSearchFilter]}
         actionComponent={CustomSpotlightAction}
         actionsWrapperComponent={ActionsWrapper}
         searchPlaceholder="Search models, users, articles, tags"
