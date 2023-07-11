@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
-import { FilterIndex } from '~/components/QuickSearch/util';
+import { FilterIdentifier } from '~/components/QuickSearch/util';
 type SearchState = {
   query: string;
   setQuery: (dispatch: string | ((query: string) => string)) => void;
-  quickSearchFilter: FilterIndex | 'all';
-  setQuickSearchFilter: (filter: FilterIndex | 'all') => void;
+  quickSearchFilter: FilterIdentifier;
+  setQuickSearchFilter: (filter: FilterIdentifier) => void;
 };
 
 export const useSearchStore = create<SearchState>()(

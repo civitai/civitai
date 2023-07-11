@@ -213,6 +213,7 @@ function InnerSearch(props: SearchBoxProps) {
       queryUniqueQueryAttributeMatched.filterId &&
       quickSearchFilter !== queryUniqueQueryAttributeMatched.filterId
     ) {
+      // setQuery('');
       setQuickSearchFilter(queryUniqueQueryAttributeMatched.filterId);
     } else {
       setQuickSearchFilter('all');
@@ -238,9 +239,9 @@ function InnerSearch(props: SearchBoxProps) {
         filter={(_, actions) => actions}
         limit={20}
         styles={() => ({
-          inner: { paddingTop: 70 },
+          inner: { paddingTop: 50 },
           spotlight: { overflow: 'hidden' },
-          actions: { overflow: 'auto', maxHeight: 'calc(100vh - 17rem)' },
+          actions: { overflow: 'auto', maxHeight: '55vh' },
         })}
       >
         <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>

@@ -9,18 +9,19 @@ import React from 'react';
 import { isDefined } from '~/utils/type-guards';
 
 export type FilterIndex = 'models' | 'users' | 'tags' | 'articles';
-export type FilterIdentitier = FilterIndex | 'all';
+export type FilterIdentifier = FilterIndex | 'all';
 type MatchedFilter = {
-  filterId?: FilterIdentitier;
+  filterId?: FilterIdentifier;
   indexName: FilterIndex;
   attribute: string;
   attributeRegexp: RegExp;
   matchRegexp: RegExp;
   matches: string[] | null;
-  forceUniqueQuery?: boolean;
+  label?: string;
+  description?: string;
 };
 
-export const filterIcons: Record<FilterIdentitier, React.ReactNode> = {
+export const filterIcons: Record<FilterIdentifier, React.ReactNode> = {
   models: <IconCurrencyDollar size={18} />,
   users: <IconAt size={18} />,
   articles: <IconAmpersand size={18} />,
@@ -35,6 +36,8 @@ const filters: MatchedFilter[] = [
     attributeRegexp: /t:(\w+)/,
     matchRegexp: /(?<=t:)\w+/,
     matches: [],
+    label: 't:<type>',
+    description: "Filters by model's type",
   },
   {
     indexName: 'models',
@@ -42,10 +45,11 @@ const filters: MatchedFilter[] = [
     attributeRegexp: /s:(\w+)/,
     matchRegexp: /(?<=s:)\w+/,
     matches: [],
+    label: 's:<true|false>',
+    description: 'Display NSFW or NON-NSFW only',
   },
   {
     filterId: 'models',
-    forceUniqueQuery: true,
     indexName: 'models',
     attribute: '',
     attributeRegexp: /^\$/,
@@ -54,7 +58,6 @@ const filters: MatchedFilter[] = [
   },
   {
     filterId: 'users',
-    forceUniqueQuery: true,
     indexName: 'users',
     attribute: '',
     attributeRegexp: /^@/,
@@ -63,7 +66,6 @@ const filters: MatchedFilter[] = [
   },
   {
     filterId: 'tags',
-    forceUniqueQuery: true,
     indexName: 'tags',
     attribute: '',
     attributeRegexp: /^#/,
@@ -72,7 +74,6 @@ const filters: MatchedFilter[] = [
   },
   {
     filterId: 'articles',
-    forceUniqueQuery: true,
     indexName: 'articles',
     attribute: '',
     attributeRegexp: /^&/,
@@ -81,7 +82,7 @@ const filters: MatchedFilter[] = [
   },
 ];
 
-const applyQueryMatchers = (query: string, appliedFilterIds: FilterIdentitier[] = []) => {
+const applyQueryMatchers = (query: string, appliedFilterIds: FilterIdentifier[] = []) => {
   const matchedFilters: MatchedFilter[] = filters
     .map((filter) => {
       const { matchRegexp, filterId } = filter;
@@ -123,7 +124,7 @@ const getMatchedFiltersByIndexName = (indexName: string, matchedFilters: Matched
 };
 
 const hasForceUniqueQueryAttribute = (matchedFilters: MatchedFilter[]) => {
-  return matchedFilters.find((matchedFilter) => matchedFilter.forceUniqueQuery);
+  return matchedFilters.find((matchedFilter) => !!matchedFilter.filterId);
 };
 
 const getFiltersByIndexName = (indexName: string, matchedFilters: MatchedFilter[]) => {
@@ -139,9 +140,14 @@ const getFiltersByIndexName = (indexName: string, matchedFilters: MatchedFilter[
     .join(' AND ');
 };
 
+const getAvailableFiltersByIndexName = (indexName: FilterIndex) => {
+  return filters.filter((item) => item.indexName === indexName);
+};
+
 export {
   applyQueryMatchers,
   getFiltersByIndexName,
   getMatchedFiltersByIndexName,
   hasForceUniqueQueryAttribute,
+  getAvailableFiltersByIndexName,
 };
