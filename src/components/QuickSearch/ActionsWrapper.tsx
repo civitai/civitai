@@ -1,5 +1,15 @@
 import React, { forwardRef } from 'react';
-import { Chip, Group, Anchor, Badge, Stack, Text, createStyles, Accordion } from '@mantine/core';
+import {
+  Chip,
+  Group,
+  Anchor,
+  Badge,
+  Stack,
+  Text,
+  createStyles,
+  Accordion,
+  ScrollArea,
+} from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
 import { useSearchStore } from '~/components/QuickSearch/search.store';
@@ -74,18 +84,20 @@ const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => 
         <Text size="xs" color="dimmed" inline>
           Filter Results
         </Text>
-        <Chip.Group value={quickSearchFilter} spacing="xs" onChange={setQuickSearchFilter}>
-          {filterOptions.map((option) => {
-            return (
-              <Chip key={option} classNames={classes} value={option} radius="sm">
-                <Group spacing={4} noWrap>
-                  {option !== 'all' ? filterIcons[option] : null}
-                  {titleCase(option)}
-                </Group>
-              </Chip>
-            );
-          })}
-        </Chip.Group>
+        <ScrollArea type="never" viewportProps={{ style: { overflowY: 'hidden' } }}>
+          <Chip.Group value={quickSearchFilter} spacing="xs" onChange={setQuickSearchFilter} noWrap>
+            {filterOptions.map((option) => {
+              return (
+                <Chip key={option} classNames={classes} value={option} radius="sm">
+                  <Group spacing={4} noWrap>
+                    {option !== 'all' ? filterIcons[option] : null}
+                    {titleCase(option)}
+                  </Group>
+                </Chip>
+              );
+            })}
+          </Chip.Group>
+        </ScrollArea>
       </Stack>
 
       {quickSearchFilter !== 'all' && availableFilters.length > 0 && (
