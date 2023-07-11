@@ -139,7 +139,7 @@ export default RateLimitedEndpoint(
         publishedAt: modelVersion.model.publishedAt,
         earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
       });
-      const inEarlyAccess = new Date() < earlyAccessDeadline;
+      const inEarlyAccess = earlyAccessDeadline && new Date() < earlyAccessDeadline;
       if (inEarlyAccess) {
         if (req.headers['content-type'] === 'application/json')
           return res.status(403).json({ error: 'Early Access', deadline: earlyAccessDeadline });
