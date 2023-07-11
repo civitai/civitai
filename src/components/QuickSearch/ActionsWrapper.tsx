@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
 import { Chip, Group, Anchor, Badge, Stack, Text, createStyles, Accordion } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
@@ -36,9 +36,22 @@ const useStyles = createStyles((theme, _, getRef) => {
     iconWrapper: { ref },
   };
 });
+const useAccordionStyles = createStyles((theme) => {
+  return {
+    panel: {
+      [theme.fn.smallerThan('md')]: {
+        position: 'absolute',
+        background: theme.colors.gray[theme.fn.primaryShade()],
+        zIndex: 10,
+        width: '100%',
+      },
+    },
+  };
+});
 
-export function ActionsWrapper({ children }: Props) {
+const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => {
   const { classes } = useStyles();
+  const { classes: accordionClasse } = useAccordionStyles();
   const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
   const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
 
@@ -47,7 +60,7 @@ export function ActionsWrapper({ children }: Props) {
   );
 
   return (
-    <>
+    <div ref={ref}>
       <Stack
         px={15}
         py="xs"
@@ -77,6 +90,7 @@ export function ActionsWrapper({ children }: Props) {
 
       {quickSearchFilter !== 'all' && availableFilters.length > 0 && (
         <Accordion
+          classNames={accordionClasse}
           chevron={<IconPlus size="1rem" />}
           styles={{
             chevron: {
@@ -137,8 +151,12 @@ export function ActionsWrapper({ children }: Props) {
           Opt-out
         </Anchor>
       </Group>
-    </>
+    </div>
   );
-}
+});
+
+ActionsWrapper.displayName = 'ActionsWrapper';
 
 type Props = { children: React.ReactNode };
+
+export { ActionsWrapper };

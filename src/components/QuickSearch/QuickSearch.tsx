@@ -4,7 +4,7 @@ import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spot
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
 import Router from 'next/router';
-import { useEffect } from 'react';
+import { forwardRef, useEffect, useRef } from 'react';
 import {
   Configure,
   Index,
@@ -229,7 +229,7 @@ function InnerSearch(props: SearchBoxProps) {
         actions={actions}
         searchIcon={filterIcons[quickSearchFilter]}
         actionComponent={CustomSpotlightAction}
-        actionsWrapperComponent={ActionsWrapper}
+        actionsWrapperComponent={(props) => <ActionsWrapper {...props} />}
         searchPlaceholder="Search models, users, articles, tags"
         nothingFoundMessage="Nothing found"
         onQueryChange={handleQueryChange}
@@ -239,7 +239,7 @@ function InnerSearch(props: SearchBoxProps) {
         styles={() => ({
           inner: { paddingTop: 50 },
           spotlight: { overflow: 'hidden' },
-          actions: { overflow: 'auto', maxHeight: '55vh' },
+          actions: { overflow: 'auto', height: '55vh' },
         })}
       >
         <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
