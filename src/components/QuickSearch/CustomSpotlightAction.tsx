@@ -8,10 +8,9 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  UnstyledButton,
   createStyles,
 } from '@mantine/core';
-import { SpotlightActionProps } from '@mantine/spotlight';
+import { SpotlightActionProps, useSpotlight } from '@mantine/spotlight';
 import {
   IconBookmark,
   IconBox,
@@ -24,40 +23,59 @@ import {
   IconMoodSmile,
   IconPhoto,
   IconPhotoOff,
+  IconSearch,
   IconUpload,
   IconUser,
   IconUsers,
-  IconSearch,
 } from '@tabler/icons-react';
+import Link from 'next/link';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { applyQueryMatchers } from '~/components/QuickSearch/util';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 const actions = {
-  models: ModelSpotlightAction,
-  users: UserSpotlightAction,
-  tags: TagSpotlightAction,
-  articles: ArticleSpotlightAction,
+  models: {
+    Component: ModelSpotlightAction,
+    getHref: (action: SpotlightActionProps['action']) => `/models/${action.id}`,
+  },
+  users: {
+    Component: UserSpotlightAction,
+    getHref: (action: SpotlightActionProps['action']) => `/user/${action.username}`,
+  },
+  tags: {
+    Component: TagSpotlightAction,
+    getHref: (action: SpotlightActionProps['action']) => `/tag/${encodeURIComponent(action.name)}`,
+  },
+  articles: {
+    Component: ArticleSpotlightAction,
+    getHref: (action: SpotlightActionProps['action']) => `/articles/${action.id}`,
+  },
 } as const;
 type ActionType = keyof typeof actions;
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles<string, { hovered?: boolean }>((theme, { hovered }) => ({
   action: {
     position: 'relative',
     display: 'block',
     width: '100%',
     padding: '10px 12px',
     borderRadius: theme.radius.sm,
-  },
+    backgroundColor: hovered
+      ? theme.colorScheme === 'dark'
+        ? theme.colors.dark[4]
+        : theme.colors.gray[1]
+      : 'transparent',
 
-  actionHovered: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
+    '&:hover': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
+    },
   },
 }));
 
@@ -66,25 +84,25 @@ export function CustomSpotlightAction({
   styles,
   classNames,
   hovered,
-  onTrigger,
+  // onTrigger,
   query,
-  ...others
 }: SpotlightActionProps) {
-  const { classes, cx } = useStyles(undefined, { styles, classNames, name: 'Spotlight' });
+  const { classes } = useStyles({ hovered }, { styles, classNames, name: 'Spotlight' });
+  const { closeSpotlight } = useSpotlight();
   const { group, ...actionProps } = action;
+  const { updatedQuery } = applyQueryMatchers(query);
 
-  const ActionItem = actions[group as ActionType] ?? DefaultSpotlightAction;
+  const { Component: ActionItem, getHref } = actions[group as ActionType] ?? {
+    Component: DefaultSpotlightAction,
+    getHref: () => `/?query=${updatedQuery}&view=feed`,
+  };
 
   return (
-    <UnstyledButton
-      className={cx(classes.action, { [classes.actionHovered]: hovered })}
-      tabIndex={-1}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={onTrigger}
-      {...others}
-    >
-      <ActionItem {...actionProps} query={query} />
-    </UnstyledButton>
+    <Link href={getHref(action)} passHref>
+      <a className={classes.action} onClick={closeSpotlight}>
+        <ActionItem {...actionProps} query={updatedQuery} />
+      </a>
+    </Link>
   );
 }
 
