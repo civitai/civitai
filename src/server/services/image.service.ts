@@ -809,7 +809,7 @@ export const getAllImages = async ({
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
       !isModerator
-        ? `AND (p."publishedAt" IS NOT NULL ${userId ? `OR p."userId" = ${userId}` : ''})`
+        ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
         : ''
     )}
     ${Prisma.raw(
@@ -1077,7 +1077,7 @@ export const getImage = async ({
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
-      !isModerator ? 'AND p."publishedAt" IS NOT NULL' : ''
+      !isModerator ? 'AND p."publishedAt" < now()' : ''
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -1419,7 +1419,7 @@ export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: numbe
   // Hide images that need review
   const needsReviewOr = [Prisma.sql`i."needsReview" IS NULL`];
   // Hide images that aren't published
-  const publishedOr = [Prisma.sql`p."publishedAt" IS NOT NULL`];
+  const publishedOr = [Prisma.sql`p."publishedAt" < now()`];
 
   if (userId) {
     const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
@@ -1483,7 +1483,7 @@ export const getImagesByCategory = async ({
     return Math.random() - 0.5;
   });
 
-  const AND = [Prisma.sql`p."publishedAt" IS NOT NULL`];
+  const AND = [Prisma.sql`p."publishedAt" < now()`];
 
   // ensure that only scanned images make it to the main feed
   AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
@@ -1535,7 +1535,7 @@ export const getImagesByCategory = async ({
         ${Prisma.raw(
           input.period !== 'AllTime' && input.periodMode !== 'stats'
             ? `AND p."publishedAt" > now() - INTERVAL '1 ${input.period}'`
-            : 'AND p."publishedAt" IS NOT NULL'
+            : 'AND p."publishedAt" < now()'
         )}
       ${Prisma.raw(
         input.modelId || input.modelVersionId
