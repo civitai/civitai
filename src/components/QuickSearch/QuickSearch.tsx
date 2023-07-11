@@ -17,9 +17,10 @@ import { env } from '~/env/client.mjs';
 
 import { CustomSpotlightAction } from './CustomSpotlightAction';
 import { ActionsWrapper } from './ActionsWrapper';
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   applyQueryMatchers,
+  FilterIdentitier,
   getFiltersByIndexName,
   hasForceUniqueQueryAttribute,
 } from '~/components/QuickSearch/util';
@@ -114,14 +115,37 @@ function InnerSearch(props: SearchBoxProps) {
   const { classes } = useStyles();
   const { scopedResults } = useInstantSearch();
 
+  const [filter, setFilter] = useState<FilterIdentitier | null>(null);
   const { refine } = useSearchBox(props);
   const query = useSearchStore((state) => state.query);
   const setQuery = useSearchStore((state) => state.setQuery);
   const [debouncedQuery] = useDebouncedValue(query, 300);
 
-  const { updatedQuery, matchedFilters } = applyQueryMatchers(debouncedQuery);
+  const { updatedQuery, matchedFilters } = applyQueryMatchers(
+    debouncedQuery,
+    filter ? [filter] : []
+  );
+  const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
 
   useEffect(() => refine(updatedQuery), [refine, updatedQuery]);
+  useEffect(() => {
+    if (query.length > 1) {
+      return;
+    }
+
+    // If a filter is already active, hasForceUniqueQueryAttribute will return the that value and as such
+    // we won't get the "newly" selected filter, so we have to match it with the actual query temporarily.
+    const { matchedFilters: queryMatchedFilters } = applyQueryMatchers(query);
+    const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
+
+    if (
+      queryUniqueQueryAttributeMatched &&
+      queryUniqueQueryAttributeMatched.filterId &&
+      filter !== queryUniqueQueryAttributeMatched.filterId
+    ) {
+      setFilter(queryUniqueQueryAttributeMatched.filterId);
+    }
+  }, [query]);
 
   let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
@@ -156,8 +180,6 @@ function InnerSearch(props: SearchBoxProps) {
   const modelsFilter = getFiltersByIndexName('models', matchedFilters);
 
   const renderIndexes = () => {
-    const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
-
     if (uniqueQueryAttributeMatched) {
       const { indexName } = uniqueQueryAttributeMatched;
       const filters = getFiltersByIndexName(indexName, matchedFilters);
@@ -192,6 +214,13 @@ function InnerSearch(props: SearchBoxProps) {
     );
   };
 
+  const ActionsWrapperComponent = useMemo(
+    // eslint-disable-next-line react/display-name
+    () => (props: { children: React.ReactNode }) =>
+      <ActionsWrapper filter={filter} onSetFilter={setFilter} {...props} />,
+    [filter, setFilter]
+  );
+
   return (
     <>
       {/*  hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
@@ -202,7 +231,7 @@ function InnerSearch(props: SearchBoxProps) {
         searchIcon={<IconSearch size={18} />}
         searchInputProps={{ value: query, defaultValue: query }}
         actionComponent={CustomSpotlightAction}
-        actionsWrapperComponent={ActionsWrapper}
+        actionsWrapperComponent={ActionsWrapperComponent}
         searchPlaceholder="Search models, users, articles, tags"
         nothingFoundMessage="Nothing found"
         onQueryChange={setQuery}

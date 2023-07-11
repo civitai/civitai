@@ -2,7 +2,7 @@ import { Chip, Group, Anchor, Badge, Stack, Text, createStyles } from '@mantine/
 import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
 import { useSearchStore } from '~/components/QuickSearch/search.store';
-import { FilterIndex } from '~/components/QuickSearch/util';
+import { FilterIdentitier, FilterIndex } from '~/components/QuickSearch/util';
 import { titleCase } from '~/utils/string-helpers';
 
 const filterOptions: FilterIndex[] = ['models', 'users', 'tags', 'articles'];
@@ -28,24 +28,11 @@ const useStyles = createStyles((theme, _, getRef) => {
   };
 });
 
-export function ActionsWrapper({ children }: Props) {
+export function ActionsWrapper({ children, filter, onSetFilter }: Props) {
   const { classes } = useStyles();
-  const { setQuery, quickSearchFilter, setQuickSearchFilter } = useSearchStore();
 
-  const handleFilterClick = (filter: FilterIndex | 'all') => {
-    setQuickSearchFilter(filter);
-
-    if (filter === 'all') {
-      setQuery((query) => query.replace(/^[&$@#]/, ''));
-    } else if (filter === 'models') {
-      setQuery((query) => (query.startsWith('$') ? query : `$${query.replace(/^[&$@#]/, '')}`));
-    } else if (filter === 'users') {
-      setQuery((query) => (query.startsWith('@') ? query : `@${query.replace(/^[&$@#]/, '')}`));
-    } else if (filter === 'tags') {
-      setQuery((query) => (query.startsWith('#') ? query : `#${query.replace(/^[&$@#]/, '')}`));
-    } else if (filter === 'articles') {
-      setQuery((query) => (query.startsWith('&') ? query : `&${query.replace(/^[&$@#]/, '')}`));
-    }
+  const handleFilterClick = (filter: FilterIdentitier | 'all') => {
+    onSetFilter(filter === 'all' ? null : filter);
   };
 
   return (
@@ -63,7 +50,7 @@ export function ActionsWrapper({ children }: Props) {
         <Text size="xs" color="dimmed" inline>
           Filter Results
         </Text>
-        <Chip.Group value={quickSearchFilter} spacing="xs" onChange={handleFilterClick}>
+        <Chip.Group value={filter || 'all'} spacing="xs" onChange={handleFilterClick}>
           <Chip classNames={classes} value="all" radius="sm">
             All
           </Chip>
@@ -99,5 +86,6 @@ export function ActionsWrapper({ children }: Props) {
 
 type Props = {
   children: React.ReactNode;
-  onFilterClick?: React.Dispatch<React.SetStateAction<string>>;
+  filter: FilterIdentitier | null;
+  onSetFilter: React.Dispatch<React.SetStateAction<FilterIdentitier | null>>;
 };
