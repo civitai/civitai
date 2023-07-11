@@ -1,7 +1,15 @@
+import {
+  IconAmpersand,
+  IconAt,
+  IconCurrencyDollar,
+  IconHash,
+  IconSearch,
+} from '@tabler/icons-react';
+import React from 'react';
 import { isDefined } from '~/utils/type-guards';
 
 export type FilterIndex = 'models' | 'users' | 'tags' | 'articles';
-export type FilterIdentitier = 'models' | 'users' | 'tags' | 'articles' | 'all';
+export type FilterIdentitier = FilterIndex | 'all';
 type MatchedFilter = {
   filterId?: FilterIdentitier;
   indexName: FilterIndex;
@@ -10,6 +18,14 @@ type MatchedFilter = {
   matchRegexp: RegExp;
   matches: string[] | null;
   forceUniqueQuery?: boolean;
+};
+
+export const filterIcons: Record<FilterIdentitier, React.ReactNode> = {
+  models: <IconCurrencyDollar size={18} />,
+  users: <IconAt size={18} />,
+  articles: <IconAmpersand size={18} />,
+  tags: <IconHash size={18} />,
+  all: <IconSearch size={18} />,
 };
 
 const filters: MatchedFilter[] = [
@@ -125,7 +141,7 @@ const getFiltersByIndexName = (indexName: string, matchedFilters: MatchedFilter[
 
 export {
   applyQueryMatchers,
-  getMatchedFiltersByIndexName,
   getFiltersByIndexName,
+  getMatchedFiltersByIndexName,
   hasForceUniqueQueryAttribute,
 };

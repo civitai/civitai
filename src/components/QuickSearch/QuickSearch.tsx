@@ -4,6 +4,7 @@ import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spot
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
 import Router from 'next/router';
+import { useEffect } from 'react';
 import {
   Configure,
   Index,
@@ -13,18 +14,17 @@ import {
   useInstantSearch,
   useSearchBox,
 } from 'react-instantsearch-hooks-web';
-import { env } from '~/env/client.mjs';
 
-import { CustomSpotlightAction } from './CustomSpotlightAction';
-import { ActionsWrapper } from './ActionsWrapper';
-import { useEffect, useMemo, useState } from 'react';
+import { useSearchStore } from '~/components/QuickSearch/search.store';
 import {
   applyQueryMatchers,
-  FilterIdentitier,
+  filterIcons,
   getFiltersByIndexName,
   hasForceUniqueQueryAttribute,
 } from '~/components/QuickSearch/util';
-import { useSearchStore } from '~/components/QuickSearch/search.store';
+import { env } from '~/env/client.mjs';
+import { ActionsWrapper } from './ActionsWrapper';
+import { CustomSpotlightAction } from './CustomSpotlightAction';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -114,38 +114,19 @@ function InnerSearch(props: SearchBoxProps) {
   const os = useOs();
   const { classes } = useStyles();
   const { scopedResults } = useInstantSearch();
-
-  const [filter, setFilter] = useState<FilterIdentitier | null>(null);
   const { refine } = useSearchBox(props);
+
   const query = useSearchStore((state) => state.query);
+  const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
   const setQuery = useSearchStore((state) => state.setQuery);
+  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
+
   const [debouncedQuery] = useDebouncedValue(query, 300);
 
-  const { updatedQuery, matchedFilters } = applyQueryMatchers(
-    debouncedQuery,
-    filter ? [filter] : []
-  );
+  const { updatedQuery, matchedFilters } = applyQueryMatchers(debouncedQuery, [quickSearchFilter]);
   const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
 
   useEffect(() => refine(updatedQuery), [refine, updatedQuery]);
-  useEffect(() => {
-    if (query.length > 1) {
-      return;
-    }
-
-    // If a filter is already active, hasForceUniqueQueryAttribute will return the that value and as such
-    // we won't get the "newly" selected filter, so we have to match it with the actual query temporarily.
-    const { matchedFilters: queryMatchedFilters } = applyQueryMatchers(query);
-    const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
-
-    if (
-      queryUniqueQueryAttributeMatched &&
-      queryUniqueQueryAttributeMatched.filterId &&
-      filter !== queryUniqueQueryAttributeMatched.filterId
-    ) {
-      setFilter(queryUniqueQueryAttributeMatched.filterId);
-    }
-  }, [query]);
 
   let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
@@ -214,27 +195,45 @@ function InnerSearch(props: SearchBoxProps) {
     );
   };
 
-  const ActionsWrapperComponent = useMemo(
-    // eslint-disable-next-line react/display-name
-    () => (props: { children: React.ReactNode }) =>
-      <ActionsWrapper filter={filter} onSetFilter={setFilter} {...props} />,
-    [filter, setFilter]
-  );
+  const handleQueryChange = (value: string) => {
+    setQuery(value);
+
+    // Set filter based on first character of the query
+    if (value.length > 1 || quickSearchFilter !== 'all') {
+      return;
+    }
+
+    // If a filter is already active, hasForceUniqueQueryAttribute will return the that value and as such
+    // we won't get the "newly" selected filter, so we have to match it with the actual query temporarily.
+    const { matchedFilters: queryMatchedFilters } = applyQueryMatchers(value);
+    const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
+
+    if (
+      queryUniqueQueryAttributeMatched &&
+      queryUniqueQueryAttributeMatched.filterId &&
+      quickSearchFilter !== queryUniqueQueryAttributeMatched.filterId
+    ) {
+      setQuickSearchFilter(queryUniqueQueryAttributeMatched.filterId);
+    } else {
+      setQuickSearchFilter('all');
+    }
+  };
 
   return (
     <>
-      {/*  hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
+      {/* hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
       {renderIndexes()}
 
       <SpotlightProvider
         actions={actions}
-        searchIcon={<IconSearch size={18} />}
-        searchInputProps={{ value: query, defaultValue: query }}
+        searchIcon={
+          quickSearchFilter !== 'all' ? filterIcons[quickSearchFilter] : <IconSearch size={18} />
+        }
         actionComponent={CustomSpotlightAction}
-        actionsWrapperComponent={ActionsWrapperComponent}
+        actionsWrapperComponent={ActionsWrapper}
         searchPlaceholder="Search models, users, articles, tags"
         nothingFoundMessage="Nothing found"
-        onQueryChange={setQuery}
+        onQueryChange={handleQueryChange}
         cleanQueryOnClose={false}
         filter={(_, actions) => actions}
         limit={20}

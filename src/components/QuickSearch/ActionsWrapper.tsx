@@ -2,16 +2,18 @@ import { Chip, Group, Anchor, Badge, Stack, Text, createStyles } from '@mantine/
 import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
 import { useSearchStore } from '~/components/QuickSearch/search.store';
-import { FilterIdentitier, FilterIndex } from '~/components/QuickSearch/util';
+import { FilterIdentitier, filterIcons } from '~/components/QuickSearch/util';
 import { titleCase } from '~/utils/string-helpers';
 
-const filterOptions: FilterIndex[] = ['models', 'users', 'tags', 'articles'];
+const filterOptions: FilterIdentitier[] = ['all', 'models', 'users', 'tags', 'articles'];
 
 const useStyles = createStyles((theme, _, getRef) => {
   const ref = getRef('iconWrapper');
 
   return {
     label: {
+      padding: `0 ${theme.spacing.xs}px`,
+
       '&[data-checked]': {
         '&, &:hover': {
           backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
@@ -19,7 +21,7 @@ const useStyles = createStyles((theme, _, getRef) => {
         },
 
         [`& .${ref}`]: {
-          color: theme.white,
+          display: 'none',
         },
       },
     },
@@ -28,19 +30,17 @@ const useStyles = createStyles((theme, _, getRef) => {
   };
 });
 
-export function ActionsWrapper({ children, filter, onSetFilter }: Props) {
+export function ActionsWrapper({ children }: Props) {
   const { classes } = useStyles();
-
-  const handleFilterClick = (filter: FilterIdentitier | 'all') => {
-    onSetFilter(filter === 'all' ? null : filter);
-  };
+  const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
+  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
 
   return (
     <>
       <Stack
-        spacing={8}
         px={15}
         py="xs"
+        spacing={4}
         sx={(theme) => ({
           borderTop: `1px solid ${
             theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
@@ -50,42 +50,47 @@ export function ActionsWrapper({ children, filter, onSetFilter }: Props) {
         <Text size="xs" color="dimmed" inline>
           Filter Results
         </Text>
-        <Chip.Group value={filter || 'all'} spacing="xs" onChange={handleFilterClick}>
-          <Chip classNames={classes} value="all" radius="sm">
-            All
-          </Chip>
+        <Chip.Group value={quickSearchFilter} spacing="xs" onChange={setQuickSearchFilter}>
           {filterOptions.map((option) => (
             <Chip key={option} classNames={classes} value={option} radius="sm">
-              {titleCase(option)}
+              <Group spacing={4} noWrap>
+                {option !== 'all' ? filterIcons[option] : null}
+                {titleCase(option)}
+              </Group>
             </Chip>
           ))}
         </Chip.Group>
-        <Group spacing="xs">
-          <Badge color="yellow" variant="light" size="xs">
-            Beta
-          </Badge>
-          <Text size="xs" color="dimmed" inline>
-            Expect frequent changes.
-          </Text>
-          <Anchor
-            size="xs"
-            component={NextLink}
-            onClick={() => closeSpotlight()}
-            href="/user/account#settings"
-            ml="auto"
-            inline
-          >
-            Opt-out
-          </Anchor>
-        </Group>
       </Stack>
       {children}
+      <Group
+        spacing="xs"
+        px={15}
+        py="xs"
+        sx={(theme) => ({
+          borderTop: `1px solid ${
+            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+          }`,
+        })}
+      >
+        <Badge color="yellow" variant="light" size="xs">
+          Beta
+        </Badge>
+        <Text size="xs" color="dimmed" inline>
+          Expect frequent changes.
+        </Text>
+        <Anchor
+          size="xs"
+          component={NextLink}
+          onClick={() => closeSpotlight()}
+          href="/user/account#settings"
+          ml="auto"
+          inline
+        >
+          Opt-out
+        </Anchor>
+      </Group>
     </>
   );
 }
 
-type Props = {
-  children: React.ReactNode;
-  filter: FilterIdentitier | null;
-  onSetFilter: React.Dispatch<React.SetStateAction<FilterIdentitier | null>>;
-};
+type Props = { children: React.ReactNode };
