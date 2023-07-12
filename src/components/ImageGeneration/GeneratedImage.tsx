@@ -46,16 +46,13 @@ export function GeneratedImage({
       url ===
       'https://image-generation.civitai.com/v1/consumer/images/8F8FAD1FE91848FD5A1C962D7F207FB41C34DD3F9D9A8492634ED0033EE28CA8';
     const response = await fetch(url, {
-      // mode: 'no-cors',
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-      },
+      // mode: 'no-cors'
     });
     if (canLog) console.log({ response });
     if (!response.ok) {
       return;
     }
-    const blob = await response.json();
+    const blob = await response.blob();
     const imageUrl = URL.createObjectURL(blob);
     if (!ref.current) return;
     ref.current.src = imageUrl;
