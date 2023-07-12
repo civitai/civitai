@@ -1812,7 +1812,7 @@ enum CollectionReadConfiguration {
 }
 
 model Collection {
-  id Int
+  id Int @id @default(autoincrement())
   createdAt    DateTime? @default(now())
   updatedAt    DateTime? @updatedAt
   coverImage String?
@@ -1825,12 +1825,10 @@ model Collection {
 
   items      CollectionItem[]
   contributors CollectionContributor[]
-
-  @@id([id])
 }
 
 model CollectionItem {
-  id Int
+  id Int @id @default(autoincrement())
   createdAt    DateTime? @default(now())
   updatedAt    DateTime? @updatedAt
   collectionId Int
@@ -1847,7 +1845,6 @@ model CollectionItem {
   addedBy          User?        @relation(fields: [addedById], references: [id], onDelete: SetNull)
   note String?
 
-  @@id([id])
   @@unique([collectionId, addedById, articleId, postId, imageId, modelId ])
 }
 
@@ -1870,15 +1867,13 @@ model CollectionContributor {
 }
 
 model HomeBlock {
-  id Int
+  id Int @id @default(autoincrement())
   createdAt    DateTime? @default(now())
   updatedAt    DateTime? @updatedAt
   userId Int
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   metadata          Json    @default("{}")
   index Int
-
-  @@id([id])
 }
 
 /// @view
