@@ -42,7 +42,7 @@ import {
   IconArchive,
   IconCircleMinus,
   IconReload,
-  IconShare3,
+  IconPlaylistAdd,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -630,6 +630,17 @@ export default function ModelDetailsV2({
                     )}
                     {currentUser && (
                       <>
+                        <Menu.Item
+                          icon={<IconPlaylistAdd size={14} stroke={1.5} />}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openContext('addToCollection', { resourceId: model.id });
+                          }}
+                        >
+                          Add to Collection
+                        </Menu.Item>
+                        ,
                         <HideUserButton as="menu-item" userId={model.user.id} />
                         <HideModelButton as="menu-item" modelId={model.id} />
                         <Menu.Item
