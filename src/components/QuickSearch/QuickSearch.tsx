@@ -209,8 +209,6 @@ function InnerSearch(props: SearchBoxProps) {
     const { matchedFilters: queryMatchedFilters } = applyQueryMatchers(value);
     const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
 
-    console.log(queryUniqueQueryAttributeMatched, queryUniqueQueryAttributeMatched);
-
     if (
       queryUniqueQueryAttributeMatched &&
       queryUniqueQueryAttributeMatched.filterId &&
