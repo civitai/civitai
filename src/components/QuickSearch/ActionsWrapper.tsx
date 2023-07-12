@@ -129,18 +129,20 @@ const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => 
             variant="filled"
           >
             <Accordion.Item value="filters">
-              <Accordion.Control>Available filters</Accordion.Control>
+              <Accordion.Control>
+                <Text size="sm">Available filters</Text>
+              </Accordion.Control>
               <Accordion.Panel>
-                <Stack spacing={4}>
+                <Stack spacing="xs">
                   <Text size="xs">
                     You can further refine your search by adding these values to your query.
                   </Text>
                   {availableFilters.map((filter) => (
                     <Stack key={filter.label} spacing={1}>
-                      <Text size="sm" color="gold">
+                      <Text size="sm" color="gold" lh={1.2}>
                         {filter.label}
                       </Text>
-                      <Text size="sm" color="dimmed">
+                      <Text size="xs" color="dimmed" lh={1.2}>
                         {filter.description}
                       </Text>
                     </Stack>

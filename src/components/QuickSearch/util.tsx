@@ -15,7 +15,6 @@ type MatchedFilter = {
   indexName: FilterIndex;
   attribute: string;
   attributeRegexp: RegExp;
-  matchRegexp: RegExp;
   matches: string[] | null;
   label?: string;
   description?: string;
@@ -33,8 +32,7 @@ const filters: MatchedFilter[] = [
   {
     indexName: 'models',
     attribute: 'type',
-    attributeRegexp: /t:(\w+)/,
-    matchRegexp: /(?<=t:)\w+/,
+    attributeRegexp: /t:(\w+)/g,
     matches: [],
     label: 't:<type>',
     description: 'Filters by model type',
@@ -42,42 +40,37 @@ const filters: MatchedFilter[] = [
   {
     indexName: 'models',
     attribute: 'nsfw',
-    attributeRegexp: /s:(\w+)/,
-    matchRegexp: /(?<=s:)\w+/,
+    attributeRegexp: /nsfw:(\w+)/,
     matches: [],
-    label: 's:<true|false>',
+    label: 'nsfw:<true|false>',
     description: 'Display SFW or NSFW only',
   },
   {
     filterId: 'models',
     indexName: 'models',
     attribute: '',
-    attributeRegexp: /^\$/,
-    matchRegexp: /^\$/,
+    attributeRegexp: /^(\$)/,
     matches: [],
   },
   {
     filterId: 'users',
     indexName: 'users',
     attribute: '',
-    attributeRegexp: /^@/,
-    matchRegexp: /^@/,
+    attributeRegexp: /^(@)/,
     matches: [],
   },
   {
     filterId: 'tags',
     indexName: 'tags',
     attribute: '',
-    attributeRegexp: /^#/,
-    matchRegexp: /^#/,
+    attributeRegexp: /^(#)/,
     matches: [],
   },
   {
     filterId: 'articles',
     indexName: 'articles',
     attribute: '',
-    attributeRegexp: /^&/,
-    matchRegexp: /^&/,
+    attributeRegexp: /^(&)/,
     matches: [],
   },
 ];
@@ -85,7 +78,7 @@ const filters: MatchedFilter[] = [
 const applyQueryMatchers = (query: string, appliedFilterIds: FilterIdentifier[] = []) => {
   const matchedFilters: MatchedFilter[] = filters
     .map((filter) => {
-      const { matchRegexp, filterId } = filter;
+      const { attributeRegexp, filterId } = filter;
 
       if (filterId && appliedFilterIds.includes(filterId)) {
         return {
@@ -93,15 +86,21 @@ const applyQueryMatchers = (query: string, appliedFilterIds: FilterIdentifier[] 
         };
       }
 
-      const matches = query.match(matchRegexp);
-
-      if (!matches) {
-        return null;
+      const matches: string[] = [];
+      if (attributeRegexp.global) {
+        for (const [, group] of query.matchAll(attributeRegexp)) {
+          matches.push(group);
+        }
+      } else {
+        const [, group] = query.match(attributeRegexp) ?? [];
+        if (group) matches.push(group);
       }
+
+      if (!matches.length) return null;
 
       return {
         ...filter,
-        matches: query.match(matchRegexp),
+        matches,
       };
     })
     .filter(isDefined);
@@ -109,7 +108,8 @@ const applyQueryMatchers = (query: string, appliedFilterIds: FilterIdentifier[] 
   const updatedQuery = filters
     .reduce((acc, filter) => {
       const { attributeRegexp } = filter;
-      return acc.replace(attributeRegexp, '');
+      if (attributeRegexp.global) return acc.replaceAll(attributeRegexp, '');
+      else return acc.replace(attributeRegexp, '');
     }, query)
     .trim();
 
@@ -134,7 +134,7 @@ const getFiltersByIndexName = (indexName: string, matchedFilters: MatchedFilter[
 
       if (!matches || !attribute) return null;
 
-      return matches.map((match) => `${attribute}=${match}`).join(' AND ');
+      return matches.map((match) => `${attribute}=${match}`).join(' OR ');
     })
     .filter(isDefined)
     .join(' AND ');
