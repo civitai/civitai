@@ -373,7 +373,7 @@ model Model {
   metricsDaily      ModelMetricDaily[]
   associatedFrom    ModelAssociations[] @relation("ToModelAssociation")
   associations      ModelAssociations[] @relation("FromModelAssociation")
-  collectionItems CollectionItem[]
+  collectionItems   CollectionItem[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -857,19 +857,19 @@ model Post {
   metadata       Json?
   tosViolation   Boolean       @default(false)
 
-  images         Image[]
-  tags           TagsOnPost[]
-  reactions      PostReaction[]
-  thread         Thread?
-  helper         PostHelper?
-  stats          PostStat?
-  rank           PostRank?
-  metrics        PostMetric[]
-  resourceHelper PostResourceHelper[]
-  imageTags      PostImageTag[]
-  tagsComposite  PostTag[]
-  tagVotes       TagsOnPostVote[]
-  reports        PostReport[]
+  images          Image[]
+  tags            TagsOnPost[]
+  reactions       PostReaction[]
+  thread          Thread?
+  helper          PostHelper?
+  stats           PostStat?
+  rank            PostRank?
+  metrics         PostMetric[]
+  resourceHelper  PostResourceHelper[]
+  imageTags       PostImageTag[]
+  tagsComposite   PostTag[]
+  tagVotes        TagsOnPostVote[]
+  reports         PostReport[]
   collectionItems CollectionItem[]
 
   @@index([modelVersionId])
@@ -1664,16 +1664,16 @@ model Article {
   userId       Int
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  thread       Thread?
-  reactions    ArticleReaction[]
-  tags         TagsOnArticle[]
-  reports      ArticleReport[]
-  metrics      ArticleMetric[]
-  rank         ArticleRank?
-  stats        ArticleStat?
-  attachments  File[]
-  engagements  ArticleEngagement[]
-  associations ModelAssociations[]
+  thread          Thread?
+  reactions       ArticleReaction[]
+  tags            TagsOnArticle[]
+  reports         ArticleReport[]
+  metrics         ArticleMetric[]
+  rank            ArticleRank?
+  stats           ArticleStat?
+  attachments     File[]
+  engagements     ArticleEngagement[]
+  associations    ModelAssociations[]
   collectionItems CollectionItem[]
 }
 
@@ -1795,7 +1795,7 @@ enum SearchIndexUpdateQueueAction {
 model SearchIndexUpdateQueue {
   type      String
   id        Int
-  createdAt DateTime @default(now())
+  createdAt DateTime                     @default(now())
   action    SearchIndexUpdateQueueAction @default(Update)
 
   @@id([type, id, action])
@@ -1812,43 +1812,40 @@ enum CollectionReadConfiguration {
 }
 
 model Collection {
-  id Int
-  createdAt    DateTime? @default(now())
-  updatedAt    DateTime? @updatedAt
-  coverImage String?
-  name String
+  id          Int                          @id @default(autoincrement())
+  createdAt   DateTime?                    @default(now())
+  updatedAt   DateTime?                    @updatedAt
+  coverImage  String?
+  name        String
   description String?
-  userId Int
-  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  write CollectionWriteConfiguration @default(Private)
-  read CollectionReadConfiguration @default(Private)
+  userId      Int
+  user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  write       CollectionWriteConfiguration @default(Private)
+  read        CollectionReadConfiguration  @default(Private)
 
-  items      CollectionItem[]
+  items        CollectionItem[]
   contributors CollectionContributor[]
-
-  @@id([id])
 }
 
 model CollectionItem {
-  id Int
-  createdAt    DateTime? @default(now())
-  updatedAt    DateTime? @updatedAt
+  id           Int        @id @default(autoincrement())
+  createdAt    DateTime?  @default(now())
+  updatedAt    DateTime?  @updatedAt
   collectionId Int
-  collection          Collection        @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  articleId Int?
-  article          Article?        @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  postId Int?
-  post          Post?        @relation(fields: [postId], references: [id], onDelete: Cascade)
-  imageId Int?
-  image          Image?        @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  modelId Int?
-  model          Model?        @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  addedById Int?
-  addedBy          User?        @relation(fields: [addedById], references: [id], onDelete: SetNull)
-  note String?
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  articleId    Int?
+  article      Article?   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  postId       Int?
+  post         Post?      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  imageId      Int?
+  image        Image?     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  modelId      Int?
+  model        Model?     @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  addedById    Int?
+  addedBy      User?      @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  note         String?
 
-  @@id([id])
-  @@unique([collectionId, addedById, articleId, postId, imageId, modelId ])
+  @@unique([collectionId, addedById, articleId, postId, imageId, modelId])
 }
 
 enum CollectionContributorPermission {
@@ -1858,27 +1855,25 @@ enum CollectionContributorPermission {
 }
 
 model CollectionContributor {
-  createdAt    DateTime? @default(now())
-  updatedAt    DateTime? @updatedAt
-  userId Int
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime?                         @default(now())
+  updatedAt    DateTime?                         @updatedAt
+  userId       Int
+  user         User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
   collectionId Int
-  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  permissions CollectionContributorPermission[]
+  collection   Collection                        @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  permissions  CollectionContributorPermission[]
 
   @@id([userId, collectionId])
 }
 
 model HomeBlock {
-  id Int
-  createdAt    DateTime? @default(now())
-  updatedAt    DateTime? @updatedAt
-  userId Int
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  metadata          Json    @default("{}")
-  index Int
-
-  @@id([id])
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime? @default(now())
+  updatedAt DateTime? @updatedAt
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metadata  Json      @default("{}")
+  index     Int
 }
 
 /// @view
