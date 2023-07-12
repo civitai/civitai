@@ -72,7 +72,7 @@ export function Generate({ onSuccess }: { onSuccess?: () => void }) {
   const hasUnavailable = useGenerationResourceStore((state) => state.hasUnavailable);
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
 
-  const getDefaultFormValues = (props: Generation.DataParams = {}) => ({
+  const getDefaultFormValues = (props: Partial<Generation.Params> = {}) => ({
     nsfw: currentUser?.showNsfw ?? false,
     ...defaults,
     ...props,

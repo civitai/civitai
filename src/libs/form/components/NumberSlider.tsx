@@ -36,14 +36,11 @@ export function NumberSlider({
   const numberRef = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(false);
   const [_value, setValue] = useState(value);
+  const [changeEndValue, setChangeEndValue] = useState<number>();
   const [computedWidth, setComputedWidth] = useState<string>();
 
   const handleSliderChange = (value?: number) => {
     setValue(value);
-  };
-
-  const handleDragEnd = (value?: number) => {
-    onChange?.(value);
   };
 
   const handleInputChange = (value?: number) => {
@@ -83,6 +80,11 @@ export function NumberSlider({
   }, [value, precision]);
 
   useEffect(() => {
+    if (!changeEndValue) return;
+    onChange?.(changeEndValue);
+  }, [changeEndValue]);
+
+  useEffect(() => {
     if (!numberRef.current) return;
     setComputedWidth(getComputedWidth(numberRef.current, min, max, precision));
   }, [min, max, precision]);
@@ -101,8 +103,8 @@ export function NumberSlider({
           onChange={handleSliderChange}
           onBlur={handleSliderBlur}
           onFocus={handleSliderFocus}
-          label={(value) => (precision ? value.toFixed(precision) : value)}
-          onChangeEnd={handleDragEnd}
+          label={(value) => (value && precision ? value.toFixed(precision) : value)}
+          onChangeEnd={setChangeEndValue}
         />
         <NumberInput
           ref={numberRef}

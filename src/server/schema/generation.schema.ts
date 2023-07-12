@@ -64,7 +64,7 @@ export const generationParamsSchema = z.object({
   height: z.number(),
   width: z.number(),
   nsfw: z.boolean().optional(),
-  vae: z.number().optional(),
+  // vae: z.number().optional(),
 });
 
 export const generationResourceSchema = z.object({
@@ -74,6 +74,7 @@ export const generationResourceSchema = z.object({
   modelId: z.number(),
   modelName: z.string(),
   modelType: z.nativeEnum(ModelType),
+  strength: z.number().optional(),
 
   // navigation props
   covered: z.boolean().optional(),
@@ -83,7 +84,7 @@ export const generationResourceSchema = z.object({
 export type GenerateFormModel = z.infer<typeof generateFormSchema>;
 export const generateFormSchema = z.object({
   model: generationResourceSchema,
-  resources: generationResourceSchema.array().default([]),
+  resources: generationResourceSchema.array().max(9).default([]),
   vae: generationResourceSchema.optional(),
   prompt: z
     .string()
@@ -106,11 +107,14 @@ export const generateFormSchema = z.object({
   seed: seedSchema,
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(10).default(1),
-  aspectRatio: z.string(),
+  aspectRatio: z.string().superRefine((x, ctx) => {
+    const [width, height] = x.split('x');
+    if (isNaN(width as any) || isNaN(height as any))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid aspect ratio' });
+  }),
   nsfw: z.boolean().optional(),
 });
 
-export const additionalResourceLimit = 10;
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
 export const createGenerationRequestSchema = z.object({
   resources: z
@@ -121,7 +125,7 @@ export const createGenerationRequestSchema = z.object({
       triggerWord: z.string().optional(),
     })
     .array()
-    .max(additionalResourceLimit),
+    .max(10),
   params: generationParamsSchema,
 });
 
@@ -132,7 +136,7 @@ export const checkResourcesCoverageSchema = z.object({
 
 export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.object({
-  id: z.number(),
+  id: z.coerce.number(),
   type: z.enum(['image', 'model']),
 });
 

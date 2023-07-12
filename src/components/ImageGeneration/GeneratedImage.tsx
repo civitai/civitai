@@ -1,7 +1,7 @@
 import { AspectRatio, Loader, Center, Card, ThemeIcon } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Generation } from '~/server/services/generation/generation.types';
 
@@ -15,6 +15,7 @@ export function GeneratedImage({
   request: Generation.Request;
 }) {
   const [status, setStatus] = useState<GeneratedImageStatus>('loading');
+  const ref = useRef<HTMLImageElement>(null);
   const [qs, setQs] = useState<string>('');
 
   const handleImageClick = () => {
@@ -40,6 +41,31 @@ export function GeneratedImage({
 
   const handleError = () => retry();
 
+  const fetchImage = async (url: string) => {
+    const canLog =
+      url ===
+      'https://image-generation.civitai.com/v1/consumer/images/8F8FAD1FE91848FD5A1C962D7F207FB41C34DD3F9D9A8492634ED0033EE28CA8';
+    const response = await fetch(url, {
+      // mode: 'no-cors',
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+    if (canLog) console.log({ response });
+    if (!response.ok) {
+      return;
+    }
+    const blob = await response.json();
+    const imageUrl = URL.createObjectURL(blob);
+    if (!ref.current) return;
+    ref.current.src = imageUrl;
+  };
+
+  useEffect(() => {
+    if (!image?.url || !!ref.current?.src) return;
+    fetchImage(image.url);
+  }, []);
+
   return (
     <AspectRatio ratio={request.params.width / request.params.height}>
       <Card p={0} sx={{ position: 'relative' }} withBorder>
@@ -54,11 +80,13 @@ export function GeneratedImage({
           </Center>
         )}
         {status !== 'error' && image && (
-          <EdgeImage
-            src={image.url + qs}
-            width={request.params.width}
+          <img
+            ref={ref}
+            alt=""
+            // src={image.url + qs}
+            // width={request.params.width}
             onLoad={handleLoad}
-            onError={handleError}
+            // onError={(error) => console.log({ error })}
             onClick={handleImageClick}
             style={{ cursor: 'pointer', zIndex: 2 }}
           />

@@ -25,6 +25,8 @@ type ResourceSelectModalProps = {
   types: ModelType[];
 };
 
+// TODO.generation - maybe have a tab for recently selected / recently used resources
+
 export const openResourceSelectModal = ({
   title,
   ...innerProps

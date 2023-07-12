@@ -1,7 +1,8 @@
 import { Button, Card, Input, InputWrapperProps, Stack } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useEffect } from 'react';
+import { useBaseModelsContext } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
 import { withController } from '~/libs/form/hoc/withController';
@@ -17,13 +18,12 @@ type ResourceSelectMultipleProps = {
   limit?: number;
   value?: Generation.Resource[];
   onChange?: (value?: Generation.Resource[]) => void;
-  baseModels?: string[];
   groups: ResourceGrouping[];
   buttonLabel: React.ReactNode;
 } & Omit<InputWrapperProps, 'children'>;
 
 const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
-  ({ limit, value, onChange, baseModels, groups, buttonLabel, ...inputWrapperProps }, ref) => {
+  ({ limit, value, onChange, groups, buttonLabel, ...inputWrapperProps }, ref) => {
     const supportedTypes = groups.map((x) => x.type);
     const _values = [...(value ?? [])].filter((x) => supportedTypes.includes(x.modelType));
     const canAdd = !limit || limit >= _values.length;
@@ -42,7 +42,8 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
     const handleUpdate = (resource: Generation.Resource) => {
       const index = _values.findIndex((x) => x.id === resource.id);
       if (index > -1) {
-        const emitValue = [..._values].splice(index, 1);
+        const emitValue = [..._values];
+        emitValue[index] = resource;
         onChange?.(emitValue);
       }
     };
@@ -53,6 +54,8 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
         resources: _values.filter((x) => x.modelType === group.type),
       }))
       .filter((x) => !!x.resources.length);
+
+    const { baseModels } = useBaseModelsContext();
 
     if (!_groups.length && !canAdd) return null;
 

@@ -2,6 +2,7 @@ import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
 import React from 'react';
+import { useBaseModelsContext } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
 import { withController } from '~/libs/form/hoc/withController';
@@ -10,7 +11,6 @@ import { Generation } from '~/server/services/generation/generation.types';
 function ResourceSelect({
   value,
   onChange,
-  baseModels,
   type,
   buttonLabel,
   buttonProps,
@@ -18,7 +18,6 @@ function ResourceSelect({
 }: {
   value?: Generation.Resource;
   onChange?: (value?: Generation.Resource) => void;
-  baseModels?: string[];
   type: ModelType;
   buttonLabel: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -37,6 +36,8 @@ function ResourceSelect({
   const handleUpdate = (resource: Generation.Resource) => {
     onChange?.(resource);
   };
+
+  const { baseModels } = useBaseModelsContext();
 
   return (
     <Input.Wrapper {...inputWrapperProps}>

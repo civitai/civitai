@@ -47,7 +47,6 @@ type State = {
 };
 
 /**
- * TODO.generation:
  * - add search by prompt
  * - add sort by
  * - add filter by
@@ -118,7 +117,6 @@ export function Feed({
           <Group spacing="xs">
             <Autocomplete
               placeholder="Search by prompt"
-              // TODO.generation: add search by prompt
               data={[]}
               icon={<IconSearch size={14} />}
               sx={{ flex: 1 }}

@@ -27,8 +27,8 @@ import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
 import { env } from '~/env/server.mjs';
 
-import { BaseModel, baseModelSets, Sampler } from '~/server/common/constants';
-import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
+import { BaseModel, baseModelSets, generation, Sampler } from '~/server/common/constants';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
 import { modelsSearchIndex } from '~/server/search-index';
 
@@ -260,7 +260,7 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
   const additionalNetworks = resources
-    .filter((x) => x !== checkpoint)
+    .filter((x) => generation.additionalResourceTypes.includes(x.modelType as any))
     .map((x) => {
       if (x.modelType === ModelType.LORA && !x.strength) x.strength = 1;
       return x;
@@ -281,8 +281,9 @@ export const createGenerationRequest = async ({
     }
   }
 
-  if (params.vae) {
-    additionalNetworks[`@civitai/${params.vae}`] = {
+  const vae = resources.find((x) => x.modelType === ModelType.VAE);
+  if (vae) {
+    additionalNetworks[`@civitai/${vae.id}`] = {
       type: ModelType.VAE,
     };
   }
@@ -477,11 +478,11 @@ export const getGenerationData = async ({
     case 'image':
       return await getImageGenerationData(id);
     case 'model':
-      return await getResourceGenerationData({ id });
+      return await getResourceGenerationData(id);
   }
 };
 
-export const getResourceGenerationData = async ({ id }: GetByIdInput): Promise<Generation.Data> => {
+export const getResourceGenerationData = async (id: number): Promise<Generation.Data> => {
   const resource = await dbRead.modelVersion.findUnique({
     where: { id },
     select: { ...generationResourceSelect, clipSkip: true },

@@ -3,7 +3,7 @@ import { env } from '~/env/client.mjs';
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
 export type EdgeUrlProps = {
-  src: string;
+  src?: string;
   name?: string | null;
   width?: number | undefined;
   height?: number | undefined;
