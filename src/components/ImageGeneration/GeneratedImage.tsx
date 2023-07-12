@@ -1,4 +1,4 @@
-import { AspectRatio, Loader, Center, Card, ThemeIcon } from '@mantine/core';
+import { AspectRatio, Loader, Center, Card, ThemeIcon, Text } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
@@ -16,6 +16,7 @@ export function GeneratedImage({
 }) {
   const [status, setStatus] = useState<GeneratedImageStatus>('loading');
   const ref = useRef<HTMLImageElement>(null);
+  const urlRef = useRef<string>();
   const initializedRef = useRef(false);
   const [qs, setQs] = useState<string>('');
 
@@ -44,29 +45,52 @@ export function GeneratedImage({
 
   const fetchImage = async (url: string) => {
     const response = await fetch(url);
-    if (!response.ok) return;
-    const blob = await response.blob();
-    const imageUrl = URL.createObjectURL(blob);
-    if (!ref.current) return;
-    ref.current.src = imageUrl;
+
+    switch (response.status) {
+      case 404: {
+        setStatus('error');
+        break;
+      }
+      case 408: {
+        fetchImage(url);
+        break;
+      }
+      case 200: {
+        const blob = await response.blob();
+        urlRef.current = URL.createObjectURL(blob);
+        if (!ref.current) return;
+        ref.current.src = urlRef.current;
+        break;
+      }
+      default: {
+        console.error('unhandled generated image error');
+      }
+    }
   };
 
   useEffect(() => {
-    if (!image?.url || !!ref.current?.src || initializedRef.current) return;
-    initializedRef.current = true;
-    fetchImage(image.url);
+    if (image?.url && !ref.current?.src && !initializedRef.current) {
+      initializedRef.current = true;
+      fetchImage(image.url);
+    }
+    return () => {
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    };
   }, []);
 
   return (
     <AspectRatio ratio={request.params.width / request.params.height}>
       <Card p={0} sx={{ position: 'relative' }} withBorder>
         {status !== 'loaded' && (
-          <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}>
+          <Center
+            sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}
+            p="xs"
+          >
             {status === 'loading' && <Loader />}
             {status === 'error' && (
-              <ThemeIcon size="md" color="red" variant="light">
-                <IconX size={20} />
-              </ThemeIcon>
+              <Text color="dimmed" size="xs" align="center">
+                Could not load image
+              </Text>
             )}
           </Center>
         )}
@@ -75,12 +99,9 @@ export function GeneratedImage({
           <img
             ref={ref}
             alt=""
-            // src={image.url + qs}
-            // width={request.params.width}
             onLoad={handleLoad}
-            // onError={(error) => console.log({ error })}
             onClick={handleImageClick}
-            style={{ cursor: 'pointer', zIndex: 2 }}
+            style={{ cursor: 'pointer', zIndex: 2, width: '100%' }}
           />
         )}
       </Card>
