@@ -329,20 +329,24 @@ export function AmbientModelCard({ data, height }: Props) {
       {`Hide content with these tags`}
     </Menu.Item>
   );
-  // TODO.collection: Move this out and add condition
-  let contextMenuItems: React.ReactNode[] = [
-    <Menu.Item
-      key="add-to-collection"
-      icon={<IconPlaylistAdd size={14} stroke={1.5} />}
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openContext('addToCollection', { resourceId: data.id });
-      }}
-    >
-      Add to Collection
-    </Menu.Item>,
-  ];
+
+  let contextMenuItems: React.ReactNode[] = [];
+  if (features.collections) {
+    contextMenuItems = contextMenuItems.concat([
+      <Menu.Item
+        key="add-to-collection"
+        icon={<IconPlaylistAdd size={14} stroke={1.5} />}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openContext('addToCollection', { resourceId: data.id });
+        }}
+      >
+        Add to Collection
+      </Menu.Item>,
+    ]);
+  }
+
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([
       <HideModelButton key="hide-model" as="menu-item" modelId={id} />,

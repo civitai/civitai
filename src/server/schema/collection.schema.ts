@@ -1,17 +1,23 @@
 import { z } from 'zod';
 import { isDefined } from '~/utils/type-guards';
-import { CollectionContributorPermission } from '@prisma/client';
+import {
+  CollectionContributorPermission,
+  CollectionReadConfiguration,
+  CollectionWriteConfiguration,
+} from '@prisma/client';
+
+const collectionItemSchema = z.object({
+  articleId: z.number().optional(),
+  postId: z.number().optional(),
+  modelId: z.number().optional(),
+  imageId: z.number().optional(),
+  note: z.string().optional(),
+});
 
 export type AddCollectionItemInput = z.infer<typeof addCollectionItemInputSchema>;
-
-export const addCollectionItemInputSchema = z
-  .object({
-    articleId: z.number().optional(),
-    postId: z.number().optional(),
-    modelId: z.number().optional(),
-    imageId: z.number().optional(),
+export const addCollectionItemInputSchema = collectionItemSchema
+  .extend({
     collectionIds: z.number().array().min(1, 'Please select at least one collection'),
-    note: z.string().optional(),
   })
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
@@ -20,7 +26,6 @@ export const addCollectionItemInputSchema = z
   );
 
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
-
 export const getAllUserCollectionsInputSchema = z.object({
   permission: z.enum([
     CollectionContributorPermission.ADD,
@@ -28,3 +33,15 @@ export const getAllUserCollectionsInputSchema = z.object({
     CollectionContributorPermission.MANAGE,
   ]),
 });
+
+export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
+export const upsertCollectionInput = z
+  .object({
+    id: z.number().optional(),
+    name: z.string().nonempty(),
+    description: z.string().optional(),
+    coverImage: z.string().optional(),
+    read: z.nativeEnum(CollectionReadConfiguration).optional(),
+    write: z.nativeEnum(CollectionWriteConfiguration).optional(),
+  })
+  .merge(collectionItemSchema);

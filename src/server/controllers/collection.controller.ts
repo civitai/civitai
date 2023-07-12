@@ -3,11 +3,14 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import {
   AddCollectionItemInput,
   GetAllUserCollectionsInputSchema,
+  UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import {
   addCollectionItems,
   getUserCollectionsWithPermissions,
+  upsertCollection,
 } from '~/server/services/collection.service';
+import { TRPCError } from '@trpc/server';
 
 export const getAllUserCollectionsHandler = async ({
   ctx,
@@ -36,6 +39,7 @@ export const getAllUserCollectionsHandler = async ({
     throw throwDbError(error);
   }
 };
+
 export const addItemHandlers = async ({
   ctx,
   input,
@@ -48,6 +52,25 @@ export const addItemHandlers = async ({
   try {
     return await addCollectionItems({ user, input });
   } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const upsertCollectionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpsertCollectionInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+
+  try {
+    const collection = await upsertCollection({ input, user });
+
+    return collection;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
