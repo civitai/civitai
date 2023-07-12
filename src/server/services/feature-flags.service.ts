@@ -26,6 +26,14 @@ const featureFlags = createFeatureFlags({
     description: `We're improving our search experience! Starting with a new quick search feature with more coming soon. This is a beta feature, so please report any issues you find!`,
     availability: ['mod', 'granted'],
   },
+  alternateHome: {
+    toggleable: true,
+    default: true,
+    displayName: 'New Home Page',
+    description: `A new home page with a more modern design and more features. This is a beta feature, so please report any issues you find!`,
+    availability: ['dev'],
+  },
+  collections: ['dev'],
 });
 
 // --------------------------
