@@ -100,14 +100,21 @@ const formatGenerationData = ({
   );
   const aspectRatio =
     params?.height && params.width ? getClosestAspectRatio(params.width, params.height) : undefined;
+
+  let sampler = params?.sampler;
+  if (sampler) sampler = generation.samplers.includes(sampler as any) ? sampler : undefined;
+
   const formData: Partial<GenerateFormModel> = {
     model: resources.find((x) => x.modelType === ModelType.Checkpoint),
-    resources: !!additionalResources.length ? additionalResources : undefined,
     vae: resources.find((x) => x.modelType === ModelType.VAE),
     aspectRatio,
     ...params,
+    sampler,
   };
-  return removeEmpty(formData);
+  return {
+    ...removeEmpty(formData),
+    resources: !!additionalResources.length ? additionalResources : undefined,
+  };
 };
 
 export const getClosestAspectRatio = (width = 512, height = 512) => {

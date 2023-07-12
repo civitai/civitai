@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   generationParamsSchema,
   generationResourceSchema,
-  seedSchema,
 } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { findClosest } from '~/utils/number-helpers';
@@ -19,7 +18,6 @@ export const generationFormSchema = generationParamsSchema
   .omit({ height: true, width: true, seed: true })
   .extend({
     aspectRatio: z.string(),
-    seed: seedSchema.optional(),
   });
 
 const resourcesSchema = generationResourceSchema.array();

@@ -1,8 +1,6 @@
-import { AspectRatio, Loader, Center, Card, ThemeIcon, Text } from '@mantine/core';
+import { AspectRatio, Loader, Center, Card, Text } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
-import { IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { Generation } from '~/server/services/generation/generation.types';
 
 type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
@@ -18,7 +16,6 @@ export function GeneratedImage({
   const ref = useRef<HTMLImageElement>(null);
   const urlRef = useRef<string>();
   const initializedRef = useRef(false);
-  const [qs, setQs] = useState<string>('');
 
   const handleImageClick = () => {
     if (!image) return;
@@ -35,13 +32,7 @@ export function GeneratedImage({
     });
   };
 
-  const retry = () => setQs(`?${Date.now()}`);
-
-  const handleLoad = () => {
-    setStatus('loaded');
-  };
-
-  const handleError = () => retry();
+  const handleLoad = () => setStatus('loaded');
 
   const fetchImage = async (url: string) => {
     const response = await fetch(url);
@@ -52,7 +43,7 @@ export function GeneratedImage({
         break;
       }
       case 408: {
-        fetchImage(url);
+        fetchImage(`${url}?${Date.now()}`);
         break;
       }
       case 200: {

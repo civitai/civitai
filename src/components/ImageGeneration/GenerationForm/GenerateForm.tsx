@@ -35,7 +35,7 @@ import {
   InputTextArea,
 } from '~/libs/form';
 import { generation } from '~/server/common/constants';
-import { GenerateFormModel, MAX_SEED, supportedSamplers } from '~/server/schema/generation.schema';
+import { GenerateFormModel } from '~/server/schema/generation.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 
 export function GenerateForm({

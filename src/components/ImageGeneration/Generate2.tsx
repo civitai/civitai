@@ -37,12 +37,15 @@ export function Generate2() {
     const { data, type } = runData;
 
     const getFormData = () => {
-      // remix will return the formatted generation data as is
+      // 'remix' will return the formatted generation data as is
       if (type === 'remix') return data;
-      // run will return
-      const previousData = form.getValues();
-      const resources = previousData.resources ?? [];
-      return { ...data, resources: uniqBy(resources.concat(data.resources ?? []), 'id') };
+      // 'run' will keep previous relevant data
+      else if (type === 'run') {
+        const previousData = form.getValues();
+        // add new resources to existing resources
+        const resources = (previousData.resources ?? []).concat(data.resources ?? []);
+        return { ...data, resources: uniqBy(resources, 'id') };
+      }
     };
 
     const formData = getFormData();
@@ -62,10 +65,12 @@ export function Generate2() {
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
 
   const handleSubmit = async (data: GenerateFormModel) => {
-    const { model, resources = [], aspectRatio, ...params } = data;
+    const { model, resources = [], vae, aspectRatio, ...params } = data;
     const [width, height] = aspectRatio.split('x').map(Number);
+    const _resources = [model, ...resources];
+    if (vae) _resources.push(vae);
     await mutateAsync({
-      resources: [model, ...resources], // TODO - vae support
+      resources: _resources.filter((x) => x.covered),
       params: {
         ...params,
         width,

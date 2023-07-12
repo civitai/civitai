@@ -308,11 +308,21 @@ export const createGenerationRequest = async ({
     },
   };
 
+  console.log('________');
+  console.log(vae);
+  console.log(additionalNetworks);
+  console.log(JSON.stringify(generationRequest));
+  console.log('________');
+
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(generationRequest),
   });
+
+  console.log('________');
+  console.log(response);
+  console.log('________');
 
   if (response.status === 429) {
     // too many requests
@@ -485,11 +495,23 @@ export const getGenerationData = async ({
 export const getResourceGenerationData = async (id: number): Promise<Generation.Data> => {
   const resource = await dbRead.modelVersion.findUnique({
     where: { id },
-    select: { ...generationResourceSelect, clipSkip: true },
+    select: {
+      ...generationResourceSelect,
+      clipSkip: true,
+      // vaeId: true
+    },
   });
   if (!resource) throw throwNotFoundError();
+  const resources = [resource];
+  // if (resource.vaeId && resource.model.type !== ModelType.VAE) {
+  //   const vae = await dbRead.modelVersion.findUnique({
+  //     where: { id },
+  //     select: { ...generationResourceSelect, clipSkip: true, vaeId: true },
+  //   });
+  //   if (vae) resources.push(vae);
+  // }
   return {
-    resources: [mapGenerationResource(resource)],
+    resources: resources.map(mapGenerationResource),
     params: {
       clipSkip: resource.clipSkip ?? undefined,
     },
