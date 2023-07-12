@@ -16,6 +16,7 @@ export function GeneratedImage({
 }) {
   const [status, setStatus] = useState<GeneratedImageStatus>('loading');
   const ref = useRef<HTMLImageElement>(null);
+  const initializedRef = useRef(false);
   const [qs, setQs] = useState<string>('');
 
   const handleImageClick = () => {
@@ -42,16 +43,8 @@ export function GeneratedImage({
   const handleError = () => retry();
 
   const fetchImage = async (url: string) => {
-    const canLog =
-      url ===
-      'https://image-generation.civitai.com/v1/consumer/images/8F8FAD1FE91848FD5A1C962D7F207FB41C34DD3F9D9A8492634ED0033EE28CA8';
-    const response = await fetch(url, {
-      // mode: 'no-cors'
-    });
-    if (canLog) console.log({ response });
-    if (!response.ok) {
-      return;
-    }
+    const response = await fetch(url);
+    if (!response.ok) return;
     const blob = await response.blob();
     const imageUrl = URL.createObjectURL(blob);
     if (!ref.current) return;
@@ -59,7 +52,8 @@ export function GeneratedImage({
   };
 
   useEffect(() => {
-    if (!image?.url || !!ref.current?.src) return;
+    if (!image?.url || !!ref.current?.src || initializedRef.current) return;
+    initializedRef.current = true;
     fetchImage(image.url);
   }, []);
 
@@ -77,6 +71,7 @@ export function GeneratedImage({
           </Center>
         )}
         {status !== 'error' && image && (
+          // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
           <img
             ref={ref}
             alt=""
