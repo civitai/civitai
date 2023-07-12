@@ -8,6 +8,7 @@ import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
+import { openAddToCollectionModal } from '~/components/Collections/AddToCollectionModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -35,6 +36,7 @@ const ResourceSelectModal = dynamic(
   () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal')
 );
 const BoostModal = dynamic(() => import('~/components/ImageGeneration/BoostModal'));
+const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
 
 const registry = {
   blockModelTags: {
@@ -64,6 +66,10 @@ const registry = {
   associateModels: {
     Component: AssociateModelsModal,
     fn: openAssociateModelsModal,
+  },
+  addToCollection: {
+    Component: AddToCollectionModal,
+    fn: openAddToCollectionModal,
   },
 };
 

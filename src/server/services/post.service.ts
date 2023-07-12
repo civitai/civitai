@@ -70,7 +70,7 @@ export const getPostsInfinite = async ({
     AND.push({
       publishedAt:
         period === 'AllTime' || periodMode === 'stats'
-          ? { not: null }
+          ? { lt: new Date() }
           : { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) },
     });
     if (query) AND.push({ title: { in: query } });
@@ -173,7 +173,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       OR: user?.isModerator
         ? undefined
         : [
-            { publishedAt: { not: null } },
+            { publishedAt: { lt: new Date() } },
             { userId: user?.id },
             { modelVersionId: null },
             { modelVersion: { status: 'Published' } },
@@ -511,7 +511,7 @@ export const getPostsByCategory = async ({
         ${Prisma.raw(
           input.period !== 'AllTime' && input.periodMode !== 'stats'
             ? `AND p."publishedAt" > now() - INTERVAL '1 ${input.period}'`
-            : 'AND p."publishedAt" IS NOT NULL'
+            : 'AND p."publishedAt" < now()'
         )}
       ${Prisma.raw(input.modelId ? `JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"` : '')}
       ${Prisma.raw(

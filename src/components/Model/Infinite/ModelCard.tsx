@@ -14,7 +14,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  useMantineTheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { ModelStatus } from '@prisma/client';
@@ -27,10 +26,11 @@ import {
   IconFlag,
   IconTagOff,
   IconDotsVertical,
+  IconPlaylistAdd,
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { InView } from 'react-intersection-observer';
 
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
@@ -329,7 +329,24 @@ export function AmbientModelCard({ data, height }: Props) {
       {`Hide content with these tags`}
     </Menu.Item>
   );
+
   let contextMenuItems: React.ReactNode[] = [];
+  if (features.collections) {
+    contextMenuItems = contextMenuItems.concat([
+      <Menu.Item
+        key="add-to-collection"
+        icon={<IconPlaylistAdd size={14} stroke={1.5} />}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openContext('addToCollection', { resourceId: data.id });
+        }}
+      >
+        Add to Collection
+      </Menu.Item>,
+    ]);
+  }
+
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([
       <HideModelButton key="hide-model" as="menu-item" modelId={id} />,

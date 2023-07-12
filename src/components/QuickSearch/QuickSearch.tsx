@@ -1,9 +1,10 @@
 import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
-import { useDebouncedValue, useOs } from '@mantine/hooks';
+import { useDebouncedValue, useElementSize, useOs } from '@mantine/hooks';
 import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
 import Router from 'next/router';
+import React, { useEffect, useMemo } from 'react';
 import {
   Configure,
   Index,
@@ -13,11 +14,17 @@ import {
   useInstantSearch,
   useSearchBox,
 } from 'react-instantsearch-hooks-web';
-import { env } from '~/env/client.mjs';
 
-import { CustomSpotlightAction } from './CustomSpotlightAction';
+import { useSearchStore } from '~/components/QuickSearch/search.store';
+import {
+  applyQueryMatchers,
+  filterIcons,
+  getFiltersByIndexName,
+  hasForceUniqueQueryAttribute,
+} from '~/components/QuickSearch/util';
+import { env } from '~/env/client.mjs';
 import { ActionsWrapper } from './ActionsWrapper';
-import { useEffect, useState } from 'react';
+import { CustomSpotlightAction } from './CustomSpotlightAction';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -106,12 +113,21 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
 function InnerSearch(props: SearchBoxProps) {
   const os = useOs();
   const { classes } = useStyles();
-  const { refine } = useSearchBox(props);
   const { scopedResults } = useInstantSearch();
-  const [query, setQuery] = useState<string>('');
-  const [debouncedQuery] = useDebouncedValue(query, 300);
+  const { refine } = useSearchBox(props);
 
-  useEffect(() => refine(debouncedQuery), [refine, debouncedQuery]);
+  const query = useSearchStore((state) => state.query);
+  const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
+  const setQuery = useSearchStore((state) => state.setQuery);
+  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
+
+  const [debouncedQuery] = useDebouncedValue(query, 300);
+  const { ref, height } = useElementSize();
+
+  const { updatedQuery, matchedFilters } = applyQueryMatchers(debouncedQuery, [quickSearchFilter]);
+  const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
+
+  useEffect(() => refine(updatedQuery), [refine, updatedQuery]);
 
   let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
@@ -139,49 +155,127 @@ function InnerSearch(props: SearchBoxProps) {
       group: 'search',
       title: 'Keyword search',
       description: 'Search for models using the keywords you entered',
-      onTrigger: () => Router.push(`/?query=${query}&view=feed`),
+      onTrigger: () => Router.push(`/?query=${updatedQuery}&view=feed`),
     });
   }
 
+  const modelsFilter = getFiltersByIndexName('models', matchedFilters);
+
+  const renderIndexes = () => {
+    if (uniqueQueryAttributeMatched) {
+      const { indexName } = uniqueQueryAttributeMatched;
+      const filters = getFiltersByIndexName(indexName, matchedFilters);
+
+      return (
+        <>
+          <Configure hitsPerPage={0} />
+          <Index indexName={indexName}>
+            <Configure filters={filters} hitsPerPage={20} />
+          </Index>
+        </>
+      );
+    }
+
+    return (
+      <>
+        {/*  hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
+        <Configure hitsPerPage={0} />
+        <Index indexName="models">
+          <Configure filters={modelsFilter} hitsPerPage={5} />
+        </Index>
+        <Index indexName="users">
+          <Configure hitsPerPage={5} />
+        </Index>
+        <Index indexName="articles">
+          <Configure hitsPerPage={5} />
+        </Index>
+        <Index indexName="tags">
+          <Configure hitsPerPage={5} />
+        </Index>
+      </>
+    );
+  };
+
+  const handleQueryChange = (value: string) => {
+    setQuery(value);
+
+    // Set filter based on first character of the query
+    if (value.length > 1) {
+      return;
+    }
+
+    // If a filter is already active, hasForceUniqueQueryAttribute will return the that value and as such
+    // we won't get the "newly" selected filter, so we have to match it with the actual query temporarily.
+    const { matchedFilters: queryMatchedFilters } = applyQueryMatchers(value);
+    const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
+
+    if (
+      queryUniqueQueryAttributeMatched &&
+      queryUniqueQueryAttributeMatched.filterId &&
+      quickSearchFilter !== queryUniqueQueryAttributeMatched.filterId
+    ) {
+      // setQuery('');
+      setQuickSearchFilter(queryUniqueQueryAttributeMatched.filterId);
+    } else if (!value || (quickSearchFilter !== 'all' && !queryUniqueQueryAttributeMatched)) {
+      setQuickSearchFilter('all');
+    }
+  };
+
+  // Wrap it in useMemo to avoid re-rendering the component on every render
+  const ActionsWrapperComponent = useMemo(
+    // eslint-disable-next-line react/display-name
+    () => (props: { children: React.ReactNode }) => <ActionsWrapper {...props} ref={ref} />,
+    [ref]
+  );
+
   return (
-    <SpotlightProvider
-      actions={actions}
-      searchIcon={<IconSearch size={18} />}
-      actionComponent={CustomSpotlightAction}
-      searchPlaceholder="Search models, users, articles, tags"
-      nothingFoundMessage="Nothing found"
-      actionsWrapperComponent={ActionsWrapper}
-      onQueryChange={setQuery}
-      filter={(_, actions) => actions}
-      limit={20}
-      styles={(theme) => ({
-        inner: {
-          paddingTop: 70,
-        },
-      })}
-    >
-      <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
-        <Group position="apart" noWrap>
-          <Group spacing={8} noWrap>
-            <IconSearch size={16} />
-            <Text color="dimmed">Search</Text>
+    <>
+      {/* hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
+      {renderIndexes()}
+
+      <SpotlightProvider
+        actions={actions}
+        searchIcon={filterIcons[quickSearchFilter]}
+        actionComponent={CustomSpotlightAction}
+        actionsWrapperComponent={ActionsWrapperComponent}
+        searchPlaceholder="Search models, users, articles, tags"
+        nothingFoundMessage="Nothing found"
+        onQueryChange={handleQueryChange}
+        cleanQueryOnClose={false}
+        filter={(_, actions) => actions}
+        limit={20}
+        styles={(theme) => ({
+          inner: { paddingTop: 50 },
+          spotlight: { overflow: 'hidden' },
+          actions: {
+            overflow: 'auto',
+            height: '55vh',
+
+            [theme.fn.smallerThan('sm')]: {
+              height: `calc(100vh - ${height + 137}px)`,
+            },
+          },
+        })}
+      >
+        <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
+          <Group position="apart" noWrap>
+            <Group spacing={8} noWrap>
+              <IconSearch size={16} />
+              <Text color="dimmed">Search</Text>
+            </Group>
+            <Text className={classes.keyboardIndicator} size="xs" color="dimmed">
+              {os === 'macos' ? '⌘ + K' : 'Ctrl + K'}
+            </Text>
           </Group>
-          <Text className={classes.keyboardIndicator} size="xs" color="dimmed">
-            {os === 'macos' ? '⌘ + K' : 'Ctrl + K'}
-          </Text>
-        </Group>
-      </UnstyledButton>
-    </SpotlightProvider>
+        </UnstyledButton>
+      </SpotlightProvider>
+    </>
   );
 }
 
 export function QuickSearch() {
   return (
-    <InstantSearch indexName="models" searchClient={searchClient}>
-      <Index indexName="users" />
-      <Index indexName="articles" />
-      <Index indexName="tags" />
-      <Configure hitsPerPage={5} />
+    <InstantSearch searchClient={searchClient} indexName="models">
       <InnerSearch />
     </InstantSearch>
   );

@@ -2,20 +2,26 @@
 title: "What the heck is Civitai?"
 ---
 
-Civitai is a platform that makes it easy for people to share and discover resources for creating AI art. Our users can upload and share custom models that they've trained using their own data, or browse and download models created by other users. These models can then be used with AI art software to generate unique works of art.
+Launched in November 2022, Civitai was born to answer the growing demand of fine-tuning enthusiasts for a platform where they could seamlessly share their creations and interact with fellow creators. Civitai is a dynamic platform designed to boost the creation and exploration of AI-generated media. We offer an environment where users can upload, share, and discover custom models, each trained on distinct datasets. With the aid of AI media software, these models can be leveraged as innovative tools for crafting your own unique creations. In operating our platform, we're guided by our [Terms of Service](https://civitai.com/content/tos) to ensure a respectful and secure environment for all users.
 
-### Cool, what's a "Model?"
-Put simply, a "model" refers to a machine learning algorithm or set of algorithms that have been trained to generate art or media in a particular style. This can include images, music, video, or other types of media.
+**Interesting, But What Exactly is a "Model"?**
+A "model" in this context refers to a machine learning algorithm that's been trained to generate art or media in a specific style. This might encompass a range of media including images, music, videos, and more.
 
-To create a model for generating art, a dataset of examples in the desired style is first collected and used to train the model. The model is then able to generate new art by learning patterns and characteristics from the examples it was trained on. The resulting art is not an exact copy of any of the examples in the training dataset, but rather a new piece of art that is influenced by the style of the training examples.
+To develop a media-generating model, a dataset encompassing the desired style or subject is assembled and used to train the model. This model then generates new, original media by recognizing patterns and characteristics from its training data. The resulting media isn't an exact reproduction of the training examples but rather a unique creation influenced by the content of the training dataset. Models can be trained to generate everything from photorealistic images, abstract patterns, diverse audio arangements, short stories, or even video, facilitating the creation of content that could be challenging and labor-intensive to manually produce.
 
-Models can be trained to generate a wide range of styles, from photorealistic images to abstract patterns, and can be used to create art that is difficult or time-consuming for humans to produce manually.
+**Sounds Exciting! How Do I Use the Models Once I've Downloaded Them?**
+Due to the rapid pace of updates for tools like Stable Diffusion, static instructions may not always be current. Instead, we recommend checking out our [Articles](https://civitai.com/articles) section where community members share their experiences and insights on how to use various file types, tools and techniques.
 
-### Pretty Sweet, How do I use these once I've downloaded them?
-Stable Diffusion is constantly updating so explaining this on a static text page isnt much use, we reccomend checking out our [Q&A section](https://civitai.com/questions) to get answers from the community on ways to use the different file types.
+**What Makes Civitai Unique?**
+Civitai stands out as a thriving community where you can consistently discover new and intriguing models. Regardless of whether you're a seasoned AI creator or a beginner, you're invited to explore our diverse collection of resources and push your creative boundaries. If you experiment with a model, we encourage you to share your experience and leave a review, contributing to our vibrant, supportive community of AI creators. Through collaboration and sharing, we're collectively shaping the future of AI in media.
 
-### So what does Civitai bring to the table?
+**Why does this platform exist?**
+Our mission at Civitai is rooted in the belief that AI resources should be accessible to all, not monopolized by a few. We exist to bring these resources out of the shadows and into the light, where they can be harnessed by everyone, fostering innovation, creativity, and inclusivity.
 
-Our community is constantly sharing new and interesting models, so there's always something new to explore on Civitai. Whether you're an experienced AI artist or just getting started, we invite you to browse our selection of models and see what you can create. If you try out a model, we encourage you to leave a review and share your experience with the rest of the community. Together, we're building a vibrant and supportive community of AI artists.
+We envision a future where AI technology empowers everyone, amplifying our potential to create, learn, and make a difference. By facilitating the sharing of knowledge and resources, we aim to create an inclusive platform where no one is left behind in the AI revolution.
+
+We firmly believe that exposure to and education about AI technologies are crucial for their positive use. It's not enough to merely provide access to these resources. We also strive to equip our users with the knowledge and tools they need to use AI responsibly and effectively. We're committed to creating a platform that not only provides access to AI media creation tools but also promotes learning, understanding, and responsible use of these powerful technologies.
+
+In essence, Civitai exists to democratize AI media creation, making it a shared, inclusive, and empowering journey. By fostering a community that learns from each other and shares freely, we're shaping a future where AI and media creation coalesce, opening up unprecedented creative avenues for everyone.
 
 ## [Start Exploring](/)

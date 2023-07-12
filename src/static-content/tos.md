@@ -30,7 +30,7 @@ These rules apply to all Content posted on Civitai. Moderators consider context 
 Content containing nudity, sexual situations, provocative/revealing attire, blood/gore, death, or other mature themes.
 
 ### Content Removal Criteria:
-- Content depicting or intended to depict real individuals or minors (under 18) in a mature context.
+- Content depicting or intended to depict real individuals or minors (under 18) in a mature context. For a more detailed explanation, please review our guidelines on [depicting the likeness of real people](/content/rules/real-people) and [depicting minors](/content/rules/minors).
 - Content promoting illegal or violent activities, including, but not limited to:
   - child abuse and exploitation
   - rape and domestic abuse
@@ -39,7 +39,7 @@ Content containing nudity, sexual situations, provocative/revealing attire, bloo
   - brutal fights, graphic injuries, or human death
   - graphic violence or bestiality
 - "Loli", "lolicon", "shota", "shotacon" content
-- Content depicting or intended to depict photorealistic minors, regardless of context.
+- Content depicting or intended to depict photorealistic minors, regardless of context. For a more detailed explanation, please refer to our guidelines on [depicting photorealistic minors](/content/rules/minors).
 - Content depicting the excrement of "scat" or fecal matter.
 - Content that is disrespectful, offensive, or promotes hate speech, discrimination, or harassment based on, but not limited to:
   - Religion or religious beliefs
