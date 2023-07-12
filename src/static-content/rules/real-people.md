@@ -13,7 +13,7 @@ Portraying real people in any mature or suggestive context is strictly prohibite
 ## FAQs
 
 ### Q: How are these guidelines enforced?
-**A:** Every image uploaded is sent for AI content tagging, which automatically flags images potentially containing mature content. For models that have been marked as representing a real person, any image that potentially contains mature content is sent for manual human moderator review before the image will be allowed to appear on the site. Our AI detection isn't perfect, and not all images containing real people are properly tagged, so if you see something, please take a moment to report it.
+**A:** Every image uploaded is sent for AI content and moderation tagging (utilizing Amazon Rekognition), which automatically flags images potentially containing mature content. For models that have been marked as representing a real person, any image that potentially contains mature content is sent for manual human moderator review before the image will be allowed to appear on the site. Our AI detection isn't perfect, and not all images containing real people are properly tagged, so if you see something, please take a moment to report it.
 
 ### Q: How can I report content that I believe violates the community guidelines?
 **A:** If you come across content that you believe doesn't adhere to our community guidelines, please don't hesitate to report it. A "Report" button is generally available in content menus on most images and models through-out the site. If you don't see it, you can always reach out to the moderators on our Discord server. We appreciate your vigilance in keeping our community safe and respectful.

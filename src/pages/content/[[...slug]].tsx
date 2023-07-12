@@ -8,6 +8,7 @@ import { getFilesWithExtension } from '~/utils/fs-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
+import Link from 'next/link';
 
 const contentRoot = 'src/static-content';
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -58,7 +59,22 @@ export default function ContentPage({
       />
       <Container size="md">
         <Title order={1}>{title}</Title>
-        <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
+        <ReactMarkdown
+          rehypePlugins={[rehypeRaw]}
+          className="markdown-content"
+          components={{
+            a: ({ node, ...props }) => {
+              console.log('props: ', { props });
+              return (
+                <Link href={props.href as string}>
+                  <a target={props.href?.includes('http') ? '_blank' : '_self'}>
+                    {props.children[0]}
+                  </a>
+                </Link>
+              );
+            },
+          }}
+        >
           {content}
         </ReactMarkdown>
       </Container>
