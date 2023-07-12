@@ -1,10 +1,11 @@
 import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
-import { useDebouncedValue, useElementSize, useOs } from '@mantine/hooks';
+import { useElementSize, useOs } from '@mantine/hooks';
 import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
+import { debounce } from 'lodash-es';
 import Router from 'next/router';
-import React, { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import {
   Configure,
   Index,
@@ -114,20 +115,14 @@ function InnerSearch(props: SearchBoxProps) {
   const os = useOs();
   const { classes } = useStyles();
   const { scopedResults } = useInstantSearch();
-  const { refine } = useSearchBox(props);
-
-  const query = useSearchStore((state) => state.query);
-  const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
-  const setQuery = useSearchStore((state) => state.setQuery);
-  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
-
-  const [debouncedQuery] = useDebouncedValue(query, 300);
+  const { refine, query } = useSearchBox(props);
   const { ref, height } = useElementSize();
 
-  const { updatedQuery, matchedFilters } = applyQueryMatchers(debouncedQuery, [quickSearchFilter]);
-  const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
+  const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
+  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
 
-  useEffect(() => refine(updatedQuery), [refine, updatedQuery]);
+  const { matchedFilters } = applyQueryMatchers(query, [quickSearchFilter]);
+  const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
 
   let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
@@ -155,7 +150,7 @@ function InnerSearch(props: SearchBoxProps) {
       group: 'search',
       title: 'Keyword search',
       description: 'Search for models using the keywords you entered',
-      onTrigger: () => Router.push(`/?query=${updatedQuery}&view=feed`),
+      onTrigger: () => Router.push(`/?query=${query}&view=feed`),
     });
   }
 
@@ -197,7 +192,10 @@ function InnerSearch(props: SearchBoxProps) {
   };
 
   const handleQueryChange = (value: string) => {
-    setQuery(value);
+    const { updatedQuery, matchedFilters: queryMatchedFilters } = applyQueryMatchers(value, [
+      quickSearchFilter,
+    ]);
+    refine(updatedQuery);
 
     // Set filter based on first character of the query
     if (value.length > 1) {
@@ -206,7 +204,6 @@ function InnerSearch(props: SearchBoxProps) {
 
     // If a filter is already active, hasForceUniqueQueryAttribute will return the that value and as such
     // we won't get the "newly" selected filter, so we have to match it with the actual query temporarily.
-    const { matchedFilters: queryMatchedFilters } = applyQueryMatchers(value);
     const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
 
     if (
@@ -214,7 +211,6 @@ function InnerSearch(props: SearchBoxProps) {
       queryUniqueQueryAttributeMatched.filterId &&
       quickSearchFilter !== queryUniqueQueryAttributeMatched.filterId
     ) {
-      // setQuery('');
       setQuickSearchFilter(queryUniqueQueryAttributeMatched.filterId);
     } else if (!value || (quickSearchFilter !== 'all' && !queryUniqueQueryAttributeMatched)) {
       setQuickSearchFilter('all');
@@ -273,10 +269,18 @@ function InnerSearch(props: SearchBoxProps) {
   );
 }
 
+/**
+ * Needs to be declared either outside or inside a useCallback to avoid re-rendering the component on every render
+ * @see https://www.algolia.com/doc/api-reference/widgets/search-box/react-hooks/#hook-params
+ */
+const debouncedQueryHook = debounce((query, refine) => {
+  refine(query);
+}, 300);
+
 export function QuickSearch() {
   return (
     <InstantSearch searchClient={searchClient} indexName="models">
-      <InnerSearch />
+      <InnerSearch queryHook={debouncedQueryHook} />
     </InstantSearch>
   );
 }
