@@ -1254,7 +1254,7 @@ model Partner {
   homepage         String?
   tos              String?
   privacy          String?
-  startupTime      Int? //Seconds
+  startupTime      Int? // Seconds
   onDemand         Boolean
   onDemandStrategy String? // URL Template
   onDemandTypes    ModelType[]         @default([])
@@ -1866,14 +1866,21 @@ model CollectionContributor {
   @@id([userId, collectionId])
 }
 
+enum HomeBlockType {
+  Collection
+  Announcement
+  Leaderboard
+}
+
 model HomeBlock {
-  id        Int       @id @default(autoincrement())
-  createdAt DateTime? @default(now())
-  updatedAt DateTime? @updatedAt
+  id        Int           @id @default(autoincrement())
+  createdAt DateTime?     @default(now())
+  updatedAt DateTime?     @updatedAt
   userId    Int
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  metadata  Json      @default("{}")
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metadata  Json          @default("{}")
   index     Int
+  type      HomeBlockType
 }
 
 /// @view
