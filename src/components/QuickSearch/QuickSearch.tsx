@@ -216,7 +216,7 @@ function InnerSearch(props: SearchBoxProps) {
     ) {
       // setQuery('');
       setQuickSearchFilter(queryUniqueQueryAttributeMatched.filterId);
-    } else if (!value || quickSearchFilter !== 'all') {
+    } else if (!value || (quickSearchFilter !== 'all' && !queryUniqueQueryAttributeMatched)) {
       setQuickSearchFilter('all');
     }
   };
