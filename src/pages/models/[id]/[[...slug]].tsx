@@ -42,7 +42,7 @@ import {
   IconArchive,
   IconCircleMinus,
   IconReload,
-  IconShare3,
+  IconPlaylistAdd,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -97,6 +97,7 @@ import { ModelMeta } from '~/server/schema/model.schema';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -142,6 +143,7 @@ export default function ModelDetailsV2({
   const { classes, theme } = useStyles();
   const queryUtils = trpc.useContext();
   const isClient = useIsClient();
+  const features = useFeatureFlags();
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
@@ -630,6 +632,19 @@ export default function ModelDetailsV2({
                     )}
                     {currentUser && (
                       <>
+                        {/* TODO.collections: condition this appropiately */}
+                        {features.collections && (
+                          <Menu.Item
+                            icon={<IconPlaylistAdd size={14} stroke={1.5} />}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              openContext('addToCollection', { resourceId: model.id });
+                            }}
+                          >
+                            Add to Collection
+                          </Menu.Item>
+                        )}
                         <HideUserButton as="menu-item" userId={model.user.id} />
                         <HideModelButton as="menu-item" modelId={model.id} />
                         <Menu.Item
