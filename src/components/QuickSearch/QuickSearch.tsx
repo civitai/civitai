@@ -209,6 +209,8 @@ function InnerSearch(props: SearchBoxProps) {
     const { matchedFilters: queryMatchedFilters } = applyQueryMatchers(value);
     const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
 
+    console.log(queryUniqueQueryAttributeMatched, queryUniqueQueryAttributeMatched);
+
     if (
       queryUniqueQueryAttributeMatched &&
       queryUniqueQueryAttributeMatched.filterId &&
@@ -216,7 +218,7 @@ function InnerSearch(props: SearchBoxProps) {
     ) {
       // setQuery('');
       setQuickSearchFilter(queryUniqueQueryAttributeMatched.filterId);
-    } else if (!value || quickSearchFilter !== 'all') {
+    } else if (!value || (quickSearchFilter !== 'all' && !queryUniqueQueryAttributeMatched)) {
       setQuickSearchFilter('all');
     }
   };
