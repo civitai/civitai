@@ -10,7 +10,7 @@ export const addCollectionItemInputSchema = z
     postId: z.number().optional(),
     modelId: z.number().optional(),
     imageId: z.number().optional(),
-    collectionIds: z.number().array(),
+    collectionIds: z.number().array().min(1, 'Please select at least one collection'),
     note: z.string().optional(),
   })
   .refine(

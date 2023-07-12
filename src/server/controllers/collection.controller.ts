@@ -1,13 +1,13 @@
-import { Context } from '~/server/createContext';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { Context } from "~/server/createContext";
+import { throwDbError } from "~/server/utils/errorHandling";
 import {
   AddCollectionItemInput,
   GetAllUserCollectionsInputSchema,
-} from '~/server/schema/collection.schema';
+} from "~/server/schema/collection.schema";
 import {
   addCollectionItems,
   getUserCollectionsWithPermissions,
-} from '~/server/services/collection.service';
+} from "~/server/services/collection.service";
 
 export const getAllUserCollectionsHandler = async ({
   ctx,
@@ -33,7 +33,7 @@ export const getAllUserCollectionsHandler = async ({
 
     return collections;
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };
 export const addItemHandlers = async ({
@@ -48,6 +48,6 @@ export const addItemHandlers = async ({
   try {
     return await addCollectionItems({ user, input });
   } catch (error) {
-    throwDbError(error);
+    throw throwDbError(error);
   }
 };
