@@ -95,7 +95,11 @@ export const upsertCollection = async ({
       contributors: {
         create: {
           userId: user.id,
-          permissions: [CollectionContributorPermission.MANAGE],
+          permissions: [
+            CollectionContributorPermission.MANAGE,
+            CollectionContributorPermission.ADD,
+            CollectionContributorPermission.VIEW,
+          ],
         },
       },
       items: { create: { ...collectionItem, addedById: user.id } },
