@@ -1,5 +1,5 @@
 import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
-import { useElementSize, useOs } from '@mantine/hooks';
+import { useDebouncedValue, useElementSize, useOs } from '@mantine/hooks';
 import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
@@ -118,11 +118,16 @@ function InnerSearch(props: SearchBoxProps) {
   const { refine, query } = useSearchBox(props);
   const { ref, height } = useElementSize();
 
+  const rawQuery = useSearchStore((state) => state.query);
+  const setRawQuery = useSearchStore((state) => state.setQuery);
   const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
   const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
+  const [debouncedRawQuery] = useDebouncedValue(rawQuery, 300);
 
-  const { matchedFilters } = applyQueryMatchers(query, [quickSearchFilter]);
+  const { matchedFilters } = applyQueryMatchers(debouncedRawQuery, [quickSearchFilter]);
   const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
+  const indexName = uniqueQueryAttributeMatched?.indexName ?? 'models';
+  const filters = getFiltersByIndexName(indexName, matchedFilters);
 
   let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
@@ -150,48 +155,14 @@ function InnerSearch(props: SearchBoxProps) {
       group: 'search',
       title: 'Keyword search',
       description: 'Search for models using the keywords you entered',
-      onTrigger: () => Router.push(`/?query=${query}&view=feed`),
+      onTrigger: () => Router.push(`/?query=${encodeURIComponent(query)}&view=feed`),
     });
   }
 
   const modelsFilter = getFiltersByIndexName('models', matchedFilters);
 
-  const renderIndexes = () => {
-    if (uniqueQueryAttributeMatched) {
-      const { indexName } = uniqueQueryAttributeMatched;
-      const filters = getFiltersByIndexName(indexName, matchedFilters);
-
-      return (
-        <>
-          <Configure hitsPerPage={0} />
-          <Index indexName={indexName}>
-            <Configure filters={filters} hitsPerPage={20} />
-          </Index>
-        </>
-      );
-    }
-
-    return (
-      <>
-        {/*  hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
-        <Configure hitsPerPage={0} />
-        <Index indexName="models">
-          <Configure filters={modelsFilter} hitsPerPage={5} />
-        </Index>
-        <Index indexName="users">
-          <Configure hitsPerPage={5} />
-        </Index>
-        <Index indexName="articles">
-          <Configure hitsPerPage={5} />
-        </Index>
-        <Index indexName="tags">
-          <Configure hitsPerPage={5} />
-        </Index>
-      </>
-    );
-  };
-
   const handleQueryChange = (value: string) => {
+    setRawQuery(value);
     const { updatedQuery, matchedFilters: queryMatchedFilters } = applyQueryMatchers(value, [
       quickSearchFilter,
     ]);
@@ -226,8 +197,28 @@ function InnerSearch(props: SearchBoxProps) {
 
   return (
     <>
-      {/* hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
-      {renderIndexes()}
+      {uniqueQueryAttributeMatched ? (
+        <>
+          <Index indexName={indexName}>
+            <Configure filters={filters} hitsPerPage={20} />
+          </Index>
+        </>
+      ) : (
+        <>
+          <Index indexName="models">
+            <Configure filters={modelsFilter} hitsPerPage={5} />
+          </Index>
+          <Index indexName="users">
+            <Configure hitsPerPage={5} />
+          </Index>
+          <Index indexName="articles">
+            <Configure hitsPerPage={5} />
+          </Index>
+          <Index indexName="tags">
+            <Configure hitsPerPage={5} />
+          </Index>
+        </>
+      )}
 
       <SpotlightProvider
         actions={actions}
@@ -279,7 +270,15 @@ const debouncedQueryHook = debounce((query, refine) => {
 
 export function QuickSearch() {
   return (
-    <InstantSearch searchClient={searchClient} indexName="models">
+    <InstantSearch
+      searchClient={searchClient}
+      indexName="models"
+      initialUiState={{
+        models: { hitsPerPage: 0 },
+      }}
+    >
+      {/* hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
+      <Configure hitsPerPage={0} />
       <InnerSearch queryHook={debouncedQueryHook} />
     </InstantSearch>
   );

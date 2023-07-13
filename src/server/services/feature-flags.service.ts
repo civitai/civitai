@@ -24,7 +24,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Quick Search (Beta)',
     description: `We're improving our search experience! Starting with a new quick search feature with more coming soon. This is a beta feature, so please report any issues you find!`,
-    availability: ['mod', 'granted'],
+    availability: ['public'],
   },
   alternateHome: {
     toggleable: true,
