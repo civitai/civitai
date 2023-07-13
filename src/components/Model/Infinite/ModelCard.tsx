@@ -333,17 +333,18 @@ export function AmbientModelCard({ data, height }: Props) {
   let contextMenuItems: React.ReactNode[] = [];
   if (features.collections) {
     contextMenuItems = contextMenuItems.concat([
-      <Menu.Item
-        key="add-to-collection"
-        icon={<IconPlaylistAdd size={14} stroke={1.5} />}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          openContext('addToCollection', { modelId: data.id });
-        }}
-      >
-        Add to Collection
-      </Menu.Item>,
+      <LoginRedirect key="add-to-collection" reason="add-to-collection">
+        <Menu.Item
+          icon={<IconPlaylistAdd size={14} stroke={1.5} />}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openContext('addToCollection', { modelId: data.id });
+          }}
+        >
+          Add to Collection
+        </Menu.Item>
+      </LoginRedirect>,
     ]);
   }
 

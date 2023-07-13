@@ -19,6 +19,7 @@ export const loginRedirectReasons = {
   'create-article': 'You need to be logged in to create an article',
   'favorite-article': 'You need to be logged in to like an article',
   'post-images': 'You need to be logged in to post images',
+  'add-to-collection': 'You must be logged in to add this resource to a collection',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;
