@@ -42,3 +42,20 @@ export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
   },
   tags: { select: { tag: { select: simpleTagSelect } } },
 });
+
+export const postForHomePageSelector = Prisma.validator<Prisma.PostSelect>()({
+  id: true,
+  nsfw: true,
+  title: true,
+  publishedAt: true,
+  stats: {
+    select: {
+      commentCountAllTime: true,
+      likeCountAllTime: true,
+      dislikeCountAllTime: true,
+      heartCountAllTime: true,
+      laughCountAllTime: true,
+      cryCountAllTime: true,
+    },
+  },
+});

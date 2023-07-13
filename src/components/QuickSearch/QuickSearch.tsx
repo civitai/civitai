@@ -114,7 +114,7 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
 function InnerSearch(props: SearchBoxProps) {
   const os = useOs();
   const { classes } = useStyles();
-  const { scopedResults } = useInstantSearch();
+  const { scopedResults, results } = useInstantSearch();
   const { refine, query } = useSearchBox(props);
   const { ref, height } = useElementSize();
 
@@ -128,6 +128,8 @@ function InnerSearch(props: SearchBoxProps) {
   const uniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(matchedFilters);
   const indexName = uniqueQueryAttributeMatched?.indexName ?? 'models';
   const filters = getFiltersByIndexName(indexName, matchedFilters);
+
+  console.log(scopedResults, results);
 
   let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
@@ -272,7 +274,6 @@ export function QuickSearch() {
   return (
     <InstantSearch
       searchClient={searchClient}
-      indexName="models"
       initialUiState={{
         models: { hitsPerPage: 0 },
       }}

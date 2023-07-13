@@ -1,13 +1,27 @@
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { AddCollectionItemInput, UpsertCollectionInput } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
   CollectionWriteConfiguration,
+  MetricTimeframe,
   Prisma,
 } from '@prisma/client';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { modelForHomePageSelector } from '~/server/selectors/model.selector';
+import { isDefined } from '~/utils/type-guards';
+import { getPostsInfiniteHandler } from '~/server/controllers/post.controller';
+import { ImageModel } from '~/server/selectors/image.selector';
+import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { ArticleGetAll } from '~/types/router';
+import { getArticles } from '~/server/services/article.service';
+import {
+  getModelsWithImagesAndModelVersions,
+  GetModelsWithImagesAndModelVersions,
+} from '~/server/services/model.service';
+import { Context } from '~/server/createContext';
+import { ArticleSort, BrowsingMode, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.service';
+import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 
 export const getUserCollectionsWithPermissions = <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
@@ -122,13 +136,23 @@ export const getCollectionById = ({ id }: { id: number }) => {
   });
 };
 
+type CollectionItemExpanded = {
+  model?: GetModelsWithImagesAndModelVersions;
+  post?: PostsInfiniteModel;
+  image?: ImagesInfiniteModel;
+  article?: ArticleGetAll['items'][0];
+};
+
 export const getCollectionItemsByCollectionId = async ({
   id,
-  take = 20,
+  ctx,
+  input,
 }: {
   id: number;
-  take: number;
+  ctx: Context;
+  input: UserPreferencesInput & { limit: number };
 }) => {
+  const { limit: take, ...userPreferencesInput } = input;
   const collectionWithItems = await dbRead.collection.findUnique({
     select: {
       id: true,
@@ -136,9 +160,10 @@ export const getCollectionItemsByCollectionId = async ({
         take,
         select: {
           id: true,
-          model: {
-            select: modelForHomePageSelector,
-          },
+          modelId: true,
+          postId: true,
+          imageId: true,
+          articleId: true,
         },
       },
     },
@@ -148,20 +173,122 @@ export const getCollectionItemsByCollectionId = async ({
   });
 
   if (!collectionWithItems) {
-    return null;
+    return [];
   }
 
-  const collectionItemsExpanded = await Promise.all(
-    collectionWithItems.items.map((collectionItem) => {
-      if (collectionItem.model?.id) {
+  const modelIds = collectionWithItems.items.map((item) => item.modelId).filter(isDefined);
+
+  const models = await getModelsWithImagesAndModelVersions({
+    input: {
+      sort: ModelSort.Newest,
+      period: MetricTimeframe.AllTime,
+      periodMode: 'stats',
+      hidden: false,
+      favorites: false,
+      ...userPreferencesInput,
+      ids: modelIds,
+    },
+    ctx,
+  });
+
+  const articleIds = collectionWithItems.items.map((item) => item.articleId).filter(isDefined);
+
+  const articles = await getArticles({
+    limit: articleIds.length,
+    period: MetricTimeframe.AllTime,
+    periodMode: 'stats',
+    sort: ArticleSort.Newest,
+    ...userPreferencesInput,
+    browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+    sessionUser: ctx.user,
+    ids: articleIds,
+  });
+
+  const imageIds = collectionWithItems.items.map((item) => item.imageId).filter(isDefined);
+
+  const images = await getAllImages({
+    include: [],
+    limit: imageIds.length,
+    period: MetricTimeframe.AllTime,
+    periodMode: 'stats',
+    sort: ImageSort.Newest,
+    ...userPreferencesInput,
+    userId: ctx.user?.id,
+    isModerator: ctx.user?.isModerator,
+    ids: imageIds,
+  });
+
+  const postIds = collectionWithItems.items.map((item) => item.postId).filter(isDefined);
+
+  const posts = await getPostsInfinite({
+    limit: 0,
+    period: MetricTimeframe.AllTime,
+    periodMode: 'stats',
+    sort: PostSort.Newest,
+    ...userPreferencesInput,
+    user: ctx.user,
+    browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+  });
+
+  const collectionItemsExpanded: (Omit<
+    (typeof collectionWithItems.items)[0],
+    'postId' | 'modelId' | 'imageId' | 'articleId'
+  > &
+    CollectionItemExpanded)[] = collectionWithItems.items
+    .map(({ imageId, postId, articleId, modelId, ...collectionItemRemainder }) => {
+      const collectionItem: typeof collectionItemRemainder & CollectionItemExpanded = {
+        ...collectionItemRemainder,
+        // Mark all as undefined:
+        image: undefined,
+        model: undefined,
+        post: undefined,
+        article: undefined,
+      };
+
+      if (modelId) {
         // Get all model info:
+        const model = models.items.find((m) => m.id === modelId);
+        if (!model) {
+          return collectionItem;
+        }
+
+        collectionItem.model = model;
       }
 
-      return {
-        ...collectionItem,
-      };
+      if (postId) {
+        const post = posts.items.find((p) => p.id === postId);
+
+        if (!post) {
+          return collectionItem;
+        }
+
+        collectionItem.post = post;
+      }
+
+      if (imageId) {
+        const image = images.items.find((i) => i.id === imageId);
+
+        if (!image) {
+          return collectionItem;
+        }
+
+        collectionItem.image = image;
+      }
+
+      if (articleId) {
+        const article = articles.items.find((a) => a.id === articleId);
+
+        if (!article) {
+          return collectionItem;
+        }
+
+        collectionItem.article = article;
+      }
+
+      return collectionItem;
     })
-  );
+    .filter(isDefined)
+    .filter((collectionItem) => collectionItem.model || collectionItem.post);
 
   return collectionItemsExpanded;
 };

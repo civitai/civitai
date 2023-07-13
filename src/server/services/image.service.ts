@@ -653,6 +653,7 @@ export const getAllImages = async ({
   nsfw,
   excludeCrossPosts,
   reactions,
+  ids,
 }: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: NsfwLevel }) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
@@ -692,6 +693,10 @@ export const getAllImages = async ({
 
   if (excludeCrossPosts && modelVersionId) {
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+  }
+
+  if (ids) {
+    AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
   }
 
   // Filter to specific model/review content

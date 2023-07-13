@@ -57,6 +57,7 @@ export const getPostsInfinite = async ({
   user,
   tags,
   modelVersionId,
+  ids,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
@@ -89,6 +90,13 @@ export const getPostsInfinite = async ({
     if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
     if (!user?.isModerator)
       AND.push({ OR: [{ modelVersion: { status: 'Published' } }, { modelVersionId: null }] });
+  }
+  if (ids) {
+    AND.push({
+      id: {
+        in: ids,
+      },
+    });
   }
 
   // sorting
