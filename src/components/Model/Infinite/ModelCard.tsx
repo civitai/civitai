@@ -339,7 +339,7 @@ export function AmbientModelCard({ data, height }: Props) {
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('addToCollection', { resourceId: data.id });
+          openContext('addToCollection', { modelId: data.id });
         }}
       >
         Add to Collection

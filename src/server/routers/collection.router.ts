@@ -16,7 +16,7 @@ export const collectionRouter = router({
     .use(isFlagProtected('collections'))
     .query(getAllUserCollectionsHandler),
   upsert: protectedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
-  addItems: protectedProcedure
+  addItem: protectedProcedure
     .input(addCollectionItemInputSchema)
     .use(isFlagProtected('collections'))
     .mutation(addItemHandlers),

@@ -639,7 +639,7 @@ export default function ModelDetailsV2({
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              openContext('addToCollection', { resourceId: model.id });
+                              openContext('addToCollection', { modelId: model.id });
                             }}
                           >
                             Add to Collection

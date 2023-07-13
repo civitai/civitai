@@ -25,12 +25,13 @@ export const getAllUserCollectionsHandler = async ({
   try {
     const collections = await getUserCollectionsWithPermissions({
       user,
-      permissions: [permission],
+      permissions: permission ? [permission] : [],
       select: {
         id: true,
         name: true,
         description: true,
         coverImage: true,
+        read: true,
       },
     });
 

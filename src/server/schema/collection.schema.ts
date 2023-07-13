@@ -17,7 +17,7 @@ const collectionItemSchema = z.object({
 export type AddCollectionItemInput = z.infer<typeof addCollectionItemInputSchema>;
 export const addCollectionItemInputSchema = collectionItemSchema
   .extend({
-    collectionIds: z.number().array().min(1, 'Please select at least one collection'),
+    collectionIds: z.coerce.number().array().min(1, 'Please select at least one collection'),
   })
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
@@ -26,13 +26,11 @@ export const addCollectionItemInputSchema = collectionItemSchema
   );
 
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
-export const getAllUserCollectionsInputSchema = z.object({
-  permission: z.enum([
-    CollectionContributorPermission.ADD,
-    CollectionContributorPermission.VIEW,
-    CollectionContributorPermission.MANAGE,
-  ]),
-});
+export const getAllUserCollectionsInputSchema = z
+  .object({
+    permission: z.nativeEnum(CollectionContributorPermission),
+  })
+  .partial();
 
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z
