@@ -35,27 +35,32 @@ export function GeneratedImage({
   const handleLoad = () => setStatus('loaded');
 
   const fetchImage = async (url: string) => {
-    const response = await fetch(url);
+    try {
+      const response = await fetch(url);
 
-    switch (response.status) {
-      case 404: {
-        setStatus('error');
-        break;
+      switch (response.status) {
+        case 404: {
+          setStatus('error');
+          break;
+        }
+        case 408: {
+          fetchImage(`${url}?${Date.now()}`);
+          break;
+        }
+        case 200: {
+          const blob = await response.blob();
+          urlRef.current = URL.createObjectURL(blob);
+          if (!ref.current) return;
+          ref.current.src = urlRef.current;
+          break;
+        }
+        default: {
+          console.error('unhandled generated image error');
+        }
       }
-      case 408: {
-        fetchImage(`${url}?${Date.now()}`);
-        break;
-      }
-      case 200: {
-        const blob = await response.blob();
-        urlRef.current = URL.createObjectURL(blob);
-        if (!ref.current) return;
-        ref.current.src = urlRef.current;
-        break;
-      }
-      default: {
-        console.error('unhandled generated image error');
-      }
+    } catch (e) {
+      console.error(e);
+      setStatus('error');
     }
   };
 

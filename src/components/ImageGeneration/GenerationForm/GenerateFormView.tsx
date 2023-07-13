@@ -24,34 +24,41 @@ import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/B
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import { PersistantAccordion } from '~/components/PersistantAccordion/PersistantAccordion';
+import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import {
-  Form,
   InputNumber,
   InputNumberSlider,
   InputSegmentedControl,
   InputSelect,
   InputSwitch,
   InputTextArea,
+  PersistentForm,
 } from '~/libs/form';
 import { generation } from '~/server/common/constants';
 import { GenerateFormModel } from '~/server/schema/generation.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 
-export function GenerateForm({
+export function GenerateFormView({
   form,
   onSubmit,
-  isLoading,
 }: {
   form: UseFormReturn<GenerateFormModel>;
   onSubmit: (data: GenerateFormModel) => void;
-  isLoading?: boolean;
 }) {
   const { classes } = useStyles();
+  const { formState } = form;
+  const { isSubmitting } = formState;
+  //
 
   return (
-    <Form form={form} onSubmit={onSubmit} style={{ height: '100%' }}>
-      <BaseModelProvider form={form} getBaseModels={getBaseModels}>
+    <PersistentForm
+      form={form}
+      onSubmit={onSubmit}
+      style={{ height: '100%' }}
+      name="generate-form-test"
+      storage={typeof window !== 'undefined' ? window.localStorage : undefined}
+    >
+      <BaseModelProvider getBaseModels={getBaseModels}>
         <Stack h="100%">
           <ScrollArea sx={{ flex: 1, marginRight: -16, paddingRight: 16 }}>
             <Stack py="md">
@@ -90,7 +97,7 @@ export function GenerateForm({
                     <Input.Label>Aspect Ratio</Input.Label>
                     <InputSegmentedControl name="aspectRatio" data={aspectRatioControls} />
                   </Stack>
-                  <PersistantAccordion
+                  <PersistentAccordion
                     storeKey="generation-form-advanced"
                     variant="filled"
                     styles={(theme) => ({
@@ -160,7 +167,7 @@ export function GenerateForm({
                         </Stack>
                       </Accordion.Panel>
                     </Accordion.Item>
-                  </PersistantAccordion>
+                  </PersistentAccordion>
                 </Stack>
               </Card>
               {/* <Card {...sharedCardProps}>
@@ -193,7 +200,7 @@ export function GenerateForm({
             <Button
               type="submit"
               size="lg"
-              loading={isLoading}
+              loading={isSubmitting}
               className={classes.generateButtonButton}
             >
               Generate
@@ -211,7 +218,7 @@ export function GenerateForm({
           </Group>
         </Stack>
       </BaseModelProvider>
-    </Form>
+    </PersistentForm>
   );
 }
 

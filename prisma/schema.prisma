@@ -424,6 +424,7 @@ model ModelVersion {
   steps                Int?
   epochs               Int?
   clipSkip             Int?
+  vaeId                Int?
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
   publishedAt          DateTime?

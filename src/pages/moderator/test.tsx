@@ -1,6 +1,4 @@
 import { Container } from '@mantine/core';
-import { AssociateModels } from '~/components/AssociatedModels/AssociateModels';
-import { Generate } from '~/components/ImageGeneration/Generate';
 import { Generate2 } from '~/components/ImageGeneration/Generate2';
 
 export default function Test() {

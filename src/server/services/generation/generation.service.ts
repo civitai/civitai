@@ -308,11 +308,9 @@ export const createGenerationRequest = async ({
     },
   };
 
-  console.log('________');
-  console.log(vae);
-  console.log(additionalNetworks);
-  console.log(JSON.stringify(generationRequest));
-  console.log('________');
+  // console.log('________');
+  // console.log(JSON.stringify(generationRequest));
+  // console.log('________');
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
@@ -320,9 +318,9 @@ export const createGenerationRequest = async ({
     body: JSON.stringify(generationRequest),
   });
 
-  console.log('________');
-  console.log(response);
-  console.log('________');
+  // console.log('________');
+  // console.log(response);
+  // console.log('________');
 
   if (response.status === 429) {
     // too many requests
@@ -447,24 +445,6 @@ export async function bulkDeleteGeneratedImages({
   return deleteResponse.ok;
 }
 
-export const getRandomGenerationData = async () => {
-  const imageReaction = await dbRead.imageReaction.findFirst({
-    where: {
-      reaction: { in: ['Like', 'Heart', 'Laugh'] },
-      user: { isModerator: true },
-      image: { meta: { not: Prisma.JsonNull } },
-    },
-    select: { imageId: true },
-    orderBy: { createdAt: 'desc' },
-    skip: Math.floor(Math.random() * 1000),
-  });
-  if (!imageReaction) throw throwNotFoundError();
-
-  const { params = {} } = await getImageGenerationData(imageReaction.imageId);
-  params.seed = undefined;
-  return params;
-};
-
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
   try {
     const resource = await dbRead.modelVersionGenerationCoverage.findFirst({
@@ -480,15 +460,16 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   }
 }
 
-export const getGenerationData = async ({
-  type,
-  id,
-}: GetGenerationDataInput): Promise<Generation.Data> => {
-  switch (type) {
+export const getGenerationData = async (
+  props: GetGenerationDataInput
+): Promise<Generation.Data> => {
+  switch (props.type) {
     case 'image':
-      return await getImageGenerationData(id);
+      return await getImageGenerationData(props.id);
     case 'model':
-      return await getResourceGenerationData(id);
+      return await getResourceGenerationData(props.id);
+    case 'random':
+      return await getRandomGenerationData(props.includeResources);
   }
 };
 
@@ -498,17 +479,17 @@ export const getResourceGenerationData = async (id: number): Promise<Generation.
     select: {
       ...generationResourceSelect,
       clipSkip: true,
-      // vaeId: true
+      // vaeId: true,
     },
   });
   if (!resource) throw throwNotFoundError();
   const resources = [resource];
-  // if (resource.vaeId && resource.model.type !== ModelType.VAE) {
+  // if (resource.vaeId) {
   //   const vae = await dbRead.modelVersion.findUnique({
   //     where: { id },
-  //     select: { ...generationResourceSelect, clipSkip: true, vaeId: true },
+  //     select: { ...generationResourceSelect, clipSkip: true },
   //   });
-  //   if (vae) resources.push(vae);
+  //   if (vae) resources.push({ ...vae, vaeId: null });
   // }
   return {
     resources: resources.map(mapGenerationResource),
@@ -528,6 +509,12 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     },
   });
   if (!image) throw throwNotFoundError();
+
+  const {
+    'Clip skip': legacyClipSkip,
+    clipSkip = legacyClipSkip,
+    ...meta
+  } = imageGenerationSchema.parse(image.meta);
 
   const resources = await dbRead.$queryRaw<
     Array<Generation.Resource & { covered: boolean; hash?: string }>
@@ -550,18 +537,12 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
 
   const deduped = uniqBy(resources, 'id');
 
-  const {
-    'Clip skip': legacyClipSkip,
-    clipSkip = legacyClipSkip,
-    ...meta
-  } = imageGenerationSchema.parse(image.meta);
-
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
       if (!key.startsWith('lora:')) continue;
 
       // get the resource that matches the hash
-      const resource = resources.find((x) => x.hash === hash);
+      const resource = deduped.find((x) => x.hash === hash);
       if (!resource) continue;
 
       // get everything that matches <key:{number}>
@@ -581,6 +562,24 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       width: image.width ?? undefined,
     },
   };
+};
+
+export const getRandomGenerationData = async (includeResources?: boolean) => {
+  const imageReaction = await dbRead.imageReaction.findFirst({
+    where: {
+      reaction: { in: ['Like', 'Heart', 'Laugh'] },
+      user: { isModerator: true },
+      image: { nsfw: 'None', meta: { not: Prisma.JsonNull } },
+    },
+    select: { imageId: true },
+    orderBy: { createdAt: 'desc' },
+    skip: Math.floor(Math.random() * 1000),
+  });
+  if (!imageReaction) throw throwNotFoundError();
+
+  const { resources, params = {} } = await getImageGenerationData(imageReaction.imageId);
+  params.seed = undefined;
+  return { resources: includeResources ? resources : [], params };
 };
 
 export const deleteAllGenerationRequests = async ({ userId }: { userId: number }) => {

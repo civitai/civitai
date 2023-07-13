@@ -10,15 +10,17 @@ import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 
-type RunType = 'run' | 'remix';
+type RunType = 'run' | 'remix' | 'random';
 type View = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: View;
   data?: { type: RunType; data: Partial<GenerateFormModel> };
-  open: (input?: GetGenerationDataInput) => Promise<void>; // used to populate form with model/image generation data
+  // used to populate form with model/image generation data
+  open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
   setView: (view: View) => void;
+  randomize: (includeResources?: boolean) => Promise<void>;
   setData: (args: { data: Generation.Data; type: RunType }) => void;
   clearData: () => void;
 };
@@ -36,7 +38,7 @@ export const useGenerationStore = create<GenerationState>()(
 
         if (!input) return;
         const data = await getGenerationData(input);
-        const type = input.type === 'model' ? 'run' : 'remix';
+        const type = input.type === 'model' ? 'run' : input.type === 'image' ? 'remix' : 'random';
         if (data) get().setData({ type, data });
       },
       close: () =>
@@ -47,12 +49,15 @@ export const useGenerationStore = create<GenerationState>()(
         set((state) => {
           state.view = view;
         }),
-      // TODO - need to be able to differentiate between selecting a model and selecting image generation data (run/remix)
       setData: ({ data, type }) =>
         set((state) => {
           state.view = 'generate';
           state.data = { type, data: formatGenerationData(data) };
         }),
+      randomize: async (includeResources) => {
+        const data = await getGenerationData({ type: 'random', includeResources });
+        if (data) get().setData({ type: 'random', data });
+      },
       clearData: () =>
         set((state) => {
           state.data = undefined;
@@ -72,22 +77,23 @@ export const generationPanel = {
 export const generationStore = {
   setData: store.setData,
   clearData: store.clearData,
+  randomize: store.randomize,
 };
 
 const dictionary: Record<string, Generation.Data> = {};
 const getGenerationData = async (input: GetGenerationDataInput) => {
-  const key = `${input.type}_${input.id}`;
-  if (dictionary[key]) return dictionary[key];
-  else {
-    try {
+  try {
+    const key = input.type !== 'random' ? `${input.type}_${input.id}` : undefined;
+    if (key && dictionary[key]) return dictionary[key];
+    else {
       const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
       if (!response.ok) throw new Error(response.statusText);
       const data: Generation.Data = await response.json();
-      dictionary[key] = data;
+      if (key) dictionary[key] = data;
       return data;
-    } catch (error: any) {
-      showErrorNotification({ error });
     }
+  } catch (error: any) {
+    showErrorNotification({ error });
   }
 };
 

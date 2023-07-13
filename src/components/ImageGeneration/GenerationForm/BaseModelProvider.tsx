@@ -1,6 +1,6 @@
 import { isEqual } from 'lodash';
 import { createContext, useContext, useEffect, useState } from 'react';
-import { FieldValues, UseFormReturn, DeepPartial } from 'react-hook-form';
+import { FieldValues, UseFormReturn, DeepPartial, useFormContext, Path } from 'react-hook-form';
 
 type State = {
   baseModels: string[];
@@ -13,7 +13,7 @@ export const useBaseModelsContext = () => {
   return context;
 };
 
-export function BaseModelProvider<T extends FieldValues>({
+export function BaseModelProviderOld<T extends FieldValues>({
   children,
   form,
   getBaseModels,
@@ -38,6 +38,31 @@ export function BaseModelProvider<T extends FieldValues>({
   }, []); //eslint-disable-line
 
   // useEffect(() => console.log({ baseModels }), [baseModels]);
+
+  return <BaseModelsContext.Provider value={{ baseModels }}>{children}</BaseModelsContext.Provider>;
+}
+
+export function BaseModelProvider<T extends FieldValues>({
+  children,
+  getBaseModels,
+}: {
+  children: React.ReactNode;
+  getBaseModels: (data: DeepPartial<T>) => string[];
+}) {
+  const [baseModels, setBaseModels] = useState<string[]>([]);
+  const { getValues, watch } = useFormContext();
+
+  useEffect(() => {
+    const subscription = watch((value, { name, type }) => {
+      const values = getValues();
+      const baseModels = getBaseModels(values as any);
+      setBaseModels((state) => {
+        return isEqual(state, baseModels) ? state : baseModels;
+      });
+      //TODO - alert user if there are incompatible basemodels
+    });
+    return () => subscription.unsubscribe();
+  }, []); //eslint-disable-line
 
   return <BaseModelsContext.Provider value={{ baseModels }}>{children}</BaseModelsContext.Provider>;
 }

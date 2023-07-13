@@ -29,7 +29,6 @@ export default function GenerationTabs({}) {
     >
       <Tabs.Panel value="generate" pt={0}>
         <Generate2 />
-        {/* <Generate onSuccess={() => setView('queue')} /> */}
       </Tabs.Panel>
       <Tabs.Panel value="queue" py={0}>
         <Queue {...result} />

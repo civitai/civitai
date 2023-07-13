@@ -1,7 +1,7 @@
 import { Accordion, AccordionProps } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 
-export function PersistantAccordion({
+export function PersistentAccordion({
   storeKey,
   defaultValue,
   ...props
