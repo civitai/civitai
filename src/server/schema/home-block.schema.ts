@@ -14,10 +14,13 @@ export const homeBlockMetaSchema = z
   })
   .partial();
 
-export type GetHomeBlocksInputSchema = z.infer<typeof getHomeBlocksInputScheme>;
+export type GetHomeBlocksInputSchema = z.infer<typeof getHomeBlocksInputSchema>;
 export const getHomeBlocksInputSchema = z
   .object({
+    // TODO.home-blocks
+    // Need to define a block limit AND a block-"items"-limit
     limit: z.number().default(8),
   })
   .merge(userPreferencesSchema)
-  .partial();
+  .partial()
+  .default({ limit: 8 });

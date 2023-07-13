@@ -129,8 +129,6 @@ function InnerSearch(props: SearchBoxProps) {
   const indexName = uniqueQueryAttributeMatched?.indexName ?? 'models';
   const filters = getFiltersByIndexName(indexName, matchedFilters);
 
-  console.log(scopedResults, results);
-
   let actions: SpotlightAction[] = [];
   if (scopedResults && scopedResults.length > 0) {
     actions = scopedResults.flatMap((scope) => {

@@ -8,6 +8,7 @@ import {
 import { GetHomeBlocksInputSchema, HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { HomeBlockType } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
+import { UserPreferencesInput } from '~/server/middleware.trpc';
 
 export const getHomeBlocksHandler = async ({
   ctx,
@@ -16,9 +17,6 @@ export const getHomeBlocksHandler = async ({
   ctx: Context;
   input: GetHomeBlocksInputSchema;
 }) => {
-  const { user } = ctx;
-  console.log(user);
-
   try {
     const homeBlocks = await getHomeBlocks({
       select: {
@@ -45,7 +43,11 @@ export const getHomeBlocksHandler = async ({
               const items = await getCollectionItemsByCollectionId({
                 id: collection.id,
                 ctx,
-                input,
+                input: {
+                  ...(input as UserPreferencesInput),
+                  // TODO.home-blocks: Set item limit as part of the input
+                  limit: 8,
+                },
               });
 
               return {
