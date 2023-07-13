@@ -7,6 +7,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { modelForHomePageSelector } from '~/server/selectors/model.selector';
 
 export const getUserCollectionsWithPermissions = <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
@@ -105,4 +106,62 @@ export const upsertCollection = async ({
       items: { create: { ...collectionItem, addedById: user.id } },
     },
   });
+};
+
+export const getCollectionById = ({ id }: { id: number }) => {
+  return dbRead.collection.findUnique({
+    select: {
+      id: true,
+      name: true,
+      coverImage: true,
+      description: true,
+    },
+    where: {
+      id,
+    },
+  });
+};
+
+export const getCollectionItemsByCollectionId = async ({
+  id,
+  take = 20,
+}: {
+  id: number;
+  take: number;
+}) => {
+  const collectionWithItems = await dbRead.collection.findUnique({
+    select: {
+      id: true,
+      items: {
+        take,
+        select: {
+          id: true,
+          model: {
+            select: modelForHomePageSelector,
+          },
+        },
+      },
+    },
+    where: {
+      id,
+    },
+  });
+
+  if (!collectionWithItems) {
+    return null;
+  }
+
+  const collectionItemsExpanded = await Promise.all(
+    collectionWithItems.items.map((collectionItem) => {
+      if (collectionItem.model?.id) {
+        // Get all model info:
+      }
+
+      return {
+        ...collectionItem,
+      };
+    })
+  );
+
+  return collectionItemsExpanded;
 };

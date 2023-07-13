@@ -178,6 +178,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 };
 
 export type GetModelsInfiniteReturnType = AsyncReturnType<typeof getModelsInfiniteHandler>['items'];
+
 export const getModelsInfiniteHandler = async ({
   input,
   ctx,
