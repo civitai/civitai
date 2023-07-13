@@ -11,7 +11,7 @@ import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
-const userPreferencesSchema = z.object({
+export const userPreferencesSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   excludedTagIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),

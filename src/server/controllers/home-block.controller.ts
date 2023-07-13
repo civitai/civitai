@@ -5,17 +5,16 @@ import {
   getCollectionById,
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import { GetHomeBlocksInputSchema, HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { HomeBlockType } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
-import { UserPreferencesInput } from '~/server/middleware.trpc';
 
 export const getHomeBlocksHandler = async ({
   ctx,
   input,
 }: {
   ctx: Context;
-  input: UserPreferencesInput;
+  input: GetHomeBlocksInputSchema;
 }) => {
   const { user } = ctx;
   console.log(user);
