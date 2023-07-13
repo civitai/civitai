@@ -48,7 +48,8 @@ export function GenerateFormView({
   const { classes } = useStyles();
   const { formState } = form;
   const { isSubmitting } = formState;
-  //
+
+  console.log({ formState });
 
   return (
     <PersistentForm
@@ -177,7 +178,7 @@ export function GenerateFormView({
         </Card> */}
             </Stack>
           </ScrollArea>
-          <Group spacing={0} className={classes.generateButtonContainer} noWrap>
+          <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
             <Card withBorder className={classes.generateButtonQuantity} p={0}>
               <Stack spacing={0}>
                 <Text
@@ -205,16 +206,17 @@ export function GenerateFormView({
             >
               Generate
             </Button>
-            <Tooltip label="Reset" color="dark" withArrow>
-              <Button
-                onClick={() => form.reset()}
-                variant="outline"
-                className={classes.generateButtonReset}
-                px="xs"
-              >
-                <IconX size={20} strokeWidth={3} />
-              </Button>
-            </Tooltip>
+            {/* <Tooltip label="Reset" color="dark" withArrow> */}
+            <Button
+              onClick={() => form.reset()}
+              variant="outline"
+              className={classes.generateButtonReset}
+              px="xs"
+            >
+              {/* <IconX size={20} strokeWidth={3} /> */}
+              Clear All
+            </Button>
+            {/* </Tooltip> */}
           </Group>
         </Stack>
       </BaseModelProvider>
@@ -231,8 +233,8 @@ const useStyles = createStyles((theme) => ({
   },
   generateButtonQuantity: {
     width: 100,
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
+    // borderTopRightRadius: 0,
+    // borderBottomRightRadius: 0,
   },
   generateButtonQuantityText: {
     paddingRight: 25,
@@ -256,13 +258,13 @@ const useStyles = createStyles((theme) => ({
   },
   generateButtonButton: {
     flex: 1,
-    borderRadius: 0,
+    // borderRadius: 0,
     height: 'auto',
   },
 
   generateButtonReset: {
-    borderBottomLeftRadius: 0,
-    borderTopLeftRadius: 0,
+    // borderBottomLeftRadius: 0,
+    // borderTopLeftRadius: 0,
     height: 'auto',
   },
 
