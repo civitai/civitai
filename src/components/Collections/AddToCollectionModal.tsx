@@ -90,6 +90,7 @@ function CollectionListForm({
   onSubmit,
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
+  const { note, ...target } = props;
   const { classes } = useCollectionListStyles();
   const form = useForm({
     schema: saveCollectionItemInputSchema,
@@ -98,13 +99,16 @@ function CollectionListForm({
   });
   const queryUtils = trpc.useContext();
 
-  const { data = [], isLoading } = trpc.collection.getAllUser.useQuery({});
+  const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery({});
+  const { data: matchedCollections = [] } = trpc.collection.getUserCollectionsByItem.useQuery({
+    ...target,
+  });
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
     addCollectionItemMutation.mutate(data, {
       async onSuccess() {
-        await queryUtils.collection.getAllUser.invalidate();
+        await queryUtils.collection.getUserCollectionsByItem.invalidate();
         onSubmit();
       },
       onError(error) {
@@ -117,25 +121,15 @@ function CollectionListForm({
   };
 
   useEffect(() => {
-    if (data.length === 0) return;
-    const collectionIds = data
-      .filter((collection) =>
-        collection.items.some(
-          (item) =>
-            item.modelId === props.modelId ||
-            item.imageId === props.imageId ||
-            item.articleId === props.articleId ||
-            item.postId === props.postId
-        )
-      )
-      .map((collection) => collection.id.toString());
+    if (matchedCollections.length === 0) return;
+    const collectionIds = matchedCollections.map((collection) => collection.id.toString());
 
     // Ignoring because CheckboxGroup only accepts string[] to
     // keep track of the selected values but actual schema should be number[]
     // @ts-ignore: See above
     form.reset({ ...props, collectionIds });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, props.articleId, props.imageId, props.modelId, props.postId]);
+  }, [matchedCollections, props.articleId, props.imageId, props.modelId, props.postId]);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -161,9 +155,9 @@ function CollectionListForm({
             </Center>
           ) : (
             <ScrollArea.Autosize maxHeight={200}>
-              {data.length > 0 ? (
+              {collections.length > 0 ? (
                 <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                  {data.map((collection) => (
+                  {collections.map((collection) => (
                     <Checkbox
                       key={collection.id}
                       classNames={classes}
@@ -220,6 +214,7 @@ function NewCollectionForm({
     upsertCollectionMutation.mutate(data, {
       async onSuccess() {
         await queryUtils.collection.getAllUser.invalidate();
+        await queryUtils.collection.getUserCollectionsByItem.invalidate();
         onSubmit();
       },
       onError(error) {

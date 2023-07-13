@@ -43,3 +43,12 @@ export const upsertCollectionInput = z
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
   })
   .merge(collectionItemSchema);
+
+export type GetUserCollectionsByItemSchema = z.infer<typeof getUserCollectionsByItemSchema>;
+export const getUserCollectionsByItemSchema = collectionItemSchema
+  .extend({ note: z.never().optional() })
+  .refine(
+    ({ articleId, imageId, postId, modelId }) =>
+      [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
+    { message: 'Only one item can be added at a time.' }
+  );

@@ -1,5 +1,9 @@
 import { dbWrite, dbRead } from '~/server/db/client';
-import { AddCollectionItemInput, UpsertCollectionInput } from '~/server/schema/collection.schema';
+import {
+  AddCollectionItemInput,
+  GetUserCollectionsByItemSchema,
+  UpsertCollectionInput,
+} from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
@@ -114,5 +118,30 @@ export const upsertCollection = async ({
       },
       items: { create: { ...collectionItem, addedById: user.id } },
     },
+  });
+};
+
+export const getUserCollectionsByItem = ({
+  input,
+  user,
+}: {
+  input: GetUserCollectionsByItemSchema;
+  user: SessionUser;
+}) => {
+  const { modelId, imageId, articleId, postId } = input;
+
+  return dbRead.collection.findMany({
+    where: {
+      userId: user.id,
+      items: {
+        some: {
+          modelId,
+          imageId,
+          articleId,
+          postId,
+        },
+      },
+    },
+    select: { id: true, name: true, read: true, write: true },
   });
 };

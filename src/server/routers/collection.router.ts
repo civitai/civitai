@@ -1,12 +1,14 @@
 import {
   saveItemHandler,
   getAllUserCollectionsHandler,
+  getUserCollectionsByItemHandler,
   upsertCollectionHandler,
 } from '~/server/controllers/collection.controller';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 import {
   saveCollectionItemInputSchema,
   getAllUserCollectionsInputSchema,
+  getUserCollectionsByItemSchema,
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
 
@@ -20,4 +22,8 @@ export const collectionRouter = router({
     .input(saveCollectionItemInputSchema)
     .use(isFlagProtected('collections'))
     .mutation(saveItemHandler),
+  getUserCollectionsByItem: protectedProcedure
+    .input(getUserCollectionsByItemSchema)
+    .use(isFlagProtected('collections'))
+    .query(getUserCollectionsByItemHandler),
 });
