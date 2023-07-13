@@ -9,3 +9,12 @@ export function isNumber(value: unknown) {
 export function isPromise(value: unknown): value is Promise<unknown> {
   return value instanceof Promise;
 }
+
+export function isValidURL(value: unknown): value is string {
+  try {
+    new URL(value as string);
+    return true;
+  } catch {
+    return false;
+  }
+}
