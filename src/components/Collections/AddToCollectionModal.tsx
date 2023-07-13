@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { CollectionReadConfiguration, CollectionWriteConfiguration } from '@prisma/client';
 import { IconArrowLeft, IconEyeOff, IconLock, IconPlus, IconWorld } from '@tabler/icons-react';
-import { forwardRef, useState } from 'react';
+import { forwardRef, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import {
@@ -24,7 +24,7 @@ import {
 } from '~/libs/form';
 import {
   AddCollectionItemInput,
-  addCollectionItemInputSchema,
+  saveCollectionItemInputSchema,
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import { showErrorNotification } from '~/utils/notifications';
@@ -92,7 +92,7 @@ function CollectionListForm({
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { classes } = useCollectionListStyles();
   const form = useForm({
-    schema: addCollectionItemInputSchema,
+    schema: saveCollectionItemInputSchema,
     defaultValues: { ...props, collectionIds: [] },
     shouldUnregister: false,
   });
@@ -100,7 +100,7 @@ function CollectionListForm({
 
   const { data = [], isLoading } = trpc.collection.getAllUser.useQuery({});
 
-  const addCollectionItemMutation = trpc.collection.addItem.useMutation();
+  const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
     addCollectionItemMutation.mutate(data, {
       async onSuccess() {
@@ -115,6 +115,27 @@ function CollectionListForm({
       },
     });
   };
+
+  useEffect(() => {
+    if (data.length === 0) return;
+    const collectionIds = data
+      .filter((collection) =>
+        collection.items.some(
+          (item) =>
+            item.modelId === props.modelId ||
+            item.imageId === props.imageId ||
+            item.articleId === props.articleId ||
+            item.postId === props.postId
+        )
+      )
+      .map((collection) => collection.id.toString());
+
+    // Ignoring because CheckboxGroup only accepts string[] to
+    // keep track of the selected values but actual schema should be number[]
+    // @ts-ignore: See above
+    form.reset({ ...props, collectionIds });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, props.articleId, props.imageId, props.modelId, props.postId]);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -168,7 +189,7 @@ function CollectionListForm({
         </Stack>
         <Group position="right">
           <Button type="submit" loading={addCollectionItemMutation.isLoading}>
-            Add
+            Save
           </Button>
         </Group>
       </Stack>

@@ -14,10 +14,10 @@ const collectionItemSchema = z.object({
   note: z.string().optional(),
 });
 
-export type AddCollectionItemInput = z.infer<typeof addCollectionItemInputSchema>;
-export const addCollectionItemInputSchema = collectionItemSchema
+export type AddCollectionItemInput = z.infer<typeof saveCollectionItemInputSchema>;
+export const saveCollectionItemInputSchema = collectionItemSchema
   .extend({
-    collectionIds: z.coerce.number().array().min(1, 'Please select at least one collection'),
+    collectionIds: z.coerce.number().array(),
   })
   .refine(
     ({ articleId, imageId, postId, modelId }) =>

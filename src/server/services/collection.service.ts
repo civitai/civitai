@@ -41,7 +41,7 @@ export const getUserCollectionsWithPermissions = <
     select,
   });
 };
-export const addCollectionItems = async ({
+export const saveItemInCollections = async ({
   user,
   input: { collectionIds, ...input },
 }: {
@@ -53,10 +53,20 @@ export const addCollectionItems = async ({
     addedById: user.id,
     collectionId,
   }));
+  const transactions = [dbWrite.collectionItem.createMany({ data })];
 
-  return dbWrite.collectionItem.createMany({
-    data,
+  // Determine which items need to be removed
+  const itemsToRemove = await dbRead.collectionItem.findMany({
+    where: { ...input, addedById: user.id, collectionId: { notIn: collectionIds } },
+    select: { id: true },
   });
+  // if we have items to remove, add a deleteMany mutation to the transaction
+  if (itemsToRemove.length)
+    transactions.push(
+      dbWrite.collectionItem.deleteMany({ where: { id: { in: itemsToRemove.map((i) => i.id) } } })
+    );
+
+  return dbWrite.$transaction(transactions);
 };
 
 export const upsertCollection = async ({

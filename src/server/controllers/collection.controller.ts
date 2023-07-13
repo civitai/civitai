@@ -6,7 +6,7 @@ import {
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import {
-  addCollectionItems,
+  saveItemInCollections,
   getUserCollectionsWithPermissions,
   upsertCollection,
 } from '~/server/services/collection.service';
@@ -32,6 +32,7 @@ export const getAllUserCollectionsHandler = async ({
         description: true,
         coverImage: true,
         read: true,
+        items: { select: { modelId: true, imageId: true, articleId: true, postId: true } },
       },
     });
 
@@ -41,7 +42,7 @@ export const getAllUserCollectionsHandler = async ({
   }
 };
 
-export const addItemHandlers = async ({
+export const saveItemHandler = ({
   ctx,
   input,
 }: {
@@ -51,7 +52,7 @@ export const addItemHandlers = async ({
   const { user } = ctx;
 
   try {
-    return await addCollectionItems({ user, input });
+    return saveItemInCollections({ user, input });
   } catch (error) {
     throw throwDbError(error);
   }
