@@ -1,12 +1,15 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
-import { FilterIdentifier } from '~/components/QuickSearch/util';
+import { applyQueryMatchers, FilterIdentifier } from '~/components/QuickSearch/util';
 type SearchState = {
+  rawQuery: string;
   query: string;
-  setQuery: (dispatch: string | ((query: string) => string)) => void;
-  quickSearchFilter: FilterIdentifier;
-  setQuickSearchFilter: (filter: FilterIdentifier) => void;
+  setQuery: (rawQuery: string) => void;
+  quickSearchIndex: FilterIdentifier;
+  setQuickSearchIndex: (filter: FilterIdentifier) => void;
+  filters: Partial<Record<FilterIdentifier, string>>;
+  setFilters:
 };
 
 export const useSearchStore = create<SearchState>()(
@@ -14,16 +17,26 @@ export const useSearchStore = create<SearchState>()(
     immer((set, get) => {
       return {
         query: '',
-        quickSearchFilter: 'all',
-        setQuery: (dispatch) => {
+        quickSearchIndex: 'all',
+        filters: {},
+        setQuery: (rawQuery) => {
           set((state) => {
-            const query = get().query;
-            state.query = typeof dispatch === 'function' ? dispatch(query) : dispatch;
+            state.rawQuery = rawQuery;
+
+            // Check for change to selected quick search index
+
+
+
+            const { updatedQuery, matchedFilters: queryMatchedFilters } = applyQueryMatchers(rawQuery, [
+              state.quickSearchIndex,
+            ]);
+            state.updateQuery = updatedQuery;
+
           });
         },
-        setQuickSearchFilter: (filter) => {
+        setQuickSearchIndex: (filter) => {
           set((state) => {
-            state.quickSearchFilter = filter;
+            state.quickSearchIndex = filter;
           });
         },
       };

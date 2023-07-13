@@ -79,8 +79,8 @@ const useAccordionStyles = createStyles((theme) => {
 const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => {
   const { classes } = useStyles();
   const { classes: accordionClasses } = useAccordionStyles();
-  const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
-  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
+  const quickSearchFilter = useSearchStore((state) => state.quickSearchIndex);
+  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchIndex);
 
   const availableFilters = getAvailableFiltersByIndexName(quickSearchFilter as FilterIndex).filter(
     (item) => !item.filterId && !!item.label

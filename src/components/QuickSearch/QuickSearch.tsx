@@ -1,11 +1,16 @@
 import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
 import { useDebouncedValue, useElementSize, useOs } from '@mantine/hooks';
-import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
+import {
+  SpotlightAction,
+  SpotlightProvider,
+  openSpotlight,
+  useSpotlight,
+} from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
 import { debounce } from 'lodash-es';
 import Router from 'next/router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Configure,
   Index,
@@ -120,8 +125,8 @@ function InnerSearch(props: SearchBoxProps) {
 
   const rawQuery = useSearchStore((state) => state.query);
   const setRawQuery = useSearchStore((state) => state.setQuery);
-  const quickSearchFilter = useSearchStore((state) => state.quickSearchFilter);
-  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchFilter);
+  const quickSearchFilter = useSearchStore((state) => state.quickSearchIndex);
+  const setQuickSearchFilter = useSearchStore((state) => state.setQuickSearchIndex);
   const [debouncedRawQuery] = useDebouncedValue(rawQuery, 300);
 
   const { matchedFilters } = applyQueryMatchers(debouncedRawQuery, [quickSearchFilter]);
@@ -282,4 +287,159 @@ export function QuickSearch() {
       <InnerSearch queryHook={debouncedQueryHook} />
     </InstantSearch>
   );
+}
+
+export function QuickSearch2() {
+  const { ref, height } = useElementSize();
+
+  const setSearchQuery = useSearchStore((state) => state.setQuery);
+  const quickSearchIndex = useSearchStore((state) => state.quickSearchIndex);
+  const setQuickSearchIndex = useSearchStore((state) => state.setQuickSearchIndex);
+
+  // TODO: Move to custom hit component
+  // let actions: SpotlightAction[] = [];
+  // if (scopedResults && scopedResults.length > 0) {
+  //   actions = scopedResults.flatMap((scope) => {
+  //     if (!scope.results || scope.results.nbHits === 0) return [];
+
+  //     switch (scope.indexId) {
+  //       case 'models':
+  //         return prepareModelActions(scope.results.hits);
+  //       case 'users':
+  //         return prepareUserActions(scope.results.hits);
+  //       case 'articles':
+  //         return prepareArticleActions(scope.results.hits);
+  //       case 'tags':
+  //         return prepareTagActions(scope.results.hits);
+  //       default:
+  //         return [];
+  //     }
+  //   });
+  // }
+
+  // TODO: Move to inner search and register/remove as needed
+  // if (query.length > 0) {
+  //   actions.unshift({
+  //     id: 'old-search',
+  //     group: 'search',
+  //     title: 'Keyword search',
+  //     description: 'Search for models using the keywords you entered',
+  //     onTrigger: () => Router.push(`/?query=${encodeURIComponent(query)}&view=feed`),
+  //   });
+  // }
+
+  const handleQueryChange = (value: string) => {
+    // TODO: Move to inner search
+    const { updatedQuery, matchedFilters: queryMatchedFilters } = applyQueryMatchers(value, [
+      quickSearchIndex,
+    ]);
+    setSearchQuery(updatedQuery);
+
+    // If we have more than 1 character, we're not going to switch indexes
+    if (value.length > 1) return;
+
+    // If a filter is already active, hasForceUniqueQueryAttribute will return the that value and as such
+    // we won't get the "newly" selected filter, so we have to match it with the actual query temporarily.
+    const queryUniqueQueryAttributeMatched = hasForceUniqueQueryAttribute(queryMatchedFilters);
+
+    if (
+      queryUniqueQueryAttributeMatched &&
+      queryUniqueQueryAttributeMatched.filterId &&
+      quickSearchIndex !== queryUniqueQueryAttributeMatched.filterId
+    ) {
+      setQuickSearchIndex(queryUniqueQueryAttributeMatched.filterId);
+    } else if (!value || (quickSearchIndex !== 'all' && !queryUniqueQueryAttributeMatched)) {
+      setQuickSearchIndex('all');
+    }
+
+    const filters: Partial<Record<FilterIdentifier, string>> = {};
+    for (const filter of queryMatchedFilters) {
+      if (!filter.matches || !filter.attribute) continue;
+
+      filters[filter.indexName] = filter.matches
+        .map((match) => `${attribute}=${match}`)
+        .join(' OR ');
+    }
+    setF;
+  };
+
+  // Wrap it in useMemo to avoid re-rendering the component on every render
+  const ActionsWrapperComponent = useMemo(
+    // eslint-disable-next-line react/display-name
+    () => (props: { children: React.ReactNode }) => <ActionsWrapper {...props} ref={ref} />,
+    [ref]
+  );
+
+  return (
+    <>
+      <SpotlightProvider
+        actions={[]}
+        searchIcon={filterIcons[quickSearchIndex]}
+        actionComponent={CustomSpotlightAction}
+        actionsWrapperComponent={ActionsWrapperComponent}
+        searchPlaceholder="Search models, users, articles, tags"
+        nothingFoundMessage="Nothing found"
+        onQueryChange={handleQueryChange}
+        cleanQueryOnClose={false}
+        limit={20}
+        styles={(theme) => ({
+          inner: { paddingTop: 50 },
+          spotlight: { overflow: 'hidden' },
+          actions: {
+            overflow: 'auto',
+            height: '55vh',
+
+            [theme.fn.smallerThan('sm')]: {
+              height: `calc(100vh - ${height + 137}px)`,
+            },
+          },
+        })}
+      >
+        <SearchNavItem />
+        <SearchResults />
+      </SpotlightProvider>
+    </>
+  );
+}
+
+function SearchNavItem() {
+  const os = useOs();
+  const { classes } = useStyles();
+  return (
+    <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
+      <Group position="apart" noWrap>
+        <Group spacing={8} noWrap>
+          <IconSearch size={16} />
+          <Text color="dimmed">Search</Text>
+        </Group>
+        <Text className={classes.keyboardIndicator} size="xs" color="dimmed">
+          {os === 'macos' ? '⌘ + K' : 'Ctrl + K'}
+        </Text>
+      </Group>
+    </UnstyledButton>
+  );
+}
+
+function SearchResults({}) {
+  const spotlight = useSpotlight();
+  const [active, setActive] = useState(false);
+
+  if (!active) {
+    if (spotlight.opened) setActive(true);
+    return null;
+  }
+
+  return (
+    <InstantSearch searchClient={searchClient}>
+      <SearchResultsInner />
+    </InstantSearch>
+  );
+}
+
+function SearchResultsInner() {
+  const query = useSearchStore((state) => state.query);
+  // Refine
+
+  return null;
+  // indexes->configure+hit
 }
