@@ -328,6 +328,8 @@ export const deleteModelById = async ({ id, userId }: GetByIdInput & { userId: n
       data: { publishedAt: null },
     });
 
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
     return model;
   });
 
