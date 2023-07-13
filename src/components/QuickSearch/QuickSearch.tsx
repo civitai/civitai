@@ -114,7 +114,7 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
 function InnerSearch(props: SearchBoxProps) {
   const os = useOs();
   const { classes } = useStyles();
-  const { scopedResults, results } = useInstantSearch();
+  const { scopedResults } = useInstantSearch();
   const { refine, query } = useSearchBox(props);
   const { ref, height } = useElementSize();
 
@@ -272,6 +272,7 @@ export function QuickSearch() {
   return (
     <InstantSearch
       searchClient={searchClient}
+      indexName="models"
       initialUiState={{
         models: { hitsPerPage: 0 },
       }}
