@@ -55,7 +55,10 @@ export const getUserCollectionPermissionsById = async ({
     return permissions;
   }
 
-  if (collection.read === CollectionReadConfiguration.Public) {
+  if (
+    collection.read === CollectionReadConfiguration.Public ||
+    collection.read === CollectionReadConfiguration.Unlisted
+  ) {
     permissions.read = true;
   }
 
