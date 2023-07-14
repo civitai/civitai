@@ -3,7 +3,6 @@ import {
   bulkDeleteGeneratedImagesSchema,
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
-  getGenerationDataSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
@@ -14,10 +13,8 @@ import {
   deleteAllGenerationRequests,
   deleteGeneratedImage,
   deleteGenerationRequest,
-  getGenerationData,
   getGenerationRequests,
   getGenerationResources,
-  getRandomGenerationData,
 } from '~/server/services/generation/generation.service';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -50,13 +47,7 @@ export const generationRouter = router({
   getResources: publicProcedure
     .input(getGenerationResourcesSchema)
     .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
-  getRandomGenerationData: publicProcedure
-    .use(isFlagProtected('imageGeneration'))
-    .query(() => getRandomGenerationData()),
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .query(({ input }) => checkResourcesCoverage(input)),
-  getGenerationData: publicProcedure
-    .input(getGenerationDataSchema)
-    .query(({ input }) => getGenerationData(input)),
 });

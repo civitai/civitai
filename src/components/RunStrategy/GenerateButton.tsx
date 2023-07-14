@@ -1,6 +1,6 @@
 import { Button, Group, Text, Tooltip } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
-import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
+import { generationPanel } from '~/store/generation.store';
 
 export function GenerateButton({ iconOnly, modelVersionId }: Props) {
   const button = (

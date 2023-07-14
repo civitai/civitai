@@ -32,6 +32,9 @@ const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'
 const GenerationResourceModal = dynamic(
   () => import('~/components/ImageGeneration/GenerationResources/GenerationResourceModal')
 );
+const ResourceSelectModal = dynamic(
+  () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal')
+);
 const BoostModal = dynamic(() => import('~/components/ImageGeneration/BoostModal'));
 const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
 
@@ -90,6 +93,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
           questionsInfo: QuestionsInfoModal,
           generatedImageLightbox: GeneratedImageLightbox,
           generationResourceModal: GenerationResourceModal,
+          resourceSelectModal: ResourceSelectModal,
           boostModal: BoostModal,
           'civitai-link-success': CivitaiLinkSuccessModal,
           ...(Object.keys(registry) as Array<keyof typeof registry>).reduce<any>((acc, key) => {

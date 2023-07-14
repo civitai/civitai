@@ -30,6 +30,7 @@ import { FileList } from '~/components/Model/ModelForm/FileList';
 import { TagsInput } from '~/components/Tags/TagsInput';
 import { MultiFileInputUpload } from './MultiFileInputUpload';
 import { SimpleImageUpload } from './SimpleImageUpload';
+import { NumberSlider } from '~/libs/form/components/NumberSlider';
 
 export * from './Form';
 
@@ -65,6 +66,7 @@ export const InputSimpleImageUpload = withWatcher(withController(SimpleImageUplo
 export const InputFileList = withWatcher(withController(FileList));
 export const InputTags = withWatcher(withController(TagsInput));
 export const InputTime = withWatcher(withController(TimeInput));
+export const InputNumberSlider = withWatcher(withController(NumberSlider));
 
 export const InputSwitch = withWatcher(
   withController(Switch, ({ field }) => ({
