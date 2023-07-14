@@ -17,10 +17,9 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 
 export const getUserCollectionPermissionsById = async ({
   user,
-  collectionId,
-}: {
+  id,
+}: GetByIdInput & {
   user?: SessionUser;
-  collectionId: number;
 }) => {
   const permissions = {
     read: false,
@@ -48,7 +47,7 @@ export const getUserCollectionPermissionsById = async ({
         : false,
     },
     where: {
-      id: collectionId,
+      id,
     },
   });
 
@@ -155,6 +154,14 @@ export const getUserCollectionsWithPermissions = <
     select,
   });
 };
+
+export const getCollectionById = async ({ id }: GetByIdInput) => {
+  return await dbRead.collection.findFirst({
+    where: { id },
+    select: { id: true, name: true, description: true, coverImage: true, read: true },
+  });
+};
+
 export const saveItemInCollections = async ({
   user,
   input: { collectionIds, ...input },
