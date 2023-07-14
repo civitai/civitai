@@ -14,10 +14,10 @@ const collectionItemSchema = z.object({
   note: z.string().optional(),
 });
 
-export type AddCollectionItemInput = z.infer<typeof addCollectionItemInputSchema>;
-export const addCollectionItemInputSchema = collectionItemSchema
+export type AddCollectionItemInput = z.infer<typeof saveCollectionItemInputSchema>;
+export const saveCollectionItemInputSchema = collectionItemSchema
   .extend({
-    collectionIds: z.number().array().min(1, 'Please select at least one collection'),
+    collectionIds: z.coerce.number().array(),
   })
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
@@ -26,13 +26,11 @@ export const addCollectionItemInputSchema = collectionItemSchema
   );
 
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
-export const getAllUserCollectionsInputSchema = z.object({
-  permission: z.enum([
-    CollectionContributorPermission.ADD,
-    CollectionContributorPermission.VIEW,
-    CollectionContributorPermission.MANAGE,
-  ]),
-});
+export const getAllUserCollectionsInputSchema = z
+  .object({
+    permission: z.nativeEnum(CollectionContributorPermission),
+  })
+  .partial();
 
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z
@@ -45,3 +43,12 @@ export const upsertCollectionInput = z
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
   })
   .merge(collectionItemSchema);
+
+export type GetUserCollectionsByItemSchema = z.infer<typeof getUserCollectionsByItemSchema>;
+export const getUserCollectionsByItemSchema = collectionItemSchema
+  .extend({ note: z.never().optional() })
+  .refine(
+    ({ articleId, imageId, postId, modelId }) =>
+      [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
+    { message: 'Please pass a single resource to match collections to.' }
+  );

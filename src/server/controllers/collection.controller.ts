@@ -3,12 +3,14 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import {
   AddCollectionItemInput,
   GetAllUserCollectionsInputSchema,
+  GetUserCollectionsByItemSchema,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import {
-  addCollectionItems,
+  saveItemInCollections,
   getUserCollectionsWithPermissions,
   upsertCollection,
+  getUserCollectionsByItem,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 
@@ -25,12 +27,14 @@ export const getAllUserCollectionsHandler = async ({
   try {
     const collections = await getUserCollectionsWithPermissions({
       user,
-      permissions: [permission],
+      permissions: permission ? [permission] : [],
       select: {
         id: true,
         name: true,
         description: true,
         coverImage: true,
+        read: true,
+        items: { select: { modelId: true, imageId: true, articleId: true, postId: true } },
       },
     });
 
@@ -40,7 +44,7 @@ export const getAllUserCollectionsHandler = async ({
   }
 };
 
-export const addItemHandlers = async ({
+export const saveItemHandler = ({
   ctx,
   input,
 }: {
@@ -50,7 +54,7 @@ export const addItemHandlers = async ({
   const { user } = ctx;
 
   try {
-    return await addCollectionItems({ user, input });
+    return saveItemInCollections({ user, input });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -71,6 +75,24 @@ export const upsertCollectionHandler = async ({
     return collection;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getUserCollectionsByItemHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetUserCollectionsByItemSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+
+  try {
+    const collections = await getUserCollectionsByItem({ input, user });
+
+    return collections;
+  } catch (error) {
     throw throwDbError(error);
   }
 };
