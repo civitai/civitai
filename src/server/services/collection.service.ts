@@ -1,6 +1,7 @@
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   AddCollectionItemInput,
+  GetAllUserCollectionsInputSchema,
   GetUserCollectionsByItemSchema,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
@@ -100,23 +101,32 @@ export const getUserCollectionsWithPermissions = <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
 >({
   user,
-  permissions = [],
+  input,
   select,
 }: {
   user: SessionUser;
-  permissions: CollectionContributorPermission[];
+  input: GetAllUserCollectionsInputSchema;
   select: TSelect;
 }) => {
+  const { permissions, permission, contributingOnly } = input;
   // By default, owned collctions will be always returned
   const OR: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ userId: user.id }];
 
-  if (permissions.includes(CollectionContributorPermission.ADD)) {
+  if (
+    permissions &&
+    permissions.includes(CollectionContributorPermission.ADD) &&
+    !contributingOnly
+  ) {
     OR.push({
       write: CollectionWriteConfiguration.Public,
     });
   }
 
-  if (permissions.includes(CollectionContributorPermission.VIEW)) {
+  if (
+    permissions &&
+    permissions.includes(CollectionContributorPermission.VIEW) &&
+    !contributingOnly
+  ) {
     // Even with view permission we don't really
     // want to return unlisted unless the user is a contributor
     // with that permission
@@ -125,13 +135,13 @@ export const getUserCollectionsWithPermissions = <
     });
   }
 
-  if (permissions.length) {
+  if (permissions || permission) {
     OR.push({
       contributors: {
         some: {
           userId: user.id,
           permissions: {
-            hasSome: permissions,
+            hasSome: permission ? [permission] : permissions,
           },
         },
       },
@@ -232,7 +242,9 @@ export const getUserCollectionsByItem = async ({
 
   const userCollections = await getUserCollectionsWithPermissions({
     user,
-    permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+    input: {
+      permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+    },
     select: { id: true },
   });
 

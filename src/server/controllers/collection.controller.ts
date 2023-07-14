@@ -25,12 +25,11 @@ export const getAllUserCollectionsHandler = async ({
   input: GetAllUserCollectionsInputSchema;
 }) => {
   const { user } = ctx;
-  const { permission } = input;
 
   try {
     const collections = await getUserCollectionsWithPermissions({
+      input,
       user,
-      permissions: permission ? [permission] : [],
       select: {
         id: true,
         name: true,

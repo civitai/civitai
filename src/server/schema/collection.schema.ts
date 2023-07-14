@@ -28,7 +28,9 @@ export const saveCollectionItemInputSchema = collectionItemSchema
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
 export const getAllUserCollectionsInputSchema = z
   .object({
+    contributingOnly: z.boolean().default(true),
     permission: z.nativeEnum(CollectionContributorPermission),
+    permissions: z.array(z.nativeEnum(CollectionContributorPermission)),
   })
   .partial();
 
