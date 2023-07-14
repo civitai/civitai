@@ -100,31 +100,47 @@ export const getUserCollectionsWithPermissions = <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
 >({
   user,
-  permissions,
+  permissions = [],
   select,
 }: {
   user: SessionUser;
   permissions: CollectionContributorPermission[];
   select: TSelect;
 }) => {
-  return dbRead.collection.findMany({
-    where: {
-      OR: [
-        {
-          write: CollectionWriteConfiguration.Public,
-        },
-        { userId: user.id },
-        {
-          contributors: {
-            some: {
-              userId: user.id,
-              permissions: {
-                hasSome: permissions,
-              },
-            },
+  // By default, owned collctions will be always returned
+  const OR: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ userId: user.id }];
+
+  if (permissions.includes(CollectionContributorPermission.ADD)) {
+    OR.push({
+      write: CollectionWriteConfiguration.Public,
+    });
+  }
+
+  if (permissions.includes(CollectionContributorPermission.VIEW)) {
+    // Even with view permission we don't really
+    // want to return unlisted unless the user is a contributor
+    // with that permission
+    OR.push({
+      read: CollectionWriteConfiguration.Public,
+    });
+  }
+
+  if (permissions.length) {
+    OR.push({
+      contributors: {
+        some: {
+          userId: user.id,
+          permissions: {
+            hasSome: permissions,
           },
         },
-      ],
+      },
+    });
+  }
+
+  return dbRead.collection.findMany({
+    where: {
+      OR,
     },
     select,
   });
