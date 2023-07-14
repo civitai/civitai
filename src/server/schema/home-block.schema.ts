@@ -8,7 +8,12 @@ export const homeBlockMetaSchema = z
     title: z.string(),
     description: z.string(),
     collectionId: z.number(),
-    leaderboards: z.string().array(),
+    leaderboards: z.array(
+      z.object({
+        id: z.string(),
+        // TODO: perhaps we want other useful info here, such as limit, icon, prize, header, etc.
+      })
+    ),
     link: z.string(),
     linkText: z.string(),
   })

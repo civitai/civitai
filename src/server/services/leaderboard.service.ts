@@ -5,9 +5,9 @@ import { isModerator } from '~/server/routers/base.router';
 import {
   GetLeaderboardInput,
   GetLeaderboardPositionsInput,
+  GetLeaderboardsInput,
+  GetLeaderboardsWithResultsInput,
 } from '~/server/schema/leaderboard.schema';
-
-type IsMod = { isModerator: boolean };
 
 export async function isLeaderboardPopulated() {
   const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
@@ -20,11 +20,16 @@ export async function isLeaderboardPopulated() {
   return populated;
 }
 
-export async function getLeaderboards(input: IsMod) {
+export async function getLeaderboards(input: GetLeaderboardsInput) {
   const leaderboards = await dbRead.leaderboard.findMany({
     where: {
       public: !input.isModerator ? true : undefined,
       active: true,
+      id: input.ids
+        ? {
+            in: input.ids,
+          }
+        : undefined,
     },
     select: {
       id: true,
@@ -47,7 +52,7 @@ type LeaderboardPosition = {
   score: number;
   metrics: Prisma.JsonValue;
 };
-export async function getLeaderboardPositions(input: GetLeaderboardPositionsInput & IsMod) {
+export async function getLeaderboardPositions(input: GetLeaderboardPositionsInput) {
   const userId = input.userId;
   if (!userId) return [] as LeaderboardPosition[];
 
@@ -97,7 +102,7 @@ type LeaderboardRaw = {
     score: number;
   } | null;
 };
-export async function getLeaderboard(input: GetLeaderboardInput & IsMod) {
+export async function getLeaderboard(input: GetLeaderboardInput) {
   const date = dayjs(input.date ?? dayjs().utc()).format('YYYY-MM-DD');
 
   const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
@@ -170,4 +175,22 @@ export async function getLeaderboard(input: GetLeaderboardInput & IsMod) {
       };
     }
   );
+}
+
+export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResultsInput) {
+  const { isModerator } = input;
+  const leaderboards = await getLeaderboards(input);
+
+  const leaderboardsWithResults = await Promise.all(
+    leaderboards.map(async (leaderboard) => {
+      const results = await getLeaderboard({ id: leaderboard.id, isModerator, date: input.date });
+
+      return {
+        ...leaderboard,
+        results,
+      };
+    })
+  );
+
+  return leaderboardsWithResults;
 }

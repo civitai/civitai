@@ -9,6 +9,7 @@ import { GetHomeBlocksInputSchema, HomeBlockMetaSchema } from '~/server/schema/h
 import { HomeBlockType } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 
 export const getHomeBlocksHandler = async ({
   ctx,
@@ -56,6 +57,22 @@ export const getHomeBlocksHandler = async ({
                   ...collection,
                   items,
                 },
+              };
+            }
+            case HomeBlockType.Leaderboard: {
+              if (!metadata.leaderboards) {
+                return null;
+              }
+
+              const leaderboardIds = metadata.leaderboards.map((leaderboard) => leaderboard.id);
+              const leaderboardsWithResults = await getLeaderboardsWithResults({
+                ids: leaderboardIds,
+                isModerator: ctx.user?.isModerator || false,
+              });
+
+              return {
+                ...homeBlock,
+                leaderboards: leaderboardsWithResults,
               };
             }
             default:
