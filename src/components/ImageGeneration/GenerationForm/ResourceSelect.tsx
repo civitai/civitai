@@ -1,7 +1,7 @@
 import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useBaseModelsContext } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
@@ -67,5 +67,7 @@ function ResourceSelect({
   );
 }
 
-const InputResourceSelect = withController(ResourceSelect);
+const InputResourceSelect = withController(ResourceSelect, ({ field }) => ({
+  value: field.value,
+}));
 export default InputResourceSelect;

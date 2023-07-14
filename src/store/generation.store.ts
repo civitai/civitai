@@ -10,7 +10,7 @@ import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 
-type RunType = 'run' | 'remix' | 'random';
+type RunType = 'run' | 'remix' | 'random' | 'params';
 type View = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
@@ -21,6 +21,7 @@ type GenerationState = {
   close: () => void;
   setView: (view: View) => void;
   randomize: (includeResources?: boolean) => Promise<void>;
+  setParams: (data: Generation.Data['params']) => void;
   setData: (args: { data: Generation.Data; type: RunType }) => void;
   clearData: () => void;
 };
@@ -49,6 +50,12 @@ export const useGenerationStore = create<GenerationState>()(
         set((state) => {
           state.view = view;
         }),
+      setParams: (params) => {
+        const data = formatGenerationData({ resources: [], params });
+        set((state) => {
+          state.data = { type: 'params', data };
+        });
+      },
       setData: ({ data, type }) =>
         set((state) => {
           state.view = 'generate';
@@ -76,6 +83,7 @@ export const generationPanel = {
 
 export const generationStore = {
   setData: store.setData,
+  setParams: store.setParams,
   clearData: store.clearData,
   randomize: store.randomize,
 };

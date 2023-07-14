@@ -19,8 +19,6 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-// import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
-import generationForm from '~/components/ImageGeneration/utils/generationFormStorage';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';

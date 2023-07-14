@@ -23,10 +23,12 @@ type ResourceSelectMultipleProps = {
 } & Omit<InputWrapperProps, 'children'>;
 
 const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
-  ({ limit, value, onChange, groups, buttonLabel, ...inputWrapperProps }, ref) => {
+  ({ limit, value = [], onChange, groups, buttonLabel, ...inputWrapperProps }, ref) => {
     const supportedTypes = groups.map((x) => x.type);
-    const _values = [...(value ?? [])].filter((x) => supportedTypes.includes(x.modelType));
+    const _values = [...value].filter((x) => supportedTypes.includes(x.modelType));
     const canAdd = !limit || limit >= _values.length;
+
+    console.log({ value });
 
     const handleAdd = (resource: Generation.Resource) => {
       if (!canAdd) return;
@@ -56,6 +58,12 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
       .filter((x) => !!x.resources.length);
 
     const { baseModels } = useBaseModelsContext();
+
+    // removes resources that have unsupported types
+    useEffect(() => {
+      const filtered = value.filter((x) => supportedTypes.includes(x.modelType));
+      if (filtered.length !== value.length) onChange?.(filtered.length ? filtered : undefined);
+    }, [value]); //eslint-disable-line
 
     if (!_groups.length && !canAdd) return null;
 
@@ -103,5 +111,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
 
 ResourceSelectMultiple.displayName = 'ResourceSelectMultiple';
 
-const InputResourceSelectMultiple = withController(ResourceSelectMultiple);
+const InputResourceSelectMultiple = withController(ResourceSelectMultiple, ({ field }) => ({
+  value: field.value,
+}));
 export default InputResourceSelectMultiple;

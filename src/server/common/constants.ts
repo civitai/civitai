@@ -188,4 +188,15 @@ export const generation = {
     )
   ),
   maxSeed: 4294967295,
+  defaultValues: {
+    cfgScale: 7,
+    steps: 25,
+    sampler: 'DPM++ 2M Karras',
+    seed: undefined,
+    clipSkip: 2,
+    quantity: 4,
+    aspectRatio: '512x512',
+    prompt: '',
+    negativePrompt: '',
+  },
 };

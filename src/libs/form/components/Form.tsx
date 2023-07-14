@@ -10,6 +10,7 @@ import {
   Path,
   useFormContext,
 } from 'react-hook-form';
+import { z } from 'zod';
 
 type FormProps<TFieldValues extends FieldValues> = {
   id?: string;
@@ -58,58 +59,73 @@ export function Form<TFieldValues extends FieldValues = FieldValues>({
   );
 }
 
-export function PersistentForm<TFieldValues extends FieldValues>({
+export function PersistentForm<TFieldValues extends FieldValues, TSchema extends z.AnyZodObject>({
   name,
   storage,
   exclude,
+  schema,
   children,
   ...formProps
-}: PersistProps<TFieldValues> & FormProps<TFieldValues>) {
+}: PersistProps<TFieldValues, TSchema> & FormProps<TFieldValues>) {
   return (
     <Form {...formProps}>
-      <PersistWrapper name={name} storage={storage} exclude={exclude}>
+      <PersistWrapper name={name} storage={storage} exclude={exclude} schema={schema}>
         {children}
       </PersistWrapper>
     </Form>
   );
 }
 
-type PersistProps<TFieldValues extends FieldValues> = {
+type PersistProps<TFieldValues extends FieldValues, TSchema extends z.AnyZodObject> = {
   name: string;
   storage?: Storage;
   exclude?: Path<TFieldValues>[];
+  schema?: TSchema;
   children: React.ReactNode;
+  shouldValidate?: boolean;
+  shouldDirty?: boolean;
+  shouldTouch?: boolean;
 };
 
-function PersistWrapper<TFieldValues extends FieldValues>({
+function PersistWrapper<TFieldValues extends FieldValues, TSchema extends z.AnyZodObject>({
   children,
   name,
   storage,
   exclude = [],
-}: PersistProps<TFieldValues>) {
+  schema,
+  shouldValidate,
+  shouldDirty,
+  shouldTouch,
+}: PersistProps<TFieldValues, TSchema>) {
   const [restored, setRestored] = useState(false);
   const watchedValues = useWatch();
   const { setValue } = useFormContext();
 
   const getStorage = () => storage || window.sessionStorage;
 
+  const parseStoredData = (values: any) => {
+    if (!schema) return values;
+    const result = schema.safeParse(values);
+    return result.success ? result.data : {};
+  };
+
   useEffect(() => {
     const str = getStorage().getItem(name);
 
     if (str) {
       const values = JSON.parse(str);
-      const dataRestored: { [key: string]: any } = {};
+      const toUpdate = Object.keys(values)
+        .filter((key) => !exclude.includes(key as any))
+        .reduce((acc, key) => ({ ...acc, [key]: values[key] }), {} as any);
 
-      Object.keys(values).forEach((key) => {
-        const shouldSet = !exclude.includes(key as any);
-        if (shouldSet) {
-          dataRestored[key] = values[key];
-          setValue(key as any, values[key], {
-            shouldValidate: false,
-            shouldDirty: false,
-            shouldTouch: false,
-          });
-        }
+      const parsed = parseStoredData(toUpdate);
+
+      Object.keys(parsed).forEach((key) => {
+        setValue(key as any, parsed[key], {
+          shouldValidate,
+          shouldDirty,
+          shouldTouch,
+        });
       });
     }
     setRestored(true);
@@ -122,8 +138,6 @@ function PersistWrapper<TFieldValues extends FieldValues>({
           .filter(([key]) => !exclude.includes(key as any))
           .reduce((obj, [key, val]) => Object.assign(obj, { [key]: val }), {})
       : Object.assign({}, watchedValues);
-
-    console.log({ values });
 
     if (Object.entries(values).length) {
       getStorage().setItem(name, JSON.stringify(values));

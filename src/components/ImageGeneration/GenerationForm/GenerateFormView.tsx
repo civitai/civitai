@@ -13,13 +13,14 @@ import {
   Accordion,
   Divider,
   createStyles,
-  Tooltip,
   ScrollArea,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconX } from '@tabler/icons-react';
+import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
+import { useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
@@ -35,7 +36,11 @@ import {
   PersistentForm,
 } from '~/libs/form';
 import { generation } from '~/server/common/constants';
-import { GenerateFormModel } from '~/server/schema/generation.schema';
+import { GenerateFormModel, generationFormShapeSchema } from '~/server/schema/generation.schema';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { generationStore } from '~/store/generation.store';
+import { parsePromptMetadata } from '~/utils/metadata';
+import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 
 export function GenerateFormView({
@@ -49,15 +54,40 @@ export function GenerateFormView({
   const { formState } = form;
   const { isSubmitting } = formState;
 
-  console.log({ formState });
+  // #region [Handle display of survey after 10 minutes]
+  if (!localStorage.getItem('generation-first-loaded'))
+    localStorage.setItem('generation-first-loaded', Date.now().toString());
+  const firstLoaded = parseInt(localStorage.getItem('generation-first-loaded') ?? '0');
+  const showSurvey = Date.now() - firstLoaded > 1000 * 60 * 10;
+  // #endregion
+
+  // #region [Handle parse prompt]
+  const [showFillForm, setShowFillForm] = useState(false);
+  const handleParsePrompt = async () => {
+    const prompt = form.getValues('prompt');
+    const metadata = await parsePromptMetadata(prompt);
+    const result = imageGenerationSchema.safeParse(metadata);
+    if (result.success) {
+      generationStore.setParams(result.data);
+      setShowFillForm(false);
+    } else {
+      console.error(result.error);
+      showErrorNotification({
+        title: 'Unable to parse prompt',
+        error: new Error('We are unable to fill out the form with the provided prompt.'),
+      });
+    }
+  };
+  // #endregion
 
   return (
     <PersistentForm
       form={form}
       onSubmit={onSubmit}
       style={{ height: '100%' }}
-      name="generate-form-test"
+      name="generation-form"
       storage={typeof window !== 'undefined' ? window.localStorage : undefined}
+      schema={generationFormShapeSchema.deepPartial()}
     >
       <BaseModelProvider getBaseModels={getBaseModels}>
         <Stack h="100%">
@@ -87,7 +117,35 @@ export function GenerateFormView({
                     ]}
                     buttonLabel="Add additional resource"
                   />
-                  <InputTextArea name="prompt" label="Prompt" withAsterisk autosize />
+                  <Stack spacing={0}>
+                    <InputTextArea
+                      name="prompt"
+                      label="Prompt"
+                      withAsterisk
+                      autosize
+                      styles={
+                        showFillForm
+                          ? { input: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 } }
+                          : undefined
+                      }
+                      onPaste={(event) => {
+                        const text = event.clipboardData.getData('text/plain');
+                        if (text) setShowFillForm(text.includes('Steps:'));
+                      }}
+                    />
+                    {showFillForm && (
+                      <Button
+                        variant="light"
+                        onClick={handleParsePrompt}
+                        leftIcon={<IconArrowAutofitDown size={16} />}
+                        sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                        fullWidth
+                      >
+                        Apply Parameters
+                      </Button>
+                    )}
+                  </Stack>
+
                   <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
                   <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
                 </Stack>
@@ -218,6 +276,28 @@ export function GenerateFormView({
             </Button>
             {/* </Tooltip> */}
           </Group>
+          {showSurvey && (
+            <DismissibleAlert
+              id="generation-alpha-feedback"
+              title="Share your feedback!"
+              content={
+                <Text>
+                  Thank you for participating in our generation tech test. To help us improve the
+                  service and prioritize feature development, please take a moment to fill out{' '}
+                  <Text
+                    component="a"
+                    td="underline"
+                    href="https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4"
+                    variant="link"
+                    target="_blank"
+                  >
+                    our survey
+                  </Text>
+                  .
+                </Text>
+              }
+            />
+          )}
         </Stack>
       </BaseModelProvider>
     </PersistentForm>

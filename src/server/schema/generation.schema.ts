@@ -47,11 +47,23 @@ export const generationResourceSchema = z.object({
   baseModel: z.string(),
 });
 
-const sharedGenerationParamsSchema = z.object({
+const baseGenerationParamsSchema = z.object({
+  prompt: z.string(),
+  negativePrompt: z.string().optional(),
+  cfgScale: z.coerce.number(),
+  sampler: z.string(),
+  seed: z.coerce.number(),
+  steps: z.coerce.number(),
+  clipSkip: z.coerce.number(),
+  quantity: z.coerce.number(),
+  nsfw: z.boolean().optional(),
+});
+
+const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
-    .max(1500, 'Prompt cannot be longer than 1000 characters')
+    .max(1500, 'Prompt cannot be longer than 1500 characters')
     .superRefine((val, ctx) => {
       const { blockedFor, success } = auditPrompt(val);
       if (!success)
@@ -72,17 +84,26 @@ const sharedGenerationParamsSchema = z.object({
   nsfw: z.boolean().optional(),
 });
 
-export type GenerateFormModel = z.infer<typeof generateFormSchema>;
-export const generateFormSchema = sharedGenerationParamsSchema.extend({
+export const generationFormShapeSchema = baseGenerationParamsSchema.extend({
   model: generationResourceSchema,
-  resources: generationResourceSchema.array().max(9).default([]),
+  resources: generationResourceSchema.array(),
   vae: generationResourceSchema.optional(),
-  aspectRatio: z.string().superRefine((x, ctx) => {
-    const [width, height] = x.split('x');
-    if (isNaN(width as any) || isNaN(height as any))
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid aspect ratio' });
-  }),
+  aspectRatio: z.string(),
 });
+
+export type GenerateFormModel = z.infer<typeof generateFormSchema>;
+export const generateFormSchema = generationFormShapeSchema
+  .merge(sharedGenerationParamsSchema)
+  .extend({
+    model: generationResourceSchema,
+    resources: generationResourceSchema.array().max(9).default([]),
+    vae: generationResourceSchema.optional(),
+    aspectRatio: z.string().superRefine((x, ctx) => {
+      const [width, height] = x.split('x');
+      if (isNaN(width as any) || isNaN(height as any))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid aspect ratio' });
+    }),
+  });
 
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
 export const createGenerationRequestSchema = z.object({

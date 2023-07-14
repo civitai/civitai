@@ -6,7 +6,7 @@ import {
   useGetGenerationRequests,
   usePollGenerationRequests,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { Generate2 } from '~/components/ImageGeneration/Generate2';
+import { Generate } from '~/components/ImageGeneration/Generate';
 import { useGenerationStore } from '~/store/generation.store';
 
 export default function GenerationTabs({}) {
@@ -28,7 +28,7 @@ export default function GenerationTabs({}) {
       inverted
     >
       <Tabs.Panel value="generate" pt={0}>
-        <Generate2 />
+        <Generate />
       </Tabs.Panel>
       <Tabs.Panel value="queue" py={0}>
         <Queue {...result} />
