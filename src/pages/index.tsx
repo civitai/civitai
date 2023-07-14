@@ -23,10 +23,10 @@ function Home() {
   const currentUser = useCurrentUser();
   const storedView = useFiltersContext((state) => state.models.view);
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
-  const { username, favorites, hidden, query } = queryFilters;
+  const { username, favorites, hidden, query, collectionId } = queryFilters;
   const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
-  const canToggleView = !username && !favorites && !hidden;
+  const canToggleView = !username && !favorites && !hidden && !collectionId;
   const view = canToggleView ? queryView ?? storedView : 'feed';
 
   return (
@@ -45,6 +45,8 @@ function Home() {
         <MasonryContainer fluid>
           {username && typeof username === 'string' && <Title>Models by {username}</Title>}
           {favorites && <Title>Your Liked Models</Title>}
+          {/*TODO.collection: Add relevant collection title*/}
+          {collectionId && <Title>Collection</Title>}
           {hidden && <Title>Your Hidden Models</Title>}
           <Stack spacing="xs">
             <Announcements

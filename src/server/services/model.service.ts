@@ -125,6 +125,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     supportsGeneration,
     collectionId,
   } = input;
+  console.log('here we go', collectionId);
+
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
