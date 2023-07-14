@@ -1,5 +1,9 @@
 import { dbWrite, dbRead } from '~/server/db/client';
-import { AddCollectionItemInput, UpsertCollectionInput } from '~/server/schema/collection.schema';
+import {
+  AddCollectionItemInput,
+  GetUserCollectionsByItemSchema,
+  UpsertCollectionInput,
+} from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
@@ -41,7 +45,7 @@ export const getUserCollectionsWithPermissions = <
     select,
   });
 };
-export const addCollectionItems = async ({
+export const saveItemInCollections = async ({
   user,
   input: { collectionIds, ...input },
 }: {
@@ -53,10 +57,20 @@ export const addCollectionItems = async ({
     addedById: user.id,
     collectionId,
   }));
+  const transactions = [dbWrite.collectionItem.createMany({ data })];
 
-  return dbWrite.collectionItem.createMany({
-    data,
+  // Determine which items need to be removed
+  const itemsToRemove = await dbRead.collectionItem.findMany({
+    where: { ...input, addedById: user.id, collectionId: { notIn: collectionIds } },
+    select: { id: true },
   });
+  // if we have items to remove, add a deleteMany mutation to the transaction
+  if (itemsToRemove.length)
+    transactions.push(
+      dbWrite.collectionItem.deleteMany({ where: { id: { in: itemsToRemove.map((i) => i.id) } } })
+    );
+
+  return dbWrite.$transaction(transactions);
 };
 
 export const upsertCollection = async ({
@@ -104,5 +118,38 @@ export const upsertCollection = async ({
       },
       items: { create: { ...collectionItem, addedById: user.id } },
     },
+  });
+};
+
+export const getUserCollectionsByItem = async ({
+  input,
+  user,
+}: {
+  input: GetUserCollectionsByItemSchema;
+  user: SessionUser;
+}) => {
+  const { modelId, imageId, articleId, postId } = input;
+
+  const userCollections = await getUserCollectionsWithPermissions({
+    user,
+    permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+    select: { id: true },
+  });
+
+  if (userCollections.length === 0) return [];
+
+  return dbRead.collection.findMany({
+    where: {
+      id: { in: userCollections.map((c) => c.id) },
+      items: {
+        some: {
+          modelId,
+          imageId,
+          articleId,
+          postId,
+        },
+      },
+    },
+    select: { id: true, name: true, read: true, write: true },
   });
 };
