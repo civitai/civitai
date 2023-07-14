@@ -101,7 +101,12 @@ export function CustomSpotlightAction({
 
   return (
     <Link href={getHref(action)} passHref>
-      <a className={classes.action} onClick={closeSpotlight}>
+      <a
+        className={classes.action}
+        onClick={(e) => {
+          if (!(e.ctrlKey || e.metaKey) && e.button !== 1) closeSpotlight();
+        }}
+      >
         <ActionItem {...actionProps} query={updatedQuery} />
       </a>
     </Link>
