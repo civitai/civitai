@@ -57,6 +57,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelsSearchIndex } from '~/server/search-index';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -125,7 +126,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     supportsGeneration,
     collectionId,
   } = input;
-  console.log('here we go', collectionId);
 
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
@@ -233,6 +233,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
   }
   if (collectionId) {
+    const permissions = await getUserCollectionPermissionsById({ user: sessionUser, collectionId });
+    if (!permissions.read) {
+      return { items: [] };
+    }
+
     const collectionItemModels = await dbRead.collectionItem.findMany({
       select: {
         id: true,
