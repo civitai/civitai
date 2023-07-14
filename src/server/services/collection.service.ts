@@ -9,8 +9,15 @@ import {
   CollectionContributorPermission,
   CollectionWriteConfiguration,
   Prisma,
+  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { isProd } from '~/env/other';
+import { deleteObject } from '~/utils/s3-utils';
+import { env } from '~/env/server.mjs';
+import { imagesSearchIndex } from '~/server/search-index';
+import { imageUrlInUse } from '~/server/services/image.service';
 
 export const getUserCollectionsWithPermissions = <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
@@ -152,4 +159,22 @@ export const getUserCollectionsByItem = async ({
     },
     select: { id: true, name: true, read: true, write: true },
   });
+};
+
+export const deleteCollectionById = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  try {
+    const collection = await dbRead.collection.findFirst({
+      // Confirm the collection belongs to the user:
+      where: { id, userId: user.id },
+      select: { id: true },
+    });
+
+    if (!collection) {
+      return null;
+    }
+
+    return await dbWrite.collection.delete({ where: { id } });
+  } catch {
+    // Ignore errors
+  }
 };
