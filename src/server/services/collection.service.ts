@@ -121,7 +121,7 @@ export const upsertCollection = async ({
   });
 };
 
-export const getUserCollectionsByItem = ({
+export const getUserCollectionsByItem = async ({
   input,
   user,
 }: {
@@ -130,9 +130,17 @@ export const getUserCollectionsByItem = ({
 }) => {
   const { modelId, imageId, articleId, postId } = input;
 
+  const userCollections = await getUserCollectionsWithPermissions({
+    user,
+    permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+    select: { id: true },
+  });
+
+  if (userCollections.length === 0) return [];
+
   return dbRead.collection.findMany({
     where: {
-      userId: user.id,
+      id: { in: userCollections.map((c) => c.id) },
       items: {
         some: {
           modelId,

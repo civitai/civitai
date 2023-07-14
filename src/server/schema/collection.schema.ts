@@ -50,5 +50,5 @@ export const getUserCollectionsByItemSchema = collectionItemSchema
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
-    { message: 'Only one item can be added at a time.' }
+    { message: 'Please pass a single resource to match collections to.' }
   );
