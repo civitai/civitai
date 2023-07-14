@@ -12,6 +12,8 @@ import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
 
+export type HomeBlockExtended = AsyncReturnType<typeof getHomeBlocksHandler>[number];
+
 export const getHomeBlocksHandler = async ({
   ctx,
   input,
@@ -28,76 +30,92 @@ export const getHomeBlocksHandler = async ({
       },
     });
 
-    const homeBlocksWithData = await Promise.all(
-      homeBlocks
-        .map(async (homeBlock) => {
-          const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
-          switch (homeBlock.type) {
-            case HomeBlockType.Collection: {
-              if (!metadata.collectionId) {
-                return null;
-              }
+    const homeBlocksWithData: ((typeof homeBlocks)[number] & {
+      collection?: AsyncReturnType<typeof getCollectionById> & {
+        items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
+      };
+      leaderboards?: AsyncReturnType<typeof getLeaderboardsWithResults>;
+      announcements?: AsyncReturnType<typeof getAnnouncements>;
+    })[] = (
+      await Promise.all(
+        homeBlocks
+          .map(async (homeBlock) => {
+            const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
 
-              const collection = await getCollectionById({ id: metadata.collectionId });
-              if (!collection) {
-                return null;
-              }
-              const items = await getCollectionItemsByCollectionId({
-                id: collection.id,
-                ctx,
-                input: {
-                  ...(input as UserPreferencesInput),
-                  // TODO.home-blocks: Set item limit as part of the input
-                  limit: 8,
-                },
-              });
+            switch (homeBlock.type) {
+              case HomeBlockType.Collection: {
+                if (!metadata.collectionId) {
+                  return null;
+                }
 
-              return {
-                ...homeBlock,
-                collection: {
-                  ...collection,
-                  items,
-                },
-              };
+                const collection = await getCollectionById({ id: metadata.collectionId });
+                if (!collection) {
+                  return null;
+                }
+                const items = await getCollectionItemsByCollectionId({
+                  id: collection.id,
+                  ctx,
+                  input: {
+                    ...(input as UserPreferencesInput),
+                    // TODO.home-blocks: Set item limit as part of the input
+                    limit: 8,
+                  },
+                });
+
+                return {
+                  ...homeBlock,
+                  collection: {
+                    ...collection,
+                    items,
+                  },
+                };
+              }
+              case HomeBlockType.Leaderboard: {
+                if (!metadata.leaderboards) {
+                  return null;
+                }
+
+                const leaderboardIds = metadata.leaderboards.map((leaderboard) => leaderboard.id);
+                const leaderboardsWithResults = await getLeaderboardsWithResults({
+                  ids: leaderboardIds,
+                  isModerator: ctx.user?.isModerator || false,
+                });
+
+                return {
+                  ...homeBlock,
+                  leaderboards: leaderboardsWithResults,
+                };
+              }
+              case HomeBlockType.Announcement: {
+                if (!metadata.announcements) {
+                  return null;
+                }
+
+                const announcementIds = metadata.announcements.map(
+                  (announcement) => announcement.id
+                );
+                const announcements = await getAnnouncements({
+                  ids: announcementIds,
+                  dismissed: input.dismissed,
+                });
+
+                if (!announcements.length) {
+                  // If the user cleared all announcements in home block, do not display this block.
+                  return null;
+                }
+
+                return {
+                  ...homeBlock,
+                  announcements,
+                };
+              }
+              default:
+                return homeBlock;
             }
-            case HomeBlockType.Leaderboard: {
-              if (!metadata.leaderboards) {
-                return null;
-              }
-
-              const leaderboardIds = metadata.leaderboards.map((leaderboard) => leaderboard.id);
-              const leaderboardsWithResults = await getLeaderboardsWithResults({
-                ids: leaderboardIds,
-                isModerator: ctx.user?.isModerator || false,
-              });
-
-              return {
-                ...homeBlock,
-                leaderboards: leaderboardsWithResults,
-              };
-            }
-            case HomeBlockType.Announcement: {
-              if (!metadata.announcements) {
-                return null;
-              }
-
-              const announcementIds = metadata.announcements.map((announcement) => announcement.id);
-              const announcements = getAnnouncements({
-                ids: announcementIds,
-                dismissed: input.dismissed,
-              });
-
-              return {
-                ...homeBlock,
-                announcements,
-              };
-            }
-            default:
-              return homeBlock;
-          }
-        })
-        .filter(isDefined)
-    );
+          })
+          .filter(isDefined)
+      )
+    ).filter(isDefined);
 
     return homeBlocksWithData;
   } catch (error) {

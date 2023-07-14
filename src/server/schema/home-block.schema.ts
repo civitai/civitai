@@ -26,6 +26,13 @@ export const homeBlockMetaSchema = z
   })
   .partial();
 
+export type HomeBlockSchema = z.infer<typeof homeBlockSchema>;
+export const homeBlockSchema = z.object({
+  id: z.number(),
+  type: z.string(),
+  metadata: homeBlockMetaSchema,
+});
+
 export type GetHomeBlocksInputSchema = z.infer<typeof getHomeBlocksInputSchema>;
 export const getHomeBlocksInputSchema = z
   .object({
