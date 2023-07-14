@@ -57,6 +57,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelsSearchIndex } from '~/server/search-index';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -123,7 +124,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     needsReview,
     earlyAccess,
     supportsGeneration,
+    collectionId,
   } = input;
+
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
@@ -227,6 +230,39 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (supportsGeneration) {
     AND.push({
       modelVersions: { some: { modelVersionGenerationCoverage: { workers: { gt: 0 } } } },
+    });
+  }
+  if (collectionId) {
+    const permissions = await getUserCollectionPermissionsById({ user: sessionUser, collectionId });
+    if (!permissions.read) {
+      return { items: [] };
+    }
+
+    const collectionItemModels = await dbRead.collectionItem.findMany({
+      select: {
+        id: true,
+        modelId: true,
+      },
+      where: {
+        collectionId,
+        modelId: {
+          not: null,
+        },
+      },
+    });
+
+    const modelIds = collectionItemModels
+      .map((collectionItemModel) => collectionItemModel.modelId)
+      .filter(isDefined);
+
+    if (modelIds.length === 0) {
+      return { items: [] };
+    }
+
+    AND.push({
+      id: {
+        in: modelIds,
+      },
     });
   }
 

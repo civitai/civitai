@@ -11,8 +11,11 @@ import {
   getUserCollectionsWithPermissions,
   upsertCollection,
   getUserCollectionsByItem,
+  deleteCollectionById,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { deletePost } from '~/server/services/post.service';
 
 export const getAllUserCollectionsHandler = async ({
   ctx,
@@ -94,5 +97,21 @@ export const getUserCollectionsByItemHandler = async ({
     return collections;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const deleteUserCollectionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { user } = ctx;
+    await deleteCollectionById({ id: input.id, user });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };

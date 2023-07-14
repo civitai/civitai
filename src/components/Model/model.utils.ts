@@ -26,6 +26,7 @@ const modelQueryParamSchema = z
     hidden: z.preprocess((val) => val === true || val === 'true', z.boolean()),
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'draft']),
+    collectionId: z.coerce.number(),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;

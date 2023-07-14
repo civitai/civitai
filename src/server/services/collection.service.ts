@@ -7,11 +7,85 @@ import {
 import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
+  CollectionReadConfiguration,
   CollectionWriteConfiguration,
   Prisma,
 } from '@prisma/client';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { GetByIdInput } from '~/server/schema/base.schema';
 
+export const getUserCollectionPermissionsById = async ({
+  user,
+  collectionId,
+}: {
+  user?: SessionUser;
+  collectionId: number;
+}) => {
+  const permissions = {
+    read: false,
+    write: false,
+    manage: false,
+  };
+
+  const collection = await dbRead.collection.findFirst({
+    select: {
+      id: true,
+      read: true,
+      write: true,
+      contributors: user
+        ? {
+            select: {
+              permissions: true,
+            },
+            where: {
+              user: {
+                id: user.id,
+              },
+            },
+          }
+        : false,
+    },
+    where: {
+      id: collectionId,
+    },
+  });
+
+  if (!collection) {
+    return permissions;
+  }
+
+  if (collection.read === CollectionReadConfiguration.Public) {
+    permissions.read = true;
+  }
+
+  if (collection.write === CollectionWriteConfiguration.Public) {
+    permissions.write = true;
+  }
+
+  if (!user) {
+    return permissions;
+  }
+
+  const [contributorItem] = collection.contributors;
+
+  if (!contributorItem) {
+    return permissions;
+  }
+
+  if (contributorItem.permissions.includes(CollectionContributorPermission.VIEW)) {
+    permissions.read = true;
+  }
+
+  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD)) {
+    permissions.write = true;
+  }
+
+  if (contributorItem.permissions.includes(CollectionContributorPermission.MANAGE)) {
+    permissions.manage = true;
+  }
+
+  return permissions;
+};
 export const getUserCollectionsWithPermissions = <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
 >({
@@ -152,4 +226,22 @@ export const getUserCollectionsByItem = async ({
     },
     select: { id: true, name: true, read: true, write: true },
   });
+};
+
+export const deleteCollectionById = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  try {
+    const collection = await dbRead.collection.findFirst({
+      // Confirm the collection belongs to the user:
+      where: { id, userId: user.id },
+      select: { id: true },
+    });
+
+    if (!collection) {
+      return null;
+    }
+
+    return await dbWrite.collection.delete({ where: { id } });
+  } catch {
+    // Ignore errors
+  }
 };
