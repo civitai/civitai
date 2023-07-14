@@ -123,6 +123,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     needsReview,
     earlyAccess,
     supportsGeneration,
+    collectionId,
   } = input;
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
@@ -227,6 +228,34 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (supportsGeneration) {
     AND.push({
       modelVersions: { some: { modelVersionGenerationCoverage: { workers: { gt: 0 } } } },
+    });
+  }
+  if (collectionId) {
+    const collectionItemModels = await dbRead.collectionItem.findMany({
+      select: {
+        id: true,
+        modelId: true,
+      },
+      where: {
+        collectionId,
+        modelId: {
+          not: null,
+        },
+      },
+    });
+
+    const modelIds = collectionItemModels
+      .map((collectionItemModel) => collectionItemModel.modelId)
+      .filter(isDefined);
+
+    if (modelIds.length === 0) {
+      return { items: [] };
+    }
+
+    AND.push({
+      id: {
+        in: modelIds,
+      },
     });
   }
 
