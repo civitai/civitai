@@ -9,8 +9,6 @@ import {
 } from '@prisma/client';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { getPostsInfiniteHandler } from '~/server/controllers/post.controller';
-import { ImageModel } from '~/server/selectors/image.selector';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
 import { getArticles } from '~/server/services/article.service';
@@ -228,8 +226,12 @@ export const getCollectionItemsByCollectionId = async ({
     ...userPreferencesInput,
     user: ctx.user,
     browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+    ids: postIds,
   });
 
+  // TODO.collections:
+  // Make structure work like so:
+  // { type: 'model', ....data } => Discriminated union with models/posts/images/articles
   const collectionItemsExpanded: (Omit<
     (typeof collectionWithItems.items)[0],
     'postId' | 'modelId' | 'imageId' | 'articleId'
@@ -288,7 +290,13 @@ export const getCollectionItemsByCollectionId = async ({
       return collectionItem;
     })
     .filter(isDefined)
-    .filter((collectionItem) => collectionItem.model || collectionItem.post);
+    .filter(
+      (collectionItem) =>
+        collectionItem.model ||
+        collectionItem.post ||
+        collectionItem.article ||
+        collectionItem.image
+    );
 
   return collectionItemsExpanded;
 };
