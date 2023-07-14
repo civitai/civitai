@@ -2,7 +2,6 @@ import { createStyles } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { forwardRef } from 'react';
 
 export type EdgeImageProps = EdgeUrlProps &
   Omit<
@@ -34,20 +33,18 @@ export function EdgeImage({
   if (anim && !isGif) anim = undefined;
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
-  const _src = src
-    ? getEdgeUrl(src, {
-        width,
-        height,
-        fit,
-        anim,
-        blur,
-        quality,
-        gravity,
-        optimized: optimized ? true : undefined,
-        gamma,
-        name,
-      })
-    : undefined;
+  const _src = getEdgeUrl(src, {
+    width,
+    height,
+    fit,
+    anim,
+    blur,
+    quality,
+    gravity,
+    optimized: optimized ? true : undefined,
+    gamma,
+    name,
+  });
 
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
   return <img className={cx(classes.responsive, className)} src={_src} {...imgProps} />;
