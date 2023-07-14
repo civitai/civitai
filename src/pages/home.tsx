@@ -23,9 +23,11 @@ export default function Home() {
   const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery();
 
   return (
-    <Container size="xl">
-      <Title order={1}>Home</Title>
-      <HomeContentToggle />
+    <>
+      <Container size="xl">
+        <Title order={1}>Home</Title>
+        <HomeContentToggle />
+      </Container>
       {homeBlocks.map((homeBlock) => {
         switch (homeBlock.type) {
           case HomeBlockType.Collection:
@@ -36,6 +38,6 @@ export default function Home() {
             return <LeaderboardsHomeBlock homeBlock={homeBlock} />;
         }
       })}
-    </Container>
+    </>
   );
 }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { HomeBlockExtended } from '~/server/controllers/home-block.controller';
+import HomeBlockWrapper from '~/components/HomeBlocks/HomeBlockWrapper';
 
 type Props = { homeBlock: HomeBlockExtended };
 
@@ -10,7 +11,11 @@ const CollectionHomeBlock = ({ homeBlock }: Props) => {
 
   console.log(homeBlock.collection);
 
-  return <div>Display collection component depending on the collection items type</div>;
+  return (
+    <HomeBlockWrapper>
+      Display collection component depending on the collection items type
+    </HomeBlockWrapper>
+  );
 };
 
 export default CollectionHomeBlock;
