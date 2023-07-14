@@ -30,6 +30,7 @@ import {
   IconLogout,
   IconMoonStars,
   IconPalette,
+  IconPlaylistAdd,
   IconPlus,
   IconSearch,
   IconSettings,
@@ -241,6 +242,16 @@ export function AppHeader() {
         ),
       },
       {
+        href: `/collections`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPlaylistAdd stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My collections
+          </Group>
+        ),
+      },
+      {
         href: '/?favorites=true',
         visible: !!currentUser,
         label: (
@@ -255,7 +266,7 @@ export function AppHeader() {
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconBookmark stroke={1.5} />
+            <IconBookmark stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Bookmarked articles
           </Group>
         ),
@@ -264,7 +275,7 @@ export function AppHeader() {
         href: '/leaderboard/overall',
         label: (
           <Group align="center" spacing="xs">
-            <IconCrown stroke={1.5} />
+            <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
           </Group>
         ),
