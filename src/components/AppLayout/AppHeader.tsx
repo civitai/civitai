@@ -107,7 +107,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   search: {
-    [theme.fn.smallerThan('xs')]: {
+    [theme.fn.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -424,19 +424,15 @@ export function AppHeader() {
             <SupportButton />
           </Group>
         </Grid.Col>
-        {!features.enhancedSearch && (
-          <Grid.Col span={6} md={5}>
+        <Grid.Col span={6} md={5}>
+          {!features.enhancedSearch ? (
             <ListSearch onSearch={() => closeBurger()} />
-          </Grid.Col>
-        )}
+          ) : (
+            <QuickSearch className={classes.search} />
+          )}
+        </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="xs" align="center">
-            {features.enhancedSearch && (
-              <>
-                <QuickSearch />
-                <Divider orientation="vertical" />
-              </>
-            )}
             {!currentUser ? (
               <Button
                 component={NextLink}

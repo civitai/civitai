@@ -135,7 +135,7 @@ const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => 
                           withArrow
                           width={300}
                           zIndex={10000}
-                          shadow="xl"
+                          shadow="sm"
                           openDelay={500}
                         >
                           <HoverCard.Target>
