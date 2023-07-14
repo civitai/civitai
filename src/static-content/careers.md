@@ -30,5 +30,4 @@ Civitai is in a phase of rapid expansion and we're looking for exceptional indiv
 ### Open Positions
 - [Full Stack Developer](/content/careers/full-stack-dev)
 - [Senior Dev Ops Engineer](/content/careers/dev-ops)
-- [Project Manager](/content/careers/project-manager)
 - [Marketing Manager](/content/careers/marketing-manager)
