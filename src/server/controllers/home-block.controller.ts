@@ -10,6 +10,7 @@ import { HomeBlockType } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
+import { getAnnouncements } from '~/server/services/announcement.service';
 
 export const getHomeBlocksHandler = async ({
   ctx,
@@ -73,6 +74,22 @@ export const getHomeBlocksHandler = async ({
               return {
                 ...homeBlock,
                 leaderboards: leaderboardsWithResults,
+              };
+            }
+            case HomeBlockType.Announcement: {
+              if (!metadata.announcements) {
+                return null;
+              }
+
+              const announcementIds = metadata.announcements.map((announcement) => announcement.id);
+              const announcements = getAnnouncements({
+                ids: announcementIds,
+                dismissed: input.dismissed,
+              });
+
+              return {
+                ...homeBlock,
+                announcements,
               };
             }
             default:
