@@ -32,6 +32,7 @@ export const getUserCollectionPermissionsById = async ({
       id: true,
       read: true,
       write: true,
+      userId: true,
       contributors: user
         ? {
             select: {
@@ -64,6 +65,12 @@ export const getUserCollectionPermissionsById = async ({
 
   if (!user) {
     return permissions;
+  }
+
+  if (user.id === collection.userId) {
+    permissions.manage = true;
+    permissions.read = true;
+    permissions.write = true;
   }
 
   const [contributorItem] = collection.contributors;
