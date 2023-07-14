@@ -12,8 +12,6 @@ import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
 
-export type HomeBlockExtended = AsyncReturnType<typeof getHomeBlocksHandler>[number];
-
 export const getHomeBlocksHandler = async ({
   ctx,
   input,

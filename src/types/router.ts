@@ -72,3 +72,6 @@ export type ArticleGetByCategoryArticleModel = ArticleGetByCategoryModel['items'
 
 type LeaderboardRouter = RouterOutput['leaderboard'];
 export type LeaderboardGetModel = LeaderboardRouter['getLeaderboard'][number];
+
+type HomeBlockRouter = RouterOutput['homeBlock'];
+export type HomeBlockGetAll = HomeBlockRouter['getHomeBlocks'];

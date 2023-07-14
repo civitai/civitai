@@ -4,10 +4,9 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { HomeBlockType } from '@prisma/client';
-import CollectionHomeBlock from '~/components/HomeBlocks/CollectionHomeBlock';
-import { HomeBlockExtended } from '~/server/controllers/home-block.controller';
-import AnnouncementHomeBlock from '~/components/HomeBlocks/AnnouncementHomeBlock';
-import LeaderboardsHomeBlock from '~/components/HomeBlocks/LeaderboardsHomeBlock';
+import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
+import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
+import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

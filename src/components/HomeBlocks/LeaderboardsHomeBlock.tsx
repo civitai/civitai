@@ -1,10 +1,9 @@
-import React from 'react';
-import { HomeBlockExtended } from '~/server/controllers/home-block.controller';
-import HomeBlockWrapper from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockGetAll } from '~/types/router';
 
-type Props = { homeBlock: HomeBlockExtended };
+type Props = { homeBlock: HomeBlockGetAll[number] };
 
-const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
+export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   if (!homeBlock.leaderboards) {
     return null;
   }
@@ -13,5 +12,3 @@ const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
 
   return <HomeBlockWrapper>Display leaderboards component</HomeBlockWrapper>;
 };
-
-export default LeaderboardsHomeBlock;
