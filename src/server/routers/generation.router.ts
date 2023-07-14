@@ -3,7 +3,6 @@ import {
   bulkDeleteGeneratedImagesSchema,
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
-  getGenerationDataSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
 } from '~/server/schema/generation.schema';
@@ -14,10 +13,8 @@ import {
   deleteAllGenerationRequests,
   deleteGeneratedImage,
   deleteGenerationRequest,
-  getGenerationData,
   getGenerationRequests,
   getGenerationResources,
-  getRandomGenerationData,
 } from '~/server/services/generation/generation.service';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 

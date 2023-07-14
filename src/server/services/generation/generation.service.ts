@@ -479,18 +479,18 @@ export const getResourceGenerationData = async (id: number): Promise<Generation.
     select: {
       ...generationResourceSelect,
       clipSkip: true,
-      // vaeId: true,
+      vaeId: true,
     },
   });
   if (!resource) throw throwNotFoundError();
   const resources = [resource];
-  // if (resource.vaeId) {
-  //   const vae = await dbRead.modelVersion.findUnique({
-  //     where: { id },
-  //     select: { ...generationResourceSelect, clipSkip: true },
-  //   });
-  //   if (vae) resources.push({ ...vae, vaeId: null });
-  // }
+  if (resource.vaeId) {
+    const vae = await dbRead.modelVersion.findUnique({
+      where: { id },
+      select: { ...generationResourceSelect, clipSkip: true },
+    });
+    if (vae) resources.push({ ...vae, vaeId: null });
+  }
   return {
     resources: resources.map(mapGenerationResource),
     params: {
