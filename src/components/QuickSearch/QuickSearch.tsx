@@ -19,7 +19,7 @@ import {
 import { useSearchStore } from '~/components/QuickSearch/search.store';
 import {
   applyQueryMatchers,
-  filterIcons,
+  FilterIcon,
   getFiltersByIndexName,
   hasForceUniqueQueryAttribute,
 } from '~/components/QuickSearch/util';
@@ -222,7 +222,7 @@ function InnerSearch(props: SearchBoxProps) {
 
       <SpotlightProvider
         actions={actions}
-        searchIcon={filterIcons[quickSearchFilter]}
+        searchIcon={<FilterIcon type={quickSearchFilter} size={18} />}
         actionComponent={CustomSpotlightAction}
         actionsWrapperComponent={ActionsWrapperComponent}
         searchPlaceholder="Search models, users, articles, tags"
