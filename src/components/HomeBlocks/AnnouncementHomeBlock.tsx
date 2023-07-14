@@ -1,10 +1,9 @@
-import React from 'react';
-import { HomeBlockExtended } from '~/server/controllers/home-block.controller';
-import HomeBlockWrapper from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockGetAll } from '~/types/router';
 
-type Props = { homeBlock: HomeBlockExtended };
+type Props = { homeBlock: HomeBlockGetAll[number] };
 
-const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
+export const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
   if (!homeBlock.announcements) {
     return null;
   }
@@ -13,5 +12,3 @@ const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
 
   return <HomeBlockWrapper>Display announcements component</HomeBlockWrapper>;
 };
-
-export default AnnouncementHomeBlock;

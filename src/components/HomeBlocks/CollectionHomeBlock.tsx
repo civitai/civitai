@@ -1,10 +1,9 @@
-import React from 'react';
-import { HomeBlockExtended } from '~/server/controllers/home-block.controller';
-import HomeBlockWrapper from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockGetAll } from '~/types/router';
 
-type Props = { homeBlock: HomeBlockExtended };
+type Props = { homeBlock: HomeBlockGetAll[number] };
 
-const CollectionHomeBlock = ({ homeBlock }: Props) => {
+export const CollectionHomeBlock = ({ homeBlock }: Props) => {
   if (!homeBlock.collection) {
     return null;
   }
@@ -17,5 +16,3 @@ const CollectionHomeBlock = ({ homeBlock }: Props) => {
     </HomeBlockWrapper>
   );
 };
-
-export default CollectionHomeBlock;

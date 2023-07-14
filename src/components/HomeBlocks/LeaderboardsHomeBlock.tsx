@@ -1,11 +1,10 @@
-import React from 'react';
-import { HomeBlockExtended } from '~/server/controllers/home-block.controller';
-import HomeBlockWrapper from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { HomeBlockGetAll } from '~/types/router';
 import { createStyles, Group, Title } from '@mantine/core';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import Link from 'next/link';
 
-type Props = { homeBlock: HomeBlockExtended };
+type Props = { homeBlock: HomeBlockGetAll[number] };
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -15,7 +14,7 @@ const useStyles = createStyles((theme) => ({
         : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
 }));
-const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
+export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
 
   if (!homeBlock.leaderboards) {
@@ -43,5 +42,3 @@ const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
     </HomeBlockWrapper>
   );
 };
-
-export default LeaderboardsHomeBlock;
