@@ -695,7 +695,7 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
   }
 
-  if (ids) {
+  if (ids && ids.length > 0) {
     AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
   }
 
