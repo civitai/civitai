@@ -113,6 +113,12 @@ const useStyles = createStyles((theme) => ({
     },
   },
 
+  searchArea: {
+    [theme.fn.smallerThan('md')]: {
+      display: 'none',
+    },
+  },
+
   links: {
     display: 'flex',
     [theme.fn.smallerThan('md')]: {
@@ -378,7 +384,7 @@ export function AppHeader() {
   );
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed>
+    <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={201}>
       <Grid className={classes.header} m={0} gutter="xs" align="center">
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
@@ -435,7 +441,11 @@ export function AppHeader() {
             <SupportButton />
           </Group>
         </Grid.Col>
-        <Grid.Col span={6} md={5}>
+        <Grid.Col
+          span={6}
+          md={5}
+          className={features.enhancedSearch ? classes.searchArea : undefined}
+        >
           {!features.enhancedSearch ? (
             <ListSearch onSearch={() => closeBurger()} />
           ) : (
