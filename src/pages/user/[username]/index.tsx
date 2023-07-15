@@ -369,7 +369,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
     );
   if (!userLoading && !user) return <NotFound />;
 
-  const activeTab = router.pathname.split('/[username]').pop()?.split('?').at(0) || '/images';
+  const activeTab = router.pathname.split('/[username]').pop()?.split('?')[0] || '/images';
 
   return (
     <>

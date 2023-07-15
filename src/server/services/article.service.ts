@@ -378,7 +378,7 @@ export const getDraftArticlesByUserId = async ({
 
     const items = articles.map(({ tags, ...article }) => ({
       ...article,
-      category: tags.at(0)?.tag,
+      category: tags[0]?.tag,
     }));
 
     return getPagingData({ items, count }, take, page);

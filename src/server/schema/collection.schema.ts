@@ -38,8 +38,8 @@ export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z
   .object({
     id: z.number().optional(),
-    name: z.string().nonempty(),
-    description: z.string().optional(),
+    name: z.string().max(30).nonempty(),
+    description: z.string().max(300).optional(),
     coverImage: z.string().optional(),
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),

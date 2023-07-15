@@ -44,7 +44,7 @@ const searchClient = instantMeiliSearch(
 function prepareModelActions(hits: InstantSearchApi['results']['hits']): SpotlightAction[] {
   return hits.map((hit) => {
     // TODO.clientsideFiltering modify this to use the user's tag preferences
-    let coverImage = hit.images.at(0);
+    let coverImage = hit.images[0];
     for (const image of hit.images) {
       if (coverImage.nsfw === 'None') break;
       if (image.nsfw === 'None') {

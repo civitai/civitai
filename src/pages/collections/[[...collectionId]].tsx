@@ -1,4 +1,4 @@
-import { ActionIcon, Card, Drawer, Text, createStyles } from '@mantine/core';
+import { ActionIcon, Card, Drawer, Text, createStyles, Container } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { CollectionContributorPermission } from '@prisma/client';
 import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
@@ -12,13 +12,15 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, session = null }) => {
+  resolver: async ({ ssg, session = null, features }) => {
     if (ssg) {
       if (session) {
         ssg.collection.getAllUser.prefetch({ permission: CollectionContributorPermission.VIEW });
       }
       // TODO - prefetch top user collections and popular collections
     }
+
+    if (!features?.collections) return { notFound: true };
   },
 });
 
@@ -28,15 +30,36 @@ export default function Collections() {
   const { collectionId } = useCollectionQueryParams();
 
   return (
-    <div className={classes.container}>
-      <Card className={classes.sidebar} withBorder>
-        {!isMobile && <MyCollections />}
+    <Container fluid className={classes.container}>
+      <Card
+        className={classes.sidebar}
+        withBorder
+        w={220}
+        mr="md"
+        p="xs"
+        mah="calc(80vh - var(--mantine-header-height,0))"
+      >
+        <Card.Section py={4} inheritPadding>
+          <Text weight={500}>My Collections</Text>
+        </Card.Section>
+        {!isMobile && (
+          <MyCollections>
+            {({ FilterBox, Collections }) => (
+              <>
+                <Card.Section withBorder mb="xs">
+                  {FilterBox}
+                </Card.Section>
+                {Collections}
+              </>
+            )}
+          </MyCollections>
+        )}
       </Card>
       <div className={classes.content}>
         {isMobile && <MyCollectionsDrawer />}
         {!collectionId ? <CollectionsLanding /> : <Collection collectionId={collectionId} fluid />}
       </div>
-    </div>
+    </Container>
   );
 }
 
@@ -70,14 +93,9 @@ const useStyle = createStyles((theme) => ({
   container: {
     display: 'flex',
     flexWrap: 'nowrap',
+    alignItems: 'flex-start',
   },
   sidebar: {
-    // display: 'block',
-    width: 300,
-    padding: theme.spacing.xs,
-    marginLeft: theme.spacing.md,
-    // background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[3],
-    borderRadius: theme.radius.xs,
     [theme.fn.smallerThan('sm')]: {
       display: 'none',
     },

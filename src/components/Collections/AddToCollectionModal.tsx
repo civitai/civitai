@@ -9,6 +9,7 @@ import {
   Text,
   createStyles,
 } from '@mantine/core';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { CollectionReadConfiguration, CollectionWriteConfiguration } from '@prisma/client';
 import { IconArrowLeft, IconEyeOff, IconLock, IconPlus, IconWorld } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
@@ -27,7 +28,7 @@ import {
   saveCollectionItemInputSchema,
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 type PrivacyData = { icon: React.ReactNode; value: string; label: string; description: string };
@@ -110,6 +111,10 @@ function CollectionListForm({
       async onSuccess() {
         await queryUtils.collection.getUserCollectionsByItem.invalidate();
         onSubmit();
+        showNotification({
+          title: 'Item added',
+          message: 'Your item has been added to the selected collections.',
+        });
       },
       onError(error) {
         showErrorNotification({
@@ -191,6 +196,7 @@ function CollectionListForm({
   );
 }
 
+const NOTIFICATION_ID = 'create-collection';
 function NewCollectionForm({
   onSubmit,
   onBack,
@@ -202,7 +208,7 @@ function NewCollectionForm({
       ...props,
       name: '',
       description: '',
-      read: CollectionReadConfiguration.Public,
+      read: CollectionReadConfiguration.Private,
       write: CollectionWriteConfiguration.Private,
     },
     shouldUnregister: false,
@@ -211,17 +217,31 @@ function NewCollectionForm({
 
   const upsertCollectionMutation = trpc.collection.upsert.useMutation();
   const handleSubmit = (data: z.infer<typeof upsertCollectionInput>) => {
+    showNotification({
+      id: NOTIFICATION_ID,
+      loading: true,
+      disallowClose: true,
+      autoClose: false,
+      message: 'Creating collection...',
+    });
     upsertCollectionMutation.mutate(data, {
       async onSuccess() {
         await queryUtils.collection.getAllUser.invalidate();
         await queryUtils.collection.getUserCollectionsByItem.invalidate();
         onSubmit();
+        showSuccessNotification({
+          title: 'Collection created',
+          message: 'Your collection has been created.',
+        });
       },
       onError(error) {
         showErrorNotification({
           title: 'Unable to create collection',
           error: new Error(error.message),
         });
+      },
+      onSettled() {
+        hideNotification(NOTIFICATION_ID);
       },
     });
   };
@@ -282,7 +302,7 @@ const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
           {icon}
           <div>
             <Text size="sm">{label}</Text>
-            <Text size="xs" color="dimmed">
+            <Text size="xs" sx={{ opacity: 0.7 }}>
               {description}
             </Text>
           </div>
