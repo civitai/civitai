@@ -18,7 +18,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
-export function MyCollections({ children }: MyCollectionsProps) {
+export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
@@ -31,6 +31,7 @@ export function MyCollections({ children }: MyCollectionsProps) {
 
   const selectCollection = (id: number) => {
     set({ collectionId: id });
+    onSelect?.(collections.find((c) => c.id === id)!);
   };
 
   const filteredCollections = useMemo(
@@ -100,6 +101,7 @@ type MyCollectionsProps = {
     isLoading: boolean;
     noCollections: boolean;
   }) => JSX.Element;
+  onSelect?: (collection: CollectionGetAllUserModel) => void;
 };
 
 const useStyles = createStyles((theme) => ({

@@ -1,5 +1,14 @@
-import { ActionIcon, ContainerProps, Group, Stack, Title, Popover, Text } from '@mantine/core';
-import { IconDotsVertical, IconInfoCircle, IconMessage2 } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  ContainerProps,
+  Group,
+  Stack,
+  Title,
+  Popover,
+  Text,
+  Button,
+} from '@mantine/core';
+import { IconDotsVertical, IconInfoCircle, IconPlus } from '@tabler/icons-react';
 import { ComingSoon } from '~/components/ComingSoon/ComingSoon';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -21,23 +30,28 @@ export function Collection({
       maxSingleColumnWidth={450}
     >
       <MasonryContainer {...containerProps}>
-        <Stack spacing="xs">
-          <Group align="center" spacing="xs">
-            <Title order={1} lh={1.2}>
-              {collection?.name ?? 'Loading...'}
-            </Title>
-            {collection?.description && (
-              <Popover withArrow>
-                <Popover.Target>
-                  <ActionIcon color="gray" variant="transparent" radius="xl" size="lg" ml="auto">
-                    <IconInfoCircle size={28} strokeWidth={2} />
-                  </ActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
-                  <Text size="sm">{collection.description}</Text>
-                </Popover.Dropdown>
-              </Popover>
-            )}
+        <Stack spacing="xs" w="100%">
+          <Group align="center" spacing="xs" noWrap style={{ alignItems: 'flex-start' }}>
+            <Stack spacing={0}>
+              <Title order={1} lh={1}>
+                {collection?.name ?? 'Loading...'}
+              </Title>
+              {collection?.description && (
+                <Text size="xs" color="dimmed">
+                  {collection.description}
+                </Text>
+              )}
+            </Stack>
+            <ComingSoon
+              message={`We're still working on adding the ability to follow collections. Check back soon!`}
+            >
+              <Button variant="outline" size="xs" pl={4} pr={8} ml="auto">
+                <Group spacing={4}>
+                  <IconPlus size={18} />
+                  Follow
+                </Group>
+              </Button>
+            </ComingSoon>
             <ComingSoon
               message={`We're still working on adding the ability to edit and delete your collections, but thought we'd get this into your hands anyway. Check back soon!`}
             >
@@ -48,7 +62,7 @@ export function Collection({
           </Group>
 
           <IsClient>
-            <ModelsInfinite filters={{ collectionId }} />
+            <ModelsInfinite filters={{ collectionId, period: 'AllTime' }} />
           </IsClient>
         </Stack>
       </MasonryContainer>

@@ -1,4 +1,13 @@
-import { ActionIcon, Card, Drawer, Text, createStyles, Container } from '@mantine/core';
+import {
+  ActionIcon,
+  Card,
+  Drawer,
+  Text,
+  createStyles,
+  Container,
+  Button,
+  Group,
+} from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { CollectionContributorPermission } from '@prisma/client';
 import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
@@ -69,9 +78,19 @@ function MyCollectionsDrawer() {
 
   return (
     <>
-      <ActionIcon className={classes.drawerButton} size="md" variant="transparent" onClick={toggle}>
-        <IconLayoutSidebarLeftExpand />
-      </ActionIcon>
+      <Button
+        className={classes.drawerButton}
+        onClick={toggle}
+        mb="sm"
+        pl={5}
+        pr={8}
+        variant="default"
+      >
+        <Group spacing={4}>
+          <IconLayoutSidebarLeftExpand />
+          My Collections
+        </Group>
+      </Button>
       <Drawer
         opened={drawerOpen}
         onClose={close}
@@ -83,7 +102,7 @@ function MyCollectionsDrawer() {
         }
         classNames={{ header: classes.drawerHeader }}
       >
-        <MyCollections />
+        <MyCollections onSelect={() => close()} />
       </Drawer>
     </>
   );

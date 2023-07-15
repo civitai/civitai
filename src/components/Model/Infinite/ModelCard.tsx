@@ -335,7 +335,13 @@ export function AmbientModelCard({ data, height }: Props) {
     contextMenuItems = contextMenuItems.concat([
       <LoginRedirect key="add-to-collection" reason="add-to-collection">
         <Menu.Item
-          icon={<IconPlaylistAdd size={16} stroke={1.5} />}
+          icon={
+            <IconPlaylistAdd
+              size={16}
+              stroke={1.5}
+              color={theme.colors.pink[theme.fn.primaryShade()]}
+            />
+          }
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();

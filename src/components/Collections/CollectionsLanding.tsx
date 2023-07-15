@@ -4,44 +4,91 @@ import {
   Badge,
   Card,
   Center,
+  Box,
   Group,
   Skeleton,
   Stack,
   Text,
   Title,
+  Overlay,
+  useMantineTheme,
+  ThemeIcon,
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 
 export function CollectionsLanding() {
+  const theme = useMantineTheme();
+
   return (
-    <Stack>
-      <Center>
-        <Card withBorder maw={500} shadow="sm">
-          <Stack spacing={4}>
-            <Badge color="yellow">Beta</Badge>
-            <Text size="sm">
-              {`Collections are a way to organize things you're interested in. This is an early preview, so stay tuned for more updates!`}
-            </Text>
+    <Box maw={1000} mx="auto">
+      <Stack>
+        <Stack pos="relative">
+          <Overlay
+            blur={3}
+            zIndex={10}
+            color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+            opacity={0.8}
+            m={-8}
+            radius="md"
+          />
+          <Stack
+            sx={{ zIndex: 11, transform: 'translateX(-50%)' }}
+            pos="absolute"
+            top={0}
+            left="50%"
+            maw="400"
+          >
+            <Alert>
+              <Stack spacing="xs">
+                <Group>
+                  <ThemeIcon color="blue" size={32}>
+                    <IconAlertTriangle size={24} strokeWidth={2.5} />
+                  </ThemeIcon>
+                  <Text size="lg" weight={500}>
+                    Early Preview
+                  </Text>
+                </Group>
+                <Text size="md">
+                  {`We're still hard at work on collections, so you may notice some things are missing or run into bugs. As always, we'd love to hear your feedback!`}
+                </Text>
+              </Stack>
+            </Alert>
+
+            <Card withBorder shadow="sm">
+              <Card.Section withBorder inheritPadding mb="sm">
+                <Text size="lg" weight={500} py="xs">
+                  What are Collections?
+                </Text>
+              </Card.Section>
+              <Stack spacing={4}>
+                <Text>
+                  {`This lets you add any resource to a currated list so you can catagorize them for yourself or share them for others to follow as you update. Want to put together a collection of resources just for game assets? Now you easily can and share that collection so others can find those resources easily.`}
+                </Text>
+              </Stack>
+            </Card>
+            <Card withBorder shadow="sm">
+              <Card.Section withBorder inheritPadding mb="sm">
+                <Text size="lg" weight={500} py="xs">
+                  Whats available now?
+                </Text>
+              </Card.Section>
+              <Stack spacing={4}>
+                <Text>
+                  {`Right now you can Add any model to a collection from the context menu on Model cards and Model pages. You can also view your collections by clicking any of them on the left. Start building your collections now!`}
+                </Text>
+              </Stack>
+            </Card>
           </Stack>
-        </Card>
-      </Center>
-      <Stack pos="relative">
-        <Alert color="yellow">
-          <Group>
-            <IconAlertTriangle size={20} />
-            The stuff below is still in the works, but you can still checkout any of your
-            collections by selecting them from the My Collections menu.
-          </Group>
-        </Alert>
-        <SectionPlaceholder
-          title="The latest from your subscriptions"
-          quantity={4}
-          ratio={512 / 768}
-        />
-        <SectionPlaceholder quantity={3} ratio={5 / 3} title="Your recent collections" />
-        <SectionPlaceholder title="Based on your recent activity" />
+          <SectionPlaceholder
+            title="The latest from your subscriptions"
+            quantity={4}
+            ratio={512 / 768}
+          />
+          <SectionPlaceholder quantity={3} ratio={5 / 3} title="Your recent collections" />
+          <SectionPlaceholder title="Based on your recent activity" />
+        </Stack>
       </Stack>
-    </Stack>
+    </Box>
   );
 }
 

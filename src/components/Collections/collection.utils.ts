@@ -13,7 +13,7 @@ const collectionQueryParamSchema = z
 
 export type CollectionQueryParams = z.output<typeof collectionQueryParamSchema>;
 export const useCollectionQueryParams = () => {
-  const { query, pathname, replace } = useRouter();
+  const { query, pathname, push } = useRouter();
 
   return useMemo(() => {
     const result = collectionQueryParamSchema.safeParse(query);
@@ -22,7 +22,7 @@ export const useCollectionQueryParams = () => {
     return {
       ...data,
       set: (filters: Partial<CollectionQueryParams>, pathnameOverride?: string) => {
-        replace(
+        push(
           {
             pathname: pathnameOverride ?? pathname,
             query: removeEmpty({ ...query, ...filters }),
@@ -34,5 +34,5 @@ export const useCollectionQueryParams = () => {
         );
       },
     };
-  }, [query, pathname, replace]);
+  }, [query, pathname, push]);
 };

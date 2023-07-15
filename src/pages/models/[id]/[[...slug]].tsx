@@ -618,7 +618,13 @@ export default function ModelDetailsV2({
                     {features.collections && (
                       <LoginRedirect reason="add-to-collection">
                         <Menu.Item
-                          icon={<IconPlaylistAdd size={14} stroke={1.5} />}
+                          icon={
+                            <IconPlaylistAdd
+                              color={theme.colors.pink[theme.fn.primaryShade()]}
+                              size={14}
+                              stroke={1.5}
+                            />
+                          }
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
