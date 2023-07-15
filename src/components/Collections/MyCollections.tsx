@@ -45,7 +45,6 @@ export function MyCollections({ children }: MyCollectionsProps) {
   const FilterBox = (
     <TextInput
       variant="unstyled"
-      className={classes.filter}
       icon={<IconSearch size={20} />}
       onChange={(e) => setQuery(e.target.value)}
       value={query}

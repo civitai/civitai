@@ -233,7 +233,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
   }
   if (collectionId) {
-    const permissions = await getUserCollectionPermissionsById({ user: sessionUser, collectionId });
+    const permissions = await getUserCollectionPermissionsById({
+      user: sessionUser,
+      id: collectionId,
+    });
     if (!permissions.read) {
       return { items: [] };
     }
