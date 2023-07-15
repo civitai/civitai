@@ -25,6 +25,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { showNotification } from '@mantine/notifications';
 import {
   IconDownload,
   IconLink,
@@ -49,6 +50,7 @@ import {
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
@@ -69,6 +71,63 @@ export function CivitaiLinkPopover() {
   );
 }
 
+type HelpStatus = 'pending' | 'processing' | 'complete';
+function SupporterHelp() {
+  const [status, setStatus] = useState<HelpStatus>('pending');
+  const user = useCurrentUser();
+  if (!user) return null;
+
+  const refreshSession = () => {
+    setStatus('processing');
+    showNotification({
+      id: 'refresh-session',
+      title: 'Refreshing account data...',
+      message: 'Fetching fresh data for your account',
+      loading: true,
+    });
+    user.refresh();
+    setTimeout(() => {
+      showNotification({
+        id: 'refresh-session',
+        title: 'Account data refreshed!',
+        message: 'The data for your account has been updated',
+        loading: false,
+      });
+      setStatus('complete');
+    }, 5000);
+  };
+
+  if (status === 'processing') {
+    return (
+      <Text size="xs" ta="center">
+        Refreshing your account data...
+      </Text>
+    );
+  } else if (status === 'complete') {
+    return (
+      <Text size="xs" ta="center" px="xs">
+        Oh, no! You are still seeing this...
+        <br /> Please check your subscription status and try again.
+      </Text>
+    );
+  }
+
+  return (
+    <Text size="xs" ta="center">
+      Are you a support and seeing this message?{' '}
+      <Text
+        component="span"
+        variant="link"
+        td="underline"
+        onClick={() => refreshSession()}
+        sx={{ cursor: 'pointer' }}
+      >
+        Click here
+      </Text>
+    </Text>
+  );
+}
+
 function AboutCivitaiLink() {
   return (
     <>
@@ -81,6 +140,7 @@ function AboutCivitaiLink() {
       >
         This feature is currently in early access and only available to Supporters.
       </AlertWithIcon>
+      <SupporterHelp />
       <Stack py="sm" px="lg" spacing={4}>
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
