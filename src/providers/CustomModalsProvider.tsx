@@ -74,12 +74,13 @@ const registry = {
 };
 
 export const CustomModalsProvider = ({ children }: { children: React.ReactNode }) => {
-  const handlePopState = () => {
-    if (!location.href.includes('#')) {
-      closeAllModals();
-    }
-  };
-  useWindowEvent('popstate', handlePopState);
+  // TODO.briant - fix the scrolling this was causing...
+  // const handlePopState = () => {
+  //   if (!location.href.includes('#')) {
+  //     closeAllModals();
+  //   }
+  // };
+  // useWindowEvent('popstate', handlePopState);
 
   return (
     <ModalsProvider
