@@ -384,7 +384,7 @@ export function AppHeader() {
   );
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={201}>
+    <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
       <Grid className={classes.header} m={0} gutter="xs" align="center">
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
