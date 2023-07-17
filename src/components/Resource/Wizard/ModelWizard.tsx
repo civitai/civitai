@@ -109,7 +109,7 @@ export function ModelWizard() {
         setState((current) => ({
           ...current,
           model: parsedModel,
-          modelVersion: parsedModel.modelVersions.at(0),
+          modelVersion: parsedModel.modelVersions[0],
         }));
     }
   }, [model, state.model]);

@@ -4,6 +4,7 @@ import {
   IconCurrencyDollar,
   IconHash,
   IconSearch,
+  TablerIconsProps,
 } from '@tabler/icons-react';
 import React from 'react';
 import { isDefined } from '~/utils/type-guards';
@@ -20,13 +21,15 @@ type MatchedFilter = {
   description?: string;
 };
 
-export const filterIcons: Record<FilterIdentifier, React.ReactNode> = {
-  models: <IconCurrencyDollar size={18} />,
-  users: <IconAt size={18} />,
-  articles: <IconAmpersand size={18} />,
-  tags: <IconHash size={18} />,
-  all: <IconSearch size={18} />,
-};
+export function FilterIcon({ type, ...props }: TablerIconsProps & { type: FilterIdentifier }) {
+  return {
+    models: <IconCurrencyDollar {...props} />,
+    users: <IconAt {...props} />,
+    articles: <IconAmpersand {...props} />,
+    tags: <IconHash {...props} />,
+    all: <IconSearch {...props} />,
+  }[type];
+}
 
 const filters: MatchedFilter[] = [
   {

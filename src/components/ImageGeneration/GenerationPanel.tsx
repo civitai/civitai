@@ -8,6 +8,7 @@ import { immer } from 'zustand/middleware/immer';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
+import { useGenerationStore } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
 
 const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'), {
@@ -74,8 +75,8 @@ export function GenerationPanel() {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [isPending, startTransition] = useTransition();
 
-  const opened = useGenerationPanelControls((state) => state.opened);
-  const onClose = useGenerationPanelControls((state) => state.close);
+  const opened = useGenerationStore((state) => state.opened);
+  const onClose = useGenerationStore((state) => state.close);
   const [showContent, setShowContent] = useState(false);
 
   useDidUpdate(() => {

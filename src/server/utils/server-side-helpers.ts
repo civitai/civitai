@@ -6,7 +6,7 @@ import { Tracker } from '~/server/clickhouse/client';
 
 import { parseBrowsingMode } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export const getServerProxySSGHelpers = async (
@@ -49,6 +49,7 @@ export function createServerSideProps<P>({
       isClient,
       ssg,
       session,
+      features: flags,
     })) as GetPropsFnResult<P> | undefined;
 
     let props: GetPropsFnResult<P>['props'] | undefined;
@@ -90,4 +91,5 @@ type CustomGetServerSidePropsContext = {
   isClient: boolean;
   ssg?: AsyncReturnType<typeof getServerProxySSGHelpers>;
   session?: Session | null;
+  features?: FeatureAccess;
 };

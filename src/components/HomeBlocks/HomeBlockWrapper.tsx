@@ -1,10 +1,9 @@
-import { Container, Styles } from '@mantine/core';
+import React from 'react';
+import { Container, ContainerProps } from '@mantine/core';
 
-type Props = { children: React.ReactNode; styles?: Styles<never, Record<string, any>> };
-
-export const HomeBlockWrapper = ({ children, styles }: Props) => {
+export const HomeBlockWrapper = ({ children, ...props }: ContainerProps) => {
   return (
-    <Container fluid styles={styles}>
+    <Container fluid {...props}>
       <Container size="xl">{children}</Container>
     </Container>
   );

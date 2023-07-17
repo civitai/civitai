@@ -1,6 +1,6 @@
 import sanitize, { Transformer } from 'sanitize-html';
 import linkBlocklist from '~/server/utils/link-blocklist.json';
-import { isNumber } from '~/utils/type-guards';
+import { isNumber, isValidURL } from '~/utils/type-guards';
 
 export type santizeHtmlOptions = sanitize.IOptions & { stripEmpty?: boolean };
 export function sanitizeHtml(
@@ -64,7 +64,10 @@ export function sanitizeHtml(
     allowedIframeHostnames: ['www.youtube.com', 'www.instagram.com', 'www.strawpoll.com'],
     transformTags: {
       a: function (tagName, { href, ...attr }) {
-        const hrefDomain = new URL(href).hostname;
+        const updatedHref = href.startsWith('http') ? href : `http://${href}`;
+        const hrefDomain = isValidURL(updatedHref) ? new URL(updatedHref).hostname : undefined;
+        if (!hrefDomain) return { tagName: 'span', ...attr };
+
         const isBlocked = linkBlocklist.some((domain) => domain === hrefDomain);
         if (isBlocked)
           return {
