@@ -70,11 +70,13 @@ export const InputNumberSlider = withWatcher(withController(NumberSlider));
 
 export const InputSwitch = withWatcher(
   withController(Switch, ({ field }) => ({
+    value: field.value ?? false,
     checked: field.value ?? false,
   }))
 );
 export const InputCheckbox = withWatcher(
   withController(Checkbox, ({ field }) => ({
+    value: field.value ?? false,
     checked: field.value ?? false,
   }))
 );

@@ -361,9 +361,9 @@ export async function refreshGenerationCoverage() {
 
   await dbWrite.$queryRawUnsafe(`
     INSERT INTO "ModelVersionGenerationCoverage" ("modelVersionId", "workers", "serviceProviders")
-    SELECT 
-      mv."id", 
-      IIF(m."type" = 'VAE', 0, mc."workers") as "workers", 
+    SELECT
+      mv."id",
+      IIF(m."type" = 'VAE', 0, mc."workers") as "workers",
       IIF(m."type" = 'VAE', ARRAY[]::text[], mc."serviceProviders") as "serviceProviders"
     FROM (VALUES ${values}) AS mc ("modelVersionId", "workers", "serviceProviders")
     JOIN "ModelVersion" mv ON mv."id" = mc."modelVersionId"
