@@ -28,8 +28,6 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
     const _values = [...value].filter((x) => supportedTypes.includes(x.modelType));
     const canAdd = !limit || limit >= _values.length;
 
-    console.log({ value });
-
     const handleAdd = (resource: Generation.Resource) => {
       if (!canAdd) return;
       onChange?.([..._values, resource]);
