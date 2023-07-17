@@ -30,8 +30,6 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { leaderboards } = homeBlock;
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
 
-  console.log(homeBlock.leaderboards);
-
   return (
     <HomeBlockWrapper className={classes.root}>
       {metadata?.title && (
@@ -53,7 +51,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
         sx={{ flex: 1 }}
         breakpoints={[
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
-          { maxWidth: 'sm', slideSize: '100%', slideGap: 0 },
+          { maxWidth: 'sm', slideSize: '100%', slideGap: 'sm' },
         ]}
         styles={{
           control: {
@@ -86,7 +84,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
 
                   return (
                     <Fragment key={idx}>
-                      <LeaderHomeBlockCreatorItem data={result} />
+                      <LeaderHomeBlockCreatorItem leaderboard={leaderboard} data={result} />
                       {!isLastItem && <Divider />}
                     </Fragment>
                   );

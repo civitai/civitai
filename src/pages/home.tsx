@@ -30,7 +30,7 @@ export default function Home() {
         <HomeContentToggle />
       </Container>
       {isLoading && (
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
+        <Center sx={{ height: 36 }} mt="md">
           {<Loader />}
         </Center>
       )}
