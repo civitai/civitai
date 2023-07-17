@@ -11,6 +11,7 @@ export const homeBlockMetaSchema = z
     leaderboards: z.array(
       z.object({
         id: z.string(),
+        index: z.number().default(0),
         // TODO.home-blocks: perhaps we want other useful info here, such as maximum number of places, size of the category, etc.
       })
     ),

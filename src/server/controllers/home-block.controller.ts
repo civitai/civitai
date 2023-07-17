@@ -74,6 +74,7 @@ export const getHomeBlocksHandler = async ({
                 }
 
                 const leaderboardIds = metadata.leaderboards.map((leaderboard) => leaderboard.id);
+
                 const leaderboardsWithResults = await getLeaderboardsWithResults({
                   ids: leaderboardIds,
                   isModerator: ctx.user?.isModerator || false,
@@ -81,7 +82,18 @@ export const getHomeBlocksHandler = async ({
 
                 return {
                   ...homeBlock,
-                  leaderboards: leaderboardsWithResults,
+                  leaderboards: leaderboardsWithResults.sort((a, b) => {
+                    if (!metadata.leaderboards) {
+                      return 0;
+                    }
+
+                    const aIndex =
+                      metadata.leaderboards.find((item) => item.id === a.id)?.index ?? 0;
+                    const bIndex =
+                      metadata.leaderboards.find((item) => item.id === b.id)?.index ?? 0;
+
+                    return aIndex - bIndex;
+                  }),
                 };
               }
               case HomeBlockType.Announcement: {

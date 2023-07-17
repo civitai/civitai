@@ -37,11 +37,20 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
           <Title>{metadata?.title}</Title>
           {metadata.link && metadata.linkText && (
             <Link href={metadata.link} passHref>
-              {metadata.linkText}
+              <Button
+                rightIcon={<IconArrowRight size={16} />}
+                variant="subtle"
+                size="md"
+                compact
+                style={{ padding: 0 }}
+              >
+                {metadata.linkText}
+              </Button>
             </Link>
           )}
         </Group>
       )}
+      {metadata?.description && <Text mb="md">{metadata?.description}</Text>}
       <Carousel
         loop={false}
         slideSize="25%"
@@ -62,37 +71,46 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
           },
         }}
       >
-        {leaderboards.map((leaderboard) => (
-          <Carousel.Slide key={leaderboard.id}>
-            <Card>
-              <Group position="apart" align="center">
-                <Text size="lg">{leaderboard.title}</Text>
-                <Link href={`/leaderboard/${leaderboard.id}`} passHref>
-                  <Button
-                    rightIcon={<IconArrowRight size={16} />}
-                    variant="subtle"
-                    size="xs"
-                    compact
-                  >
-                    More
-                  </Button>
-                </Link>
-              </Group>
-              <Stack mt="md">
-                {leaderboard.results.map((result, idx) => {
-                  const isLastItem = idx === leaderboard.results.length - 1;
+        {leaderboards.map((leaderboard) => {
+          const displayedResults = leaderboard.results.slice(0, 4);
 
-                  return (
-                    <Fragment key={idx}>
-                      <LeaderHomeBlockCreatorItem leaderboard={leaderboard} data={result} />
-                      {!isLastItem && <Divider />}
-                    </Fragment>
-                  );
-                })}
-              </Stack>
-            </Card>
-          </Carousel.Slide>
-        ))}
+          return (
+            <Carousel.Slide key={leaderboard.id}>
+              <Card sx={{ minHeight: '100%' }}>
+                <Group position="apart" align="center">
+                  <Text size="lg">{leaderboard.title}</Text>
+                  <Link href={`/leaderboard/${leaderboard.id}`} passHref>
+                    <Button
+                      rightIcon={<IconArrowRight size={16} />}
+                      variant="subtle"
+                      size="xs"
+                      compact
+                    >
+                      More
+                    </Button>
+                  </Link>
+                </Group>
+                <Stack mt="md">
+                  {displayedResults.length === 0 && (
+                    <Text sx={{ opacity: 0.5 }}>
+                      No results have been published for this leaderboard
+                    </Text>
+                  )}
+                  {displayedResults.map((result, idx) => {
+                    const isLastItem = idx === leaderboard.results.length - 1;
+
+                    return (
+                      <Fragment key={idx}>
+                        <LeaderHomeBlockCreatorItem leaderboard={leaderboard} data={result} />
+                        {!isLastItem && <Divider />}
+                      </Fragment>
+                    );
+                  })}
+                </Stack>
+              </Card>
+            </Carousel.Slide>
+          );
+        })}
       </Carousel>
     </HomeBlockWrapper>
   );
