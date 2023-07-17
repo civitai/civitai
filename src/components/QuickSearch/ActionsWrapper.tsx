@@ -8,6 +8,8 @@ import {
   Stack,
   Text,
   createStyles,
+  ThemeIcon,
+  HoverCard,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
@@ -17,8 +19,8 @@ import { useSearchStore } from '~/components/QuickSearch/search.store';
 import {
   FilterIdentifier,
   FilterIndex,
-  filterIcons,
   getAvailableFiltersByIndexName,
+  FilterIcon,
 } from '~/components/QuickSearch/util';
 import { titleCase } from '~/utils/string-helpers';
 
@@ -44,6 +46,19 @@ const useStyles = createStyles((theme, _, getRef) => {
     },
 
     iconWrapper: { ref },
+
+    filterIcon:
+      theme.colorScheme === 'dark'
+        ? {
+            background: theme.colors.gray[8],
+            borderColor: theme.colors.gray[7],
+            color: theme.colors.gray[5],
+          }
+        : {
+            background: theme.colors.gray[3],
+            borderColor: theme.colors.gray[4],
+            color: theme.colors.gray[6],
+          },
   };
 });
 const useAccordionStyles = createStyles((theme) => {
@@ -113,8 +128,36 @@ const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => 
                 return (
                   <Chip key={option} classNames={classes} value={option} radius="sm">
                     <Group spacing={4} noWrap>
-                      {option !== 'all' ? filterIcons[option] : null}
                       {titleCase(option)}
+                      {option !== 'all' && (
+                        <HoverCard
+                          withinPortal
+                          withArrow
+                          width={300}
+                          zIndex={10000}
+                          shadow="sm"
+                          openDelay={500}
+                        >
+                          <HoverCard.Target>
+                            <ThemeIcon
+                              className={classes.filterIcon}
+                              size="xs"
+                              radius="xs"
+                              variant="default"
+                            >
+                              <FilterIcon type={option} size={12} strokeWidth={2.5} />
+                            </ThemeIcon>
+                          </HoverCard.Target>
+                          <HoverCard.Dropdown>
+                            <Text size="sm" weight={500}>
+                              Pro-tip: Quick switching!
+                            </Text>
+                            <Text size="xs" lh={1.2}>
+                              Start your search with this character to jump to searching these items
+                            </Text>
+                          </HoverCard.Dropdown>
+                        </HoverCard>
+                      )}
                     </Group>
                   </Chip>
                 );

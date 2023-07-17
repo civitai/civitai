@@ -1,21 +1,14 @@
 import { Group, Text } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import { FloatingActionButton } from '~/components/FloatingActionButton/FloatingActionButton';
-import {
-  generationPanel,
-  useGenerationPanelControls,
-} from '~/components/ImageGeneration/GenerationPanel';
+import { useGenerationStore } from '~/store/generation.store';
 
 export function FloatingGenerationButton() {
-  const opened = useGenerationPanelControls((state) => state.opened);
+  const opened = useGenerationStore((state) => state.opened);
+  const open = useGenerationStore((state) => state.open);
 
   return (
-    <FloatingActionButton
-      transition="pop"
-      onClick={() => generationPanel.open()}
-      mounted={!opened}
-      px="xs"
-    >
+    <FloatingActionButton transition="pop" onClick={() => open()} mounted={!opened} px="xs">
       <Group spacing="xs">
         <IconBrush size={20} stroke={2.5} />
         <Text inherit>Create</Text>

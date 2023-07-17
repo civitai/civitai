@@ -1,5 +1,13 @@
-import { Group, Text, UnstyledButton, createStyles } from '@mantine/core';
-import { useDebouncedValue, useElementSize, useOs } from '@mantine/hooks';
+import {
+  Group,
+  Text,
+  UnstyledButton,
+  createStyles,
+  HoverCard,
+  Code,
+  UnstyledButtonProps,
+} from '@mantine/core';
+import { useDebouncedValue, useElementSize } from '@mantine/hooks';
 import { SpotlightAction, SpotlightProvider, openSpotlight } from '@mantine/spotlight';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconSearch } from '@tabler/icons-react';
@@ -19,7 +27,7 @@ import {
 import { useSearchStore } from '~/components/QuickSearch/search.store';
 import {
   applyQueryMatchers,
-  filterIcons,
+  FilterIcon,
   getFiltersByIndexName,
   hasForceUniqueQueryAttribute,
 } from '~/components/QuickSearch/util';
@@ -33,31 +41,10 @@ const searchClient = instantMeiliSearch(
   { primaryKey: 'id' }
 );
 
-const useStyles = createStyles((theme) => ({
-  searchBar: {
-    padding: `4px 5px 4px 12px`,
-    borderRadius: theme.radius.sm,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
-    outline: 0,
-    width: 225,
-  },
-  keyboardIndicator: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
-    borderRadius: theme.radius.sm,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    padding: `0 ${theme.spacing.xs}px`,
-  },
-}));
-
 function prepareModelActions(hits: InstantSearchApi['results']['hits']): SpotlightAction[] {
   return hits.map((hit) => {
     // TODO.clientsideFiltering modify this to use the user's tag preferences
-    let coverImage = hit.images.at(0);
+    let coverImage = hit.images[0];
     for (const image of hit.images) {
       if (coverImage.nsfw === 'None') break;
       if (image.nsfw === 'None') {
@@ -111,12 +98,9 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
   }));
 }
 
-function InnerSearch(props: SearchBoxProps) {
-  const os = useOs();
-  const { classes } = useStyles();
+function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.ReactNode }) {
   const { scopedResults } = useInstantSearch();
   const { refine, query } = useSearchBox(props);
-  const { ref, height } = useElementSize();
 
   const rawQuery = useSearchStore((state) => state.query);
   const setRawQuery = useSearchStore((state) => state.setQuery);
@@ -188,13 +172,6 @@ function InnerSearch(props: SearchBoxProps) {
     }
   };
 
-  // Wrap it in useMemo to avoid re-rendering the component on every render
-  const ActionsWrapperComponent = useMemo(
-    // eslint-disable-next-line react/display-name
-    () => (props: { children: React.ReactNode }) => <ActionsWrapper {...props} ref={ref} />,
-    [ref]
-  );
-
   return (
     <>
       {uniqueQueryAttributeMatched ? (
@@ -222,41 +199,99 @@ function InnerSearch(props: SearchBoxProps) {
 
       <SpotlightProvider
         actions={actions}
-        searchIcon={filterIcons[quickSearchFilter]}
+        searchIcon={<FilterIcon type={quickSearchFilter} size={18} />}
         actionComponent={CustomSpotlightAction}
-        actionsWrapperComponent={ActionsWrapperComponent}
+        actionsWrapperComponent={ActionsWrapper}
         searchPlaceholder="Search models, users, articles, tags"
         nothingFoundMessage="Nothing found"
         onQueryChange={handleQueryChange}
         cleanQueryOnClose={false}
         filter={(_, actions) => actions}
+        shortcut={['mod + p', 'mod + k', '/']}
         limit={20}
         styles={(theme) => ({
-          inner: { paddingTop: 50 },
+          inner: { paddingTop: 'var(--mantine-header-height,50px)' },
           spotlight: { overflow: 'hidden' },
           actions: {
             overflow: 'auto',
             height: '55vh',
 
             [theme.fn.smallerThan('sm')]: {
-              height: `calc(100vh - ${height + 137}px)`,
+              height: `calc(100vh - var(--mantine-header-height,50px) - 150px)`,
             },
           },
         })}
       >
-        <UnstyledButton className={classes.searchBar} onClick={() => openSpotlight()}>
-          <Group position="apart" noWrap>
-            <Group spacing={8} noWrap>
-              <IconSearch size={16} />
-              <Text color="dimmed">Search</Text>
-            </Group>
-            <Text className={classes.keyboardIndicator} size="xs" color="dimmed">
-              {os === 'macos' ? '⌘ + K' : 'Ctrl + K'}
-            </Text>
-          </Group>
-        </UnstyledButton>
+        {children}
       </SpotlightProvider>
     </>
+  );
+}
+
+const useStyles = createStyles((theme) => ({
+  searchBar: {
+    padding: `4px 5px`,
+    borderRadius: theme.radius.sm,
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+    border: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+    }`,
+    outline: 0,
+    width: '100%',
+  },
+  icon: {
+    color: theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[3],
+  },
+  placeholder: {
+    color: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[5],
+    fontSize: theme.fontSizes.sm,
+  },
+  keyboardIndicator: {
+    border: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+    }`,
+    borderRadius: theme.radius.sm,
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+    color: theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+    textAlign: 'center',
+    width: 24,
+  },
+}));
+
+function SearchBar({
+  className,
+  onClick,
+  ...props
+}: UnstyledButtonProps & {
+  onClick: () => void;
+}) {
+  const { classes, cx } = useStyles();
+
+  return (
+    <UnstyledButton {...props} className={cx(classes.searchBar, className)} onClick={onClick}>
+      <Group position="apart" noWrap>
+        <Group spacing={8} noWrap>
+          <IconSearch size={24} className={classes.icon} />
+          <Text className={classes.placeholder}>Quick Search</Text>
+        </Group>
+        <HoverCard withArrow width={300} zIndex={10000} shadow="sm" openDelay={500}>
+          <HoverCard.Target>
+            <Text className={classes.keyboardIndicator} weight="bold">
+              /
+            </Text>
+          </HoverCard.Target>
+          <HoverCard.Dropdown>
+            <Text size="sm" weight={500}>
+              Pro-tip: Quick search faster!
+            </Text>
+            <Text size="xs" lh={1.2}>
+              Open the quick search without leaving your keyboard by tapping the <Code>/</Code> key
+              from anywhere and just start typing.
+            </Text>
+          </HoverCard.Dropdown>
+        </HoverCard>
+      </Group>
+    </UnstyledButton>
   );
 }
 
@@ -268,7 +303,7 @@ const debouncedQueryHook = debounce((query, refine) => {
   refine(query);
 }, 300);
 
-export function QuickSearch() {
+export function QuickSearch(searchBarProps: UnstyledButtonProps) {
   return (
     <InstantSearch
       searchClient={searchClient}
@@ -279,7 +314,9 @@ export function QuickSearch() {
     >
       {/* hitsPerPage = 0 because this refers to the "main" index instead of the configured. Might get duped results if we don't remove the results */}
       <Configure hitsPerPage={0} />
-      <InnerSearch queryHook={debouncedQueryHook} />
+      <InnerSearch queryHook={debouncedQueryHook}>
+        <SearchBar onClick={openSpotlight} {...searchBarProps} />
+      </InnerSearch>
     </InstantSearch>
   );
 }

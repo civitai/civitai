@@ -5,11 +5,11 @@ import { IconInbox } from '@tabler/icons-react';
 import { useDeferredValue, useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 
-import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Virtuoso } from 'react-virtuoso';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { generationPanel } from '~/store/generation.store';
 
 export function Queue({
   requests,

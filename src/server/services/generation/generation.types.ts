@@ -14,10 +14,9 @@ export namespace Generation {
     seed?: number; // TODO.generation - check if this prop will be set
   };
 
-  export type DataParams = Partial<Omit<Generation.Params, 'seed'> & { seed?: number }>;
   export type Data = {
-    params?: DataParams;
-    resources: Generation.Resource[];
+    params?: Partial<Params>;
+    resources: Resource[];
   };
 
   export type Params = {

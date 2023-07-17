@@ -27,8 +27,8 @@ import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
 import { env } from '~/env/server.mjs';
 
-import { BaseModel, baseModelSets, Sampler } from '~/server/common/constants';
-import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
+import { BaseModel, baseModelSets, generation, Sampler } from '~/server/common/constants';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
 import { modelsSearchIndex } from '~/server/search-index';
 
@@ -260,7 +260,7 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
   const additionalNetworks = resources
-    .filter((x) => x !== checkpoint)
+    .filter((x) => generation.additionalResourceTypes.includes(x.modelType as any))
     .map((x) => {
       if (x.modelType === ModelType.LORA && !x.strength) x.strength = 1;
       return x;
@@ -281,8 +281,9 @@ export const createGenerationRequest = async ({
     }
   }
 
-  if (params.vae) {
-    additionalNetworks[`@civitai/${params.vae}`] = {
+  const vae = resources.find((x) => x.modelType === ModelType.VAE);
+  if (vae) {
+    additionalNetworks[`@civitai/${vae.id}`] = {
       type: ModelType.VAE,
     };
   }
@@ -307,11 +308,19 @@ export const createGenerationRequest = async ({
     },
   };
 
+  // console.log('________');
+  // console.log(JSON.stringify(generationRequest));
+  // console.log('________');
+
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(generationRequest),
   });
+
+  // console.log('________');
+  // console.log(response);
+  // console.log('________');
 
   if (response.status === 429) {
     // too many requests
@@ -352,9 +361,13 @@ export async function refreshGenerationCoverage() {
 
   await dbWrite.$queryRawUnsafe(`
     INSERT INTO "ModelVersionGenerationCoverage" ("modelVersionId", "workers", "serviceProviders")
-    SELECT mv."id", mc."workers", mc."serviceProviders"
+    SELECT 
+      mv."id", 
+      IIF(m."type" = 'VAE', 0, mc."workers") as "workers", 
+      IIF(m."type" = 'VAE', ARRAY[]::text[], mc."serviceProviders") as "serviceProviders"
     FROM (VALUES ${values}) AS mc ("modelVersionId", "workers", "serviceProviders")
     JOIN "ModelVersion" mv ON mv."id" = mc."modelVersionId"
+    JOIN "Model" m ON mv."modelId" = m."id"
     ON CONFLICT ("modelVersionId")
     DO UPDATE
     SET "workers" = EXCLUDED."workers",
@@ -436,24 +449,6 @@ export async function bulkDeleteGeneratedImages({
   return deleteResponse.ok;
 }
 
-export const getRandomGenerationData = async () => {
-  const imageReaction = await dbRead.imageReaction.findFirst({
-    where: {
-      reaction: { in: ['Like', 'Heart', 'Laugh'] },
-      user: { isModerator: true },
-      image: { meta: { not: Prisma.JsonNull } },
-    },
-    select: { imageId: true },
-    orderBy: { createdAt: 'desc' },
-    skip: Math.floor(Math.random() * 1000),
-  });
-  if (!imageReaction) throw throwNotFoundError();
-
-  const { params = {} } = await getImageGenerationData(imageReaction.imageId);
-  params.seed = undefined;
-  return params;
-};
-
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
   try {
     const resource = await dbRead.modelVersionGenerationCoverage.findFirst({
@@ -469,26 +464,39 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   }
 }
 
-export const getGenerationData = async ({
-  type,
-  id,
-}: GetGenerationDataInput): Promise<Generation.Data> => {
-  switch (type) {
+export const getGenerationData = async (
+  props: GetGenerationDataInput
+): Promise<Generation.Data> => {
+  switch (props.type) {
     case 'image':
-      return await getImageGenerationData(id);
+      return await getImageGenerationData(props.id);
     case 'model':
-      return await getResourceGenerationData({ id });
+      return await getResourceGenerationData(props.id);
+    case 'random':
+      return await getRandomGenerationData(props.includeResources);
   }
 };
 
-export const getResourceGenerationData = async ({ id }: GetByIdInput): Promise<Generation.Data> => {
+export const getResourceGenerationData = async (id: number): Promise<Generation.Data> => {
   const resource = await dbRead.modelVersion.findUnique({
     where: { id },
-    select: { ...generationResourceSelect, clipSkip: true },
+    select: {
+      ...generationResourceSelect,
+      clipSkip: true,
+      vaeId: true,
+    },
   });
   if (!resource) throw throwNotFoundError();
+  const resources = [resource];
+  if (resource.vaeId) {
+    const vae = await dbRead.modelVersion.findUnique({
+      where: { id },
+      select: { ...generationResourceSelect, clipSkip: true },
+    });
+    if (vae) resources.push({ ...vae, vaeId: null });
+  }
   return {
-    resources: [mapGenerationResource(resource)],
+    resources: resources.map(mapGenerationResource),
     params: {
       clipSkip: resource.clipSkip ?? undefined,
     },
@@ -505,6 +513,12 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     },
   });
   if (!image) throw throwNotFoundError();
+
+  const {
+    'Clip skip': legacyClipSkip,
+    clipSkip = legacyClipSkip,
+    ...meta
+  } = imageGenerationSchema.parse(image.meta);
 
   const resources = await dbRead.$queryRaw<
     Array<Generation.Resource & { covered: boolean; hash?: string }>
@@ -527,18 +541,12 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
 
   const deduped = uniqBy(resources, 'id');
 
-  const {
-    'Clip skip': legacyClipSkip,
-    clipSkip = legacyClipSkip,
-    ...meta
-  } = imageGenerationSchema.parse(image.meta);
-
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
       if (!key.startsWith('lora:')) continue;
 
       // get the resource that matches the hash
-      const resource = resources.find((x) => x.hash === hash);
+      const resource = deduped.find((x) => x.hash === hash);
       if (!resource) continue;
 
       // get everything that matches <key:{number}>
@@ -558,6 +566,24 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       width: image.width ?? undefined,
     },
   };
+};
+
+export const getRandomGenerationData = async (includeResources?: boolean) => {
+  const imageReaction = await dbRead.imageReaction.findFirst({
+    where: {
+      reaction: { in: ['Like', 'Heart', 'Laugh'] },
+      user: { isModerator: true },
+      image: { nsfw: 'None', meta: { not: Prisma.JsonNull } },
+    },
+    select: { imageId: true },
+    orderBy: { createdAt: 'desc' },
+    skip: Math.floor(Math.random() * 1000),
+  });
+  if (!imageReaction) throw throwNotFoundError();
+
+  const { resources, params = {} } = await getImageGenerationData(imageReaction.imageId);
+  params.seed = undefined;
+  return { resources: includeResources ? resources : [], params };
 };
 
 export const deleteAllGenerationRequests = async ({ userId }: { userId: number }) => {

@@ -9,6 +9,8 @@ import {
   Text,
   ThemeIcon,
   createStyles,
+  useMantineColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import { SpotlightActionProps, useSpotlight } from '@mantine/spotlight';
 import {
@@ -31,7 +33,7 @@ import {
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { applyQueryMatchers } from '~/components/QuickSearch/util';
@@ -99,7 +101,12 @@ export function CustomSpotlightAction({
 
   return (
     <Link href={getHref(action)} passHref>
-      <a className={classes.action} onClick={closeSpotlight}>
+      <a
+        className={classes.action}
+        onClick={(e) => {
+          if (!(e.ctrlKey || e.metaKey) && e.button !== 1) closeSpotlight();
+        }}
+      >
         <ActionItem {...actionProps} query={updatedQuery} />
       </a>
     </Link>
@@ -230,27 +237,31 @@ function ModelSpotlightAction({
           {category && <Badge size="xs">{category.tag.name}</Badge>}
         </Group>
         <Group spacing={4}>
-          <IconBadge
-            color="dark"
-            size="xs"
+          <ActionIconBadge
             // @ts-ignore: ignoring because size doesn't allow number
             icon={<Rating value={metrics.rating} size={12} readOnly />}
           >
             {abbreviateNumber(metrics.ratingCount)}
-          </IconBadge>
-          <IconBadge color="dark" size="xs" icon={<IconHeart size={12} stroke={2.5} />}>
+          </ActionIconBadge>
+          <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.favoriteCount)}
-          </IconBadge>
-          <IconBadge color="dark" size="xs" icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
+          </ActionIconBadge>
+          <ActionIconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.commentCount)}
-          </IconBadge>
-          <IconBadge color="dark" size="xs" icon={<IconDownload size={12} stroke={2.5} />}>
+          </ActionIconBadge>
+          <ActionIconBadge icon={<IconDownload size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.downloadCount)}
-          </IconBadge>
+          </ActionIconBadge>
         </Group>
       </Stack>
     </Group>
   );
+}
+
+function ActionIconBadge(props: Omit<IconBadgeProps, 'color'>) {
+  const theme = useMantineTheme();
+
+  return <IconBadge color={theme.colorScheme === 'dark' ? 'dark' : 'gray'} size="xs" {...props} />;
 }
 
 function UserSpotlightAction({
@@ -281,26 +292,24 @@ function UserSpotlightAction({
         </Text>
         {stats && (
           <Group spacing={4}>
-            <IconBadge
-              color="dark"
-              size="xs"
+            <ActionIconBadge
               // @ts-ignore: ignoring because size doesn't allow number
               icon={<Rating value={stats.ratingAllTime} size={12} readOnly />}
             >
               {abbreviateNumber(stats.ratingCountAllTime)}
-            </IconBadge>
-            <IconBadge color="dark" size="xs" icon={<IconUpload size={12} stroke={2.5} />}>
+            </ActionIconBadge>
+            <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.uploadCountAllTime)}
-            </IconBadge>
-            <IconBadge color="dark" size="xs" icon={<IconUsers size={12} stroke={2.5} />}>
+            </ActionIconBadge>
+            <ActionIconBadge icon={<IconUsers size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.followerCountAllTime)}
-            </IconBadge>
-            <IconBadge color="dark" size="xs" icon={<IconHeart size={12} stroke={2.5} />}>
+            </ActionIconBadge>
+            <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.favoriteCountAllTime)}
-            </IconBadge>
-            <IconBadge color="dark" size="xs" icon={<IconDownload size={16} />}>
+            </ActionIconBadge>
+            <ActionIconBadge icon={<IconDownload size={16} />}>
               {abbreviateNumber(stats.downloadCountAllTime)}
-            </IconBadge>
+            </ActionIconBadge>
           </Group>
         )}
       </Stack>
@@ -323,12 +332,12 @@ function TagSpotlightAction({
           {title}
         </Highlight>
         <Group spacing={4}>
-          <IconBadge size="xs" color="dark" icon={<IconBox size={12} stroke={2.5} />}>
+          <ActionIconBadge icon={<IconBox size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.modelCount)} Models
-          </IconBadge>
-          <IconBadge size="xs" color="dark" icon={<IconPhoto size={12} stroke={2.5} />}>
+          </ActionIconBadge>
+          <ActionIconBadge icon={<IconPhoto size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.imageCount)} Images
-          </IconBadge>
+          </ActionIconBadge>
         </Group>
       </Stack>
     </Group>
@@ -379,18 +388,18 @@ function ArticleSpotlightAction({
           ))}
         </Group>
         <Group spacing={4}>
-          <IconBadge icon={<IconBookmark size={12} stroke={2.5} />} color="dark" size="xs">
+          <ActionIconBadge icon={<IconBookmark size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.favoriteCount)}
-          </IconBadge>
-          <IconBadge icon={<IconMoodSmile size={12} stroke={2.5} />} color="dark" size="xs">
+          </ActionIconBadge>
+          <ActionIconBadge icon={<IconMoodSmile size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.reactionCount)}
-          </IconBadge>
-          <IconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />} color="dark" size="xs">
+          </ActionIconBadge>
+          <ActionIconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.commentCount)}
-          </IconBadge>
-          <IconBadge icon={<IconEye size={12} stroke={2.5} />} color="dark" size="xs">
+          </ActionIconBadge>
+          <ActionIconBadge icon={<IconEye size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.viewCount)}
-          </IconBadge>
+          </ActionIconBadge>
         </Group>
       </Stack>
     </Group>

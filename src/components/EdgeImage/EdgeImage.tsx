@@ -33,7 +33,7 @@ export function EdgeImage({
   if (anim && !isGif) anim = undefined;
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
-  src = getEdgeUrl(src, {
+  const _src = getEdgeUrl(src, {
     width,
     height,
     fit,
@@ -45,8 +45,9 @@ export function EdgeImage({
     gamma,
     name,
   });
+
   // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-  return <img className={cx(classes.responsive, className)} src={src} {...imgProps} />;
+  return <img className={cx(classes.responsive, className)} src={_src} {...imgProps} />;
 }
 
 const useStyles = createStyles((_theme, params: { maxWidth?: number }) => ({

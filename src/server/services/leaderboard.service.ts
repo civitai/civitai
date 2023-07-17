@@ -122,7 +122,9 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
             'data', c.data,
             'type', c.type,
             'source', c.source,
-            'name', c.name
+            'name', c.name,
+            'leaderboardId', c."leaderboardId",
+            'leaderboardPosition', c."leaderboardPosition"
           ))
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
@@ -184,9 +186,23 @@ export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResul
   const leaderboardsWithResults = await Promise.all(
     leaderboards.map(async (leaderboard) => {
       const results = await getLeaderboard({ id: leaderboard.id, isModerator, date: input.date });
+      const cosmetics = await dbRead.cosmetic.findMany({
+        select: {
+          id: true,
+          name: true,
+          data: true,
+          description: true,
+          source: true,
+          type: true,
+        },
+        where: {
+          leaderboardId: leaderboard.id,
+        },
+      });
 
       return {
         ...leaderboard,
+        cosmetics,
         results,
       };
     })

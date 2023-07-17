@@ -3,6 +3,7 @@ import {
   Button,
   Center,
   Group,
+  Navbar,
   Stack,
   Text,
   ThemeIcon,
@@ -11,15 +12,15 @@ import {
 } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
+import React from 'react';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader } from '~/components/AppLayout/AppHeader';
-import { SideNavigation } from '~/components/AppLayout/SideNavigation';
 import { FloatingGenerationButton } from '~/components/ImageGeneration/FloatingGenerationButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function AppLayout({ children, showNavbar }: Props) {
+export function AppLayout({ children, navbar }: Props) {
   const theme = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
@@ -32,7 +33,7 @@ export function AppLayout({ children, showNavbar }: Props) {
         header={!isBanned ? <AppHeader /> : undefined}
         footer={<AppFooter />}
         className={`theme-${theme.colorScheme}`}
-        navbar={showNavbar ? <SideNavigation /> : undefined}
+        navbar={navbar}
         styles={{
           body: {
             display: 'block',
@@ -74,5 +75,5 @@ export function AppLayout({ children, showNavbar }: Props) {
 
 type Props = {
   children: React.ReactNode;
-  showNavbar?: boolean;
+  navbar?: React.ReactElement;
 };

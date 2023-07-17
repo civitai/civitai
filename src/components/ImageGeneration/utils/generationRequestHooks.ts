@@ -8,6 +8,8 @@ import { useEffect, useMemo } from 'react';
 import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
 import { GenerationRequestStatus, Generation } from '~/server/services/generation/generation.types';
 import { useDebouncer } from '~/utils/debouncer';
+import { usePrevious } from '@dnd-kit/utilities';
+import { isEqual } from 'lodash-es';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,

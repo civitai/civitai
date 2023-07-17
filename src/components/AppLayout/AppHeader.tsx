@@ -30,6 +30,7 @@ import {
   IconLogout,
   IconMoonStars,
   IconPalette,
+  IconPlaylistAdd,
   IconPlus,
   IconSearch,
   IconSettings,
@@ -107,7 +108,13 @@ const useStyles = createStyles((theme) => ({
   },
 
   search: {
-    [theme.fn.smallerThan('xs')]: {
+    [theme.fn.smallerThan('md')]: {
+      display: 'none',
+    },
+  },
+
+  searchArea: {
+    [theme.fn.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -241,6 +248,16 @@ export function AppHeader() {
         ),
       },
       {
+        href: `/collections`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPlaylistAdd stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My collections
+          </Group>
+        ),
+      },
+      {
         href: '/?favorites=true',
         visible: !!currentUser,
         label: (
@@ -255,7 +272,7 @@ export function AppHeader() {
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconBookmark stroke={1.5} />
+            <IconBookmark stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Bookmarked articles
           </Group>
         ),
@@ -264,7 +281,7 @@ export function AppHeader() {
         href: '/leaderboard/overall',
         label: (
           <Group align="center" spacing="xs">
-            <IconCrown stroke={1.5} />
+            <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
           </Group>
         ),
@@ -367,7 +384,7 @@ export function AppHeader() {
   );
 
   return (
-    <Header ref={ref} height={HEADER_HEIGHT} fixed>
+    <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
       <Grid className={classes.header} m={0} gutter="xs" align="center">
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
@@ -424,19 +441,19 @@ export function AppHeader() {
             <SupportButton />
           </Group>
         </Grid.Col>
-        {!features.enhancedSearch && (
-          <Grid.Col span={6} md={5}>
+        <Grid.Col
+          span={6}
+          md={5}
+          className={features.enhancedSearch ? classes.searchArea : undefined}
+        >
+          {!features.enhancedSearch ? (
             <ListSearch onSearch={() => closeBurger()} />
-          </Grid.Col>
-        )}
+          ) : (
+            <QuickSearch className={classes.search} />
+          )}
+        </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="xs" align="center">
-            {features.enhancedSearch && (
-              <>
-                <QuickSearch />
-                <Divider orientation="vertical" />
-              </>
-            )}
             {!currentUser ? (
               <Button
                 component={NextLink}

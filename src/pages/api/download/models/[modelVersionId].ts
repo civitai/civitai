@@ -1,4 +1,4 @@
-import { ModelModifier, ModelType, Prisma, UserActivityType } from '@prisma/client';
+import { ModelModifier, ModelStatus, ModelType, Prisma, UserActivityType } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
@@ -68,6 +68,7 @@ export default RateLimitedEndpoint(
       where: { id: modelVersionId },
       select: {
         id: true,
+        status: true,
         model: {
           select: {
             id: true,
@@ -118,7 +119,7 @@ export default RateLimitedEndpoint(
 
     const canDownload =
       isMod ||
-      modelVersion?.model?.status === 'Published' ||
+      (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published') ||
       (userId && modelVersion?.model?.userId === userId);
     if (!canDownload) return errorResponse(404, 'Model not found');
 

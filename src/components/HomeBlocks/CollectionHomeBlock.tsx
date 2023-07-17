@@ -8,8 +8,6 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
     return null;
   }
 
-  console.log(homeBlock.collection);
-
   return (
     <HomeBlockWrapper>
       Display collection component depending on the collection items type

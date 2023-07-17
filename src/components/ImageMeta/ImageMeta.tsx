@@ -19,7 +19,7 @@ import { useMemo } from 'react';
 import { ImageGenerationProcess, ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
+import { generationPanel } from '~/store/generation.store';
 import { encodeMetadata } from '~/utils/metadata';
 
 type Props = {
