@@ -10,6 +10,7 @@ import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
 import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { ModelCard } from '~/components/Cards/ModelCard';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
@@ -57,7 +58,7 @@ export function ModelsInfinite({
             }}
             adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
             maxItemHeight={600}
-            render={AmbientModelCard}
+            render={ModelCard}
             itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (
