@@ -414,26 +414,28 @@ model ModelEngagement {
 }
 
 model ModelVersion {
-  id                   Int         @id @default(autoincrement())
+  id                   Int           @id @default(autoincrement())
   index                Int?
   name                 String
   description          String?
   modelId              Int
-  model                Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model                Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
   trainedWords         String[]
   steps                Int?
   epochs               Int?
   clipSkip             Int?
-  createdAt            DateTime    @default(now())
-  updatedAt            DateTime    @updatedAt
+  vaeId                Int?
+  vae                  ModelVersion? @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
   publishedAt          DateTime?
-  status               ModelStatus @default(Draft)
-  fromImport           Import?     @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  status               ModelStatus   @default(Draft)
+  fromImport           Import?       @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId         Int?
-  inaccurate           Boolean     @default(false)
+  inaccurate           Boolean       @default(false)
   baseModel            String
-  meta                 Json        @default("{}")
-  earlyAccessTimeFrame Int         @default(0)
+  meta                 Json          @default("{}")
+  earlyAccessTimeFrame Int           @default(0)
 
   reviews                        Review[]
   images                         ImagesOnModels[]
@@ -449,8 +451,9 @@ model ModelVersion {
   resourceReviews                ResourceReview[]
   hashes                         ModelHash[]
   metricsDaily                   ModelMetricDaily[]
-  ModelVersionExploration        ModelVersionExploration[]
+  modelVersionExploration        ModelVersionExploration[]
   modelVersionGenerationCoverage ModelVersionGenerationCoverage?
+  vaeFor                         ModelVersion[]                  @relation("vae")
 
   @@index([modelId], type: Hash)
 }

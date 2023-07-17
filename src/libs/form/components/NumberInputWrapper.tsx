@@ -73,14 +73,6 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         parser={parser}
         formatter={formatter}
         rightSection={showCloseButton ? closeButton : rightSection}
-        // rightSection={
-        //   showCloseButton || rightSection ? (
-        //     <Group>
-        //       {showCloseButton && closeButton}
-        //       {rightSection}
-        //     </Group>
-        //   ) : null
-        // }
         onChange={handleChange}
         value={value}
         {...props}

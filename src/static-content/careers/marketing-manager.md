@@ -40,6 +40,7 @@ As our Marketing Manager, you'll play a foundational role in shaping Civitai's m
 
 - $80K - $106K annually, based on experience.
 - Fully remote position.
+- An opportunity to work with a rapidly growing startup, with potential for future leadership roles.
 
 Civitai is on a mission to democratize AI resources for all. By joining us, you'll play a key role in this transformative journey. We look forward to your application!
 

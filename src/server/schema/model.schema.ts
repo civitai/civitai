@@ -85,6 +85,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   earlyAccess: z.boolean().optional(),
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
   supportsGeneration: z.boolean().optional(),
+  collectionId: z.number().optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

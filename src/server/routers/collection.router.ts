@@ -1,23 +1,40 @@
 import {
-  addItemHandlers,
+  saveItemHandler,
   getAllUserCollectionsHandler,
+  getUserCollectionsByItemHandler,
   upsertCollectionHandler,
+  deleteUserCollectionHandler,
+  getCollectionByIdHandler,
 } from '~/server/controllers/collection.controller';
-import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
+import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
-  addCollectionItemInputSchema,
+  saveCollectionItemInputSchema,
   getAllUserCollectionsInputSchema,
+  getUserCollectionsByItemSchema,
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 
 export const collectionRouter = router({
   getAllUser: protectedProcedure
     .input(getAllUserCollectionsInputSchema)
     .use(isFlagProtected('collections'))
     .query(getAllUserCollectionsHandler),
-  upsert: protectedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
-  addItems: protectedProcedure
-    .input(addCollectionItemInputSchema)
+  getById: publicProcedure
+    .input(getByIdSchema)
     .use(isFlagProtected('collections'))
-    .mutation(addItemHandlers),
+    .query(getCollectionByIdHandler),
+  upsert: protectedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
+  saveItem: protectedProcedure
+    .input(saveCollectionItemInputSchema)
+    .use(isFlagProtected('collections'))
+    .mutation(saveItemHandler),
+  getUserCollectionsByItem: protectedProcedure
+    .input(getUserCollectionsByItemSchema)
+    .use(isFlagProtected('collections'))
+    .query(getUserCollectionsByItemHandler),
+  delete: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('collections'))
+    .mutation(deleteUserCollectionHandler),
 });

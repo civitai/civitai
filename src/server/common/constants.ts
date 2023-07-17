@@ -1,6 +1,6 @@
 import { IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { ImageSort, PostSort, QuestionSort, BrowsingMode, ArticleSort } from './enums';
-import { MetricTimeframe, ModelStatus, ReviewReactions } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
 export const constants = {
@@ -173,3 +173,30 @@ export const samplerMap = new Map<Sampler, string[]>([
   ['PLMS', ['plms']],
   ['UniPC', ['uni_pc', 'uni_pc_bh2']],
 ]);
+
+export const generation = {
+  formStoreKey: 'generation-form',
+  aspectRatios: [
+    { label: 'Square', width: 512, height: 512 },
+    { label: 'Landscape', width: 768, height: 512 },
+    { label: 'Portrait', width: 512, height: 768 },
+  ],
+  additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion],
+  samplers: constants.samplers.filter((sampler) =>
+    ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(
+      sampler
+    )
+  ),
+  maxSeed: 4294967295,
+  defaultValues: {
+    cfgScale: 7,
+    steps: 25,
+    sampler: 'DPM++ 2M Karras',
+    seed: undefined,
+    clipSkip: 2,
+    quantity: 4,
+    aspectRatio: '512x512',
+    prompt: '',
+    negativePrompt: '',
+  },
+};

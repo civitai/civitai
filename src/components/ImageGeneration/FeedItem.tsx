@@ -19,12 +19,11 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-import { generationPanel } from '~/components/ImageGeneration/GenerationPanel';
-import generationForm from '~/components/ImageGeneration/utils/generationFormStorage';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
+import { generationStore } from '~/store/generation.store';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -33,11 +32,6 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
 
-/**
- * TODO.generation:
- * - add action to generate image with the same prompt (play icon)
- * - correctly type the image object
- */
 export function FeedItem({
   image,
   request,
@@ -50,8 +44,7 @@ export function FeedItem({
   const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
-    generationForm.setData(request);
-    generationPanel.setView('generate');
+    generationStore.setData({ type: 'remix', data: request });
   };
 
   const handleDeleteImage = () => {
