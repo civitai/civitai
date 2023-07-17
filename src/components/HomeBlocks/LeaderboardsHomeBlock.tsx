@@ -7,6 +7,7 @@ import { Carousel } from '@mantine/carousel';
 import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/LeaderboardHomeBlockCreatorItem';
 import { Fragment } from 'react';
 import { IconArrowRight, IconTrash } from '@tabler/icons-react';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
 
@@ -22,6 +23,7 @@ const useStyles = createStyles((theme) => ({
 }));
 export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
+  const isMobile = useIsMobile();
 
   if (!homeBlock.leaderboards || homeBlock.leaderboards.length === 0) {
     return null;
@@ -33,14 +35,22 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   return (
     <HomeBlockWrapper className={classes.root}>
       {metadata?.title && (
-        <Group position="apart" align="center" pb="md">
-          <Title>{metadata?.title}</Title>
+        <Group position="apart" align="center" pb="md" style={{ flexWrap: 'nowrap' }}>
+          <Title
+            sx={(theme) => ({
+              fontSize: isMobile
+                ? theme.headings.sizes.h3.fontSize
+                : theme.headings.sizes.h1.fontSize,
+            })}
+          >
+            {metadata?.title}
+          </Title>
           {metadata.link && metadata.linkText && (
             <Link href={metadata.link} passHref>
               <Button
                 rightIcon={<IconArrowRight size={16} />}
                 variant="subtle"
-                size="md"
+                size={isMobile ? 'sm' : 'md'}
                 compact
                 style={{ padding: 0 }}
               >
@@ -57,10 +67,9 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
         slideGap="md"
         height="100%"
         align="start"
-        sx={{ flex: 1 }}
         breakpoints={[
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
-          { maxWidth: 'sm', slideSize: '100%', slideGap: 'sm' },
+          { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
         ]}
         styles={{
           control: {
