@@ -20,7 +20,7 @@ This position is for the dreamers, creators, and technologists who believe in us
 
 ## Qualifications
 
-- Bachelor's degree in Computer Science, Machine Learning, or a related field.
+- Bachelor's degree in Computer Science, Machine Learning, or a related field or equivalent experience.
 - Experience working with AI models and Python.
 - Familiarity with containerization technologies like Docker or Kubernetes.
 - Proven problem-solving skills and the ability to think critically.
