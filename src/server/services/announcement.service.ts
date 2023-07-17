@@ -27,6 +27,7 @@ export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementS
   });
 };
 
+export type GetAnnouncement = Awaited<ReturnType<typeof getAnnouncements>>[number];
 export const getAnnouncements = async ({ dismissed, ids }: GetAnnouncementsInput) => {
   const now = new Date();
   return dbRead.announcement.findMany({
@@ -48,6 +49,7 @@ export const getAnnouncements = async ({ dismissed, ids }: GetAnnouncementsInput
       content: true,
       color: true,
       emoji: true,
+      metadata: true,
     },
   });
 };
