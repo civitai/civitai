@@ -7,7 +7,10 @@ export const homeBlockMetaSchema = z
   .object({
     title: z.string(),
     description: z.string(),
-    collectionId: z.number(),
+    collection: z.object({
+      id: z.number(),
+      limit: z.number().default(8),
+    }),
     leaderboards: z.array(
       z.object({
         id: z.string(),
@@ -36,8 +39,6 @@ export const homeBlockSchema = z.object({
 export type GetHomeBlocksInputSchema = z.infer<typeof getHomeBlocksInputSchema>;
 export const getHomeBlocksInputSchema = z
   .object({
-    // TODO.home-blocks
-    // Need to define a block limit AND a block-"items"-limit
     limit: z.number().default(8),
     dismissed: z.array(z.number()).optional(),
   })

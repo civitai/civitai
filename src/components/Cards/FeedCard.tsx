@@ -2,33 +2,39 @@ import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square';
-const aspectRatioValues: Record<AspectRatio, { ratio: number; maxHeight: number }> = {
+const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number }> = {
   portrait: {
     ratio: 9 / 16,
-    maxHeight: 430,
+    height: 430,
   },
   landscape: {
     ratio: 16 / 9,
-    maxHeight: 300,
+    height: 300,
   },
   square: {
     ratio: 1,
-    maxHeight: 332,
+    height: 332,
   },
 };
 
-const useStyles = createStyles<string, { maxHeight: number }>((theme, { maxHeight }) => ({
-  root: { maxHeight, padding: '0 !important', color: 'white', borderRadius: theme.radius.sm },
+const useStyles = createStyles<string, { height: number }>((theme, { height }) => ({
+  root: {
+    height,
+    padding: '0 !important',
+    color: 'white',
+    borderRadius: theme.radius.sm,
+    minHeight: 300,
+  },
 }));
 
 export function FeedCard({ href, children, aspectRatio = 'portrait', className, ...props }: Props) {
-  const { ratio, maxHeight } = aspectRatioValues[aspectRatio];
-  const { classes, cx } = useStyles({ maxHeight });
+  const { ratio, height } = aspectRatioValues[aspectRatio];
+  const { classes, cx } = useStyles({ height });
 
   return (
     <Link href={href} passHref>
       <Card className={cx(classes.root, className)} {...props} component="a">
-        <AspectRatio mah={maxHeight} ratio={ratio}>
+        <AspectRatio h={height} ratio={ratio}>
           {children}
         </AspectRatio>
       </Card>
