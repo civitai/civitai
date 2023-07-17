@@ -252,12 +252,32 @@ export const upsertCollection = async ({
   });
 };
 
-type CollectionItemExpanded = {
-  model?: GetModelsWithImagesAndModelVersions;
-  post?: PostsInfiniteModel;
-  image?: ImagesInfiniteModel;
-  article?: ArticleGetAll['items'][0];
-};
+interface ModelCollectionItem {
+  type: 'model';
+  data: GetModelsWithImagesAndModelVersions;
+}
+
+interface PostCollectionItem {
+  type: 'post';
+  data: PostsInfiniteModel;
+}
+
+interface ImageCollectionItem {
+  type: 'image';
+  data: ImagesInfiniteModel;
+}
+
+interface ArticleCollectionItem {
+  type: 'article';
+  data: ArticleGetAll['items'][0];
+}
+
+type CollectionItemExpanded = { id: number } & (
+  | ModelCollectionItem
+  | PostCollectionItem
+  | ImageCollectionItem
+  | ArticleCollectionItem
+);
 
 export const getCollectionItemsByCollectionId = async ({
   id,
@@ -347,74 +367,68 @@ export const getCollectionItemsByCollectionId = async ({
     ids: postIds,
   });
 
-  // TODO.collections:
-  // Make structure work like so:
-  // { type: 'model', ....data } => Discriminated union with models/posts/images/articles
-  const collectionItemsExpanded: (Omit<
-    (typeof collectionWithItems.items)[0],
-    'postId' | 'modelId' | 'imageId' | 'articleId'
-  > &
-    CollectionItemExpanded)[] = collectionWithItems.items
+  const collectionItemsExpanded: CollectionItemExpanded[] = collectionWithItems.items
     .map(({ imageId, postId, articleId, modelId, ...collectionItemRemainder }) => {
-      const collectionItem: typeof collectionItemRemainder & CollectionItemExpanded = {
-        ...collectionItemRemainder,
-        // Mark all as undefined:
-        image: undefined,
-        model: undefined,
-        post: undefined,
-        article: undefined,
-      };
-
       if (modelId) {
         // Get all model info:
         const model = models.items.find((m) => m.id === modelId);
         if (!model) {
-          return collectionItem;
+          return null;
         }
 
-        collectionItem.model = model;
+        return {
+          ...collectionItemRemainder,
+          type: 'model' as const,
+          data: model,
+        };
       }
 
       if (postId) {
         const post = posts.items.find((p) => p.id === postId);
 
         if (!post) {
-          return collectionItem;
+          return null;
         }
 
-        collectionItem.post = post;
+        return {
+          ...collectionItemRemainder,
+          type: 'post' as const,
+          data: post,
+        };
       }
 
       if (imageId) {
         const image = images.items.find((i) => i.id === imageId);
 
         if (!image) {
-          return collectionItem;
+          return null;
         }
 
-        collectionItem.image = image;
+        return {
+          ...collectionItemRemainder,
+          type: 'image' as const,
+          data: image,
+        };
       }
 
       if (articleId) {
         const article = articles.items.find((a) => a.id === articleId);
 
         if (!article) {
-          return collectionItem;
+          return null;
         }
 
-        collectionItem.article = article;
+        return {
+          ...collectionItemRemainder,
+          type: 'article' as const,
+          data: article,
+        };
       }
 
-      return collectionItem;
+      return null;
     })
     .filter(isDefined)
-    .filter(
-      (collectionItem) =>
-        collectionItem.model ||
-        collectionItem.post ||
-        collectionItem.article ||
-        collectionItem.image
-    );
+    .filter((collectionItem) => !!collectionItem.data);
 
   return collectionItemsExpanded;
 };
