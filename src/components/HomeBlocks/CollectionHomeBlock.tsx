@@ -68,7 +68,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
       <Stack spacing="xl">
         <Group spacing="xs" position="apart" noWrap>
           <Title className={classes.title} order={1} lineClamp={1}>
-            {homeBlock.metadata.title}
+            {homeBlock.metadata.title ?? homeBlock.collection.name}
           </Title>
           {homeBlock.metadata.link && (
             <Link href={homeBlock.metadata.link} passHref>
