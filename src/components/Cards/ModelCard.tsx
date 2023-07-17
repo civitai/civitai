@@ -1,26 +1,45 @@
 import {
+  ActionIcon,
   Badge,
   Group,
   Indicator,
+  Menu,
   Rating,
   Stack,
   Text,
   UnstyledButton,
   createStyles,
 } from '@mantine/core';
-import { IconStar, IconDownload, IconHeart, IconMessageCircle2 } from '@tabler/icons-react';
+import {
+  IconStar,
+  IconDownload,
+  IconHeart,
+  IconMessageCircle2,
+  IconFlag,
+  IconTagOff,
+  IconPlaylistAdd,
+  IconDotsVertical,
+} from '@tabler/icons-react';
+import image from 'next/image';
 import { useRouter } from 'next/router';
+import React from 'react';
 import { useEffect } from 'react';
 import { InView } from 'react-intersection-observer';
 import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetAll } from '~/types/router';
 import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -79,6 +98,7 @@ export function ModelCard({ data }: Props) {
   const { classes, cx, theme } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const queryResult = querySchema.safeParse(router.query);
   const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
   const modelId = queryResult.success ? queryResult.data.modelId : undefined;
@@ -99,6 +119,87 @@ export function ModelCard({ data }: Props) {
   const isHidden =
     hidden.find(({ id }) => id === data.user.id) ||
     hiddenModels.find((modelId) => modelId === data.id);
+
+  const reportOption = (
+    <LoginRedirect reason="report-model" key="report">
+      <Menu.Item
+        icon={<IconFlag size={14} stroke={1.5} />}
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openContext('report', { entityType: ReportEntity.Model, entityId: data.id });
+        }}
+      >
+        Report Resource
+      </Menu.Item>
+    </LoginRedirect>
+  );
+
+  const reportImageOption = data.image && (
+    <LoginRedirect reason="report-content" key="report-image">
+      <Menu.Item
+        icon={<IconFlag size={14} stroke={1.5} />}
+        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openContext('report', {
+            entityType: ReportEntity.Image,
+            // Explicitly cast to number cause we know it's not undefined
+            entityId: data.image?.id as number,
+          });
+        }}
+      >
+        Report Image
+      </Menu.Item>
+    </LoginRedirect>
+  );
+
+  const blockTagsOption = (
+    <Menu.Item
+      key="block-tags"
+      icon={<IconTagOff size={14} stroke={1.5} />}
+      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openContext('blockModelTags', { modelId: data.id });
+      }}
+    >
+      {`Hide content with these tags`}
+    </Menu.Item>
+  );
+
+  let contextMenuItems: React.ReactNode[] = [];
+  if (features.collections) {
+    contextMenuItems = contextMenuItems.concat([
+      <LoginRedirect key="add-to-collection" reason="add-to-collection">
+        <Menu.Item
+          icon={
+            <IconPlaylistAdd
+              size={16}
+              stroke={1.5}
+              color={theme.colors.pink[theme.fn.primaryShade()]}
+            />
+          }
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openContext('addToCollection', { modelId: data.id });
+          }}
+        >
+          Add to Collection
+        </Menu.Item>
+      </LoginRedirect>,
+    ]);
+  }
+
+  if (currentUser?.id !== data.user.id)
+    contextMenuItems = contextMenuItems.concat([
+      <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
+      <HideUserButton key="hide-button" as="menu-item" userId={data.user.id} />,
+      reportOption,
+      reportImageOption,
+    ]);
+  if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
 
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
@@ -141,13 +242,42 @@ export function ModelCard({ data }: Props) {
 
                         return (
                           <>
-                            <Group spacing={4} className={cx(classes.contentOverlay, classes.top)}>
-                              <ImageGuard.ToggleConnect position="static" />
-                              <Badge variant="light" color="dark">
-                                <Text color="white" size="xs" transform="capitalize" inline>
-                                  {getDisplayName(data.type)}
-                                </Text>
-                              </Badge>
+                            <Group
+                              spacing={4}
+                              position="apart"
+                              className={cx(classes.contentOverlay, classes.top)}
+                              noWrap
+                            >
+                              <Group spacing={4}>
+                                <ImageGuard.ToggleConnect position="static" />
+                                <Badge variant="light" color="dark">
+                                  <Text color="white" size="xs" transform="capitalize" inline>
+                                    {getDisplayName(data.type)}
+                                  </Text>
+                                </Badge>
+                              </Group>
+
+                              {contextMenuItems.length > 0 && (
+                                <Menu position="left-start" withArrow offset={-5}>
+                                  <Menu.Target>
+                                    <ActionIcon
+                                      variant="transparent"
+                                      p={0}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                    >
+                                      <IconDotsVertical
+                                        size={24}
+                                        color="#fff"
+                                        style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                      />
+                                    </ActionIcon>
+                                  </Menu.Target>
+                                  <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                                </Menu>
+                              )}
                             </Group>
                             {safe ? (
                               <EdgeImage
