@@ -27,8 +27,6 @@ export const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
   const announcementsMetadata = metadata.announcements;
 
-  console.log(homeBlock.announcements);
-
   return (
     <HomeBlockWrapper className={classes.root}>
       <Grid>

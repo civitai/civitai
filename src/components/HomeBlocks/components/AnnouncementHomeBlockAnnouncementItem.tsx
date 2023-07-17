@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Card, createStyles, Group, Stack, Text, Title } from '@mantine/core';
+import { Button, Card, createStyles, Grid, Group, Stack, Text, Title } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
 import { GetAnnouncement } from '~/server/services/announcement.service';
 import { AnnouncementMetaSchema } from '~/server/schema/announcement.schema';
@@ -48,33 +48,35 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement }: Props) => {
           </ReactMarkdown>
         </Text>
 
-        <Group mt="auto">
+        <Grid mt="auto">
           {actions &&
             actions.map((action, index) => {
               if (action.type === 'button') {
                 return (
-                  <Link key={index} href={action.link} passHref>
-                    <Button
-                      sx={
-                        isMobile
-                          ? {
-                              display: 'flex',
-                              flexGrow: 1,
-                              justifyContent: 'center',
-                            }
-                          : undefined
-                      }
-                      variant={action.variant ? (action.variant as ButtonVariant) : undefined}
-                    >
-                      <Text>{action.linkText}</Text>
-                    </Button>
-                  </Link>
+                  <Grid.Col key={index} span={isMobile ? 'auto' : 'content'}>
+                    <Link href={action.link} passHref>
+                      <Button
+                        sx={
+                          isMobile
+                            ? {
+                                display: 'flex',
+                                flexGrow: 1,
+                                justifyContent: 'center',
+                              }
+                            : undefined
+                        }
+                        variant={action.variant ? (action.variant as ButtonVariant) : undefined}
+                      >
+                        <Text>{action.linkText}</Text>
+                      </Button>
+                    </Link>
+                  </Grid.Col>
                 );
               }
 
               return null;
             })}
-        </Group>
+        </Grid>
       </Stack>
     </Card>
   );
