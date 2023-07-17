@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Carousel } from '@mantine/carousel';
 import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/LeaderboardHomeBlockCreatorItem';
 import { Fragment } from 'react';
-import { IconArrowRight, IconTrash } from '@tabler/icons-react';
+import { IconArrowRight } from '@tabler/icons-react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
@@ -20,7 +20,16 @@ const useStyles = createStyles((theme) => ({
         ? theme.colors.dark[8]
         : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
+  carousel: {
+    control: {
+      '&[data-inactive]': {
+        opacity: 0,
+        cursor: 'default',
+      },
+    },
+  },
 }));
+
 export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
   const isMobile = useIsMobile();
@@ -71,21 +80,14 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
           { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
         ]}
-        styles={{
-          control: {
-            '&[data-inactive]': {
-              opacity: 0,
-              cursor: 'default',
-            },
-          },
-        }}
+        className={classes.carousel}
       >
         {leaderboards.map((leaderboard) => {
           const displayedResults = leaderboard.results.slice(0, 4);
 
           return (
             <Carousel.Slide key={leaderboard.id}>
-              <Card sx={{ minHeight: '100%' }}>
+              <Card radius="md" sx={{ minHeight: '100%' }}>
                 <Group position="apart" align="center">
                   <Text size="lg">{leaderboard.title}</Text>
                   <Link href={`/leaderboard/${leaderboard.id}`} passHref>
