@@ -165,6 +165,7 @@ export const getUserCollectionsWithPermissions = async <
   const collections = await dbRead.collection.findMany({
     where: {
       OR,
+      type: input.type || undefined,
     },
     select,
   });
@@ -173,7 +174,7 @@ export const getUserCollectionsWithPermissions = async <
   return collections
     .map((collection) => ({
       ...collection,
-      isOwner: collection.userId === ctx.user?.id,
+      isOwner: collection.userId === user?.id,
     }))
     .sort(({ userId }) => (userId === user.id ? -1 : 1));
 };
@@ -199,9 +200,10 @@ export const saveItemInCollections = async ({
     postId: CollectionType.Post,
   };
 
-  const itemKey = Object.keys(inputToCollectionType).find((key) => !!input[key]);
+  const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
 
-  if (itemKey) {
+  if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
+    const type: CollectionType = inputToCollectionType[itemKey];
     // check if all collections match the Model type
     const collections = await dbRead.collection.findMany({
       where: {
@@ -211,7 +213,7 @@ export const saveItemInCollections = async ({
             type: null,
           },
           {
-            type: inputToCollectionType[itemKey],
+            type,
           },
         ],
       },

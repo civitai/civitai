@@ -56,6 +56,7 @@ export const getAllUserCollectionsInputSchema = z
     contributingOnly: z.boolean().default(true),
     permission: z.nativeEnum(CollectionContributorPermission),
     permissions: z.array(z.nativeEnum(CollectionContributorPermission)),
+    type: z.nativeEnum(CollectionType).optional(),
   })
   .partial();
 
