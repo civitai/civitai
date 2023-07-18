@@ -15,16 +15,13 @@ import {
   IconDownload,
   IconHeart,
   IconMessageCircle2,
-  IconFlag,
   IconTagOff,
   IconPlaylistAdd,
   IconDotsVertical,
 } from '@tabler/icons-react';
-import image from 'next/image';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { useEffect } from 'react';
-import { InView } from 'react-intersection-observer';
 import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
