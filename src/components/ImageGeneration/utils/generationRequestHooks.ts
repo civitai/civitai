@@ -47,6 +47,7 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
       requestId: requestIds,
       take: 100,
       status: !requestIds.length ? POLLABLE_STATUSES : undefined,
+      detailed: true,
     },
     {
       onError: () => debouncer(refetch),

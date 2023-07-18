@@ -183,6 +183,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       createdAt: x.createdAt,
       estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
+      queuePosition: x.queuePosition,
       params: {
         ...params,
         negativePrompt,
