@@ -12,12 +12,13 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
   return (
     <>
       {metadata?.title && (
-        <Group position="apart" align="center" pb="md" style={{ flexWrap: 'nowrap' }}>
+        <Group position="apart" align="center" pb="md" noWrap>
           <Title
             sx={(theme) => ({
-              fontSize: isMobile
-                ? theme.headings.sizes.h3.fontSize
-                : theme.headings.sizes.h1.fontSize,
+              fontSize: theme.headings.sizes.h1.fontSize,
+              [theme.fn.smallerThan('md')]: {
+                fontSize: theme.headings.sizes.h3.fontSize,
+              },
             })}
           >
             {metadata?.title}

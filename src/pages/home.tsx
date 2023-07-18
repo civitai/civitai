@@ -31,7 +31,7 @@ export default function Home() {
       </Container>
       {isLoading && (
         <Center sx={{ height: 36 }} mt="md">
-          {<Loader />}
+          <Loader />
         </Center>
       )}
       {homeBlocks.map((homeBlock) => {

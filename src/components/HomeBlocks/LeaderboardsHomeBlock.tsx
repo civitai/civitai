@@ -78,9 +78,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
                 </Group>
                 <Stack mt="md">
                   {displayedResults.length === 0 && (
-                    <Text sx={{ opacity: 0.5 }}>
-                      No results have been published for this leaderboard
-                    </Text>
+                    <Text color="dimmed">No results have been published for this leaderboard</Text>
                   )}
                   {displayedResults.map((result, idx) => {
                     const isLastItem = idx === leaderboard.results.length - 1;
