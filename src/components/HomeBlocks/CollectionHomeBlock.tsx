@@ -14,47 +14,57 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockGetAll } from '~/types/router';
 
-const useStyles = createStyles((theme) => ({
-  title: {
-    fontSize: 32,
+const useStyles = createStyles((theme, _params, getRef) => {
+  const gridItem = getRef('gridItem');
 
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: 28,
+  return {
+    title: {
+      fontSize: 32,
+
+      [theme.fn.smallerThan('sm')]: {
+        fontSize: 28,
+      },
     },
-  },
 
-  gridContainer: {
-    marginLeft: '-8px',
-    padding: 0,
+    gridContainer: {
+      marginLeft: '-8px',
+      padding: 0,
 
-    [theme.fn.smallerThan('sm')]: {
-      paddingRight: '45px',
+      [theme.fn.smallerThan('sm')]: {
+        paddingRight: '45px',
+      },
     },
-  },
 
-  cardGrid: {
-    [theme.fn.smallerThan('sm')]: {
-      flexWrap: 'nowrap',
+    cardGrid: {
+      [theme.fn.smallerThan('sm')]: {
+        flexWrap: 'nowrap',
+
+        [`& > .${gridItem}:last-child`]: {
+          paddingRight: theme.spacing.md,
+        },
+      },
     },
-  },
 
-  gridItem: {
-    [theme.fn.smallerThan('sm')]: {
-      paddingTop: 0,
-      paddingBottom: 0,
+    gridItem: {
+      ref: gridItem,
+
+      [theme.fn.smallerThan('sm')]: {
+        paddingTop: 0,
+        paddingBottom: 0,
+      },
     },
-  },
 
-  viewport: {
-    [theme.fn.smallerThan('sm')]: {
-      overflowY: 'hidden',
+    viewport: {
+      [theme.fn.smallerThan('sm')]: {
+        overflowY: 'hidden',
+      },
     },
-  },
 
-  expandButton: {
-    height: 34,
-  },
-}));
+    expandButton: {
+      height: 34,
+    },
+  };
+});
 
 export const CollectionHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
@@ -64,7 +74,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
   }
 
   return (
-    <HomeBlockWrapper py={32} px={0}>
+    <HomeBlockWrapper py={32} px={0} innerContainerProps={{ pr: 0 }}>
       <Stack spacing="xl">
         <Group spacing="xs" position="apart" noWrap>
           <Title className={classes.title} order={1} lineClamp={1}>
@@ -83,16 +93,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
             </Link>
           )}
         </Group>
-        <ScrollArea
-          type="never"
-          styles={(theme) => ({
-            viewport: {
-              [theme.fn.smallerThan('sm')]: {
-                overflowY: 'hidden',
-              },
-            },
-          })}
-        >
+        <ScrollArea type="never" viewportProps={{ style: { overflowY: 'hidden' } }}>
           <Container className={classes.gridContainer} fluid>
             <Grid className={classes.cardGrid} gutter="md" m={0}>
               {homeBlock.collection.items.map((item) => (
