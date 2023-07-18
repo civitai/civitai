@@ -26,7 +26,6 @@ export default function Home() {
   return (
     <>
       <Container size="xl">
-        <Title order={1}>Home</Title>
         <HomeContentToggle />
       </Container>
       {isLoading && (

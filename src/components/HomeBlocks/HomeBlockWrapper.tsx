@@ -1,10 +1,23 @@
-import React from 'react';
-import { Container, ContainerProps } from '@mantine/core';
+import { Container, ContainerProps, createStyles } from '@mantine/core';
 
-export const HomeBlockWrapper = ({ children, ...props }: ContainerProps) => {
+const useStyles = createStyles((theme) => ({
+  bleedRight: {
+    [theme.fn.smallerThan('sm')]: {
+      paddingRight: 0,
+    },
+  },
+}));
+
+export const HomeBlockWrapper = ({ children, bleedRight, ...props }: Props) => {
+  const { classes, cx } = useStyles();
+
   return (
     <Container px={0} fluid {...props}>
-      <Container size="xl">{children}</Container>
+      <Container size="xl" className={cx({ [classes.bleedRight]: bleedRight })}>
+        {children}
+      </Container>
     </Container>
   );
 };
+
+type Props = ContainerProps & { bleedRight?: boolean };

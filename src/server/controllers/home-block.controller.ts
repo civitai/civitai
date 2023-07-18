@@ -12,6 +12,18 @@ import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
 
+type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
+type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
+type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
+  items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
+};
+type HomeBlockWithData = Omit<AsyncReturnType<typeof getHomeBlocks>[number], 'metadata'> & {
+  metadata: HomeBlockMetaSchema;
+  collection?: GetCollectionWithItems;
+  leaderboards?: GetLeaderboardsWithResults;
+  announcements?: GetAnnouncements;
+};
+
 export const getHomeBlocksHandler = async ({
   ctx,
   input,
@@ -28,13 +40,7 @@ export const getHomeBlocksHandler = async ({
       },
     });
 
-    const homeBlocksWithData: ((typeof homeBlocks)[number] & {
-      collection?: AsyncReturnType<typeof getCollectionById> & {
-        items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
-      };
-      leaderboards?: AsyncReturnType<typeof getLeaderboardsWithResults>;
-      announcements?: AsyncReturnType<typeof getAnnouncements>;
-    })[] = (
+    const homeBlocksWithData: HomeBlockWithData[] = (
       await Promise.all(
         homeBlocks
           .map(async (homeBlock) => {
@@ -42,11 +48,11 @@ export const getHomeBlocksHandler = async ({
 
             switch (homeBlock.type) {
               case HomeBlockType.Collection: {
-                if (!metadata.collectionId) {
+                if (!metadata.collection || !metadata.collection.id) {
                   return null;
                 }
 
-                const collection = await getCollectionById({ id: metadata.collectionId });
+                const collection = await getCollectionById({ id: metadata.collection.id });
                 if (!collection) {
                   return null;
                 }
@@ -56,12 +62,13 @@ export const getHomeBlocksHandler = async ({
                   input: {
                     ...(input as UserPreferencesInput),
                     // TODO.home-blocks: Set item limit as part of the input
-                    limit: 8,
+                    limit: metadata.collection.limit,
                   },
                 });
 
                 return {
                   ...homeBlock,
+                  metadata,
                   collection: {
                     ...collection,
                     items,
@@ -82,6 +89,7 @@ export const getHomeBlocksHandler = async ({
 
                 return {
                   ...homeBlock,
+                  metadata,
                   leaderboards: leaderboardsWithResults.sort((a, b) => {
                     if (!metadata.leaderboards) {
                       return 0;
@@ -116,6 +124,7 @@ export const getHomeBlocksHandler = async ({
 
                 return {
                   ...homeBlock,
+                  metadata,
                   announcements: announcements.sort((a, b) => {
                     if (!metadata.announcements) {
                       return 0;
@@ -131,7 +140,7 @@ export const getHomeBlocksHandler = async ({
                 };
               }
               default:
-                return homeBlock;
+                return { ...homeBlock, metadata };
             }
           })
           .filter(isDefined)

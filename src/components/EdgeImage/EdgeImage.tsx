@@ -4,10 +4,7 @@ import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export type EdgeImageProps = EdgeUrlProps &
-  Omit<
-    JSX.IntrinsicElements['img'],
-    'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'loading' | 'metadata'
-  >;
+  Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'>;
 
 export function EdgeImage({
   src,

@@ -43,3 +43,5 @@ export function isBetweenToday(value: Date) {
   const today = dayjs();
   return dayjs(value).isBetween(today.startOf('day'), today.clone().endOf('day'), null, '[]');
 }
+
+export const aDayAgo = dayjs().subtract(1, 'day').toDate();
