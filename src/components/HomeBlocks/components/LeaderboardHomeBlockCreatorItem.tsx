@@ -4,7 +4,7 @@ import Link from 'next/link';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { LeaderboardGetModel } from '~/types/router';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { LeaderboardWithResults } from '~/server/services/leaderboard.service';
 
@@ -54,12 +54,7 @@ export const LeaderHomeBlockCreatorItem = ({
               <Text>{position}</Text>
             </Grid.Col>
             <Grid.Col span={8}>
-              <Group
-                spacing="xs"
-                style={{
-                  flexWrap: 'nowrap',
-                }}
-              >
+              <Group spacing="xs" noWrap>
                 <UserAvatar
                   avatarProps={{
                     radius: 'md',
@@ -80,7 +75,7 @@ export const LeaderHomeBlockCreatorItem = ({
                   </Text>
                   <Group spacing={4}>
                     <IconTrophy size={12} />
-                    <Text size="xs">{numberWithCommas(score) || 0}</Text>
+                    <Text size="xs">{abbreviateNumber(score)}</Text>
                   </Group>
                 </Stack>
               </Group>

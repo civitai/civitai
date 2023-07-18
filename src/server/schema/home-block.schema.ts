@@ -20,6 +20,7 @@ export const homeBlockMetaSchema = z
         id: z.number(),
         // TODO.home-blocks: define what props will be needed for announcements. Based off of design, at least colSpan is needed.
         colSpan: z.number().default(12),
+        index: z.number().default(0),
       })
     ),
     link: z.string(),

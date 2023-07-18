@@ -116,7 +116,18 @@ export const getHomeBlocksHandler = async ({
 
                 return {
                   ...homeBlock,
-                  announcements,
+                  announcements: announcements.sort((a, b) => {
+                    if (!metadata.announcements) {
+                      return 0;
+                    }
+
+                    const aIndex =
+                      metadata.announcements.find((item) => item.id === a.id)?.index ?? 0;
+                    const bIndex =
+                      metadata.announcements.find((item) => item.id === b.id)?.index ?? 0;
+
+                    return aIndex - bIndex;
+                  }),
                 };
               }
               default:

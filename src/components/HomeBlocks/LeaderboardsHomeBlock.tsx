@@ -6,8 +6,9 @@ import Link from 'next/link';
 import { Carousel } from '@mantine/carousel';
 import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/LeaderboardHomeBlockCreatorItem';
 import { Fragment } from 'react';
-import { IconArrowRight, IconTrash } from '@tabler/icons-react';
+import { IconArrowRight } from '@tabler/icons-react';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
 
@@ -20,7 +21,16 @@ const useStyles = createStyles((theme) => ({
         ? theme.colors.dark[8]
         : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
+  carousel: {
+    control: {
+      '&[data-inactive]': {
+        opacity: 0,
+        cursor: 'default',
+      },
+    },
+  },
 }));
+
 export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
   const isMobile = useIsMobile();
@@ -34,33 +44,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
 
   return (
     <HomeBlockWrapper className={classes.root}>
-      {metadata?.title && (
-        <Group position="apart" align="center" pb="md" style={{ flexWrap: 'nowrap' }}>
-          <Title
-            sx={(theme) => ({
-              fontSize: isMobile
-                ? theme.headings.sizes.h3.fontSize
-                : theme.headings.sizes.h1.fontSize,
-            })}
-          >
-            {metadata?.title}
-          </Title>
-          {metadata.link && metadata.linkText && (
-            <Link href={metadata.link} passHref>
-              <Button
-                rightIcon={<IconArrowRight size={16} />}
-                variant="subtle"
-                size={isMobile ? 'sm' : 'md'}
-                compact
-                style={{ padding: 0 }}
-              >
-                {metadata.linkText}
-              </Button>
-            </Link>
-          )}
-        </Group>
-      )}
-      {metadata?.description && <Text mb="md">{metadata?.description}</Text>}
+      <HomeBlockHeaderMeta metadata={metadata} />
       <Carousel
         loop={false}
         slideSize="25%"
@@ -71,21 +55,14 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
           { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
         ]}
-        styles={{
-          control: {
-            '&[data-inactive]': {
-              opacity: 0,
-              cursor: 'default',
-            },
-          },
-        }}
+        className={classes.carousel}
       >
         {leaderboards.map((leaderboard) => {
           const displayedResults = leaderboard.results.slice(0, 4);
 
           return (
             <Carousel.Slide key={leaderboard.id}>
-              <Card sx={{ minHeight: '100%' }}>
+              <Card radius="md" sx={{ minHeight: '100%' }}>
                 <Group position="apart" align="center">
                   <Text size="lg">{leaderboard.title}</Text>
                   <Link href={`/leaderboard/${leaderboard.id}`} passHref>
@@ -101,9 +78,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
                 </Group>
                 <Stack mt="md">
                   {displayedResults.length === 0 && (
-                    <Text sx={{ opacity: 0.5 }}>
-                      No results have been published for this leaderboard
-                    </Text>
+                    <Text color="dimmed">No results have been published for this leaderboard</Text>
                   )}
                   {displayedResults.map((result, idx) => {
                     const isLastItem = idx === leaderboard.results.length - 1;

@@ -1610,6 +1610,7 @@ model Announcement {
   updatedAt DateTime  @updatedAt
   startsAt  DateTime?
   endsAt    DateTime?
+  metadata  Json?
 }
 
 enum CosmeticType {
