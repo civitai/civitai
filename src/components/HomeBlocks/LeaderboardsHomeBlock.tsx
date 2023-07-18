@@ -1,6 +1,6 @@
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockGetAll } from '~/types/router';
-import { Button, Card, createStyles, Divider, Group, Stack, Text, Title } from '@mantine/core';
+import { Button, Card, createStyles, Divider, Group, Stack, Text } from '@mantine/core';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import Link from 'next/link';
 import { Carousel } from '@mantine/carousel';

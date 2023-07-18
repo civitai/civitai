@@ -49,6 +49,7 @@ export const upsertCollectionInput = z
 export type GetUserCollectionsByItemSchema = z.infer<typeof getUserCollectionsByItemSchema>;
 export const getUserCollectionsByItemSchema = collectionItemSchema
   .extend({ note: z.never().optional() })
+  .merge(getAllUserCollectionsInputSchema)
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,

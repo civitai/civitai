@@ -10,7 +10,11 @@ import {
   createStyles,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { CollectionReadConfiguration, CollectionWriteConfiguration } from '@prisma/client';
+import {
+  CollectionContributorPermission,
+  CollectionReadConfiguration,
+  CollectionWriteConfiguration,
+} from '@prisma/client';
 import { IconArrowLeft, IconEyeOff, IconLock, IconPlus, IconWorld } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -100,7 +104,9 @@ function CollectionListForm({
   });
   const queryUtils = trpc.useContext();
 
-  const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery({});
+  const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery({
+    permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+  });
   const { data: matchedCollections = [] } = trpc.collection.getUserCollectionsByItem.useQuery({
     ...target,
   });
