@@ -123,7 +123,7 @@ export const getUserCollectionsWithPermissions = async <
   select: TSelect;
 }) => {
   const { permissions, permission, contributingOnly } = input;
-  // By default, owned collctions will be always returned
+  // By default, owned collections will be always returned
   const OR: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ userId: user.id }];
 
   if (
@@ -162,10 +162,25 @@ export const getUserCollectionsWithPermissions = async <
     });
   }
 
+  const AND: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ OR }];
+
+  if (input.type) {
+    // TODO.collections: Support exclusive type
+    AND.push({
+      OR: [
+        {
+          type: input.type,
+        },
+        {
+          type: null,
+        },
+      ],
+    });
+  }
+
   const collections = await dbRead.collection.findMany({
     where: {
-      OR,
-      type: input.type || undefined,
+      AND,
     },
     select,
   });
@@ -193,7 +208,7 @@ export const saveItemInCollections = async ({
   user: SessionUser;
   input: AddCollectionItemInput;
 }) => {
-  const inputToCollectionType = {
+  const inputToCollectionType: Record<string, CollectionType> = {
     modelId: CollectionType.Model,
     articleId: CollectionType.Article,
     imageId: CollectionType.Image,
