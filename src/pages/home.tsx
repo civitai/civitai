@@ -1,4 +1,4 @@
-import { Container, Title } from '@mantine/core';
+import { Center, Container, Loader, Title } from '@mantine/core';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -10,16 +10,18 @@ import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeB
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  useSSG: true,
+  resolver: async ({ session, ssg }) => {
     const features = getFeatureFlags({ user: session?.user });
     if (!features.alternateHome) return { notFound: true };
+    if (ssg) await ssg.homeBlock.getHomeBlocks.prefetch();
 
     return { props: {} };
   },
 });
 
 export default function Home() {
-  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery();
+  const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
 
   return (
     <>
@@ -27,6 +29,11 @@ export default function Home() {
         <Title order={1}>Home</Title>
         <HomeContentToggle />
       </Container>
+      {isLoading && (
+        <Center sx={{ height: 36 }} mt="md">
+          <Loader />
+        </Center>
+      )}
       {homeBlocks.map((homeBlock) => {
         switch (homeBlock.type) {
           case HomeBlockType.Collection:

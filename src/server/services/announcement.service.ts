@@ -1,6 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import {
+  AnnouncementMetaSchema,
   GetAnnouncementsInput,
   GetLatestAnnouncementInput,
 } from '~/server/schema/announcement.schema';
@@ -27,9 +28,10 @@ export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementS
   });
 };
 
+export type GetAnnouncement = Awaited<ReturnType<typeof getAnnouncements>>[number];
 export const getAnnouncements = async ({ dismissed, ids }: GetAnnouncementsInput) => {
   const now = new Date();
-  return dbRead.announcement.findMany({
+  const announcements = await dbRead.announcement.findMany({
     where: {
       id: { notIn: dismissed, in: ids },
       AND: [
@@ -48,6 +50,12 @@ export const getAnnouncements = async ({ dismissed, ids }: GetAnnouncementsInput
       content: true,
       color: true,
       emoji: true,
+      metadata: true,
     },
   });
+
+  return announcements.map(({ metadata, ...announcement }) => ({
+    ...announcement,
+    metadata: metadata as AnnouncementMetaSchema,
+  }));
 };

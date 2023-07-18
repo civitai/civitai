@@ -13,7 +13,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
         const downloadDate = dayjs(download.createdAt);
 
         return (
-          <Group key={download.id} style={{ flexWrap: 'nowrap' }}>
+          <Group key={download.id} noWrap>
             <Link href={`/models/${download.model.id}/${slugit(download.model.name)}`} passHref>
               <Text
                 component="a"

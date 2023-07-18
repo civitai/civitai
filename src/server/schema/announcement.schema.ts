@@ -5,6 +5,22 @@ export const getLastestSchema = z.object({
   dismissed: z.array(z.number()).optional(),
 });
 
+export type AnnouncementMetaSchema = z.infer<typeof announcementMetaSchema>;
+
+export const announcementMetaSchema = z
+  .object({
+    actions: z.array(
+      z.object({
+        type: z.enum(['button']),
+        link: z.string(),
+        linkText: z.string(),
+        variant: z.string().optional(),
+        icon: z.string().optional(),
+      })
+    ),
+  })
+  .partial();
+
 export type GetAnnouncementsInput = z.infer<typeof getAnnouncementsSchema>;
 export const getAnnouncementsSchema = z.object({
   dismissed: z.array(z.number()).optional(),

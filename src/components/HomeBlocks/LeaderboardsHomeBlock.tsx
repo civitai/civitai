@@ -6,7 +6,9 @@ import Link from 'next/link';
 import { Carousel } from '@mantine/carousel';
 import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/LeaderboardHomeBlockCreatorItem';
 import { Fragment } from 'react';
-import { IconArrowRight, IconTrash } from '@tabler/icons-react';
+import { IconArrowRight } from '@tabler/icons-react';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
 
@@ -19,9 +21,19 @@ const useStyles = createStyles((theme) => ({
         ? theme.colors.dark[8]
         : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
+  carousel: {
+    control: {
+      '&[data-inactive]': {
+        opacity: 0,
+        cursor: 'default',
+      },
+    },
+  },
 }));
+
 export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
+  const isMobile = useIsMobile();
 
   if (!homeBlock.leaderboards || homeBlock.leaderboards.length === 0) {
     return null;
@@ -30,71 +42,59 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { leaderboards } = homeBlock;
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
 
-  console.log(homeBlock.leaderboards);
-
   return (
     <HomeBlockWrapper className={classes.root}>
-      {metadata?.title && (
-        <Group position="apart" align="center" pb="md">
-          <Title>{metadata?.title}</Title>
-          {metadata.link && metadata.linkText && (
-            <Link href={metadata.link} passHref>
-              {metadata.linkText}
-            </Link>
-          )}
-        </Group>
-      )}
+      <HomeBlockHeaderMeta metadata={metadata} />
       <Carousel
         loop={false}
         slideSize="25%"
         slideGap="md"
         height="100%"
         align="start"
-        sx={{ flex: 1 }}
         breakpoints={[
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
-          { maxWidth: 'sm', slideSize: '100%', slideGap: 0 },
+          { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
         ]}
-        styles={{
-          control: {
-            '&[data-inactive]': {
-              opacity: 0,
-              cursor: 'default',
-            },
-          },
-        }}
+        className={classes.carousel}
       >
-        {leaderboards.map((leaderboard) => (
-          <Carousel.Slide key={leaderboard.id}>
-            <Card>
-              <Group position="apart" align="center">
-                <Text size="lg">{leaderboard.title}</Text>
-                <Link href={`/leaderboard/${leaderboard.id}`} passHref>
-                  <Button
-                    rightIcon={<IconArrowRight size={16} />}
-                    variant="subtle"
-                    size="xs"
-                    compact
-                  >
-                    More
-                  </Button>
-                </Link>
-              </Group>
-              <Stack mt="md">
-                {leaderboard.results.map((result, idx) => {
-                  const isLastItem = idx === leaderboard.results.length - 1;
+        {leaderboards.map((leaderboard) => {
+          const displayedResults = leaderboard.results.slice(0, 4);
 
-                  return (
-                    <Fragment key={idx}>
-                      <LeaderHomeBlockCreatorItem data={result} />
-                      {!isLastItem && <Divider />}
-                    </Fragment>
-                  );
-                })}
-              </Stack>
-            </Card>
-          </Carousel.Slide>
-        ))}
+          return (
+            <Carousel.Slide key={leaderboard.id}>
+              <Card radius="md" sx={{ minHeight: '100%' }}>
+                <Group position="apart" align="center">
+                  <Text size="lg">{leaderboard.title}</Text>
+                  <Link href={`/leaderboard/${leaderboard.id}`} passHref>
+                    <Button
+                      rightIcon={<IconArrowRight size={16} />}
+                      variant="subtle"
+                      size="xs"
+                      compact
+                    >
+                      More
+                    </Button>
+                  </Link>
+                </Group>
+                <Stack mt="md">
+                  {displayedResults.length === 0 && (
+                    <Text color="dimmed">No results have been published for this leaderboard</Text>
+                  )}
+                  {displayedResults.map((result, idx) => {
+                    const isLastItem = idx === leaderboard.results.length - 1;
+
+                    return (
+                      <Fragment key={idx}>
+                        <LeaderHomeBlockCreatorItem leaderboard={leaderboard} data={result} />
+                        {!isLastItem && <Divider />}
+                      </Fragment>
+                    );
+                  })}
+                </Stack>
+              </Card>
+            </Carousel.Slide>
+          );
+        })}
       </Carousel>
     </HomeBlockWrapper>
   );
