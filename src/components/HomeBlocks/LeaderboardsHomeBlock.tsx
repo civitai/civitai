@@ -21,14 +21,6 @@ const useStyles = createStyles((theme) => ({
         ? theme.colors.dark[8]
         : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
-  carousel: {
-    control: {
-      '&[data-inactive]': {
-        opacity: 0,
-        cursor: 'default',
-      },
-    },
-  },
 }));
 
 export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
@@ -43,7 +35,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
 
   return (
-    <HomeBlockWrapper className={classes.root}>
+    <HomeBlockWrapper className={classes.root} bleedRight>
       <HomeBlockHeaderMeta metadata={metadata} />
       <Carousel
         loop={false}
@@ -55,7 +47,14 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
           { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
         ]}
-        className={classes.carousel}
+        styles={{
+          control: {
+            '&[data-inactive]': {
+              opacity: 0,
+              cursor: 'default',
+            },
+          },
+        }}
       >
         {leaderboards.map((leaderboard) => {
           const displayedResults = leaderboard.results.slice(0, 4);
