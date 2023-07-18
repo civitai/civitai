@@ -3,6 +3,8 @@ import { HomeBlockGetAll } from '~/types/router';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { createStyles, Grid } from '@mantine/core';
 import { AnnouncementHomeBlockAnnouncementItem } from '~/components/HomeBlocks/components/AnnouncementHomeBlockAnnouncementItem';
+import useDismissedAnnouncements from '~/hooks/useDismissedAnnouncements';
+import { useMemo } from 'react';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
 
@@ -19,25 +21,36 @@ const useStyles = createStyles((theme) => ({
 
 export const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
+  const announcementIds = useMemo(
+    () => (homeBlock.announcements ? homeBlock.announcements.map((item) => item.id) : []),
+    [homeBlock.announcements]
+  );
+  const { dismissed, onAnnouncementDismiss } = useDismissedAnnouncements(announcementIds);
 
-  if (!homeBlock.announcements) {
+  if (!homeBlock.announcements || dismissed.length === homeBlock.announcements.length) {
     return null;
   }
 
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
   const announcementsMetadata = metadata.announcements;
+  const announcements = homeBlock.announcements.filter(
+    (announcement) => !dismissed.includes(announcement.id)
+  );
 
   return (
     <HomeBlockWrapper className={classes.root}>
       <Grid>
-        {homeBlock.announcements.map((announcement) => {
+        {announcements.map((announcement) => {
           const announcementMetadata = announcementsMetadata
             ? announcementsMetadata.find((item) => item.id === announcement.id)
             : null;
 
           return (
             <Grid.Col key={announcement.id} xs={12} md={announcementMetadata?.colSpan ?? 6}>
-              <AnnouncementHomeBlockAnnouncementItem announcement={announcement} />
+              <AnnouncementHomeBlockAnnouncementItem
+                onAnnouncementDismiss={onAnnouncementDismiss}
+                announcement={announcement}
+              />
             </Grid.Col>
           );
         })}

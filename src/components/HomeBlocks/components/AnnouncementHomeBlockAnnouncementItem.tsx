@@ -1,11 +1,23 @@
 import React from 'react';
-import { Button, Card, createStyles, Grid, Group, Stack, Text, Title } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Card,
+  createStyles,
+  Grid,
+  Group,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
 import { GetAnnouncement } from '~/server/services/announcement.service';
 import { AnnouncementMetaSchema } from '~/server/schema/announcement.schema';
 import Link from 'next/link';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useLocalStorage } from '@mantine/hooks';
+import { IconTrash } from '@tabler/icons-react';
 
 const useStyles = createStyles((theme) => ({
   emojiCard: {
@@ -22,7 +34,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const AnnouncementHomeBlockAnnouncementItem = ({ announcement }: Props) => {
+const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDismiss }: Props) => {
   const { classes } = useStyles();
   const announcementMetadata = announcement.metadata as AnnouncementMetaSchema;
   const { actions } = announcementMetadata || {};
@@ -30,6 +42,19 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement }: Props) => {
 
   return (
     <Card radius="md" p="lg" display="flex" sx={{ minHeight: '100%' }}>
+      <ActionIcon
+        variant="outline"
+        radius="xl"
+        color="red"
+        onClick={() => onAnnouncementDismiss(announcement.id)}
+        sx={(theme) => ({
+          position: 'absolute',
+          top: theme.spacing.xs,
+          right: theme.spacing.xs,
+        })}
+      >
+        <IconTrash size={20} />
+      </ActionIcon>
       <Stack>
         <Group spacing="md" sx={{ flexWrap: 'nowrap' }}>
           {announcement.emoji && (
@@ -82,6 +107,9 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement }: Props) => {
   );
 };
 
-type Props = { announcement: GetAnnouncement };
+type Props = {
+  announcement: GetAnnouncement;
+  onAnnouncementDismiss: (announcementId: number) => void;
+};
 
 export { AnnouncementHomeBlockAnnouncementItem };
