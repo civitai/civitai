@@ -1816,6 +1816,14 @@ enum CollectionReadConfiguration {
   Unlisted
 }
 
+enum CollectionType {
+  Model
+  Article
+  Post
+  Image
+}
+
+
 model Collection {
   id          Int                          @id @default(autoincrement())
   createdAt   DateTime?                    @default(now())
@@ -1827,6 +1835,7 @@ model Collection {
   user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
   write       CollectionWriteConfiguration @default(Private)
   read        CollectionReadConfiguration  @default(Private)
+  type        CollectionType?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
