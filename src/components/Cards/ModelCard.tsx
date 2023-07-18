@@ -215,178 +215,175 @@ export function ModelCard({ data }: Props) {
   }, [modelId, data.id]);
 
   return (
-    <InView rootMargin="600px">
-      {({ ref, inView }) => (
-        <Indicator
-          disabled={!isNew && !isUpdated}
-          withBorder
-          size={24}
-          radius="sm"
-          label={isUpdated ? 'Updated' : 'New'}
-          color="red"
-          styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-          sx={{ opacity: isHidden && !hiddenQuery ? 0.1 : undefined }}
-        >
-          <FeedCard href={`/models/${data.id}/${slugit(data.name)}`}>
-            <div ref={ref} className={classes.root}>
-              {data.image && inView && (
-                <ImageGuard
-                  images={[data.image]}
-                  connect={{ entityId: data.id, entityType: 'model' }}
-                  render={(image) => (
-                    <ImageGuard.Content>
-                      {({ safe }) => {
-                        // Small hack to prevent blurry landscape images
-                        const originalAspectRatio =
-                          image.width && image.height ? image.width / image.height : 1;
+    <Indicator
+      disabled={!isNew && !isUpdated}
+      withBorder
+      size={24}
+      radius="sm"
+      label={isUpdated ? 'Updated' : 'New'}
+      color="red"
+      styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
+      sx={{ opacity: isHidden && !hiddenQuery ? 0.1 : undefined }}
+    >
+      <FeedCard href={`/models/${data.id}/${slugit(data.name)}`}>
+        <div className={classes.root}>
+          {data.image && (
+            <ImageGuard
+              images={[data.image]}
+              connect={{ entityId: data.id, entityType: 'model' }}
+              render={(image) => (
+                <ImageGuard.Content>
+                  {({ safe }) => {
+                    // Small hack to prevent blurry landscape images
+                    const originalAspectRatio =
+                      image.width && image.height ? image.width / image.height : 1;
 
-                        return (
-                          <>
-                            <Group
-                              spacing={4}
-                              position="apart"
-                              className={cx(classes.contentOverlay, classes.top)}
-                              noWrap
-                            >
-                              <Group spacing={4}>
-                                <ImageGuard.ToggleConnect position="static" />
-                                <Badge variant="light" color="dark">
-                                  <Text color="white" size="xs" transform="capitalize" inline>
-                                    {getDisplayName(data.type)}
-                                  </Text>
-                                </Badge>
-                              </Group>
+                    return (
+                      <>
+                        <Group
+                          spacing={4}
+                          position="apart"
+                          className={cx(classes.contentOverlay, classes.top)}
+                          noWrap
+                        >
+                          <Group spacing={4}>
+                            <ImageGuard.ToggleConnect position="static" />
+                            <Badge variant="light" color="dark">
+                              <Text color="white" size="xs" transform="capitalize" inline>
+                                {getDisplayName(data.type)}
+                              </Text>
+                            </Badge>
+                          </Group>
 
-                              {contextMenuItems.length > 0 && (
-                                <Menu position="left-start" withArrow offset={-5}>
-                                  <Menu.Target>
-                                    <ActionIcon
-                                      variant="transparent"
-                                      p={0}
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                      }}
-                                    >
-                                      <IconDotsVertical
-                                        size={24}
-                                        color="#fff"
-                                        style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                                      />
-                                    </ActionIcon>
-                                  </Menu.Target>
-                                  <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                                </Menu>
-                              )}
-                            </Group>
-                            {safe ? (
-                              <EdgeImage
-                                src={image.url}
-                                name={image.name ?? image.id.toString()}
-                                alt={image.name ?? undefined}
-                                width={
-                                  originalAspectRatio > 1
-                                    ? IMAGE_CARD_WIDTH * originalAspectRatio
-                                    : IMAGE_CARD_WIDTH
-                                }
-                                placeholder="empty"
-                                className={classes.image}
-                              />
-                            ) : (
-                              <MediaHash {...data.image} />
-                            )}
-                          </>
-                        );
-                      }}
-                    </ImageGuard.Content>
-                  )}
-                />
+                          {contextMenuItems.length > 0 && (
+                            <Menu position="left-start" withArrow offset={-5}>
+                              <Menu.Target>
+                                <ActionIcon
+                                  variant="transparent"
+                                  p={0}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                  }}
+                                >
+                                  <IconDotsVertical
+                                    size={24}
+                                    color="#fff"
+                                    style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                  />
+                                </ActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                            </Menu>
+                          )}
+                        </Group>
+                        {safe ? (
+                          <EdgeImage
+                            src={image.url}
+                            name={image.name ?? image.id.toString()}
+                            alt={image.name ?? undefined}
+                            width={
+                              originalAspectRatio > 1
+                                ? IMAGE_CARD_WIDTH * originalAspectRatio
+                                : IMAGE_CARD_WIDTH
+                            }
+                            placeholder="empty"
+                            className={classes.image}
+                            loading="lazy"
+                          />
+                        ) : (
+                          <MediaHash {...data.image} />
+                        )}
+                      </>
+                    );
+                  }}
+                </ImageGuard.Content>
               )}
-              <Stack
-                className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
-                spacing="sm"
-              >
-                {data.user.id !== -1 && inView && (
-                  <UnstyledButton
-                    sx={{ color: 'white' }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
+            />
+          )}
+          <Stack
+            className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
+            spacing="sm"
+          >
+            {data.user.id !== -1 && (
+              <UnstyledButton
+                sx={{ color: 'white' }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
 
-                      router.push(`/users/${data.user.username}`);
-                    }}
-                  >
-                    <UserAvatar
-                      user={data.user}
-                      avatarProps={{ radius: 'md', size: 32 }}
-                      withUsername
+                  router.push(`/users/${data.user.username}`);
+                }}
+              >
+                <UserAvatar
+                  user={data.user}
+                  avatarProps={{ radius: 'md', size: 32 }}
+                  withUsername
+                />
+              </UnstyledButton>
+            )}
+            <Text size="xl" weight={700} lineClamp={2} inline>
+              {data.name}
+            </Text>
+            <Group spacing={4} position="apart">
+              {!data.locked && (
+                <IconBadge
+                  className={classes.iconBadge}
+                  sx={{ userSelect: 'none' }}
+                  color="dark"
+                  icon={
+                    <Rating
+                      size="xs"
+                      value={data.rank.rating}
+                      fractions={4}
+                      emptySymbol={
+                        theme.colorScheme === 'dark' ? (
+                          <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
+                        ) : undefined
+                      }
+                      readOnly
                     />
-                  </UnstyledButton>
-                )}
-                <Text size="xl" weight={700} lineClamp={2} inline>
-                  {data.name}
-                </Text>
-                <Group spacing={4} position="apart">
-                  {!data.locked && (
-                    <IconBadge
-                      className={classes.iconBadge}
-                      sx={{ userSelect: 'none' }}
-                      color="dark"
-                      icon={
-                        <Rating
-                          size="xs"
-                          value={data.rank.rating}
-                          fractions={4}
-                          emptySymbol={
-                            theme.colorScheme === 'dark' ? (
-                              <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                            ) : undefined
-                          }
-                          readOnly
-                        />
-                      }
-                    >
-                      <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
-                        {abbreviateNumber(data.rank.ratingCount)}
-                      </Text>
-                    </IconBadge>
-                  )}
-                  <Group spacing={4} noWrap>
-                    <IconBadge
-                      className={classes.iconBadge}
-                      color="dark"
-                      icon={
-                        <IconHeart
-                          size={14}
-                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                          color={isFavorite ? theme.colors.red[6] : undefined}
-                        />
-                      }
-                    >
-                      <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
-                    </IconBadge>
-                    <IconBadge
-                      className={classes.iconBadge}
-                      color="dark"
-                      icon={<IconMessageCircle2 size={14} />}
-                    >
-                      <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-                    </IconBadge>
-                    <IconBadge
-                      className={classes.iconBadge}
-                      color="dark"
-                      icon={<IconDownload size={14} />}
-                    >
-                      <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-                    </IconBadge>
-                  </Group>
-                </Group>
-              </Stack>
-            </div>
-          </FeedCard>
-        </Indicator>
-      )}
-    </InView>
+                  }
+                >
+                  <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
+                    {abbreviateNumber(data.rank.ratingCount)}
+                  </Text>
+                </IconBadge>
+              )}
+              <Group spacing={4} noWrap>
+                <IconBadge
+                  className={classes.iconBadge}
+                  color="dark"
+                  icon={
+                    <IconHeart
+                      size={14}
+                      style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                      color={isFavorite ? theme.colors.red[6] : undefined}
+                    />
+                  }
+                >
+                  <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
+                </IconBadge>
+                <IconBadge
+                  className={classes.iconBadge}
+                  color="dark"
+                  icon={<IconMessageCircle2 size={14} />}
+                >
+                  <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                </IconBadge>
+                <IconBadge
+                  className={classes.iconBadge}
+                  color="dark"
+                  icon={<IconDownload size={14} />}
+                >
+                  <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                </IconBadge>
+              </Group>
+            </Group>
+          </Stack>
+        </div>
+      </FeedCard>
+    </Indicator>
   );
 }
 

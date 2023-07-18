@@ -62,6 +62,7 @@ export function UserAvatar({
             alt={user.username && !userDeleted ? `${user.username}'s Avatar` : undefined}
             radius="xl"
             size={size}
+            imageProps={{ loading: 'lazy' }}
             {...avatarProps}
           >
             {user.username && !userDeleted ? getInitials(user.username) : null}
