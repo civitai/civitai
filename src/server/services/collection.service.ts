@@ -9,6 +9,7 @@ import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
   CollectionReadConfiguration,
+  CollectionType,
   CollectionWriteConfiguration,
   MetricTimeframe,
   Prisma,
@@ -191,11 +192,42 @@ export const saveItemInCollections = async ({
   user: SessionUser;
   input: AddCollectionItemInput;
 }) => {
+  const inputToCollectionType = {
+    modelId: CollectionType.Model,
+    articleId: CollectionType.Article,
+    imageId: CollectionType.Image,
+    postId: CollectionType.Post,
+  };
+
+  const itemKey = Object.keys(inputToCollectionType).find((key) => !!input[key]);
+
+  if (itemKey) {
+    // check if all collections match the Model type
+    const collections = await dbRead.collection.findMany({
+      where: {
+        id: { in: collectionIds },
+        OR: [
+          {
+            type: null,
+          },
+          {
+            type: inputToCollectionType[itemKey],
+          },
+        ],
+      },
+    });
+
+    if (collections.length !== collectionIds.length) {
+      throw new Error('Collection type mismatch');
+    }
+  }
+
   const data: Prisma.CollectionItemCreateManyInput[] = collectionIds.map((collectionId) => ({
     ...input,
     addedById: user.id,
     collectionId,
   }));
+
   const transactions = [dbWrite.collectionItem.createMany({ data })];
 
   // Determine which items need to be removed

@@ -13,6 +13,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import {
   CollectionContributorPermission,
   CollectionReadConfiguration,
+  CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
 import { IconArrowLeft, IconEyeOff, IconLock, IconPlus, IconWorld } from '@tabler/icons-react';
@@ -247,6 +248,7 @@ function NewCollectionForm({
     schema: upsertCollectionInput,
     defaultValues: {
       ...props,
+      type: CollectionType.Model,
       name: '',
       description: '',
       read: CollectionReadConfiguration.Private,
@@ -265,6 +267,7 @@ function NewCollectionForm({
       autoClose: false,
       message: 'Creating collection...',
     });
+
     upsertCollectionMutation.mutate(data, {
       async onSuccess() {
         await queryUtils.collection.getAllUser.invalidate();
