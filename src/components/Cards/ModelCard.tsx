@@ -34,6 +34,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -117,41 +118,29 @@ export function ModelCard({ data }: Props) {
     staleTime: Infinity,
   });
   const isHidden =
-    hidden.find(({ id }) => id === data.user.id) ||
+    hiddenUsers.find(({ id }) => id === data.user.id) ||
     hiddenModels.find((modelId) => modelId === data.id);
 
   const reportOption = (
-    <LoginRedirect reason="report-model" key="report">
-      <Menu.Item
-        icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-          e.preventDefault();
-          e.stopPropagation();
-          openContext('report', { entityType: ReportEntity.Model, entityId: data.id });
-        }}
-      >
-        Report Resource
-      </Menu.Item>
-    </LoginRedirect>
+    <ReportMenuItem
+      key="report-model"
+      loginReason="report-model"
+      onReport={() => openContext('report', { entityType: ReportEntity.Model, entityId: data.id })}
+    />
   );
 
   const reportImageOption = data.image && (
-    <LoginRedirect reason="report-content" key="report-image">
-      <Menu.Item
-        icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-          e.preventDefault();
-          e.stopPropagation();
-          openContext('report', {
-            entityType: ReportEntity.Image,
-            // Explicitly cast to number cause we know it's not undefined
-            entityId: data.image?.id as number,
-          });
-        }}
-      >
-        Report Image
-      </Menu.Item>
-    </LoginRedirect>
+    <ReportMenuItem
+      key="report-image"
+      label="Report image"
+      onReport={() =>
+        openContext('report', {
+          entityType: ReportEntity.Image,
+          // Explicitly cast to number cause we know it's not undefined
+          entityId: data.image?.id as number,
+        })
+      }
+    />
   );
 
   const blockTagsOption = (
@@ -186,7 +175,7 @@ export function ModelCard({ data }: Props) {
             openContext('addToCollection', { modelId: data.id });
           }}
         >
-          Add to Collection
+          Add to collection
         </Menu.Item>
       </LoginRedirect>,
     ]);
