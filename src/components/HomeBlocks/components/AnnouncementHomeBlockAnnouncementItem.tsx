@@ -16,8 +16,7 @@ import { AnnouncementMetaSchema } from '~/server/schema/announcement.schema';
 import Link from 'next/link';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useLocalStorage } from '@mantine/hooks';
-import { IconTrash } from '@tabler/icons-react';
+import { IconX } from '@tabler/icons-react';
 
 const useStyles = createStyles((theme) => ({
   emojiCard: {
@@ -43,7 +42,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
   return (
     <Card radius="md" p="lg" display="flex" sx={{ minHeight: '100%' }}>
       <ActionIcon
-        variant="outline"
+        variant="subtle"
         radius="xl"
         color="red"
         onClick={() => onAnnouncementDismiss(announcement.id)}
@@ -53,7 +52,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
           right: theme.spacing.xs,
         })}
       >
-        <IconTrash size={20} />
+        <IconX size={20} />
       </ActionIcon>
       <Stack>
         <Group spacing="md" sx={{ flexWrap: 'nowrap' }}>
