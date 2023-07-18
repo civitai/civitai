@@ -39,10 +39,14 @@ export const getAllUserCollectionsHandler = async ({
         coverImage: true,
         read: true,
         items: { select: { modelId: true, imageId: true, articleId: true, postId: true } },
+        userId: true,
       },
     });
 
-    return collections;
+    return collections.map((collection) => ({
+      ...collection,
+      isOwner: collection.userId === ctx.user?.id,
+    }));
   } catch (error) {
     throw throwDbError(error);
   }

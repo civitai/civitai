@@ -104,12 +104,21 @@ function CollectionListForm({
   });
   const queryUtils = trpc.useContext();
 
-  const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery({
-    permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
-  });
-  const { data: matchedCollections = [] } = trpc.collection.getUserCollectionsByItem.useQuery({
-    ...target,
-  });
+  const { data: collections = [], isLoading: loadingCollections } =
+    trpc.collection.getAllUser.useQuery({
+      permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+    });
+  const { data: matchedCollections = [], isLoading: loadingStatus } =
+    trpc.collection.getUserCollectionsByItem.useQuery({
+      ...target,
+    });
+
+  // Ensures we don't present the user with a list of collections
+  // before both things have loaded.
+  const isLoading = loadingStatus || loadingCollections;
+
+  const ownedCollections = collections.filter((collection) => collection.isOwner);
+  const contributingCollections = collections.filter((collection) => !collection.isOwner);
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
@@ -166,9 +175,9 @@ function CollectionListForm({
             </Center>
           ) : (
             <ScrollArea.Autosize maxHeight={200}>
-              {collections.length > 0 ? (
+              {ownedCollections.length > 0 ? (
                 <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                  {collections.map((collection) => (
+                  {ownedCollections.map((collection) => (
                     <Checkbox
                       key={collection.id}
                       classNames={classes}
@@ -192,6 +201,32 @@ function CollectionListForm({
             </ScrollArea.Autosize>
           )}
         </Stack>
+        {contributingCollections.length > 0 && (
+          <Stack>
+            <Text size="sm" weight="bold">
+              Collections you contribute in
+            </Text>
+            <ScrollArea.Autosize maxHeight={200}>
+              <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                {contributingCollections.map((collection) => (
+                  <Checkbox
+                    key={collection.id}
+                    classNames={classes}
+                    value={collection.id.toString()}
+                    label={
+                      <Group spacing="xs" position="apart" w="100%" noWrap>
+                        <Text lineClamp={1} inherit>
+                          {collection.name}
+                        </Text>
+                        {privacyData[collection.read].icon}
+                      </Group>
+                    }
+                  />
+                ))}
+              </InputCheckboxGroup>
+            </ScrollArea.Autosize>
+          </Stack>
+        )}
         <Group position="right">
           <Button type="submit" loading={addCollectionItemMutation.isLoading}>
             Save
