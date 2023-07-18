@@ -111,7 +111,7 @@ export function ModelCard({ data }: Props) {
     staleTime: Infinity,
   });
   const isFavorite = favoriteModels.find((modelId) => modelId === data.id);
-  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
+  const { data: hiddenUsers = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
     enabled: !!currentUser,
     cacheTime: Infinity,
     staleTime: Infinity,
