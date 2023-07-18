@@ -1,11 +1,10 @@
-import { Session } from 'next-auth';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { Session } from 'next-auth';
 import { z } from 'zod';
+import { env } from '~/env/server.mjs';
+import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { v4 as uuid } from 'uuid';
-import { env } from '~/env/server.mjs';
-import jwt from 'jsonwebtoken';
 
 const schema = z.object({
   return_to: z.string().url(),
@@ -29,17 +28,3 @@ export default MixedAuthEndpoint(async function (
     `${env.FEATUREBASE_URL}/api/v1/auth/access/jwt?` + new URLSearchParams({ jwt, return_to })
   );
 });
-
-function createFeaturebaseToken(user: { username: string; email: string }) {
-  if (!env.FEATUREBASE_JWT_SECRET) return;
-
-  const body = {
-    name: user.username,
-    email: user.email,
-    jti: uuid(),
-  };
-
-  return jwt.sign(body, env.FEATUREBASE_JWT_SECRET, {
-    algorithm: 'HS256',
-  });
-}
