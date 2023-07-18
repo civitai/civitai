@@ -27,7 +27,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
 
     gridContainer: {
-      marginLeft: '-8px',
       padding: 0,
 
       [theme.fn.smallerThan('sm')]: {
@@ -74,7 +73,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
   }
 
   return (
-    <HomeBlockWrapper py={32} px={0} innerContainerProps={{ pr: 0 }}>
+    <HomeBlockWrapper py={32} px={0} bleedRight>
       <Stack spacing="xl">
         <Group spacing="xs" position="apart" noWrap>
           <Title className={classes.title} order={1} lineClamp={1}>
@@ -95,7 +94,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
         </Group>
         <ScrollArea type="never" viewportProps={{ style: { overflowY: 'hidden' } }}>
           <Container className={classes.gridContainer} fluid>
-            <Grid className={classes.cardGrid} gutter="md" m={0}>
+            <Grid className={classes.cardGrid} gutter="md" my={0}>
               {homeBlock.collection.items.map((item) => (
                 <Grid.Col key={item.id} className={classes.gridItem} xs={12} sm={6} md={4} lg={3}>
                   {item.type === 'model' && <ModelCard data={item.data} />}
