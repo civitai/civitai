@@ -27,7 +27,7 @@ export namespace Generation {
     sampler: string;
     steps: number;
     cfgScale: number;
-    seed: number;
+    seed?: number;
     clipSkip: number;
   };
 

@@ -187,6 +187,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       params: {
         ...params,
         negativePrompt,
+        seed: params.seed === -1 ? undefined : params.seed,
       },
       resources: assets
         .map((assetId): Generation.Resource | undefined => {
@@ -309,9 +310,9 @@ export const createGenerationRequest = async ({
     },
   };
 
-  // console.log('________');
-  // console.log(JSON.stringify(generationRequest));
-  // console.log('________');
+  console.log('________');
+  console.log(JSON.stringify(generationRequest));
+  console.log('________');
 
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',

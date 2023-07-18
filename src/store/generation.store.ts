@@ -124,6 +124,7 @@ const formatGenerationData = ({
     aspectRatio,
     ...params,
     sampler,
+    // seed: params?.seed === -1 ? undefined : params?.seed,
   };
   return {
     ...removeEmpty(formData),

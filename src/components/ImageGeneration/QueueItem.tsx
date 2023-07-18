@@ -13,7 +13,8 @@ import {
   SimpleGrid,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
+import { IconBolt, IconPhoto, IconTrash, IconX } from '@tabler/icons-react';
+import { useEffect } from 'react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -57,6 +58,10 @@ export function QueueItem({ request }: Props) {
     else boost(request);
   };
 
+  useEffect(() => {
+    if (request.queuePosition) console.log(request.queuePosition);
+  }, [request]);
+
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
@@ -85,15 +90,21 @@ export function QueueItem({ request }: Props) {
             )}
             {pendingProcessing && (
               <Button.Group>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  color="gray"
-                  sx={{ pointerEvents: 'none' }}
-                  compact
-                >
-                  ETA <Countdown endTime={request.estimatedCompletionDate} />
-                </Button>
+                {request.queuePosition?.estimatedCompletedDate && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    color="gray"
+                    sx={{ pointerEvents: 'none' }}
+                    compact
+                  >
+                    ETA{' '}
+                    <Countdown
+                      endTime={request.queuePosition?.estimatedCompletedDate}
+                      format="short"
+                    />
+                  </Button>
+                )}
                 <HoverCard withArrow position="top" withinPortal zIndex={400}>
                   <HoverCard.Target>
                     <Button
@@ -121,12 +132,11 @@ export function QueueItem({ request }: Props) {
             </Text>
           </Group>
           <ActionIcon
-            color="red"
             size="md"
             onClick={() => deleteMutation.mutate({ id: request.id })}
             disabled={deleteMutation.isLoading}
           >
-            <IconX size={20} />
+            {pendingProcessing ? <IconX size={20} /> : <IconTrash size={20} />}
           </ActionIcon>
         </Group>
       </Card.Section>
