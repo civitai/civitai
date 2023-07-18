@@ -130,12 +130,12 @@ export function AppFooter() {
           </Button>
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
-          <Button component="a" href="/canny/bugs" {...buttonProps} target="_blank" pl={4} pr="xs">
+          <Button component="a" href="/bugs" {...buttonProps} target="_blank" pl={4} pr="xs">
             🪲 Bugs
           </Button>
           <Button
             component="a"
-            href="/canny/feedback"
+            href="/feedback"
             variant="light"
             color="yellow"
             target="_blank"
@@ -144,9 +144,6 @@ export function AppFooter() {
           >
             💡 Ideas
           </Button>
-          {/* <Button component={NextLink} href="/feedback" ml="auto" variant="light" color="yellow">
-          💡 Ideas!
-        </Button> */}
         </Group>
       </Group>
     </Footer>

@@ -46,7 +46,6 @@ import PlausibleProvider from 'next-plausible';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { CannyIdentityProvider } from '~/components/Canny/CannyProvider';
 import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 
@@ -154,7 +153,6 @@ function MyApp(props: CustomAppProps) {
                         <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                       </FreezeProvider>
                       <GenerationPanel />
-                      <CannyIdentityProvider />
                       <RoutedContextProvider2 />
                     </NotificationsProvider>
                   </CustomModalsProvider>
