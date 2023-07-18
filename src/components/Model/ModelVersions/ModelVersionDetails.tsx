@@ -720,7 +720,7 @@ export function ModelVersionDetails({
           </Accordion>
           <CreatorCard user={model.user} />
 
-          <Group position="apart" align="flex-start" style={{ flexWrap: 'nowrap' }}>
+          <Group position="apart" align="flex-start" noWrap>
             {model.type === 'Checkpoint' && (
               <Group spacing={4} noWrap style={{ flex: 1, overflow: 'hidden' }} align="flex-start">
                 <IconLicense size={16} />

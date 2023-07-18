@@ -95,6 +95,8 @@ type LeaderboardRaw = {
         type: CosmeticType;
         source: CosmeticSource;
         name: string;
+        leaderboardId: string;
+        leaderboardPosition: number;
       }[]
     | null;
   delta: {
@@ -178,6 +180,8 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
     }
   );
 }
+
+export type LeaderboardWithResults = Awaited<ReturnType<typeof getLeaderboardsWithResults>>[number];
 
 export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResultsInput) {
   const { isModerator } = input;

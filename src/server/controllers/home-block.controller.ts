@@ -81,6 +81,7 @@ export const getHomeBlocksHandler = async ({
                 }
 
                 const leaderboardIds = metadata.leaderboards.map((leaderboard) => leaderboard.id);
+
                 const leaderboardsWithResults = await getLeaderboardsWithResults({
                   ids: leaderboardIds,
                   isModerator: ctx.user?.isModerator || false,
@@ -89,7 +90,18 @@ export const getHomeBlocksHandler = async ({
                 return {
                   ...homeBlock,
                   metadata,
-                  leaderboards: leaderboardsWithResults,
+                  leaderboards: leaderboardsWithResults.sort((a, b) => {
+                    if (!metadata.leaderboards) {
+                      return 0;
+                    }
+
+                    const aIndex =
+                      metadata.leaderboards.find((item) => item.id === a.id)?.index ?? 0;
+                    const bIndex =
+                      metadata.leaderboards.find((item) => item.id === b.id)?.index ?? 0;
+
+                    return aIndex - bIndex;
+                  }),
                 };
               }
               case HomeBlockType.Announcement: {
@@ -113,7 +125,18 @@ export const getHomeBlocksHandler = async ({
                 return {
                   ...homeBlock,
                   metadata,
-                  announcements,
+                  announcements: announcements.sort((a, b) => {
+                    if (!metadata.announcements) {
+                      return 0;
+                    }
+
+                    const aIndex =
+                      metadata.announcements.find((item) => item.id === a.id)?.index ?? 0;
+                    const bIndex =
+                      metadata.announcements.find((item) => item.id === b.id)?.index ?? 0;
+
+                    return aIndex - bIndex;
+                  }),
                 };
               }
               default:

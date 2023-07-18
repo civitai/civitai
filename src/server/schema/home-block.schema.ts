@@ -14,6 +14,7 @@ export const homeBlockMetaSchema = z
     leaderboards: z.array(
       z.object({
         id: z.string(),
+        index: z.number().default(0),
         // TODO.home-blocks: perhaps we want other useful info here, such as maximum number of places, size of the category, etc.
       })
     ),
@@ -22,6 +23,7 @@ export const homeBlockMetaSchema = z
         id: z.number(),
         // TODO.home-blocks: define what props will be needed for announcements. Based off of design, at least colSpan is needed.
         colSpan: z.number().default(12),
+        index: z.number().default(0),
       })
     ),
     link: z.string(),

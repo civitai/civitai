@@ -12,7 +12,7 @@ export const HomeBlockWrapper = ({ children, bleedRight, ...props }: Props) => {
   const { classes, cx } = useStyles();
 
   return (
-    <Container fluid {...props}>
+    <Container px={0} fluid {...props}>
       <Container size="xl" className={cx({ [classes.bleedRight]: bleedRight })}>
         {children}
       </Container>
