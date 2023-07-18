@@ -25,44 +25,51 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const runData = useGenerationStore((state) => state.data);
 
   useEffect(() => {
-    if (!runData) return;
-    const { data, type } = runData;
+    if (runData) {
+      const { data, type } = runData;
+      const getFormData = () => {
+        const previousData = form.getValues();
+        switch (type) {
+          case 'remix': // 'remix' will return the formatted generation data as is
+            return { ...generation.defaultValues, ...data };
+          case 'run': // 'run' will keep previous relevant data and add new resources to existing resources
+            const resources = (previousData.resources ?? []).concat(data.resources ?? []);
+            return {
+              ...previousData,
+              ...data,
+              resources: !!resources.length ? uniqBy(resources, 'id') : undefined,
+            };
+          case 'random': // TODO - handle the case where random includes resources
+          case 'params':
+            return { ...previousData, ...data };
+        }
+      };
 
-    const getFormData = () => {
-      const previousData = form.getValues();
-      switch (type) {
-        case 'remix': // 'remix' will return the formatted generation data as is
-          return { ...generation.defaultValues, ...data };
-        case 'run': // 'run' will keep previous relevant data and add new resources to existing resources
-          const resources = (previousData.resources ?? []).concat(data.resources ?? []);
-          return {
-            ...previousData,
-            ...data,
-            resources: !!resources.length ? uniqBy(resources, 'id') : undefined,
-          };
-        case 'random': // TODO - handle the case where random includes resources
-        case 'params':
-          return { ...previousData, ...data };
+      /*
+        !important - form.reset won't work here
+        use the schema keys to iterate over each form value
+        when setting data, any keys that don't have data will be set to undefined
+        this is necessary for 'remix' to work properly.
+      */
+      const formData = getFormData();
+      const keys = Object.keys(generateFormSchema.shape);
+      for (const item of keys) {
+        const key = item as keyof typeof formData;
+        if (key === 'nsfw') return; // don't overwrite nsfw
+        form.setValue(key, formData[key]);
       }
-    };
-
-    /*
-      !important - form.reset won't work here
-      use the schema keys to iterate over each form value
-      when setting data, any keys that don't have data will be set to undefined
-      this is necessary for 'remix' to work properly.
-    */
-    const formData = getFormData();
-    const keys = Object.keys(generateFormSchema.shape);
-    for (const item of keys) {
-      const key = item as keyof typeof formData;
-      form.setValue(key, formData[key]);
     }
 
     return () => {
       generationStore.clearData();
     };
   }, [runData]); //eslint-disable-line
+
+  // useEffect(() => {
+  //   return () => {
+  //     console.log('clear');
+  //   };
+  // }, []);
 
   const { mutateAsync } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
