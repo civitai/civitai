@@ -23,7 +23,7 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
           >
             {metadata?.title}
           </Title>
-          {metadata.link && metadata.linkText && (
+          {metadata.link && (
             <Link href={metadata.link} passHref>
               <Button
                 rightIcon={<IconArrowRight size={16} />}
@@ -32,7 +32,7 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
                 compact
                 style={{ padding: 0 }}
               >
-                {metadata.linkText}
+                {metadata.linkText ?? 'View more'}
               </Button>
             </Link>
           )}
@@ -44,4 +44,4 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
 };
 
 type Props = { metadata: HomeBlockMetaSchema };
-export default HomeBlockHeaderMeta;
+export { HomeBlockHeaderMeta };

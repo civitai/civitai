@@ -38,4 +38,4 @@ const useDismissedAnnouncements = (announcementIds: number[] = []) => {
   };
 };
 
-export default useDismissedAnnouncements;
+export { useDismissedAnnouncements };

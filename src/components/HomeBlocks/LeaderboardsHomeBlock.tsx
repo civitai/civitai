@@ -8,7 +8,7 @@ import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/L
 import { Fragment } from 'react';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import HomeBlockHeaderMeta from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
+import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
 

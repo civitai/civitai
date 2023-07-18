@@ -12,7 +12,6 @@ import {
 } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
 import { GetAnnouncement } from '~/server/services/announcement.service';
-import { AnnouncementMetaSchema } from '~/server/schema/announcement.schema';
 import Link from 'next/link';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -35,7 +34,7 @@ const useStyles = createStyles((theme) => ({
 
 const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDismiss }: Props) => {
   const { classes } = useStyles();
-  const announcementMetadata = announcement.metadata as AnnouncementMetaSchema;
+  const announcementMetadata = announcement.metadata;
   const { actions } = announcementMetadata || {};
   const isMobile = useIsMobile();
 
@@ -55,7 +54,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
         <IconX size={20} />
       </ActionIcon>
       <Stack>
-        <Group spacing="md" sx={{ flexWrap: 'nowrap' }}>
+        <Group spacing="md" noWrap>
           {announcement.emoji && (
             <Card className={classes.emojiCard} radius="lg" p="sm">
               <Text size={28} p={0}>
@@ -80,6 +79,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
                   <Grid.Col key={index} span={isMobile ? 'auto' : 'content'}>
                     <Link href={action.link} passHref>
                       <Button
+                        component="a"
                         sx={
                           isMobile
                             ? {
@@ -91,7 +91,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
                         }
                         variant={action.variant ? (action.variant as ButtonVariant) : undefined}
                       >
-                        <Text>{action.linkText}</Text>
+                        {action.linkText}
                       </Button>
                     </Link>
                   </Grid.Col>

@@ -3,9 +3,9 @@ import { HomeBlockGetAll } from '~/types/router';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { createStyles, Grid } from '@mantine/core';
 import { AnnouncementHomeBlockAnnouncementItem } from '~/components/HomeBlocks/components/AnnouncementHomeBlockAnnouncementItem';
-import useDismissedAnnouncements from '~/hooks/useDismissedAnnouncements';
+import { useDismissedAnnouncements } from '~/hooks/useDismissedAnnouncements';
 import { useMemo } from 'react';
-import HomeBlockHeaderMeta from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
+import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
 
@@ -41,7 +41,7 @@ export const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
   return (
     <HomeBlockWrapper className={classes.root}>
       <HomeBlockHeaderMeta metadata={metadata} />
-      <Grid>
+      <Grid gutter="md">
         {announcements.map((announcement) => {
           const announcementMetadata = announcementsMetadata
             ? announcementsMetadata.find((item) => item.id === announcement.id)
