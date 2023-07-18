@@ -42,6 +42,10 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     [debouncedQuery, collections]
   );
   const noCollections = !isLoading && filteredCollections.length === 0;
+  const ownedFilteredCollections = filteredCollections.filter((collection) => collection.isOwner);
+  const contributingFilteredCollections = filteredCollections.filter(
+    (collection) => !collection.isOwner
+  );
 
   const FilterBox = (
     <TextInput
@@ -55,7 +59,20 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
 
   const Collections = (
     <Skeleton visible={isLoading} animate>
-      {filteredCollections.map((c) => (
+      {ownedFilteredCollections.length > 0 && <Text weight="bold">Owned</Text>}
+      {ownedFilteredCollections.map((c) => (
+        <>
+          <NavLink
+            key={c.id}
+            className={classes.navItem}
+            onClick={() => selectCollection(c.id)}
+            active={collectionId === c.id}
+            label={<Text>{c.name}</Text>}
+          ></NavLink>
+        </>
+      ))}
+      {contributingFilteredCollections.length > 0 && <Text weight="bold">Shared with me</Text>}
+      {contributingFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
           className={classes.navItem}

@@ -110,7 +110,7 @@ export const getUserCollectionPermissionsById = async ({
   return permissions;
 };
 
-export const getUserCollectionsWithPermissions = <
+export const getUserCollectionsWithPermissions = async <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
 >({
   user,
@@ -161,12 +161,20 @@ export const getUserCollectionsWithPermissions = <
     });
   }
 
-  return dbRead.collection.findMany({
+  const collections = await dbRead.collection.findMany({
     where: {
       OR,
     },
     select,
   });
+
+  // Return user collections first && add isOwner  property
+  return collections
+    .map((collection) => ({
+      ...collection,
+      isOwner: collection.userId === ctx.user?.id,
+    }))
+    .sort(({ userId }) => (userId === user.id ? -1 : 1));
 };
 
 export const getCollectionById = async ({ id }: GetByIdInput) => {

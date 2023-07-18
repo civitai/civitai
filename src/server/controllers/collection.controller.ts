@@ -43,10 +43,7 @@ export const getAllUserCollectionsHandler = async ({
       },
     });
 
-    return collections.map((collection) => ({
-      ...collection,
-      isOwner: collection.userId === ctx.user?.id,
-    }));
+    return collections;
   } catch (error) {
     throw throwDbError(error);
   }
