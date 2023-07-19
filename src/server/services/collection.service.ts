@@ -591,3 +591,68 @@ export const deleteCollectionById = async ({ id, user }: GetByIdInput & { user: 
     // Ignore errors
   }
 };
+
+export const addContributorToCollection = async ({
+  collectionId,
+  userId,
+  user,
+  permissions,
+}: {
+  user: SessionUser;
+  userId: number;
+  collectionId: number;
+  permissions?: CollectionContributorPermission[];
+}) => {
+  // check if user can add contributors:
+  const { followPermissions, manage } = await getUserCollectionPermissionsById({
+    id: collectionId,
+    user,
+  });
+
+  if (!manage) {
+    throw throwBadRequestError(
+      'You do not have permission to add contributors to this collection.'
+    );
+  }
+
+  const contributorPermissions =
+    permissions && permissions.length > 0 ? permissions : followPermissions;
+
+  if (!contributorPermissions.length) {
+    return; // Can't add this user as contributor due to lacking permissions.
+  }
+
+  return dbWrite.collectionContributor.upsert({
+    where: { userId_collectionId: { userId, collectionId } },
+    create: { userId, collectionId, permissions: contributorPermissions },
+    update: { permissions: contributorPermissions },
+  });
+};
+
+export const removeContributorFromCollection = async ({
+  user,
+  userId,
+  collectionId,
+}: GetByIdInput & {
+  user: SessionUser;
+  userId: number;
+  collectionId: number;
+}) => {
+  const { manage } = await getUserCollectionPermissionsById({
+    id: collectionId,
+    user,
+  });
+
+  if (!manage && user.id !== userId) {
+    throw throwBadRequestError(
+      'You do not have permission to remove contributors from this collection.'
+    );
+  }
+  try {
+    return await dbWrite.collectionContributor.delete({
+      where: { userId: user.id, collectionId: id },
+    });
+  } catch {
+    // Ignore errors
+  }
+};

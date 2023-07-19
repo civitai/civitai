@@ -81,3 +81,9 @@ export const getUserCollectionsByItemSchema = collectionItemSchema
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
     { message: 'Please pass a single resource to match collections to.' }
   );
+
+export type FollowCollectionInput = z.infer<typeof followCollectionInput>;
+
+export const followCollectionInput = z.object({
+  collectionId: z.number(),
+});

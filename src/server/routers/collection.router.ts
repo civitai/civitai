@@ -12,6 +12,7 @@ import {
   getAllUserCollectionsInputSchema,
   getUserCollectionsByItemSchema,
   upsertCollectionInput,
+  FollowCollectionInput,
 } from '~/server/schema/collection.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
@@ -27,6 +28,14 @@ export const collectionRouter = router({
   upsert: protectedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
   saveItem: protectedProcedure
     .input(saveCollectionItemInputSchema)
+    .use(isFlagProtected('collections'))
+    .mutation(saveItemHandler),
+  follow: protectedProcedure
+    .input(FollowCollectionInput)
+    .use(isFlagProtected('collections'))
+    .mutation(saveItemHandler),
+  unfollow: protectedProcedure
+    .input(FollowCollectionInput)
     .use(isFlagProtected('collections'))
     .mutation(saveItemHandler),
   getUserCollectionsByItem: protectedProcedure

@@ -2,6 +2,7 @@ import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
 import {
   AddCollectionItemInput,
+  FollowCollectionInput,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionsByItemSchema,
   UpsertCollectionInput,
@@ -145,5 +146,21 @@ export const deleteUserCollectionHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const followHandler = ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: FollowCollectionInput;
+}) => {
+  const { user } = ctx;
+
+  try {
+    return saveItemInCollections({ user, input });
+  } catch (error) {
+    throw throwDbError(error);
   }
 };
