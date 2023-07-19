@@ -107,7 +107,11 @@ function CollectionListForm({
 
   const { data: collections = [], isLoading: loadingCollections } =
     trpc.collection.getAllUser.useQuery({
-      permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+      permissions: [
+        CollectionContributorPermission.ADD,
+        CollectionContributorPermission.ADD_REVIEW,
+        CollectionContributorPermission.MANAGE,
+      ],
       type: CollectionType.Model,
     });
   const { data: matchedCollections = [], isLoading: loadingStatus } =
