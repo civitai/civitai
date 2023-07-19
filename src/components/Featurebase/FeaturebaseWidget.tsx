@@ -3,23 +3,23 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function FeaturebaseWidget() {
   const user = useCurrentUser();
-  console.log('featurebase');
   if (!user) return null;
 
-  return (
-    <Script
-      src="https://do.featurebase.app/js/widget.js"
-      onLoad={() => {
-        window?.FeaturebaseWidget?.init({
-          organization: 'civitai',
-          initialPage: 'MainView',
-          jwtToken: user.feedbackToken,
-          placement: 'right',
-          fullScreen: true,
-        });
-      }}
-    />
-  );
+  return null;
+  // return (
+  //   <Script
+  //     src="https://do.featurebase.app/js/widget.js"
+  //     onLoad={() => {
+  //       window?.FeaturebaseWidget?.init({
+  //         organization: 'civitai',
+  //         initialPage: 'MainView',
+  //         jwtToken: user.feedbackToken,
+  //         placement: 'right',
+  //         fullScreen: true,
+  //       });
+  //     }}
+  //   />
+  // );
 }
 
 declare global {
