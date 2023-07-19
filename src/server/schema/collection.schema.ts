@@ -3,10 +3,12 @@ import { isDefined } from '~/utils/type-guards';
 import {
   CollectionContributorPermission,
   CollectionReadConfiguration,
+  CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
 
 const collectionItemSchema = z.object({
+  type: z.nativeEnum(CollectionType).optional(),
   articleId: z.number().optional(),
   postId: z.number().optional(),
   modelId: z.number().optional(),
@@ -23,6 +25,29 @@ export const saveCollectionItemInputSchema = collectionItemSchema
     ({ articleId, imageId, postId, modelId }) =>
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
     { message: 'Only one item can be added at a time.' }
+  )
+  .refine(
+    ({ type, articleId, imageId, postId, modelId }) => {
+      if (!type) {
+        // Allows any type to be passed if type is not defined
+        return true;
+      }
+
+      if (type === CollectionType.Article) {
+        return articleId !== undefined;
+      }
+      if (type === CollectionType.Post) {
+        return postId !== undefined;
+      }
+      if (type === CollectionType.Model) {
+        return modelId !== undefined;
+      }
+      if (type === CollectionType.Image) {
+        return imageId !== undefined;
+      }
+      return false;
+    },
+    { message: 'Please pass a valid item type.' }
   );
 
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
@@ -31,6 +56,7 @@ export const getAllUserCollectionsInputSchema = z
     contributingOnly: z.boolean().default(true),
     permission: z.nativeEnum(CollectionContributorPermission),
     permissions: z.array(z.nativeEnum(CollectionContributorPermission)),
+    type: z.nativeEnum(CollectionType).optional(),
   })
   .partial();
 
@@ -49,6 +75,7 @@ export const upsertCollectionInput = z
 export type GetUserCollectionsByItemSchema = z.infer<typeof getUserCollectionsByItemSchema>;
 export const getUserCollectionsByItemSchema = collectionItemSchema
   .extend({ note: z.never().optional() })
+  .merge(getAllUserCollectionsInputSchema)
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,

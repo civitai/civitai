@@ -1079,6 +1079,7 @@ model Tag {
   tagsOnImageVotes     TagsOnImageVote[]
   tagsOnPosts          TagsOnPost[]
   tagsOnArticles       TagsOnArticle[]
+  tagsOnCollection     TagsOnCollection[]
   tagsOnImageComposite ImageTag[]
   tagsOnModelComposite ModelTag[]
   usersEngaged         TagEngagement[]
@@ -1816,6 +1817,13 @@ enum CollectionReadConfiguration {
   Unlisted
 }
 
+enum CollectionType {
+  Model
+  Article
+  Post
+  Image
+}
+
 model Collection {
   id          Int                          @id @default(autoincrement())
   createdAt   DateTime?                    @default(now())
@@ -1827,35 +1835,45 @@ model Collection {
   user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
   write       CollectionWriteConfiguration @default(Private)
   read        CollectionReadConfiguration  @default(Private)
+  type        CollectionType?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
+  tags         TagsOnCollection[]
+}
+
+enum CollectionItemStatus {
+  ACCEPTED
+  REVIEW
+  REJECTED
 }
 
 model CollectionItem {
-  id           Int        @id @default(autoincrement())
-  createdAt    DateTime?  @default(now())
-  updatedAt    DateTime?  @updatedAt
+  id           Int                  @id @default(autoincrement())
+  createdAt    DateTime?            @default(now())
+  updatedAt    DateTime?            @updatedAt
   collectionId Int
-  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collection   Collection           @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   articleId    Int?
-  article      Article?   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  article      Article?             @relation(fields: [articleId], references: [id], onDelete: Cascade)
   postId       Int?
-  post         Post?      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post         Post?                @relation(fields: [postId], references: [id], onDelete: Cascade)
   imageId      Int?
-  image        Image?     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image        Image?               @relation(fields: [imageId], references: [id], onDelete: Cascade)
   modelId      Int?
-  model        Model?     @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model        Model?               @relation(fields: [modelId], references: [id], onDelete: Cascade)
   addedById    Int?
-  addedBy      User?      @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  addedBy      User?                @relation(fields: [addedById], references: [id], onDelete: SetNull)
   note         String?
+  status       CollectionItemStatus @default(ACCEPTED)
 
-  @@unique([collectionId, addedById, articleId, postId, imageId, modelId])
+  @@unique([collectionId, articleId, postId, imageId, modelId])
 }
 
 enum CollectionContributorPermission {
   VIEW
   ADD
+  ADD_REVIEW
   MANAGE
 }
 
@@ -1869,6 +1887,17 @@ model CollectionContributor {
   permissions  CollectionContributorPermission[]
 
   @@id([userId, collectionId])
+}
+
+model TagsOnCollection {
+  collectionId Int
+  tagId        Int
+  createdAt    DateTime?  @default(now())
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  tag          Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([tagId, collectionId])
+  @@index([collectionId], type: Hash)
 }
 
 enum HomeBlockType {

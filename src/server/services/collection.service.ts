@@ -9,11 +9,12 @@ import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
   CollectionReadConfiguration,
+  CollectionType,
   CollectionWriteConfiguration,
   MetricTimeframe,
   Prisma,
 } from '@prisma/client';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
@@ -110,7 +111,7 @@ export const getUserCollectionPermissionsById = async ({
   return permissions;
 };
 
-export const getUserCollectionsWithPermissions = <
+export const getUserCollectionsWithPermissions = async <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
 >({
   user,
@@ -122,7 +123,7 @@ export const getUserCollectionsWithPermissions = <
   select: TSelect;
 }) => {
   const { permissions, permission, contributingOnly } = input;
-  // By default, owned collctions will be always returned
+  // By default, owned collections will be always returned
   const OR: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ userId: user.id }];
 
   if (
@@ -161,18 +162,48 @@ export const getUserCollectionsWithPermissions = <
     });
   }
 
-  return dbRead.collection.findMany({
+  const AND: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ OR }];
+
+  if (input.type) {
+    // TODO.collections: Support exclusive type
+    AND.push({
+      OR: [
+        {
+          type: input.type,
+        },
+        {
+          type: null,
+        },
+      ],
+    });
+  }
+
+  const collections = await dbRead.collection.findMany({
     where: {
-      OR,
+      AND,
     },
     select,
   });
+
+  // Return user collections first && add isOwner  property
+  return collections
+    .map((collection) => ({
+      ...collection,
+      isOwner: collection.userId === user?.id,
+    }))
+    .sort(({ userId }) => (userId === user.id ? -1 : 1));
 };
 
 export const getCollectionById = async ({ id }: GetByIdInput) => {
   return await dbRead.collection.findFirst({
     where: { id },
-    select: { id: true, name: true, description: true, coverImage: true, read: true },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      coverImage: true,
+      read: true,
+    },
   });
 };
 
@@ -183,22 +214,60 @@ export const saveItemInCollections = async ({
   user: SessionUser;
   input: AddCollectionItemInput;
 }) => {
+  const inputToCollectionType: Record<string, CollectionType> = {
+    modelId: CollectionType.Model,
+    articleId: CollectionType.Article,
+    imageId: CollectionType.Image,
+    postId: CollectionType.Post,
+  };
+
+  const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
+
+  if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
+    const type: CollectionType = inputToCollectionType[itemKey];
+    // check if all collections match the Model type
+    const collections = await dbRead.collection.findMany({
+      where: {
+        id: { in: collectionIds },
+        OR: [
+          {
+            type: null,
+          },
+          {
+            type,
+          },
+        ],
+      },
+    });
+
+    if (collections.length !== collectionIds.length) {
+      throw throwBadRequestError('Collection type mismatch');
+    }
+  }
+
   const data: Prisma.CollectionItemCreateManyInput[] = collectionIds.map((collectionId) => ({
     ...input,
     addedById: user.id,
     collectionId,
   }));
+
   const transactions = [dbWrite.collectionItem.createMany({ data })];
 
   // Determine which items need to be removed
   const itemsToRemove = await dbRead.collectionItem.findMany({
-    where: { ...input, addedById: user.id, collectionId: { notIn: collectionIds } },
+    where: {
+      ...input,
+      addedById: user.id,
+      collectionId: { notIn: collectionIds },
+    },
     select: { id: true },
   });
   // if we have items to remove, add a deleteMany mutation to the transaction
   if (itemsToRemove.length)
     transactions.push(
-      dbWrite.collectionItem.deleteMany({ where: { id: { in: itemsToRemove.map((i) => i.id) } } })
+      dbWrite.collectionItem.deleteMany({
+        where: { id: { in: itemsToRemove.map((i) => i.id) } },
+      })
     );
 
   return dbWrite.$transaction(transactions);

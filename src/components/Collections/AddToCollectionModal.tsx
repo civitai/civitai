@@ -10,7 +10,12 @@ import {
   createStyles,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { CollectionReadConfiguration, CollectionWriteConfiguration } from '@prisma/client';
+import {
+  CollectionContributorPermission,
+  CollectionReadConfiguration,
+  CollectionType,
+  CollectionWriteConfiguration,
+} from '@prisma/client';
 import { IconArrowLeft, IconEyeOff, IconLock, IconPlus, IconWorld } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -100,10 +105,22 @@ function CollectionListForm({
   });
   const queryUtils = trpc.useContext();
 
-  const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery({});
-  const { data: matchedCollections = [] } = trpc.collection.getUserCollectionsByItem.useQuery({
-    ...target,
-  });
+  const { data: collections = [], isLoading: loadingCollections } =
+    trpc.collection.getAllUser.useQuery({
+      permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+      type: CollectionType.Model,
+    });
+  const { data: matchedCollections = [], isLoading: loadingStatus } =
+    trpc.collection.getUserCollectionsByItem.useQuery({
+      ...target,
+    });
+
+  // Ensures we don't present the user with a list of collections
+  // before both things have loaded.
+  const isLoading = loadingStatus || loadingCollections;
+
+  const ownedCollections = collections.filter((collection) => collection.isOwner);
+  const contributingCollections = collections.filter((collection) => !collection.isOwner);
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
@@ -160,9 +177,9 @@ function CollectionListForm({
             </Center>
           ) : (
             <ScrollArea.Autosize maxHeight={200}>
-              {collections.length > 0 ? (
+              {ownedCollections.length > 0 ? (
                 <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                  {collections.map((collection) => (
+                  {ownedCollections.map((collection) => (
                     <Checkbox
                       key={collection.id}
                       classNames={classes}
@@ -186,6 +203,32 @@ function CollectionListForm({
             </ScrollArea.Autosize>
           )}
         </Stack>
+        {contributingCollections.length > 0 && (
+          <Stack>
+            <Text size="sm" weight="bold">
+              Collections you contribute in
+            </Text>
+            <ScrollArea.Autosize maxHeight={200}>
+              <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                {contributingCollections.map((collection) => (
+                  <Checkbox
+                    key={collection.id}
+                    classNames={classes}
+                    value={collection.id.toString()}
+                    label={
+                      <Group spacing="xs" position="apart" w="100%" noWrap>
+                        <Text lineClamp={1} inherit>
+                          {collection.name}
+                        </Text>
+                        {privacyData[collection.read].icon}
+                      </Group>
+                    }
+                  />
+                ))}
+              </InputCheckboxGroup>
+            </ScrollArea.Autosize>
+          </Stack>
+        )}
         <Group position="right">
           <Button type="submit" loading={addCollectionItemMutation.isLoading}>
             Save
@@ -206,6 +249,7 @@ function NewCollectionForm({
     schema: upsertCollectionInput,
     defaultValues: {
       ...props,
+      type: CollectionType.Model,
       name: '',
       description: '',
       read: CollectionReadConfiguration.Private,
@@ -224,6 +268,7 @@ function NewCollectionForm({
       autoClose: false,
       message: 'Creating collection...',
     });
+
     upsertCollectionMutation.mutate(data, {
       async onSuccess() {
         await queryUtils.collection.getAllUser.invalidate();
