@@ -10,6 +10,7 @@ import {
 } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import Link from 'next/link';
+import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockGetAll } from '~/types/router';
@@ -98,6 +99,9 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
               {homeBlock.collection.items.map((item) => (
                 <Grid.Col key={item.id} className={classes.gridItem} xs={12} sm={6} md={4} lg={3}>
                   {item.type === 'model' && <ModelCard data={item.data} />}
+                  {item.type === 'image' && (
+                    <ImageCard data={item.data} collectionId={homeBlock.collection?.id} />
+                  )}
                 </Grid.Col>
               ))}
             </Grid>

@@ -31,19 +31,29 @@ export function FeedCard({ href, children, aspectRatio = 'portrait', className, 
   const { ratio, height } = aspectRatioValues[aspectRatio];
   const { classes, cx } = useStyles({ height });
 
-  return (
+  const card = (
+    <Card<'a'>
+      className={cx(classes.root, className)}
+      {...props}
+      component={href ? 'a' : undefined}
+    >
+      <AspectRatio h={height} ratio={ratio}>
+        {children}
+      </AspectRatio>
+    </Card>
+  );
+
+  return href ? (
     <Link href={href} passHref>
-      <Card className={cx(classes.root, className)} {...props} component="a">
-        <AspectRatio h={height} ratio={ratio}>
-          {children}
-        </AspectRatio>
-      </Card>
+      {card}
     </Link>
+  ) : (
+    card
   );
 }
 
 type Props = CardProps & {
   children: React.ReactNode;
-  href: string;
+  href?: string;
   aspectRatio?: AspectRatio;
 };

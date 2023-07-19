@@ -199,6 +199,7 @@ export const getInfiniteImagesSchema = z
     cursor: z.union([z.bigint(), z.number()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
+    collectionId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
     imageId: z.number().optional(),

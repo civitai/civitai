@@ -46,6 +46,7 @@ export function UserAvatar({
 
   textSize ??= mapAvatarTextSize[size].textSize;
   subTextSize ??= mapAvatarTextSize[size].subTextSize;
+
   const avatar = (
     <Group align="center" spacing={spacing} noWrap>
       {includeAvatar && (
@@ -63,6 +64,7 @@ export function UserAvatar({
             radius="xl"
             size={size}
             imageProps={{ loading: 'lazy' }}
+            sx={{ backgroundColor: 'rgba(0,0,0,0.31)' }}
             {...avatarProps}
           >
             {user.username && !userDeleted ? getInitials(user.username) : null}

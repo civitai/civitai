@@ -630,6 +630,7 @@ export const getAllImages = async ({
   cursor,
   skip,
   postId,
+  collectionId,
   modelId,
   modelVersionId,
   imageId,
@@ -701,7 +702,7 @@ export const getAllImages = async ({
 
   // Filter to specific model/review content
   const prioritizeUser = !!prioritizedUserIds?.length;
-  const optionalRank = !!(modelId || modelVersionId || reviewId || username);
+  const optionalRank = !!(modelId || modelVersionId || reviewId || username || collectionId);
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     const irhAnd = [Prisma.sql`irr."imageId" = i.id`];
     if (modelVersionId) irhAnd.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
@@ -742,6 +743,14 @@ export const getAllImages = async ({
 
   // Filter to a specific image
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
+
+  // Filter to a specfic collection
+  if (collectionId) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "CollectionItem" ci
+      WHERE ci."collectionId" = ${collectionId} AND ci."imageId" = i.id
+    )`);
+  }
 
   if (postId && !modelId) {
     // a post image query won't include modelId
