@@ -19,6 +19,7 @@ import {
   IconWindowMaximize,
 } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
@@ -35,11 +36,13 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
 export function FeedItem({
   image,
   request,
-  selected,
-  onCheckboxClick,
+  // selected,
+  // onCheckboxClick,
   onCreateVariantClick,
 }: Props) {
   const [opened, { toggle, close }] = useDisclosure();
+  const selected = generationImageSelect.useSelected(image.id);
+  const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
 
   const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
@@ -92,7 +95,8 @@ export function FeedItem({
         })}
         checked={selected}
         onChange={(event) => {
-          onCheckboxClick({ image, checked: event.target.checked });
+          toggleSelect(event.target.checked);
+          // onCheckboxClick({ image, checked: event.target.checked });
           close();
         }}
       />

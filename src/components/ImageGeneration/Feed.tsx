@@ -33,6 +33,7 @@ import { useInView } from 'react-intersection-observer';
 
 import { CreateVariantsModal } from '~/components/ImageGeneration/CreateVariantsModal';
 import { FeedItem } from '~/components/ImageGeneration/FeedItem';
+import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
   useDeleteGenerationRequestImages,
   useGetGenerationRequests,
@@ -74,18 +75,18 @@ export function Feed({
 
   const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
     onSuccess: () => {
-      setState((current) => ({ ...current, selectedItems: [] }));
+      generationImageSelect.setSelected([]);
     },
   });
 
-  const handleDeleteImages = () => {
+  const handleDeleteImages = (ids: number[]) => {
     openConfirmModal({
       title: 'Delete images',
       children:
         'Are you sure that you want to delete the selected images? This is a destructive action and cannot be undone.',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
       confirmProps: { color: 'red' },
-      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: state.selectedItems }),
+      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids }),
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
     });
@@ -203,13 +204,13 @@ export function Feed({
         </div>
       </ScrollArea>
       <FloatingActions
-        selectCount={state.selectedItems.length}
-        onDeselectClick={() =>
-          setState((current) => ({
-            ...current,
-            selectedItems: [],
-          }))
-        }
+        // selectCount={state.selectedItems.length}
+        // onDeselectClick={() =>
+        //   setState((current) => ({
+        //     ...current,
+        //     selectedItems: [],
+        //   }))
+        // }
         onDeleteClick={handleDeleteImages}
         onPostClick={() => console.log('post images')}
         onUpscaleClick={() => console.log('upscale images')}
@@ -233,13 +234,20 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
 };
 
 function FloatingActions({
-  selectCount,
-  onDeselectClick,
+  // selectCount,
+  // onDeselectClick,
   onDeleteClick,
   loading = false,
 }: FloatingActionsProps) {
+  const selected = generationImageSelect.useSelection();
+  const handleDeselect = () => generationImageSelect.setSelected([]);
+
+  const handleDelete = () => {
+    onDeleteClick(selected);
+  };
+
   return (
-    <Transition mounted={selectCount > 0} transition="slide-up">
+    <Transition mounted={selected.length > 0} transition="slide-up">
       {(transitionStyles) => (
         <Card
           p={4}
@@ -252,16 +260,16 @@ function FloatingActions({
           <LoadingOverlay visible={loading} loaderProps={{ variant: 'bars', size: 'sm' }} />
           <Stack spacing={6}>
             <Text color="dimmed" size="xs" weight={500} inline>
-              {selectCount} selected
+              {selected.length} selected
             </Text>
             <Group spacing={4}>
               <Tooltip label="Deselect all" {...tooltipProps}>
-                <ActionIcon size="md" onClick={onDeselectClick} variant="light">
+                <ActionIcon size="md" onClick={handleDeselect} variant="light">
                   <IconSquareOff size={20} />
                 </ActionIcon>
               </Tooltip>
               <Tooltip label="Delete selected" {...tooltipProps}>
-                <ActionIcon size="md" onClick={onDeleteClick} color="red">
+                <ActionIcon size="md" onClick={handleDelete} color="red">
                   <IconTrash size={20} />
                 </ActionIcon>
               </Tooltip>
@@ -288,11 +296,11 @@ function FloatingActions({
 }
 
 type FloatingActionsProps = {
-  selectCount: number;
-  onDeselectClick: () => void;
+  // selectCount: number;
+  // onDeselectClick: () => void;
   onPostClick: () => void;
   onUpscaleClick: () => void;
-  onDeleteClick: () => void;
+  onDeleteClick: (ids: number[]) => void;
   loading?: boolean;
 };
 

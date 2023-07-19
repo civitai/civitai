@@ -4,6 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Generation } from '~/server/services/generation/generation.types';
 
 type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
+const imageCache = new Map<string, string>();
+export function clearImageCache() {
+  for (const [key, url] of imageCache.entries()) {
+    URL.revokeObjectURL(url);
+    imageCache.delete(key);
+  }
+}
 
 export function GeneratedImage({
   image,
@@ -14,7 +21,6 @@ export function GeneratedImage({
 }) {
   const [status, setStatus] = useState<GeneratedImageStatus>('loading');
   const ref = useRef<HTMLImageElement>(null);
-  const urlRef = useRef<string>();
   const initializedRef = useRef(false);
 
   const handleImageClick = () => {
@@ -35,6 +41,12 @@ export function GeneratedImage({
   const handleLoad = () => setStatus('loaded');
 
   const fetchImage = async (url: string) => {
+    // if (imageCache.has(url)) {
+    //   if (!ref.current) return;
+    //   ref.current.src = imageCache.get(url) as string;
+    //   return;
+    // }
+
     try {
       const response = await fetch(url);
 
@@ -48,10 +60,19 @@ export function GeneratedImage({
           break;
         }
         case 200: {
-          const blob = await response.blob();
-          urlRef.current = URL.createObjectURL(blob);
           if (!ref.current) return;
-          ref.current.src = urlRef.current;
+          // todo - only run for non-successful requests
+          ref.current.src = url;
+          // const blob = await response.blob();
+          // // TODO.generation - Embed metadata into image
+          // const objectUrl = URL.createObjectURL(blob);
+          // if (!ref.current) return;
+          // // imageCache.set(url, objectUrl);
+          // ref.current.src = objectUrl;
+          // if (request.id === 4512) {
+          //   console.log({ blob });
+          //   console.log({ imageCache });
+          // }
           break;
         }
         default: {
@@ -69,9 +90,6 @@ export function GeneratedImage({
       initializedRef.current = true;
       fetchImage(image.url);
     }
-    return () => {
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    };
   }, []);
 
   return (
