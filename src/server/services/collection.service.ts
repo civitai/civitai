@@ -604,12 +604,12 @@ export const addContributorToCollection = async ({
   permissions?: CollectionContributorPermission[];
 }) => {
   // check if user can add contributors:
-  const { followPermissions, manage } = await getUserCollectionPermissionsById({
+  const { followPermissions, manage, follow } = await getUserCollectionPermissionsById({
     id: collectionId,
     user,
   });
 
-  if (!manage) {
+  if (!manage && !follow) {
     throw throwBadRequestError(
       'You do not have permission to add contributors to this collection.'
     );
@@ -633,7 +633,7 @@ export const removeContributorFromCollection = async ({
   user,
   userId,
   collectionId,
-}: GetByIdInput & {
+}: {
   user: SessionUser;
   userId: number;
   collectionId: number;
@@ -650,7 +650,12 @@ export const removeContributorFromCollection = async ({
   }
   try {
     return await dbWrite.collectionContributor.delete({
-      where: { userId: user.id, collectionId: id },
+      where: {
+        userId_collectionId: {
+          userId,
+          collectionId,
+        },
+      },
     });
   } catch {
     // Ignore errors

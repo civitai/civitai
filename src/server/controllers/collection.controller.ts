@@ -2,7 +2,7 @@ import { Context } from '~/server/createContext';
 import { throwDbError } from '~/server/utils/errorHandling';
 import {
   AddCollectionItemInput,
-  FollowCollectionInput,
+  FollowCollectionInputSchema,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionsByItemSchema,
   UpsertCollectionInput,
@@ -15,6 +15,8 @@ import {
   deleteCollectionById,
   getUserCollectionPermissionsById,
   getCollectionById,
+  addContributorToCollection,
+  removeContributorFromCollection,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -154,12 +156,30 @@ export const followHandler = ({
   input,
 }: {
   ctx: DeepNonNullable<Context>;
-  input: FollowCollectionInput;
+  input: FollowCollectionInputSchema;
 }) => {
   const { user } = ctx;
+  const { collectionId } = input;
 
   try {
-    return saveItemInCollections({ user, input });
+    return addContributorToCollection({ user, userId: user?.id, collectionId });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const unfollowHandler = ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: FollowCollectionInputSchema;
+}) => {
+  const { user } = ctx;
+  const { collectionId } = input;
+
+  try {
+    return removeContributorFromCollection({ user, userId: user.id, collectionId });
   } catch (error) {
     throw throwDbError(error);
   }
