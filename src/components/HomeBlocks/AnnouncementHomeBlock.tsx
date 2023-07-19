@@ -28,7 +28,7 @@ export const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
   );
   const { dismissed, onAnnouncementDismiss } = useDismissedAnnouncements(announcementIds);
 
-  if (!homeBlock.announcements || dismissed.length === homeBlock.announcements.length) {
+  if (!homeBlock.announcements || dismissed.length >= homeBlock.announcements.length) {
     return null;
   }
 

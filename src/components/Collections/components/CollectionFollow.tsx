@@ -13,15 +13,13 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
     trpc.collection.follow.useMutation({
       onSuccess() {
         utils.collection.getById.invalidate({ id: collection.id });
+        utils.collection.getAllUser.refetch();
       },
       onError(error) {
         showErrorNotification({
           title: 'Unable to follow this collection',
           error: new Error(error.message),
         });
-      },
-      onMutate() {
-        utils.collection.getAllUser.refetch();
       },
     });
 
@@ -29,15 +27,13 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
     trpc.collection.unfollow.useMutation({
       onSuccess() {
         utils.collection.getById.invalidate({ id: collection.id });
+        utils.collection.getAllUser.refetch();
       },
       onError(error) {
         showErrorNotification({
           title: 'Unable to follow this collection',
           error: new Error(error.message),
         });
-      },
-      onMutate() {
-        utils.collection.getAllUser.refetch();
       },
     });
 
