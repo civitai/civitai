@@ -40,7 +40,6 @@ export function Username({
         weight={500}
         lineClamp={1}
         sx={{ verticalAlign: 'middle' }}
-        lh={1.1}
         inherit={inherit}
       >
         {username}

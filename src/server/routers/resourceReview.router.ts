@@ -10,6 +10,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   createResourceReviewHandler,
   deleteResourceReviewHandler,
+  toggleExcludeResourceReviewHandler,
   updateResourceReviewHandler,
   upsertResourceReviewHandler,
 } from './../controllers/resourceReview.controller';
@@ -86,5 +87,5 @@ export const resourceReviewRouter = router({
     .mutation(deleteResourceReviewHandler),
   toggleExclude: moderatorProcedure
     .input(getByIdSchema)
-    .mutation(({ input }) => toggleExcludeResourceReview(input)),
+    .mutation(toggleExcludeResourceReviewHandler),
 });
