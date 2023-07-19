@@ -61,15 +61,13 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
     <Skeleton visible={isLoading} animate>
       {ownedFilteredCollections.length > 0 && <Text weight="bold">Owned</Text>}
       {ownedFilteredCollections.map((c) => (
-        <>
-          <NavLink
-            key={c.id}
-            className={classes.navItem}
-            onClick={() => selectCollection(c.id)}
-            active={collectionId === c.id}
-            label={<Text>{c.name}</Text>}
-          ></NavLink>
-        </>
+        <NavLink
+          key={c.id}
+          className={classes.navItem}
+          onClick={() => selectCollection(c.id)}
+          active={collectionId === c.id}
+          label={<Text>{c.name}</Text>}
+        ></NavLink>
       ))}
       {contributingFilteredCollections.length > 0 && <Text weight="bold">Shared with me</Text>}
       {contributingFilteredCollections.map((c) => (

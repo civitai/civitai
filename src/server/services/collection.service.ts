@@ -14,7 +14,7 @@ import {
   MetricTimeframe,
   Prisma,
 } from '@prisma/client';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
@@ -197,7 +197,13 @@ export const getUserCollectionsWithPermissions = async <
 export const getCollectionById = async ({ id }: GetByIdInput) => {
   return await dbRead.collection.findFirst({
     where: { id },
-    select: { id: true, name: true, description: true, coverImage: true, read: true },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      coverImage: true,
+      read: true,
+    },
   });
 };
 
@@ -235,7 +241,7 @@ export const saveItemInCollections = async ({
     });
 
     if (collections.length !== collectionIds.length) {
-      throw new Error('Collection type mismatch');
+      throw throwBadRequestError('Collection type mismatch');
     }
   }
 
@@ -249,13 +255,19 @@ export const saveItemInCollections = async ({
 
   // Determine which items need to be removed
   const itemsToRemove = await dbRead.collectionItem.findMany({
-    where: { ...input, addedById: user.id, collectionId: { notIn: collectionIds } },
+    where: {
+      ...input,
+      addedById: user.id,
+      collectionId: { notIn: collectionIds },
+    },
     select: { id: true },
   });
   // if we have items to remove, add a deleteMany mutation to the transaction
   if (itemsToRemove.length)
     transactions.push(
-      dbWrite.collectionItem.deleteMany({ where: { id: { in: itemsToRemove.map((i) => i.id) } } })
+      dbWrite.collectionItem.deleteMany({
+        where: { id: { in: itemsToRemove.map((i) => i.id) } },
+      })
     );
 
   return dbWrite.$transaction(transactions);
