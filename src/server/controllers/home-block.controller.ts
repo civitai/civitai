@@ -52,10 +52,14 @@ export const getHomeBlocksHandler = async ({
                   return null;
                 }
 
-                const collection = await getCollectionById({ id: metadata.collection.id });
+                const collection = await getCollectionById({
+                  input: { id: metadata.collection.id },
+                });
+
                 if (!collection) {
                   return null;
                 }
+
                 const items = await getCollectionItemsByCollectionId({
                   id: collection.id,
                   ctx,

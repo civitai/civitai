@@ -17,7 +17,6 @@ import {
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { deletePost } from '~/server/services/post.service';
 
 export const getAllUserCollectionsHandler = async ({
   ctx,
@@ -63,12 +62,18 @@ export const getCollectionByIdHandler = async ({
 
     // If the user has 0 permission over this collection, they have no business asking for it.
     if (!permissions.read && !permissions.write && !permissions.manage) {
-      return null;
+      return {
+        collection: null,
+        permissions,
+      };
     }
 
-    const collection = await getCollectionById(input);
+    const collection = await getCollectionById({ input });
 
-    return collection;
+    return {
+      collection,
+      permissions,
+    };
   } catch (error) {
     throw throwDbError(error);
   }

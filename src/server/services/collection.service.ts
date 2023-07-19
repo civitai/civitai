@@ -29,16 +29,32 @@ import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.servi
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 
+type CollectionContributorPermissionsExpanded = {
+  read: boolean;
+  write: boolean;
+  write_review: boolean;
+  manage: boolean;
+  follow: boolean;
+  isContributor: boolean;
+  isOwner: boolean;
+  followPermissions: CollectionContributorPermission[];
+};
+
 export const getUserCollectionPermissionsById = async ({
   user,
   id,
 }: GetByIdInput & {
   user?: SessionUser;
 }) => {
-  const permissions = {
+  const permissions: CollectionContributorPermissionsExpanded = {
     read: false,
     write: false,
+    write_review: false,
     manage: false,
+    follow: false,
+    isContributor: false,
+    isOwner: false,
+    followPermissions: [],
   };
 
   const collection = await dbRead.collection.findFirst({
@@ -74,10 +90,21 @@ export const getUserCollectionPermissionsById = async ({
     collection.read === CollectionReadConfiguration.Unlisted
   ) {
     permissions.read = true;
+    permissions.follow = true;
+    permissions.followPermissions.push(CollectionContributorPermission.VIEW);
   }
 
   if (collection.write === CollectionWriteConfiguration.Public) {
     permissions.write = true;
+    // Follow will grant write permissions
+    permissions.follow = true;
+    permissions.followPermissions.push(CollectionContributorPermission.ADD);
+  }
+  if (collection.write === CollectionWriteConfiguration.Review) {
+    permissions.write_review = true;
+    // Follow will grant write permissions
+    permissions.follow = true;
+    permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
   }
 
   if (!user) {
@@ -85,6 +112,7 @@ export const getUserCollectionPermissionsById = async ({
   }
 
   if (user.id === collection.userId) {
+    permissions.isOwner = user.id === collection.userId;
     permissions.manage = true;
     permissions.read = true;
     permissions.write = true;
@@ -96,12 +124,17 @@ export const getUserCollectionPermissionsById = async ({
     return permissions;
   }
 
+  permissions.isContributor = true;
+
   if (contributorItem.permissions.includes(CollectionContributorPermission.VIEW)) {
     permissions.read = true;
   }
 
   if (contributorItem.permissions.includes(CollectionContributorPermission.ADD)) {
     permissions.write = true;
+  }
+  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
+    permissions.write_review = true;
   }
 
   if (contributorItem.permissions.includes(CollectionContributorPermission.MANAGE)) {
@@ -194,8 +227,9 @@ export const getUserCollectionsWithPermissions = async <
     .sort(({ userId }) => (userId === user.id ? -1 : 1));
 };
 
-export const getCollectionById = async ({ id }: GetByIdInput) => {
-  return await dbRead.collection.findFirst({
+export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
+  const { id } = input;
+  return dbRead.collection.findFirst({
     where: { id },
     select: {
       id: true,
@@ -203,6 +237,9 @@ export const getCollectionById = async ({ id }: GetByIdInput) => {
       description: true,
       coverImage: true,
       read: true,
+      write: true,
+      type: true,
+      userId: true,
     },
   });
 };

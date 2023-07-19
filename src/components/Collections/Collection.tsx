@@ -21,7 +21,11 @@ export function Collection({
   collectionId,
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
-  const { data: collection, isLoading } = trpc.collection.getById.useQuery({ id: collectionId });
+  const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
+    id: collectionId,
+  });
+
+  console.log(permissions);
 
   return (
     <MasonryProvider
