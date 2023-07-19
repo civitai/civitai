@@ -8,7 +8,6 @@ import {
   Stack,
   Text,
   UnstyledButton,
-  createStyles,
 } from '@mantine/core';
 import {
   IconStar,
@@ -16,7 +15,6 @@ import {
   IconHeart,
   IconMessageCircle2,
   IconTagOff,
-  IconPlaylistAdd,
   IconDotsVertical,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -24,13 +22,14 @@ import React from 'react';
 import { useEffect } from 'react';
 import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
+import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -44,47 +43,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const useStyles = createStyles((theme, _params, getRef) => {
-  const imageRef = getRef('image');
-
-  return {
-    root: {
-      position: 'relative',
-      overflow: 'hidden',
-      color: 'white',
-      '&:hover': {
-        [`& .${imageRef}`]: {
-          transform: 'scale(1.05)',
-        },
-      },
-    },
-
-    image: {
-      ref: imageRef,
-      height: '100%',
-      objectFit: 'cover',
-      transition: 'transform 400ms ease',
-    },
-
-    gradientOverlay: {
-      background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
-    },
-
-    contentOverlay: {
-      position: 'absolute',
-      width: '100%',
-      left: 0,
-      zIndex: 10,
-      padding: theme.spacing.sm,
-    },
-
-    top: { top: 0 },
-    bottom: { bottom: 0 },
-
-    iconBadge: { color: 'white' },
-  };
-});
-
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
 const querySchema = z.object({
@@ -93,7 +51,7 @@ const querySchema = z.object({
 });
 
 export function ModelCard({ data }: Props) {
-  const { classes, cx, theme } = useStyles();
+  const { classes, cx, theme } = useCardStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -157,24 +115,10 @@ export function ModelCard({ data }: Props) {
   let contextMenuItems: React.ReactNode[] = [];
   if (features.collections) {
     contextMenuItems = contextMenuItems.concat([
-      <LoginRedirect key="add-to-collection" reason="add-to-collection">
-        <Menu.Item
-          icon={
-            <IconPlaylistAdd
-              size={16}
-              stroke={1.5}
-              color={theme.colors.pink[theme.fn.primaryShade()]}
-            />
-          }
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openContext('addToCollection', { modelId: data.id });
-          }}
-        >
-          Add to collection
-        </Menu.Item>
-      </LoginRedirect>,
+      <AddToCollectionMenuItem
+        key="add-to-collection"
+        onClick={() => openContext('addToCollection', { modelId: data.id })}
+      />,
     ]);
   }
 
@@ -234,7 +178,7 @@ export function ModelCard({ data }: Props) {
                         >
                           <Group spacing={4}>
                             <ImageGuard.ToggleConnect position="static" />
-                            <Badge variant="light" color="dark">
+                            <Badge className={classes.infoChip} variant="light">
                               <Text color="white" size="xs" transform="capitalize" inline>
                                 {getDisplayName(data.type)}
                               </Text>
@@ -316,7 +260,6 @@ export function ModelCard({ data }: Props) {
                 <IconBadge
                   className={classes.iconBadge}
                   sx={{ userSelect: 'none' }}
-                  color="dark"
                   icon={
                     <Rating
                       size="xs"
@@ -339,7 +282,6 @@ export function ModelCard({ data }: Props) {
               <Group spacing={4} noWrap>
                 <IconBadge
                   className={classes.iconBadge}
-                  color="dark"
                   icon={
                     <IconHeart
                       size={14}
@@ -350,18 +292,10 @@ export function ModelCard({ data }: Props) {
                 >
                   <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
                 </IconBadge>
-                <IconBadge
-                  className={classes.iconBadge}
-                  color="dark"
-                  icon={<IconMessageCircle2 size={14} />}
-                >
+                <IconBadge className={classes.iconBadge} icon={<IconMessageCircle2 size={14} />}>
                   <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
                 </IconBadge>
-                <IconBadge
-                  className={classes.iconBadge}
-                  color="dark"
-                  icon={<IconDownload size={14} />}
-                >
+                <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
                   <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
                 </IconBadge>
               </Group>

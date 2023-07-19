@@ -196,7 +196,7 @@ function ReactionBadge({
     <Button
       size="xs"
       radius="xs"
-      variant="light"
+      variant={hasReacted ? 'light' : 'subtle'}
       sx={(theme) => ({
         '&[data-disabled]': {
           cursor: 'default',
@@ -214,7 +214,14 @@ function ReactionBadge({
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
           {constants.availableReactions[reaction]}
         </Text>
-        <Text inherit>{count}</Text>
+        <Text
+          sx={(theme) => ({
+            color: !hasReacted && theme.colorScheme === 'dark' ? 'white' : undefined,
+          })}
+          inherit
+        >
+          {count}
+        </Text>
       </Group>
     </Button>
   );

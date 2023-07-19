@@ -33,9 +33,11 @@ import { immer } from 'zustand/middleware/immer';
 
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwLevelUI } from '~/libs/moderation';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { isNsfwImage } from '~/server/common/model-helpers';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -225,11 +227,14 @@ ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
 
 ImageGuard.Report = function ReportImage({
   position = 'top-right',
+  withinPortal = false,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
+  withinPortal?: boolean;
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
   const [needsReview, setNeedsReview] = useState(image.needsReview);
 
@@ -302,6 +307,15 @@ ImageGuard.Report = function ReportImage({
   }
 
   const menuItems: React.ReactElement[] = [];
+  if (features.collections) {
+    menuItems.push(
+      <AddToCollectionMenuItem
+        key="add-to-collection"
+        onClick={() => openContext('addToCollection', { imageId: image.id })}
+      />
+    );
+  }
+
   if (!isOwner)
     menuItems.push(
       <LoginRedirect reason="report-content" key="report">
@@ -347,7 +361,7 @@ ImageGuard.Report = function ReportImage({
     >
       {NeedsReviewBadge}
       {!!menuItems.length && (
-        <Menu position="left-start" withArrow offset={-5}>
+        <Menu position="left-start" offset={-5} withinPortal={withinPortal} withArrow>
           <Menu.Target>
             <ActionIcon
               variant="transparent"

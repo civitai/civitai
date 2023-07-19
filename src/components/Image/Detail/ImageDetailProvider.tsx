@@ -61,7 +61,7 @@ export function ImageDetailProvider({
 
   // #region [data fetching]
   const shouldFetchMany = Object.keys(filters).length > 0;
-  const { images, isInitialLoading: imagesLoading } = useQueryImages(
+  const { images = [], isInitialLoading: imagesLoading } = useQueryImages(
     // TODO: Hacky way to prevent sending the username when filtering by reactions
     { ...filters, username: !!reactions?.length ? undefined : username },
     {
@@ -70,7 +70,7 @@ export function ImageDetailProvider({
   );
 
   const shouldFetchImage =
-    !imagesLoading && !!images?.length && !images.find((x) => x.id === imageId);
+    !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
   const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
     { id: imageId },
     { enabled: shouldFetchImage }

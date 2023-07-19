@@ -16,6 +16,7 @@ export const imagesQueryParamSchema = z
     modelId: numericString(),
     modelVersionId: numericString(),
     postId: numericString(),
+    collectionId: numericString(),
     username: z.string().transform(postgresSlugify),
     prioritizedUserIds: numericStringArray(),
     limit: numericString(),
