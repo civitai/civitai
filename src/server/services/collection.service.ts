@@ -29,7 +29,7 @@ import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.servi
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 
-type CollectionContributorPermissionsExpanded = {
+export type CollectionContributorPermissionsExpanded = {
   read: boolean;
   write: boolean;
   write_review: boolean;
