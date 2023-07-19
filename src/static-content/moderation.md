@@ -1,6 +1,6 @@
 ---
 title: Content Moderation Policy
-description: "Civitai values the privacy of our users and is committed to protecting their personal information. We do not disclose any user data to third parties without the explicit consent of the user."
+description: "Civitai's ultimate goal is to foster an environment of openness and inclusivity, empowering our users by giving them control over their viewing experiences. We aim to strike a balance between user freedom and the necessary boundaries to maintain a safe and respectful community."
 ---
 
 As a platform, our ultimate goal is to foster an environment of openness and inclusivity, empowering our users by giving them control over their viewing experiences. We aim to strike a balance between user freedom and the necessary boundaries to maintain a safe and respectful community.
