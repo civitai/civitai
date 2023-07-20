@@ -55,7 +55,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       const keys = Object.keys(generateFormSchema.shape);
       for (const item of keys) {
         const key = item as keyof typeof formData;
-        if (key === 'nsfw') return; // don't overwrite nsfw
+        if (key === 'nsfw') continue; // don't overwrite nsfw
         form.setValue(key, formData[key]);
       }
     }
