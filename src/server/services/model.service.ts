@@ -58,7 +58,10 @@ import { isDefined } from '~/utils/type-guards';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelsSearchIndex } from '~/server/search-index';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -243,12 +246,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       return { items: [] };
     }
 
-    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = sessionUser
-      ? [
-          { status: CollectionItemStatus.ACCEPTED },
-          { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: sessionUser.id }] },
-        ]
-      : [{ status: CollectionItemStatus.ACCEPTED }];
+    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+      getAvailableCollectionItemsFilterForUser({ user: sessionUser });
 
     const collectionItemModels = await dbRead.collectionItem.findMany({
       select: {

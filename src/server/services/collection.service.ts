@@ -8,6 +8,7 @@ import {
 import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
+  CollectionItemStatus,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
@@ -660,4 +661,19 @@ export const removeContributorFromCollection = async ({
   } catch {
     // Ignore errors
   }
+};
+
+export const getAvailableCollectionItemsFilterForUser = ({ user }: { user?: SessionUser }) => {
+  const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = user
+    ? [
+        {
+          OR: [
+            { status: CollectionItemStatus.ACCEPTED },
+            { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: user.id }] },
+          ],
+        },
+      ]
+    : [{ status: CollectionItemStatus.ACCEPTED }];
+
+  return AND;
 };
