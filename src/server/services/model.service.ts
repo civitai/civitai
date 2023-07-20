@@ -58,6 +58,7 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -708,6 +709,23 @@ export const unpublishModelById = async ({
   );
 
   return model;
+};
+
+export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
+  const files = (
+    await dbRead.modelFile.findMany({
+      where: {
+        modelVersionId: { in: vaeIds },
+        type: 'Model',
+      },
+      select: { ...modelFileSelect, modelVersionId: true },
+    })
+  ).map((x) => {
+    x.type = 'VAE';
+    return x;
+  });
+
+  return files;
 };
 
 export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>({

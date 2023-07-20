@@ -12,6 +12,7 @@ import {
   ModelVersionApiReturn,
 } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getVaeFiles } from '~/server/services/model.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 
@@ -40,7 +41,9 @@ export async function prepareModelVersionResponse(
   baseUrl: URL,
   images?: AsyncReturnType<typeof getImagesForModelVersion>
 ) {
-  const { files, model, rank, ...version } = modelVersion;
+  const { files, model, rank, vaeId, ...version } = modelVersion;
+  const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
+  files.push(...vae);
   const castedFiles = files as Array<
     Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
   >;

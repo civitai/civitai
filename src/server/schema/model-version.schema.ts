@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus, ModelType } from '@prisma/client';
 import { ModelMeta } from '~/server/schema/model.schema';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
@@ -96,4 +96,12 @@ export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
 export const publishVersionSchema = z.object({
   id: z.number(),
   publishedAt: z.date().optional(),
+});
+
+export type GetModelVersionByModelTypeProps = z.infer<typeof getModelVersionByModelTypeSchema>;
+export const getModelVersionByModelTypeSchema = z.object({
+  type: z.nativeEnum(ModelType),
+  query: z.string().optional(),
+  baseModel: z.string().optional(),
+  take: z.number().default(100),
 });

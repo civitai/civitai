@@ -78,7 +78,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
       )}
       {hasVAE && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This checkpoint includes a{' '}
+          This checkpoint recommends a{' '}
           <Anchor
             href={createModelFileDownloadUrl({
               versionId,
