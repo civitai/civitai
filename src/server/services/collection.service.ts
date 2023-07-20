@@ -2,7 +2,7 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import {
   AddCollectionItemInput,
   GetAllUserCollectionsInputSchema,
-  GetUserCollectionsByItemSchema,
+  GetUserCollectionItemsByItemSchema,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
@@ -540,11 +540,11 @@ export const getCollectionItemsByCollectionId = async ({
   return collectionItemsExpanded;
 };
 
-export const getUserCollectionsByItem = async ({
+export const getUserCollectionItemsByItem = async ({
   input,
   user,
 }: {
-  input: GetUserCollectionsByItemSchema;
+  input: GetUserCollectionItemsByItemSchema;
   user: SessionUser;
 }) => {
   const { modelId, imageId, articleId, postId } = input;
@@ -552,27 +552,52 @@ export const getUserCollectionsByItem = async ({
   const userCollections = await getUserCollectionsWithPermissions({
     user,
     input: {
-      permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+      permissions: [
+        CollectionContributorPermission.ADD,
+        CollectionContributorPermission.ADD_REVIEW,
+        CollectionContributorPermission.MANAGE,
+      ],
     },
     select: { id: true },
   });
 
+  console.log(
+    userCollections.length,
+    userCollections.map((c) => c.id)
+  );
+
   if (userCollections.length === 0) return [];
 
-  return dbRead.collection.findMany({
-    where: {
-      id: { in: userCollections.map((c) => c.id) },
-      items: {
-        some: {
-          modelId,
-          imageId,
-          articleId,
-          postId,
+  const collectionItems = await dbRead.collectionItem.findMany({
+    select: {
+      collectionId: true,
+      addedById: true,
+      collection: {
+        select: {
+          userId: true,
         },
       },
     },
-    select: { id: true, name: true, read: true, write: true },
+    where: {
+      collectionId: {
+        in: userCollections.map((c) => c.id),
+      },
+      OR: [{ modelId }, { imageId }, { postId }, { articleId }],
+    },
   });
+
+  return Promise.all(
+    collectionItems.map(async (collectionItem) => {
+      const permission = await getUserCollectionPermissionsById({
+        user,
+        id: collectionItem.collectionId,
+      });
+      return {
+        ...collectionItem,
+        canRemoveItem: collectionItem.addedById === user.id || permission.manage,
+      };
+    })
+  );
 };
 
 export const deleteCollectionById = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {

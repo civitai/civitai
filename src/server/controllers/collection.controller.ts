@@ -4,19 +4,19 @@ import {
   AddCollectionItemInput,
   FollowCollectionInputSchema,
   GetAllUserCollectionsInputSchema,
-  GetUserCollectionsByItemSchema,
+  GetUserCollectionItemsByItemSchema,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import {
   saveItemInCollections,
   getUserCollectionsWithPermissions,
   upsertCollection,
-  getUserCollectionsByItem,
   deleteCollectionById,
   getUserCollectionPermissionsById,
   getCollectionById,
   addContributorToCollection,
   removeContributorFromCollection,
+  getUserCollectionItemsByItem,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -117,19 +117,18 @@ export const upsertCollectionHandler = async ({
   }
 };
 
-export const getUserCollectionsByItemHandler = async ({
+export const getUserCollectionItemsByItemHandler = async ({
   input,
   ctx,
 }: {
-  input: GetUserCollectionsByItemSchema;
+  input: GetUserCollectionItemsByItemSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
   const { user } = ctx;
 
   try {
-    const collections = await getUserCollectionsByItem({ input, user });
-
-    return collections;
+    const collectionItems = await getUserCollectionItemsByItem({ input, user });
+    return collectionItems;
   } catch (error) {
     throw throwDbError(error);
   }

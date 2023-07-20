@@ -72,8 +72,8 @@ export const upsertCollectionInput = z
   })
   .merge(collectionItemSchema);
 
-export type GetUserCollectionsByItemSchema = z.infer<typeof getUserCollectionsByItemSchema>;
-export const getUserCollectionsByItemSchema = collectionItemSchema
+export type GetUserCollectionItemsByItemSchema = z.infer<typeof getUserCollectionItemsByItemSchema>;
+export const getUserCollectionItemsByItemSchema = collectionItemSchema
   .extend({ note: z.never().optional() })
   .merge(getAllUserCollectionsInputSchema)
   .refine(
