@@ -1,16 +1,9 @@
 import { AspectRatio, Loader, Center, Card, Text } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { useEffect, useRef, useState } from 'react';
-import { Generation } from '~/server/services/generation/generation.types';
+import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 
 type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
-const imageCache = new Map<string, string>();
-export function clearImageCache() {
-  for (const [key, url] of imageCache.entries()) {
-    URL.revokeObjectURL(url);
-    imageCache.delete(key);
-  }
-}
 
 export function GeneratedImage({
   image,
@@ -21,7 +14,7 @@ export function GeneratedImage({
 }) {
   const [status, setStatus] = useState<GeneratedImageStatus>('loading');
   const ref = useRef<HTMLImageElement>(null);
-  const initializedRef = useRef(false);
+  const initializedRef = useRef(request.status !== GenerationRequestStatus.Succeeded);
 
   const handleImageClick = () => {
     if (!image) return;
@@ -41,12 +34,6 @@ export function GeneratedImage({
   const handleLoad = () => setStatus('loaded');
 
   const fetchImage = async (url: string) => {
-    // if (imageCache.has(url)) {
-    //   if (!ref.current) return;
-    //   ref.current.src = imageCache.get(url) as string;
-    //   return;
-    // }
-
     try {
       const response = await fetch(url);
 
@@ -61,18 +48,7 @@ export function GeneratedImage({
         }
         case 200: {
           if (!ref.current) return;
-          // todo - only run for non-successful requests
           ref.current.src = url;
-          // const blob = await response.blob();
-          // // TODO.generation - Embed metadata into image
-          // const objectUrl = URL.createObjectURL(blob);
-          // if (!ref.current) return;
-          // // imageCache.set(url, objectUrl);
-          // ref.current.src = objectUrl;
-          // if (request.id === 4512) {
-          //   console.log({ blob });
-          //   console.log({ imageCache });
-          // }
           break;
         }
         default: {
@@ -113,6 +89,7 @@ export function GeneratedImage({
           <img
             ref={ref}
             alt=""
+            src={request.status === GenerationRequestStatus.Succeeded ? image.url : undefined}
             onLoad={handleLoad}
             onClick={handleImageClick}
             style={{ cursor: 'pointer', zIndex: 2, width: '100%' }}

@@ -28,6 +28,7 @@ import {
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 
@@ -72,25 +73,6 @@ export function Feed({
     selectedItems: [],
     variantModalOpened: false,
   });
-
-  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
-    onSuccess: () => {
-      generationImageSelect.setSelected([]);
-    },
-  });
-
-  const handleDeleteImages = (ids: number[]) => {
-    openConfirmModal({
-      title: 'Delete images',
-      children:
-        'Are you sure that you want to delete the selected images? This is a destructive action and cannot be undone.',
-      labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids }),
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
-      centered: true,
-    });
-  };
 
   // infinite paging
   useEffect(() => {
@@ -204,17 +186,8 @@ export function Feed({
         </div>
       </ScrollArea>
       <FloatingActions
-        // selectCount={state.selectedItems.length}
-        // onDeselectClick={() =>
-        //   setState((current) => ({
-        //     ...current,
-        //     selectedItems: [],
-        //   }))
-        // }
-        onDeleteClick={handleDeleteImages}
         onPostClick={() => console.log('post images')}
         onUpscaleClick={() => console.log('upscale images')}
-        loading={bulkDeleteImagesMutation.isLoading}
       />
       <CreateVariantsModal
         opened={state.variantModalOpened}
@@ -233,18 +206,34 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
 
-function FloatingActions({
-  // selectCount,
-  // onDeselectClick,
-  onDeleteClick,
-  loading = false,
-}: FloatingActionsProps) {
+function FloatingActions({}: // selectCount,
+// onDeselectClick,
+
+FloatingActionsProps) {
+  const router = useRouter();
   const selected = generationImageSelect.useSelection();
   const handleDeselect = () => generationImageSelect.setSelected([]);
 
-  const handleDelete = () => {
-    onDeleteClick(selected);
+  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
+    onSuccess: () => {
+      generationImageSelect.setSelected([]);
+    },
+  });
+
+  const handleDeleteImages = () => {
+    openConfirmModal({
+      title: 'Delete images',
+      children:
+        'Are you sure that you want to delete the selected images? This is a destructive action and cannot be undone.',
+      labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: selected }),
+      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      centered: true,
+    });
   };
+
+  const loading = bulkDeleteImagesMutation.isLoading;
 
   return (
     <Transition mounted={selected.length > 0} transition="slide-up">
@@ -269,7 +258,7 @@ function FloatingActions({
                 </ActionIcon>
               </Tooltip>
               <Tooltip label="Delete selected" {...tooltipProps}>
-                <ActionIcon size="md" onClick={handleDelete} color="red">
+                <ActionIcon size="md" onClick={handleDeleteImages} color="red">
                   <IconTrash size={20} />
                 </ActionIcon>
               </Tooltip>
@@ -300,8 +289,6 @@ type FloatingActionsProps = {
   // onDeselectClick: () => void;
   onPostClick: () => void;
   onUpscaleClick: () => void;
-  onDeleteClick: (ids: number[]) => void;
-  loading?: boolean;
 };
 
 const useStyles = createStyles((theme) => ({

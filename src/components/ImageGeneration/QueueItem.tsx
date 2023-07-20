@@ -45,6 +45,7 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
   [GenerationRequestStatus.Error]: 'red',
 };
 
+// export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
   const status = request.status ?? GenerationRequestStatus.Pending;

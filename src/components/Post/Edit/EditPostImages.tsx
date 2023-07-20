@@ -36,8 +36,6 @@ import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
-import { trpc } from '~/utils/trpc';
-import { useDebouncer } from '~/utils/debouncer';
 import { ImageIngestionStatus } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import {
