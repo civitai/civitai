@@ -3,6 +3,7 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import {
   AddCollectionItemInput,
   FollowCollectionInputSchema,
+  GetAllCollectionItemsSchema,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
   UpsertCollectionInput,
@@ -17,9 +18,15 @@ import {
   addContributorToCollection,
   removeContributorFromCollection,
   getUserCollectionItemsByItem,
+  getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllCommentsSchema } from '~/server/schema/comment.schema';
+import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { getComments } from '~/server/services/comment.service';
+import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
+import { UserPreferencesInput } from '~/server/middleware.trpc';
 
 export const getAllUserCollectionsHandler = async ({
   ctx,
@@ -182,4 +189,27 @@ export const unfollowHandler = ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const collectionItemsInfiniteHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllCollectionItemsSchema & UserPreferencesInput;
+  ctx: Context;
+}) => {
+  input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
+  const limit = input.limit + 1;
+  const collectionItems = await getCollectionItemsByCollectionId({
+    input: { ...input, limit },
+    ctx,
+  });
+
+  const nextItem = collectionItems.pop();
+  const nextCursor = nextItem?.id;
+
+  return {
+    nextCursor,
+    collectionItems,
+  };
 };

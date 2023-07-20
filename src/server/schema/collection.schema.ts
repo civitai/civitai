@@ -2,10 +2,12 @@ import { z } from 'zod';
 import { isDefined } from '~/utils/type-guards';
 import {
   CollectionContributorPermission,
+  CollectionItemStatus,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
+import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 
 const collectionItemSchema = z.object({
   type: z.nativeEnum(CollectionType).optional(),
@@ -87,3 +89,15 @@ export type FollowCollectionInputSchema = z.infer<typeof followCollectionInputSc
 export const followCollectionInputSchema = z.object({
   collectionId: z.number(),
 });
+
+export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSchema>;
+export const getAllCollectionItemsSchema = z
+  .object({
+    limit: z.number().min(0).max(100),
+    page: z.number(),
+    cursor: z.number(),
+    collectionId: z.number(),
+    statuses: z.array(z.nativeEnum(CollectionItemStatus)),
+  })
+  .partial()
+  .required({ collectionId: true });

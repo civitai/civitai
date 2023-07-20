@@ -7,6 +7,7 @@ import {
   followHandler,
   unfollowHandler,
   getUserCollectionItemsByItemHandler,
+  collectionItemsInfiniteHandler,
 } from '~/server/controllers/collection.controller';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
@@ -15,6 +16,7 @@ import {
   getUserCollectionItemsByItemSchema,
   upsertCollectionInput,
   followCollectionInputSchema,
+  getAllCollectionItemsSchema,
 } from '~/server/schema/collection.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
@@ -44,6 +46,10 @@ export const collectionRouter = router({
     .input(getUserCollectionItemsByItemSchema)
     .use(isFlagProtected('collections'))
     .query(getUserCollectionItemsByItemHandler),
+  getAllCollectionItems: protectedProcedure
+    .input(getAllCollectionItemsSchema)
+    .use(isFlagProtected('collections'))
+    .query(collectionItemsInfiniteHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))

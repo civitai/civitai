@@ -1,6 +1,7 @@
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   AddCollectionItemInput,
+  GetAllCollectionItemsSchema,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
   UpsertCollectionInput,
@@ -283,11 +284,25 @@ export const saveItemInCollections = async ({
     }
   }
 
-  const data: Prisma.CollectionItemCreateManyInput[] = collectionIds.map((collectionId) => ({
-    ...input,
-    addedById: user.id,
-    collectionId,
-  }));
+  const data: Prisma.CollectionItemCreateManyInput[] = (
+    await Promise.all(
+      collectionIds.map(async (collectionId) => {
+        const permission = await getUserCollectionPermissionsById({ user, id: collectionId });
+        if (!permission.write_review && !permission.write) {
+          return null;
+        }
+
+        return {
+          ...input,
+          addedById: user.id,
+          collectionId,
+          status: permission.write_review
+            ? CollectionItemStatus.REVIEW
+            : CollectionItemStatus.ACCEPTED,
+        };
+      })
+    )
+  ).filter(isDefined);
 
   const transactions = [dbWrite.collectionItem.createMany({ data })];
 
@@ -387,39 +402,50 @@ type CollectionItemExpanded = { id: number } & (
 );
 
 export const getCollectionItemsByCollectionId = async ({
-  id,
   ctx,
   input,
 }: {
-  id: number;
   ctx: Context;
-  input: UserPreferencesInput & { limit: number };
+  input: UserPreferencesInput & GetAllCollectionItemsSchema;
 }) => {
-  const { limit: take, ...userPreferencesInput } = input;
-  const collectionWithItems = await dbRead.collection.findUnique({
-    select: {
-      id: true,
-      items: {
-        take,
-        select: {
-          id: true,
-          modelId: true,
-          postId: true,
-          imageId: true,
-          articleId: true,
-        },
-      },
-    },
-    where: {
-      id,
-    },
+  const { statuses = [CollectionItemStatus.ACCEPTED], limit, collectionId, page, cursor } = input;
+
+  const skip = page && limit ? (page - 1) * limit : undefined;
+
+  const userPreferencesInput = input as UserPreferencesInput;
+  const permission = await getUserCollectionPermissionsById({
+    id: input.collectionId,
+    user: ctx.user,
   });
 
-  if (!collectionWithItems) {
+  if (statuses.includes(CollectionItemStatus.REVIEW) && !permission.isOwner && !permission.manage) {
+    throw throwBadRequestError('You do not have permission to view review items');
+  }
+
+  const where: Prisma.CollectionItemWhereInput = {
+    collectionId,
+    status: { in: statuses },
+  };
+
+  const collectionItems = await dbRead.collectionItem.findMany({
+    take: limit,
+    skip,
+    cursor: cursor ? { id: cursor } : undefined,
+    select: {
+      id: true,
+      modelId: true,
+      postId: true,
+      imageId: true,
+      articleId: true,
+    },
+    where,
+  });
+
+  if (collectionItems.length === 0) {
     return [];
   }
 
-  const modelIds = collectionWithItems.items.map((item) => item.modelId).filter(isDefined);
+  const modelIds = collectionItems.map((item) => item.modelId).filter(isDefined);
 
   const models = await getModelsWithImagesAndModelVersions({
     input: {
@@ -434,7 +460,7 @@ export const getCollectionItemsByCollectionId = async ({
     ctx,
   });
 
-  const articleIds = collectionWithItems.items.map((item) => item.articleId).filter(isDefined);
+  const articleIds = collectionItems.map((item) => item.articleId).filter(isDefined);
 
   const articles = await getArticles({
     limit: articleIds.length,
@@ -447,7 +473,7 @@ export const getCollectionItemsByCollectionId = async ({
     ids: articleIds,
   });
 
-  const imageIds = collectionWithItems.items.map((item) => item.imageId).filter(isDefined);
+  const imageIds = collectionItems.map((item) => item.imageId).filter(isDefined);
 
   const images = await getAllImages({
     include: [],
@@ -461,7 +487,7 @@ export const getCollectionItemsByCollectionId = async ({
     ids: imageIds,
   });
 
-  const postIds = collectionWithItems.items.map((item) => item.postId).filter(isDefined);
+  const postIds = collectionItems.map((item) => item.postId).filter(isDefined);
 
   const posts = await getPostsInfinite({
     limit: 0,
@@ -474,7 +500,7 @@ export const getCollectionItemsByCollectionId = async ({
     ids: postIds,
   });
 
-  const collectionItemsExpanded: CollectionItemExpanded[] = collectionWithItems.items
+  const collectionItemsExpanded: CollectionItemExpanded[] = collectionItems
     .map(({ imageId, postId, articleId, modelId, ...collectionItemRemainder }) => {
       if (modelId) {
         // Get all model info:
