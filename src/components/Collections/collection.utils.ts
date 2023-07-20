@@ -17,11 +17,23 @@ export const useCollectionQueryParams = () => {
 
   return useMemo(() => {
     const result = collectionQueryParamSchema.safeParse(query);
+    console.log(query);
     const data: CollectionQueryParams = result.success ? result.data : {};
 
     return {
       ...data,
       set: (filters: Partial<CollectionQueryParams>, pathnameOverride?: string) => {
+        console.log(
+          {
+            pathname: pathnameOverride ?? pathname,
+            query: removeEmpty({ ...query, ...filters }),
+          },
+          undefined,
+          {
+            shallow: !pathnameOverride || pathname === pathnameOverride,
+          }
+        );
+
         push(
           {
             pathname: pathnameOverride ?? pathname,

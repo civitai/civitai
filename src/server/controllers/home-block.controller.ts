@@ -61,11 +61,11 @@ export const getHomeBlocksHandler = async ({
                 }
 
                 const items = await getCollectionItemsByCollectionId({
-                  id: collection.id,
                   ctx,
                   input: {
                     ...(input as UserPreferencesInput),
-                    // TODO.home-blocks: Set item limit as part of the input
+                    collectionId: collection.id,
+                    // TODO.home-blocks: Set item limit as part of the input?
                     limit: metadata.collection.limit,
                   },
                 });

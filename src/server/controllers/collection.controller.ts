@@ -205,8 +205,12 @@ export const collectionItemsInfiniteHandler = async ({
     ctx,
   });
 
-  const nextItem = collectionItems.pop();
-  const nextCursor = nextItem?.id;
+  let nextCursor: number | undefined;
+
+  if (collectionItems.length > input.limit) {
+    const nextItem = collectionItems.pop();
+    nextCursor = nextItem?.id;
+  }
 
   return {
     nextCursor,

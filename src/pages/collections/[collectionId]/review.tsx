@@ -7,11 +7,11 @@ import {
   Card,
   Center,
   Checkbox,
+  Chip,
   Container,
   Group,
   Loader,
   Paper,
-  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -51,7 +51,9 @@ import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { useCollectionQueryParams } from '~/components/Collections/collection.utils';
+import { CollectionItemStatus } from '@prisma/client';
+import { CollectionItemExpanded } from '~/server/services/collection.service';
+import { useRouter } from 'next/router';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
@@ -106,9 +108,119 @@ const useStore = create<StoreState>()(
   }))
 );
 
-function ModerationControls({ data, view }: { data: ImagesInfiniteModel[]; filters: any }) {
+export default function ReviewCollection() {
+  const { ref, inView } = useInView();
+  const router = useRouter();
+  const { collectionId: collectionIdString } = router.query;
+  const collectionId = Number(collectionIdString);
+
+  // const queryUtils = trpc.useContext();
+  // const selectMany = useStore((state) => state.selectMany);
+  const deselectAll = useStore((state) => state.deselectAll);
+  const [statuses, setStatuses] = useState<CollectionItemStatus[]>([CollectionItemStatus.REVIEW]);
+
+  const filters = useMemo(
+    () => ({
+      collectionId: collectionId,
+      statuses,
+    }),
+    [collectionId, statuses]
+  );
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+    trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    });
+
+  const collectionItems = useMemo(
+    () => data?.pages.flatMap((x) => x.collectionItems) ?? [],
+    [data?.pages]
+  );
+
+  const handleStatusToggle = (value: string[]) => {
+    setStatuses(value as CollectionItemStatus[]);
+  };
+
+  useEffect(deselectAll, [statuses, deselectAll]);
+
+  useEffect(() => {
+    if (inView) fetchNextPage();
+  }, [fetchNextPage, inView]);
+
+  return (
+    <Container size="xl" py="xl">
+      <Stack>
+        <Paper
+          withBorder
+          shadow="lg"
+          p="xs"
+          sx={{
+            display: 'inline-flex',
+            float: 'right',
+            alignSelf: 'flex-end',
+            marginRight: 6,
+            position: 'sticky',
+            top: 'calc(var(--mantine-header-height,0) + 16px)',
+            marginBottom: -80,
+            zIndex: 10,
+          }}
+        >
+          <ModerationControls collectionItems={collectionItems} filters={filters} />
+        </Paper>
+
+        <Stack spacing={0} mb="lg">
+          <Group>
+            <Title order={1}>Images Needing Review</Title>
+            <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
+              <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
+              <Chip value={CollectionItemStatus.REJECTED}>Rejected</Chip>
+            </Chip.Group>
+          </Group>
+          <Text color="dimmed">
+            You are reviewing items on the collection that aer either pending review or have been
+            rejected. You can change the status of this to be accepted or rejected.
+          </Text>
+        </Stack>
+
+        {isLoading ? (
+          <Center py="xl">
+            <Loader size="xl" />
+          </Center>
+        ) : collectionItems.length ? (
+          <MasonryGrid2
+            data={collectionItems}
+            isRefetching={isRefetching}
+            isFetchingNextPage={isFetchingNextPage}
+            hasNextPage={hasNextPage}
+            fetchNextPage={fetchNextPage}
+            columnWidth={300}
+            filters={filters}
+            render={(props) => {
+              console.log(props);
+
+              return <div>Sample</div>;
+            }}
+          />
+        ) : (
+          <NoContent mt="lg" message="There are no images that need review" />
+        )}
+        {!isLoading && hasNextPage && (
+          <Group position="center" ref={ref}>
+            <Loader />
+          </Group>
+        )}
+      </Stack>
+    </Container>
+  );
+}
+
+function ModerationControls({
+  collectionItems,
+  filters,
+}: {
+  collectionItems: CollectionItemExpanded[];
+  filters: any;
+}) {
   const queryUtils = trpc.useContext();
-  const viewingReported = view === 'reported';
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
@@ -123,6 +235,7 @@ function ModerationControls({ data, view }: { data: ImagesInfiniteModel[]; filte
     async onMutate({ ids, needsReview, delete: deleted }) {
       await queryUtils.image.getInfinite.cancel();
       queryUtils.image.getInfinite.setInfiniteData(
+        filters,
         produce((data) => {
           if (!data?.pages?.length) return;
 
@@ -177,51 +290,18 @@ function ModerationControls({ data, view }: { data: ImagesInfiniteModel[]; filte
 
   const handleDeleteSelected = () => {
     deselectAll();
-    moderateImagesMutation.mutate(
-      {
-        ids: selected,
-        delete: true,
-        reviewType: view,
-      },
-      {
-        onSuccess() {
-          if (viewingReported) {
-            const selectedReports = images
-              .filter((x) => selected.includes(x.id) && !!x.report)
-              // Explicit casting cause we know report is defined
-              .map((x) => x.report?.id as number);
-
-            return reportMutation.mutate({ ids: selectedReports, status: 'Actioned' });
-          }
-        },
-      }
-    );
+    console.log('Ahaa!');
   };
 
   const handleSelectAll = () => {
-    selectMany(images.map((x) => x.id));
-    // if (selected.length === images.length) handleClearAll();
-    // else selectedHandlers.setState(images.map((x) => x.id));
+    selectMany(collectionItems.map((x) => x.id));
   };
 
   const handleClearAll = () => deselectAll();
 
   const handleApproveSelected = () => {
     deselectAll();
-    if (viewingReported) {
-      const selectedReports = images
-        .filter((x) => selected.includes(x.id) && !!x.report)
-        // Explicit casting cause we know report is defined
-        .map((x) => x.report?.id as number);
-
-      return reportMutation.mutate({ ids: selectedReports, status: 'Unactioned' });
-    }
-
-    return moderateImagesMutation.mutate({
-      ids: selected,
-      needsReview: null,
-      reviewType: view,
-    });
+    console.log('on Approve');
   };
 
   const handleRefresh = () => {
@@ -241,7 +321,7 @@ function ModerationControls({ data, view }: { data: ImagesInfiniteModel[]; filte
         <ActionIcon
           variant="outline"
           onClick={handleSelectAll}
-          disabled={selected.length === images.length}
+          disabled={selected.length === collectionItems.length}
         >
           <IconSquareCheck size="1.25rem" />
         </ActionIcon>
@@ -281,90 +361,6 @@ function ModerationControls({ data, view }: { data: ImagesInfiniteModel[]; filte
         </ActionIcon>
       </ButtonTooltip>
     </Group>
-  );
-}
-
-export default function ReviewCollection() {
-  const { ref, inView } = useInView();
-  const { collectionId } = useCollectionQueryParams();
-  const deselectAll = useStore((state) => state.deselectAll);
-
-  const filters = useMemo(
-    () => ({
-      collectionId,
-      sort: ImageSort.Newest,
-    }),
-    [collectionId]
-  );
-
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
-    trpc.image.getInfinite.useInfiniteQuery(filters, {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-    });
-  const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
-
-  useEffect(() => {
-    if (inView) fetchNextPage();
-  }, [fetchNextPage, inView]);
-
-  return (
-    <Container size="xl" py="xl">
-      <Stack>
-        <Paper
-          withBorder
-          shadow="lg"
-          p="xs"
-          sx={{
-            display: 'inline-flex',
-            float: 'right',
-            alignSelf: 'flex-end',
-            marginRight: 6,
-            position: 'sticky',
-            top: 'calc(var(--mantine-header-height,0) + 16px)',
-            marginBottom: -80,
-            zIndex: 10,
-          }}
-        >
-          <ModerationControls images={images} filters={filters} view={type} />
-        </Paper>
-
-        <Stack spacing={0} mb="lg">
-          <Group>
-            <Title order={1}>Images Needing Review</Title>
-            <SegmentedControl size="sm" data={segments} onChange={handleTypeChange} value={type} />
-          </Group>
-          <Text color="dimmed">
-            These are images that have been{' '}
-            {viewingReported ? 'reported by users' : 'marked by our AI'} which needs further
-            attention from the mods
-          </Text>
-        </Stack>
-
-        {isLoading ? (
-          <Center py="xl">
-            <Loader size="xl" />
-          </Center>
-        ) : images.length ? (
-          <MasonryGrid2
-            data={images}
-            isRefetching={isRefetching}
-            isFetchingNextPage={isFetchingNextPage}
-            hasNextPage={hasNextPage}
-            fetchNextPage={fetchNextPage}
-            columnWidth={300}
-            filters={filters}
-            render={(props) => <ImageGridItem {...props} />}
-          />
-        ) : (
-          <NoContent mt="lg" message="There are no images that need review" />
-        )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
-        )}
-      </Stack>
-    </Container>
   );
 }
 
@@ -517,7 +513,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
 }
 
 type ImageGridItemProps = {
-  data: ImageGetInfinite[number];
+  data: CollectionItemExpanded;
   index: number;
   width: number;
 };

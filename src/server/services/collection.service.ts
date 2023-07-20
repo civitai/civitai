@@ -18,7 +18,7 @@ import {
 } from '@prisma/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { UserPreferencesInput, userPreferencesSchema } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
 import { getArticles } from '~/server/services/article.service';
 import {
@@ -394,7 +394,7 @@ interface ArticleCollectionItem {
   data: ArticleGetAll['items'][0];
 }
 
-type CollectionItemExpanded = { id: number } & (
+export type CollectionItemExpanded = { id: number } & (
   | ModelCollectionItem
   | PostCollectionItem
   | ImageCollectionItem
@@ -412,13 +412,20 @@ export const getCollectionItemsByCollectionId = async ({
 
   const skip = page && limit ? (page - 1) * limit : undefined;
 
-  const userPreferencesInput = input as UserPreferencesInput;
+  const userPreferencesInput = userPreferencesSchema.parse(input);
+  console.log('userPreferencesInput', userPreferencesInput, 'collectionId', collectionId);
+
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
     user: ctx.user,
   });
 
-  if (statuses.includes(CollectionItemStatus.REVIEW) && !permission.isOwner && !permission.manage) {
+  if (
+    (statuses.includes(CollectionItemStatus.REVIEW) ||
+      statuses.includes(CollectionItemStatus.REJECTED)) &&
+    !permission.isOwner &&
+    !permission.manage
+  ) {
     throw throwBadRequestError('You do not have permission to view review items');
   }
 
@@ -447,58 +454,74 @@ export const getCollectionItemsByCollectionId = async ({
 
   const modelIds = collectionItems.map((item) => item.modelId).filter(isDefined);
 
-  const models = await getModelsWithImagesAndModelVersions({
-    input: {
-      sort: ModelSort.Newest,
-      period: MetricTimeframe.AllTime,
-      periodMode: 'stats',
-      hidden: false,
-      favorites: false,
-      ...userPreferencesInput,
-      ids: modelIds,
-    },
-    ctx,
-  });
+  console.log(modelIds);
+
+  const models =
+    modelIds.length > 0
+      ? await getModelsWithImagesAndModelVersions({
+          input: {
+            sort: ModelSort.Newest,
+            period: MetricTimeframe.AllTime,
+            periodMode: 'stats',
+            hidden: false,
+            favorites: false,
+            ...userPreferencesInput,
+            ids: modelIds,
+          },
+          ctx,
+        })
+      : { items: [] };
+
+  console.log(models);
 
   const articleIds = collectionItems.map((item) => item.articleId).filter(isDefined);
 
-  const articles = await getArticles({
-    limit: articleIds.length,
-    period: MetricTimeframe.AllTime,
-    periodMode: 'stats',
-    sort: ArticleSort.Newest,
-    ...userPreferencesInput,
-    browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
-    sessionUser: ctx.user,
-    ids: articleIds,
-  });
+  const articles =
+    articleIds.length > 0
+      ? await getArticles({
+          limit: articleIds.length,
+          period: MetricTimeframe.AllTime,
+          periodMode: 'stats',
+          sort: ArticleSort.Newest,
+          ...userPreferencesInput,
+          browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+          sessionUser: ctx.user,
+          ids: articleIds,
+        })
+      : { items: [] };
 
   const imageIds = collectionItems.map((item) => item.imageId).filter(isDefined);
 
-  const images = await getAllImages({
-    include: [],
-    limit: imageIds.length,
-    period: MetricTimeframe.AllTime,
-    periodMode: 'stats',
-    sort: ImageSort.Newest,
-    ...userPreferencesInput,
-    userId: ctx.user?.id,
-    isModerator: ctx.user?.isModerator,
-    ids: imageIds,
-  });
+  const images =
+    imageIds.length > 0
+      ? await getAllImages({
+          include: [],
+          limit: imageIds.length,
+          period: MetricTimeframe.AllTime,
+          periodMode: 'stats',
+          sort: ImageSort.Newest,
+          ...userPreferencesInput,
+          userId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+          ids: imageIds,
+        })
+      : { items: [] };
 
   const postIds = collectionItems.map((item) => item.postId).filter(isDefined);
 
-  const posts = await getPostsInfinite({
-    limit: 0,
-    period: MetricTimeframe.AllTime,
-    periodMode: 'stats',
-    sort: PostSort.Newest,
-    ...userPreferencesInput,
-    user: ctx.user,
-    browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
-    ids: postIds,
-  });
+  const posts =
+    postIds.length > 0
+      ? await getPostsInfinite({
+          limit: 0,
+          period: MetricTimeframe.AllTime,
+          periodMode: 'stats',
+          sort: PostSort.Newest,
+          ...userPreferencesInput,
+          user: ctx.user,
+          browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+          ids: postIds,
+        })
+      : { items: [] };
 
   const collectionItemsExpanded: CollectionItemExpanded[] = collectionItems
     .map(({ imageId, postId, articleId, modelId, ...collectionItemRemainder }) => {
@@ -586,11 +609,6 @@ export const getUserCollectionItemsByItem = async ({
     },
     select: { id: true },
   });
-
-  console.log(
-    userCollections.length,
-    userCollections.map((c) => c.id)
-  );
 
   if (userCollections.length === 0) return [];
 
@@ -714,7 +732,20 @@ export const removeContributorFromCollection = async ({
   }
 };
 
-export const getAvailableCollectionItemsFilterForUser = ({ user }: { user?: SessionUser }) => {
+export const getAvailableCollectionItemsFilterForUser = ({
+  statuses,
+  permissions,
+  user,
+}: {
+  statuses?: CollectionItemStatus[];
+  permissions: CollectionContributorPermissionFlags;
+  user?: SessionUser;
+}) => {
+  // A user with relevant permissions can filter & manage these permissions
+  if ((permissions.manage || permissions.isOwner) && statuses) {
+    return [{ status: { in: statuses } }];
+  }
+
   const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = user
     ? [
         {

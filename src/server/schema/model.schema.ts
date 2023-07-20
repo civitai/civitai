@@ -6,6 +6,7 @@ import {
   CheckpointType,
   ModelModifier,
   AssociationType,
+  CollectionItemStatus,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -86,6 +87,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
   supportsGeneration: z.boolean().optional(),
   collectionId: z.number().optional(),
+  collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

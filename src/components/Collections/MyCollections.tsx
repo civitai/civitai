@@ -13,16 +13,16 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { CollectionContributorPermission } from '@prisma/client';
 import { IconPlaylistX, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
-import { useCollectionQueryParams } from '~/components/Collections/collection.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import { useRouter } from 'next/router';
 
 export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
-  const { collectionId, set } = useCollectionQueryParams();
+  const router = useRouter();
   const { classes } = useStyles();
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
     { permission: CollectionContributorPermission.VIEW },
@@ -30,7 +30,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   );
 
   const selectCollection = (id: number) => {
-    set({ collectionId: id });
+    router.push(`/collections/${id}`);
     onSelect?.(collections.find((c) => c.id === id)!);
   };
 
@@ -65,7 +65,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
           key={c.id}
           className={classes.navItem}
           onClick={() => selectCollection(c.id)}
-          active={collectionId === c.id}
+          active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
         ></NavLink>
       ))}
@@ -75,7 +75,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
           key={c.id}
           className={classes.navItem}
           onClick={() => selectCollection(c.id)}
-          active={collectionId === c.id}
+          active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
         ></NavLink>
       ))}
@@ -117,6 +117,7 @@ type MyCollectionsProps = {
     noCollections: boolean;
   }) => JSX.Element;
   onSelect?: (collection: CollectionGetAllUserModel) => void;
+  pathnameOverride?: string;
 };
 
 const useStyles = createStyles((theme) => ({
