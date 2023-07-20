@@ -3,6 +3,7 @@ import { ModelFileType } from '~/server/common/constants';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { modelFileSelect } from './modelFile.selector';
 
 export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -115,6 +116,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       status: true,
       publishedAt: true,
       meta: true,
+      vaeId: true,
       rank: {
         select: {
           downloadCountAllTime: true,
@@ -123,26 +125,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
         },
       },
       files: {
-        select: {
-          id: true,
-          url: true,
-          sizeKB: true,
-          name: true,
-          type: true,
-          metadata: true,
-          pickleScanResult: true,
-          pickleScanMessage: true,
-          virusScanResult: true,
-          virusScanMessage: true,
-          scannedAt: true,
-          rawScanResult: true,
-          hashes: {
-            select: {
-              type: true,
-              hash: true,
-            },
-          },
-        },
+        select: modelFileSelect,
       },
       modelVersionGenerationCoverage: { select: { workers: true } },
     },

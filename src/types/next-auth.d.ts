@@ -5,7 +5,7 @@ interface ExtendedUser {
   showNsfw: boolean;
   blurNsfw: boolean;
   username: string;
-  feedbackToken?: string;
+  // feedbackToken?: string;
   image?: string;
   email?: string;
   createdAt?: Date;

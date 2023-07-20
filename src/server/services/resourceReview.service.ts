@@ -157,7 +157,7 @@ export const updateResourceReview = ({ id, rating, details }: UpdateResourceRevi
   return dbWrite.resourceReview.update({
     where: { id },
     data: { rating, details },
-    select: { id: true },
+    select: { id: true, modelId: true, modelVersionId: true, rating: true, nsfw: true },
   });
 };
 
@@ -184,9 +184,16 @@ export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
   const item = await dbRead.resourceReview.findUnique({ where: { id }, select: { exclude: true } });
   if (!item) throw throwNotFoundError();
 
-  await dbWrite.resourceReview.update({
+  return await dbWrite.resourceReview.update({
     where: { id },
     data: { exclude: !item.exclude },
-    select: { id: true },
+    select: {
+      id: true,
+      modelId: true,
+      modelVersionId: true,
+      rating: true,
+      nsfw: true,
+      exclude: true,
+    },
   });
 };

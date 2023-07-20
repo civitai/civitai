@@ -14,7 +14,6 @@ import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { Job } from '~/server/jobs/job';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
-import { disabledVotedTags } from '~/server/jobs/disabled-voted-tags';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { isProd } from '~/env/other';
@@ -42,7 +41,6 @@ export const jobs: Job[] = [
   removeDisconnectedImages,
   pushDiscordMetadata,
   applyVotedTags,
-  disabledVotedTags,
   removeOldDrafts,
   resetToDraftWithoutRequirements,
   applyContestTags,

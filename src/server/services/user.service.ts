@@ -30,7 +30,7 @@ import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { usersSearchIndex } from '~/server/search-index';
-import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
+// import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
   leaderboardId,
@@ -461,15 +461,15 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     if (value.includes(user.id)) permissions.push(key);
   }
 
-  let feedbackToken: string | undefined;
-  if (!!user.username && !!user.email)
-    feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
+  // let feedbackToken: string | undefined;
+  // if (!!user.username && !!user.email)
+  //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
 
   return {
     ...rest,
     tier,
     permissions,
-    feedbackToken,
+    // feedbackToken,
   };
 };
 

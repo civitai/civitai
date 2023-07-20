@@ -55,6 +55,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         clipSkip: true,
         status: true,
         createdAt: true,
+        vaeId: true,
         model: {
           select: {
             id: true,

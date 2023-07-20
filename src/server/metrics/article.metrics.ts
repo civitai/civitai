@@ -24,7 +24,7 @@ export const articleMetrics = createMetricProcessor({
         FROM uniqueViews
         WHERE type = 'ArticleView'
           AND time >= parseDateTimeBestEffortOrNull(
-            '${lastUpdate}'
+            '${lastUpdate.toISOString()}'
           )
         GROUP BY entityId
       ) a ON a.entityId = uv.entityId

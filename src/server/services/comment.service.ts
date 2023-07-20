@@ -151,7 +151,6 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
   const deleted = await dbWrite.comment.delete({ where: { id } });
   if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
 
-  if (modelId) await modelMetrics.queueUpdate(modelId);
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
 
   return deleted;
