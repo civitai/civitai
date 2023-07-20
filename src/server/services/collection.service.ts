@@ -30,7 +30,7 @@ import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.servi
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
 
-export type CollectionContributorPermissionsExpanded = {
+export type CollectionContributorPermissionFlags = {
   read: boolean;
   write: boolean;
   write_review: boolean;
@@ -47,7 +47,7 @@ export const getUserCollectionPermissionsById = async ({
 }: GetByIdInput & {
   user?: SessionUser;
 }) => {
-  const permissions: CollectionContributorPermissionsExpanded = {
+  const permissions: CollectionContributorPermissionFlags = {
     read: false,
     write: false,
     write_review: false,

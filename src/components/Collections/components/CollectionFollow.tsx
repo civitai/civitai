@@ -1,5 +1,5 @@
 import React from 'react';
-import { CollectionContributorPermissionsExpanded } from '~/server/services/collection.service';
+import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { Button, Group } from '@mantine/core';
@@ -85,7 +85,7 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
 
 type Props = {
   collection: NonNullable<CollectionByIdModel>;
-  permissions: CollectionContributorPermissionsExpanded;
+  permissions: CollectionContributorPermissionFlags;
 };
 
 export { CollectionFollowAction };
