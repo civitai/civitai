@@ -112,7 +112,7 @@ function CollectionListForm({
         CollectionContributorPermission.ADD_REVIEW,
         CollectionContributorPermission.MANAGE,
       ],
-      type: props.type || collectionType.Model,
+      type: props.type,
     });
   const { data: collectionItems = [], isLoading: loadingStatus } =
     trpc.collection.getUserCollectionItemsByItem.useQuery({
