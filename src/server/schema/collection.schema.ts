@@ -98,6 +98,7 @@ export const getAllCollectionItemsSchema = z
     cursor: z.number(),
     collectionId: z.number(),
     statuses: z.array(z.nativeEnum(CollectionItemStatus)),
+    forReview: z.boolean().optional(),
   })
   .partial()
   .required({ collectionId: true });

@@ -1,7 +1,5 @@
 import {
   ActionIcon,
-  Anchor,
-  AspectRatio,
   Badge,
   Box,
   Card,
@@ -11,17 +9,18 @@ import {
   Container,
   Group,
   Loader,
+  Menu,
   Paper,
   Stack,
   Text,
   Title,
+  UnstyledButton,
 } from '@mantine/core';
 import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
-import { useListState } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
-  IconExternalLink,
+  IconDotsVertical,
   IconInfoCircle,
   IconReload,
   IconSquareCheck,
@@ -29,48 +28,31 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { ImageSort } from '~/server/common/enums';
-import { ImageInclude, ImageMetaProps } from '~/server/schema/image.schema';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus } from '@prisma/client';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
-
-// export const getServerSideProps = createServerSideProps({
-//   useSession: true,
-//   resolver: async ({ session }) => {
-//     if (!session?.user?.isModerator || session.user?.bannedAt) {
-//       return {
-//         redirect: {
-//           destination: '/',
-//           permanent: false,
-//         },
-//       };
-//     }
-//   },
-// });
-
-// const REMOVABLE_TAGS = ['child', 'teen', 'baby', 'girl', 'boy'];
-// const ADDABLE_TAGS = ['anime', 'cartoon', 'comics', 'manga', 'explicit nudity', 'suggestive'];
+import { useCardStyles } from '~/components/Cards/Cards.styles';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { FeedCard } from '~/components/Cards/FeedCard';
+import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -123,6 +105,7 @@ export default function ReviewCollection() {
     () => ({
       collectionId: collectionId,
       statuses,
+      forReview: true,
     }),
     [collectionId, statuses]
   );
@@ -167,18 +150,18 @@ export default function ReviewCollection() {
           <ModerationControls collectionItems={collectionItems} filters={filters} />
         </Paper>
 
-        <Stack spacing={0} mb="lg">
+        <Stack spacing="sm" mb="lg">
+          <Title order={1}>Collection items that need Review</Title>
+          <Text color="dimmed">
+            You are reviewing items on the collection that are either pending review or have been
+            rejected. You can change the status of these to be accepted or rejected.
+          </Text>
           <Group>
-            <Title order={1}>Images Needing Review</Title>
             <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
               <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
               <Chip value={CollectionItemStatus.REJECTED}>Rejected</Chip>
             </Chip.Group>
           </Group>
-          <Text color="dimmed">
-            You are reviewing items on the collection that aer either pending review or have been
-            rejected. You can change the status of this to be accepted or rejected.
-          </Text>
         </Stack>
 
         {isLoading ? (
@@ -195,9 +178,7 @@ export default function ReviewCollection() {
             columnWidth={300}
             filters={filters}
             render={(props) => {
-              console.log(props);
-
-              return <div>Sample</div>;
+              return <CollectionItemGridItem {...props} />;
             }}
           />
         ) : (
@@ -212,6 +193,147 @@ export default function ReviewCollection() {
     </Container>
   );
 }
+
+const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItemProps) => {
+  const router = useRouter();
+  const selected = useStore(
+    useCallback((state) => state.selected[collectionItem.id] ?? false, [collectionItem.id])
+  );
+  const toggleSelected = useStore((state) => state.toggleSelected);
+  const { classes: sharedClasses, cx } = useCardStyles();
+  const reviewData = getCollectionItemReviewData(collectionItem);
+
+  return (
+    <FeedCard>
+      <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
+        <Card.Section>
+          <Checkbox
+            checked={selected}
+            onChange={() => toggleSelected(collectionItem.id)}
+            size="lg"
+            sx={{
+              position: 'absolute',
+              top: 5,
+              right: 5,
+              zIndex: 9,
+            }}
+          />
+          <ImageGuard
+            images={reviewData.images}
+            connect={{ entityId: collectionItem.id, entityType: 'collectionItemReview' }}
+            render={(image) => (
+              <ImageGuard.Content>
+                {({ safe }) => {
+                  // Small hack to prevent blurry landscape images
+                  const originalAspectRatio =
+                    image.width && image.height ? image.width / image.height : 1;
+                  return (
+                    <>
+                      <Group
+                        spacing={4}
+                        position="apart"
+                        className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
+                        noWrap
+                      >
+                        <Group spacing={4}>
+                          <ImageGuard.ToggleConnect position="static" />
+                          {collectionItem.status && (
+                            <Badge
+                              variant="filled"
+                              color={
+                                collectionItem.status === CollectionItemStatus.REJECTED
+                                  ? 'red'
+                                  : 'yellow'
+                              }
+                            >
+                              {collectionItem.status}
+                            </Badge>
+                          )}
+                        </Group>
+                      </Group>
+                      {safe ? (
+                        <EdgeImage
+                          src={image.url ?? ''}
+                          name={image.name ?? image.id.toString()}
+                          alt={image.name ?? undefined}
+                          width={
+                            originalAspectRatio > 1
+                              ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
+                              : DEFAULT_EDGE_IMAGE_WIDTH
+                          }
+                          placeholder="empty"
+                          className={sharedClasses.image}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <MediaHash {...image} />
+                      )}
+                    </>
+                  );
+                }}
+              </ImageGuard.Content>
+            )}
+          />
+        </Card.Section>
+        <Stack
+          className={cx(
+            sharedClasses.contentOverlay,
+            sharedClasses.bottom,
+            sharedClasses.gradientOverlay
+          )}
+          spacing="sm"
+        >
+          {reviewData.user && reviewData.user.id !== -1 && (
+            <UnstyledButton
+              sx={{ color: 'white' }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                router.push(`/users/${reviewData.user?.username}`);
+              }}
+            >
+              <UserAvatar
+                user={reviewData.user}
+                avatarProps={{ radius: 'md', size: 32 }}
+                withUsername
+              />
+            </UnstyledButton>
+          )}
+        </Stack>
+
+        {/*<Stack*/}
+        {/*  className={cx(*/}
+        {/*    sharedClasses.contentOverlay,*/}
+        {/*    sharedClasses.bottom,*/}
+        {/*    sharedClasses.gradientOverlay*/}
+        {/*  )}*/}
+        {/*  spacing="sm"*/}
+        {/*>*/}
+        {/*  {data.user.id !== -1 && (*/}
+        {/*    <UnstyledButton*/}
+        {/*      sx={{ color: 'white' }}*/}
+        {/*      onClick={(e) => {*/}
+        {/*        e.preventDefault();*/}
+        {/*        e.stopPropagation();*/}
+
+        {/*        router.push(`/users/${data.user.username}`);*/}
+        {/*      }}*/}
+        {/*    >*/}
+        {/*      <UserAvatar user={data.user} avatarProps={{ radius: 'md', size: 32 }} withUsername />*/}
+        {/*    </UnstyledButton>*/}
+        {/*  )}*/}
+        {/*</Stack>*/}
+      </Box>
+    </FeedCard>
+  );
+};
+
+type CollectionItemGridItemProps = {
+  data: CollectionItemExpanded;
+  index: number;
+  width: number;
+};
 
 function ModerationControls({
   collectionItems,
@@ -363,157 +485,3 @@ function ModerationControls({
     </Group>
   );
 }
-
-function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
-  const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
-  const toggleSelected = useStore((state) => state.toggleSelected);
-
-  const height = useMemo(() => {
-    if (!image.width || !image.height) return 300;
-    const width = itemWidth > 0 ? itemWidth : 300;
-    const aspectRatio = image.width / image.height;
-    const imageHeight = Math.floor(width / aspectRatio);
-    return Math.min(imageHeight, 600);
-  }, [itemWidth, image.width, image.height]);
-
-  const hasReport = !!image.report;
-  const pendingReport = hasReport && image.report?.status === 'Pending';
-
-  return (
-    <Card
-      shadow="sm"
-      p="xs"
-      sx={{ opacity: !image.needsReview && !pendingReport ? 0.2 : undefined }}
-      withBorder
-    >
-      <Card.Section sx={{ height: `${height}px` }}>
-        <Checkbox
-          checked={selected}
-          onChange={() => toggleSelected(image.id)}
-          size="lg"
-          sx={{
-            position: 'absolute',
-            top: 5,
-            right: 5,
-            zIndex: 9,
-          }}
-        />
-        <ImageGuard
-          images={[image]}
-          render={(image) => (
-            <Box
-              sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}
-              onClick={() => toggleSelected(image.id)}
-            >
-              <ImageGuard.ToggleImage
-                sx={(theme) => ({
-                  position: 'absolute',
-                  top: theme.spacing.xs,
-                  left: theme.spacing.xs,
-                  zIndex: 10,
-                })}
-                position="static"
-              />
-              <ImageGuard.Unsafe>
-                <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
-                  <MediaHash {...image} />
-                </AspectRatio>
-              </ImageGuard.Unsafe>
-              <ImageGuard.Safe>
-                <EdgeImage
-                  src={image.url}
-                  name={image.name ?? image.id.toString()}
-                  alt={image.name ?? undefined}
-                  width={450}
-                  placeholder="empty"
-                />
-                {image.postId && (
-                  <Link href={`/posts/${image.postId}`} passHref>
-                    <ActionIcon
-                      component="a"
-                      variant="transparent"
-                      style={{ position: 'absolute', bottom: '5px', left: '5px' }}
-                      size="lg"
-                      target="_blank"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                      }}
-                    >
-                      <IconExternalLink
-                        color="white"
-                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                        opacity={0.8}
-                        strokeWidth={2.5}
-                        size={26}
-                      />
-                    </ActionIcon>
-                  </Link>
-                )}
-                {image.meta && (
-                  <ImageMetaPopover
-                    meta={image.meta as ImageMetaProps}
-                    generationProcess={image.generationProcess ?? 'txt2img'}
-                  >
-                    <ActionIcon
-                      variant="transparent"
-                      style={{ position: 'absolute', bottom: '5px', right: '5px' }}
-                      size="lg"
-                    >
-                      <IconInfoCircle
-                        color="white"
-                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                        opacity={0.8}
-                        strokeWidth={2.5}
-                        size={26}
-                      />
-                    </ActionIcon>
-                  </ImageMetaPopover>
-                )}
-              </ImageGuard.Safe>
-            </Box>
-          )}
-        />
-      </Card.Section>
-      {hasReport && (
-        <Stack spacing={8} pt="xs">
-          <Group position="apart" noWrap>
-            <Stack spacing={2}>
-              <Text size="xs" color="dimmed" inline>
-                Reported by
-              </Text>
-              <Link href={`/user/${image.report?.user.username}`} passHref>
-                <Anchor size="xs" target="_blank" lineClamp={1} inline>
-                  {image.report?.user.username}
-                </Anchor>
-              </Link>
-            </Stack>
-            <Stack spacing={2} align="flex-end">
-              <Text size="xs" color="dimmed" inline>
-                Reported for
-              </Text>
-              <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
-            </Stack>
-          </Group>
-          <ContentClamp maxHeight={150}>
-            {image.report?.details
-              ? Object.entries(image.report.details).map(([key, value]) => (
-                  <Text key={key} size="sm">
-                    <Text weight="bold" span>
-                      {titleCase(key)}:
-                    </Text>{' '}
-                    {value}
-                  </Text>
-                ))
-              : null}
-          </ContentClamp>
-        </Stack>
-      )}
-    </Card>
-  );
-}
-
-type ImageGridItemProps = {
-  data: CollectionItemExpanded;
-  index: number;
-  width: number;
-};

@@ -47,7 +47,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
-  entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post';
+  entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post' | 'collectionItemReview';
   entityId: string | number;
 };
 // #region [store]
@@ -109,7 +109,7 @@ const useImageGuardContext = () => {
 //   analysis?: Prisma.JsonValue;
 // };
 
-type ImageProps = {
+export type ImageProps = {
   id: number;
   nsfw: NsfwLevel;
   imageNsfw?: boolean;
@@ -119,6 +119,8 @@ type ImageProps = {
   needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
+  url?: string | null;
+  name?: string | null;
 };
 
 type ImageGuardProps<T extends ImageProps> = {

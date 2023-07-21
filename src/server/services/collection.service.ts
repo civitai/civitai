@@ -394,7 +394,7 @@ interface ArticleCollectionItem {
   data: ArticleGetAll['items'][0];
 }
 
-export type CollectionItemExpanded = { id: number } & (
+export type CollectionItemExpanded = { id: number; status?: CollectionItemStatus } & (
   | ModelCollectionItem
   | PostCollectionItem
   | ImageCollectionItem
@@ -444,6 +444,7 @@ export const getCollectionItemsByCollectionId = async ({
       postId: true,
       imageId: true,
       articleId: true,
+      status: input.forReview,
     },
     where,
   });
