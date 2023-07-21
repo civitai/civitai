@@ -47,7 +47,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
-  entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post' | 'collectionItemReview';
+  entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post' | 'collectionItem';
   entityId: string | number;
 };
 // #region [store]

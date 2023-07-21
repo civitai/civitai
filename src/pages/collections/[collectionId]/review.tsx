@@ -115,9 +115,8 @@ const ReviewCollection = () => {
 
   const handleStatusToggle = (value: string[]) => {
     setStatuses(value as CollectionItemStatus[]);
+    deselectAll();
   };
-
-  useEffect(deselectAll, [statuses, deselectAll]);
 
   useEffect(() => {
     if (inView) fetchNextPage();
@@ -222,7 +221,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
           />
           <ImageGuard
             images={reviewData.images}
-            connect={{ entityId: collectionItem.id, entityType: 'collectionItemReview' }}
+            connect={{ entityId: collectionItem.id, entityType: 'collectionItem' }}
             render={(image) => (
               <ImageGuard.Content>
                 {({ safe }) => {

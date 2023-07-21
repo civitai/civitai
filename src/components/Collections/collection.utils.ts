@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { removeEmpty } from '~/utils/object-helpers';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { CollectionItemStatus } from '@prisma/client';
-import { ImageGetInfinite } from '~/types/router';
 import { ImageProps } from '~/components/ImageGuard/ImageGuard';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
@@ -67,6 +66,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'model':
       reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
       reviewData.user = collectionItem.data.user;
+      break;
     default:
       break;
   }

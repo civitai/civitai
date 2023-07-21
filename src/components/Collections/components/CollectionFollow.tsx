@@ -11,9 +11,9 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
 
   const { isLoading: creatingFollow, mutate: followCollection } =
     trpc.collection.follow.useMutation({
-      onSuccess() {
-        utils.collection.getById.invalidate({ id: collection.id });
-        utils.collection.getAllUser.refetch();
+      async onSuccess() {
+        await utils.collection.getById.invalidate({ id: collection.id });
+        await utils.collection.getAllUser.refetch();
       },
       onError(error) {
         showErrorNotification({
@@ -25,9 +25,9 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
 
   const { isLoading: removingFollow, mutate: unfollowCollection } =
     trpc.collection.unfollow.useMutation({
-      onSuccess() {
-        utils.collection.getById.invalidate({ id: collection.id });
-        utils.collection.getAllUser.refetch();
+      async onSuccess() {
+        await utils.collection.getById.invalidate({ id: collection.id });
+        await utils.collection.getAllUser.refetch();
       },
       onError(error) {
         showErrorNotification({

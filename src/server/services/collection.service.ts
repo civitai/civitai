@@ -17,7 +17,11 @@ import {
   MetricTimeframe,
   Prisma,
 } from '@prisma/client';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { UserPreferencesInput, userPreferencesSchema } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
@@ -35,7 +39,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 export type CollectionContributorPermissionFlags = {
   read: boolean;
   write: boolean;
-  write_review: boolean;
+  writeReview: boolean;
   manage: boolean;
   follow: boolean;
   isContributor: boolean;
@@ -52,7 +56,7 @@ export const getUserCollectionPermissionsById = async ({
   const permissions: CollectionContributorPermissionFlags = {
     read: false,
     write: false,
-    write_review: false,
+    writeReview: false,
     manage: false,
     follow: false,
     isContributor: false,
@@ -135,7 +139,7 @@ export const getUserCollectionPermissionsById = async ({
     permissions.write = true;
   }
   if (contributorItem.permissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
-    permissions.write_review = true;
+    permissions.writeReview = true;
   }
 
   if (contributorItem.permissions.includes(CollectionContributorPermission.MANAGE)) {
@@ -228,9 +232,9 @@ export const getUserCollectionsWithPermissions = async <
     .sort(({ userId }) => (userId === user.id ? -1 : 1));
 };
 
-export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
+export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
   const { id } = input;
-  return dbRead.collection.findFirst({
+  return dbRead.collection.findUnique({
     where: { id },
     select: {
       id: true,
@@ -292,7 +296,7 @@ export const saveItemInCollections = async ({
           return null;
         }
 
-        if (!permission.write_review && !permission.write) {
+        if (!permission.writeReview && !permission.write) {
           return null;
         }
 
@@ -300,7 +304,7 @@ export const saveItemInCollections = async ({
           ...input,
           addedById: user.id,
           collectionId,
-          status: permission.write_review
+          status: permission.writeReview
             ? CollectionItemStatus.REVIEW
             : CollectionItemStatus.ACCEPTED,
         };
@@ -417,7 +421,6 @@ export const getCollectionItemsByCollectionId = async ({
   const skip = page && limit ? (page - 1) * limit : undefined;
 
   const userPreferencesInput = userPreferencesSchema.parse(input);
-  console.log('userPreferencesInput', userPreferencesInput, 'collectionId', collectionId);
 
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
@@ -459,8 +462,6 @@ export const getCollectionItemsByCollectionId = async ({
 
   const modelIds = collectionItems.map((item) => item.modelId).filter(isDefined);
 
-  console.log(modelIds);
-
   const models =
     modelIds.length > 0
       ? await getModelsWithImagesAndModelVersions({
@@ -476,8 +477,6 @@ export const getCollectionItemsByCollectionId = async ({
           ctx,
         })
       : { items: [] };
-
-  console.log(models);
 
   const articleIds = collectionItems.map((item) => item.articleId).filter(isDefined);
 
@@ -685,7 +684,7 @@ export const addContributorToCollection = async ({
   });
 
   if (!manage && !follow) {
-    throw throwBadRequestError(
+    throw throwAuthorizationError(
       'You do not have permission to add contributors to this collection.'
     );
   }
@@ -719,7 +718,7 @@ export const removeContributorFromCollection = async ({
   });
 
   if (!manage && user.id !== userId) {
-    throw throwBadRequestError(
+    throw throwAuthorizationError(
       'You do not have permission to remove contributors from this collection.'
     );
   }
@@ -779,7 +778,7 @@ export const updateCollectionItemsStatus = async ({
   });
 
   if (!manage && !isOwner) {
-    throw throwBadRequestError('You do not have permission manage contributor item status.');
+    throw throwAuthorizationError('You do not have permission manage contributor item status.');
   }
   try {
     return await dbWrite.collectionItem.updateMany({
