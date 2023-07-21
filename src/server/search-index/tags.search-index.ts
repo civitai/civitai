@@ -141,8 +141,9 @@ const onFetchItemsToIndex = async ({
     .map((tagRecord) => {
       const metrics = tagRecord.metrics[0];
       //perhaps posts + articles + model + imageCounts
-      const metricsCount =
-        metrics.articleCount + metrics.postCount + metrics.modelCount + metrics.imageCount;
+      const metricsCount = metrics
+        ? metrics.articleCount + metrics.postCount + metrics.modelCount + metrics.imageCount
+        : 0;
 
       if (metricsCount < MINIMUM_METRICS_COUNT) {
         return null;
