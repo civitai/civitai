@@ -6,7 +6,6 @@ import { useInView } from 'react-intersection-observer';
 
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
 import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';

@@ -17,6 +17,72 @@ import { constants } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { NextLink } from '@mantine/next';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { CollectionByIdModel } from '~/types/router';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { useModelQueryParams } from '~/components/Model/model.utils';
+import { CollectionType } from '@prisma/client';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { useImageQueryParams } from '~/components/Image/image.utils';
+
+const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+  const { set, ...queryFilters } = useModelQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="models" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="models" />
+          <ModelFiltersDropdown />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ModelsInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection?.id,
+        }}
+      />
+    </IsClient>
+  );
+};
+
+const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+  const { ...queryFilters } = useImageQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="images" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="images" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ImagesInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection?.id,
+        }}
+        withTags
+      />
+    </IsClient>
+  );
+};
 
 export function Collection({
   collectionId,
@@ -89,9 +155,13 @@ export function Collection({
             )}
           </Group>
 
-          <IsClient>
-            <ModelsInfinite filters={{ collectionId, period: 'AllTime' }} />
-          </IsClient>
+          {collection && collection.type === CollectionType.Model && (
+            <ModelCollection collection={collection} />
+          )}
+
+          {collection && collection.type === CollectionType.Image && (
+            <ImageCollection collection={collection} />
+          )}
         </Stack>
       </MasonryContainer>
     </MasonryProvider>
