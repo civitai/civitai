@@ -42,14 +42,10 @@ import {
 } from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
-import {
-  postImageTransmitter,
-  usePostImageTransmitterStore,
-} from '~/store/post-image-transmitter.store';
+import { postImageTransmitter } from '~/store/post-image-transmitter.store';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
-  const transmittedFiles = usePostImageTransmitterStore((state) => state.data);
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
@@ -61,15 +57,10 @@ export function EditPostImages({ max }: { max?: number }) {
 
   const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
 
-  // do something with files that were set externally
-  // this will duplicate the images being uploaded in dev due to reactStrictMode
   useEffect(() => {
-    if (transmittedFiles) {
-      handleDrop(transmittedFiles);
-      postImageTransmitter.setData(undefined);
-    }
-    return () => postImageTransmitter.setData(undefined);
-  }, [transmittedFiles]);
+    const files = postImageTransmitter.getData();
+    if (files) handleDrop(files);
+  }, []);
 
   return (
     <Stack>

@@ -18,4 +18,9 @@ export const usePostImageTransmitterStore = create<StoreState>()(
 const store = usePostImageTransmitterStore.getState();
 export const postImageTransmitter = {
   setData: store.setData,
+  getData: () => {
+    const inStore = usePostImageTransmitterStore.getState().data;
+    store.setData();
+    return inStore;
+  },
 };
