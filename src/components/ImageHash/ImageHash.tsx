@@ -11,7 +11,6 @@ export type MediaHashProps = {
 };
 
 export function MediaHash({ hash, height, width, style, cropFocus }: MediaHashProps) {
-  console.log(height, width, hash, style, cropFocus);
   if (!hash || !width || !height) return null;
 
   const size = getClampedSize(width, height, 32);
