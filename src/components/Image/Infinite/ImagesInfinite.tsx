@@ -22,6 +22,7 @@ type ImagesInfiniteState = {
   period?: MetricTimeframe;
   sort?: ImageSort;
   reactions?: ReviewReactions[];
+  collectionId?: number;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {

@@ -19,15 +19,19 @@ import { CollectionFollowAction } from '~/components/Collections/components/Coll
 import { NextLink } from '@mantine/next';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CollectionByIdModel } from '~/types/router';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
-import { hideMobile } from '~/libs/sx-helpers';
-import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { CollectionType } from '@prisma/client';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 
-const ModelCollection = ({ collection }: { collectionId: CollectionByIdModel }) => {
+const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
   const { set, ...queryFilters } = useModelQueryParams();
+
+  if (!collection) {
+    return null;
+  }
 
   return (
     <IsClient>
@@ -44,10 +48,37 @@ const ModelCollection = ({ collection }: { collectionId: CollectionByIdModel }) 
       <ModelsInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection.id,
+          collectionId: collection?.id,
         }}
-        title={collection.name}
-        sx={{ mt: 0 }}
+      />
+    </IsClient>
+  );
+};
+
+const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+  const { ...queryFilters } = useImageQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="images" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="images" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ImagesInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection?.id,
+        }}
+        withTags
       />
     </IsClient>
   );
@@ -126,6 +157,10 @@ export function Collection({
 
           {collection && collection.type === CollectionType.Model && (
             <ModelCollection collection={collection} />
+          )}
+
+          {collection && collection.type === CollectionType.Image && (
+            <ImageCollection collection={collection} />
           )}
         </Stack>
       </MasonryContainer>

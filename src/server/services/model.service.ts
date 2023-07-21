@@ -286,6 +286,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   let orderBy: Prisma.ModelOrderByWithRelationInput = {
     lastVersionAt: { sort: 'desc', nulls: 'last' },
   };
+
   if (sort === ModelSort.HighestRated) orderBy = { rank: { [`rating${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostLiked)
     orderBy = { rank: { [`favoriteCount${period}Rank`]: 'asc' } };
