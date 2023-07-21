@@ -71,6 +71,7 @@ export const upsertCollectionInput = z
     coverImage: z.string().optional(),
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
+    type: z.nativeEnum(CollectionType).default(CollectionType.Model),
   })
   .merge(collectionItemSchema);
 

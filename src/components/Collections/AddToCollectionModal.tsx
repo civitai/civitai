@@ -112,7 +112,7 @@ function CollectionListForm({
         CollectionContributorPermission.ADD_REVIEW,
         CollectionContributorPermission.MANAGE,
       ],
-      type: CollectionType.Model,
+      type: props.type || collectionType.Model,
     });
   const { data: collectionItems = [], isLoading: loadingStatus } =
     trpc.collection.getUserCollectionItemsByItem.useQuery({
@@ -261,8 +261,8 @@ function NewCollectionForm({
   const form = useForm({
     schema: upsertCollectionInput,
     defaultValues: {
-      ...props,
       type: CollectionType.Model,
+      ...props,
       name: '',
       description: '',
       read: CollectionReadConfiguration.Private,

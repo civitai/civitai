@@ -16,7 +16,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { ModelStatus } from '@prisma/client';
+import { CollectionType, ModelStatus } from '@prisma/client';
 import {
   IconBrush,
   IconStar,
@@ -345,7 +345,7 @@ export function AmbientModelCard({ data, height }: Props) {
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            openContext('addToCollection', { modelId: data.id });
+            openContext('addToCollection', { modelId: data.id, type: CollectionType.Model });
           }}
         >
           Add to Collection

@@ -13,7 +13,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { NsfwLevel } from '@prisma/client';
+import { CollectionType, NsfwLevel } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -313,7 +313,9 @@ ImageGuard.Report = function ReportImage({
     menuItems.push(
       <AddToCollectionMenuItem
         key="add-to-collection"
-        onClick={() => openContext('addToCollection', { imageId: image.id })}
+        onClick={() =>
+          openContext('addToCollection', { imageId: image.id, type: CollectionType.Image })
+        }
       />
     );
   }

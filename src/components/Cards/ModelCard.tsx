@@ -42,6 +42,7 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { CollectionType } from '@prisma/client';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -117,7 +118,9 @@ export function ModelCard({ data }: Props) {
     contextMenuItems = contextMenuItems.concat([
       <AddToCollectionMenuItem
         key="add-to-collection"
-        onClick={() => openContext('addToCollection', { modelId: data.id })}
+        onClick={() =>
+          openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
+        }
       />,
     ]);
   }
