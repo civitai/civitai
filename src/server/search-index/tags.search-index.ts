@@ -21,6 +21,10 @@ const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
 const INDEX_ID = 'tags';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
+/*
+  Only tags above this threshold will be indexed.
+ */
+const MINIMUM_METRICS_COUNT = 10;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
@@ -139,8 +143,6 @@ const onFetchItemsToIndex = async ({
       //perhaps posts + articles + model + imageCounts
       const metricsCount =
         metrics.articleCount + metrics.postCount + metrics.modelCount + metrics.imageCount;
-
-      const MINIMUM_METRICS_COUNT = 10;
 
       if (metricsCount < MINIMUM_METRICS_COUNT) {
         return null;
