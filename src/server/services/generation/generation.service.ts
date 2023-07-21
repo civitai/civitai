@@ -187,6 +187,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       params: {
         ...params,
         negativePrompt,
+        seed: params.seed === -1 ? undefined : params.seed,
       },
       resources: assets
         .map((assetId): Generation.Resource | undefined => {

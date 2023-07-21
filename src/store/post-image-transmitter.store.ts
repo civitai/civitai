@@ -1,16 +1,12 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-type FileType = { type: 'file'; files: File[] };
-type UrlType = { type: 'url'; urls: string[] };
-type DiscriminatedUnion = FileType | UrlType;
-
 type StoreState = {
-  data?: DiscriminatedUnion;
-  setData: (data?: DiscriminatedUnion) => void;
+  data?: File[];
+  setData: (data?: File[]) => void;
 };
 
-const usePostImageTransmitter = create<StoreState>()(
+export const usePostImageTransmitterStore = create<StoreState>()(
   immer((set, get) => ({
     setData: (data) =>
       set((state) => {
@@ -19,7 +15,7 @@ const usePostImageTransmitter = create<StoreState>()(
   }))
 );
 
-const store = usePostImageTransmitter.getState();
-const postImageTransmitter = {
+const store = usePostImageTransmitterStore.getState();
+export const postImageTransmitter = {
   setData: store.setData,
 };

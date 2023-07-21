@@ -1,7 +1,7 @@
 import { AspectRatio, Loader, Center, Card, Text } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { useEffect, useRef, useState } from 'react';
-import { Generation } from '~/server/services/generation/generation.types';
+import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
 
 type GeneratedImageStatus = 'loading' | 'loaded' | 'error';
 
@@ -14,8 +14,7 @@ export function GeneratedImage({
 }) {
   const [status, setStatus] = useState<GeneratedImageStatus>('loading');
   const ref = useRef<HTMLImageElement>(null);
-  const urlRef = useRef<string>();
-  const initializedRef = useRef(false);
+  const initializedRef = useRef(request.status !== GenerationRequestStatus.Succeeded);
 
   const handleImageClick = () => {
     if (!image) return;
@@ -48,10 +47,8 @@ export function GeneratedImage({
           break;
         }
         case 200: {
-          const blob = await response.blob();
-          urlRef.current = URL.createObjectURL(blob);
           if (!ref.current) return;
-          ref.current.src = urlRef.current;
+          ref.current.src = url;
           break;
         }
         default: {
@@ -69,9 +66,6 @@ export function GeneratedImage({
       initializedRef.current = true;
       fetchImage(image.url);
     }
-    return () => {
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    };
   }, []);
 
   return (
@@ -95,6 +89,7 @@ export function GeneratedImage({
           <img
             ref={ref}
             alt=""
+            src={request.status === GenerationRequestStatus.Succeeded ? image.url : undefined}
             onLoad={handleLoad}
             onClick={handleImageClick}
             style={{ cursor: 'pointer', zIndex: 2, width: '100%' }}

@@ -11,20 +11,31 @@ import {
   MantineColor,
   Tooltip,
   SimpleGrid,
+  TooltipProps,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconBolt, IconPhoto, IconX } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
+import { IconBolt, IconPhoto, IconPlayerPlayFilled, IconTrash, IconX } from '@tabler/icons-react';
+import { useEffect } from 'react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Countdown } from '~/components/Countdown/Countdown';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openBoostModal } from '~/components/ImageGeneration/BoostModal';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { constants } from '~/server/common/constants';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
+
+const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
+  withinPortal: true,
+  withArrow: true,
+  color: 'dark',
+  zIndex: constants.imageGeneration.drawerZIndex + 1,
+};
 
 const statusColors: Record<GenerationRequestStatus, MantineColor> = {
   [GenerationRequestStatus.Pending]: 'gray',
@@ -34,18 +45,48 @@ const statusColors: Record<GenerationRequestStatus, MantineColor> = {
   [GenerationRequestStatus.Error]: 'red',
 };
 
+// export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
-
-  const deleteMutation = useDeleteGenerationRequest();
-
-  const { prompt, ...details } = request.params;
-
   const status = request.status ?? GenerationRequestStatus.Pending;
   const pendingProcessing =
     status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
   const succeeded = status === GenerationRequestStatus.Succeeded;
   const failed = status === GenerationRequestStatus.Error;
+
+  const verbage = pendingProcessing
+    ? {
+        modal: {
+          title: 'Cancel Request',
+          children: `Are you sure you want to cancel this request?`,
+          labels: { confirm: 'Delete', cancel: "No, don't cancel it" },
+        },
+        tooltip: 'Cancel',
+      }
+    : {
+        modal: {
+          title: 'Delete Creation',
+          children: `Are you sure you want to delete this creation?`,
+          labels: { confirm: 'Delete', cancel: "No, don't delete it" },
+        },
+        tooltip: 'Delete',
+      };
+
+  const deleteMutation = useDeleteGenerationRequest();
+  const handleDeleteQueueItem = () => {
+    openConfirmModal({
+      ...verbage.modal,
+      confirmProps: { color: 'red' },
+      zIndex: constants.imageGeneration.drawerZIndex + 1,
+      onConfirm: () => {
+        deleteMutation.mutate({ id: request.id });
+      },
+    });
+  };
+
+  const handleGenerate = () => generationStore.setData({ type: 'remix', data: request });
+
+  const { prompt, ...details } = request.params;
 
   const boost = (request: Generation.Request) => {
     console.log('boost it', request);
@@ -56,6 +97,10 @@ export function QueueItem({ request }: Props) {
     if (showBoost) openBoostModal({ request, cb: boost });
     else boost(request);
   };
+
+  useEffect(() => {
+    if (request.queuePosition) console.log(request.queuePosition);
+  }, [request]);
 
   return (
     <Card withBorder px="xs">
@@ -85,15 +130,21 @@ export function QueueItem({ request }: Props) {
             )}
             {pendingProcessing && (
               <Button.Group>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  color="gray"
-                  sx={{ pointerEvents: 'none' }}
-                  compact
-                >
-                  ETA <Countdown endTime={request.estimatedCompletionDate} />
-                </Button>
+                {request.queuePosition?.estimatedCompletedDate && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    color="gray"
+                    sx={{ pointerEvents: 'none' }}
+                    compact
+                  >
+                    ETA{' '}
+                    <Countdown
+                      endTime={request.queuePosition?.estimatedCompletedDate}
+                      format="short"
+                    />
+                  </Button>
+                )}
                 <HoverCard withArrow position="top" withinPortal zIndex={400}>
                   <HoverCard.Target>
                     <Button
@@ -120,14 +171,22 @@ export function QueueItem({ request }: Props) {
               {formatDateMin(request.createdAt)}
             </Text>
           </Group>
-          <ActionIcon
-            color="red"
-            size="md"
-            onClick={() => deleteMutation.mutate({ id: request.id })}
-            disabled={deleteMutation.isLoading}
-          >
-            <IconX size={20} />
-          </ActionIcon>
+          <Group spacing="xs">
+            <Tooltip {...tooltipProps} label="Generate">
+              <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
+                <IconPlayerPlayFilled />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip {...tooltipProps} label={verbage.tooltip}>
+              <ActionIcon
+                size="md"
+                onClick={handleDeleteQueueItem}
+                disabled={deleteMutation.isLoading}
+              >
+                {pendingProcessing ? <IconX size={20} /> : <IconTrash size={20} />}
+              </ActionIcon>
+            </Tooltip>
+          </Group>
         </Group>
       </Card.Section>
       <Stack py="xs" spacing={8}>

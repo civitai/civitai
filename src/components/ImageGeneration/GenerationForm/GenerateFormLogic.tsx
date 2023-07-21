@@ -8,6 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import { uniqBy } from 'lodash-es';
 import { generation } from '~/server/common/constants';
+import { ModelType } from '@prisma/client';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -45,13 +46,21 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         }
       };
 
+      const formData = getFormData();
+      // may not need this...
+      if (formData.resources) {
+        for (const resource of formData.resources) {
+          if (resource.modelType === ModelType.LORA) resource.strength = resource.strength ?? 1;
+        }
+      }
+
       /*
         !important - form.reset won't work here
         use the schema keys to iterate over each form value
         when setting data, any keys that don't have data will be set to undefined
         this is necessary for 'remix' to work properly.
       */
-      const formData = getFormData();
+
       const keys = Object.keys(generateFormSchema.shape);
       for (const item of keys) {
         const key = item as keyof typeof formData;
