@@ -70,7 +70,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const updateRankingRulesTask = await index.updateRankingRules([
     'attribute',
-    'nsfw:asc',
     'metrics.weightedRating:desc',
     'words',
     'typo',
