@@ -37,8 +37,6 @@ export function ImageCard({ data, collectionId }: Props) {
 
                   return (
                     <>
-                      <ImageGuard.Report withinPortal />
-                      <ImageGuard.ToggleImage position="top-left" />
                       {safe ? (
                         <EdgeImage
                           src={image.url}

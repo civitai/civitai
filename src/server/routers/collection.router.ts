@@ -1,17 +1,24 @@
 import {
   saveItemHandler,
   getAllUserCollectionsHandler,
-  getUserCollectionsByItemHandler,
   upsertCollectionHandler,
   deleteUserCollectionHandler,
   getCollectionByIdHandler,
+  followHandler,
+  unfollowHandler,
+  getUserCollectionItemsByItemHandler,
+  collectionItemsInfiniteHandler,
+  updateCollectionItemsStatusHandler,
 } from '~/server/controllers/collection.controller';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
   saveCollectionItemInputSchema,
   getAllUserCollectionsInputSchema,
-  getUserCollectionsByItemSchema,
+  getUserCollectionItemsByItemSchema,
   upsertCollectionInput,
+  followCollectionInputSchema,
+  getAllCollectionItemsSchema,
+  updateCollectionItemsStatusInput,
 } from '~/server/schema/collection.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
@@ -29,10 +36,26 @@ export const collectionRouter = router({
     .input(saveCollectionItemInputSchema)
     .use(isFlagProtected('collections'))
     .mutation(saveItemHandler),
-  getUserCollectionsByItem: protectedProcedure
-    .input(getUserCollectionsByItemSchema)
+  follow: protectedProcedure
+    .input(followCollectionInputSchema)
     .use(isFlagProtected('collections'))
-    .query(getUserCollectionsByItemHandler),
+    .mutation(followHandler),
+  unfollow: protectedProcedure
+    .input(followCollectionInputSchema)
+    .use(isFlagProtected('collections'))
+    .mutation(unfollowHandler),
+  getUserCollectionItemsByItem: protectedProcedure
+    .input(getUserCollectionItemsByItemSchema)
+    .use(isFlagProtected('collections'))
+    .query(getUserCollectionItemsByItemHandler),
+  getAllCollectionItems: protectedProcedure
+    .input(getAllCollectionItemsSchema)
+    .use(isFlagProtected('collections'))
+    .query(collectionItemsInfiniteHandler),
+  updateCollectionItemsStatus: protectedProcedure
+    .input(updateCollectionItemsStatusInput)
+    .use(isFlagProtected('collections'))
+    .mutation(updateCollectionItemsStatusHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))

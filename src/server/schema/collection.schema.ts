@@ -2,10 +2,12 @@ import { z } from 'zod';
 import { isDefined } from '~/utils/type-guards';
 import {
   CollectionContributorPermission,
+  CollectionItemStatus,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
+import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 
 const collectionItemSchema = z.object({
   type: z.nativeEnum(CollectionType).optional(),
@@ -72,8 +74,8 @@ export const upsertCollectionInput = z
   })
   .merge(collectionItemSchema);
 
-export type GetUserCollectionsByItemSchema = z.infer<typeof getUserCollectionsByItemSchema>;
-export const getUserCollectionsByItemSchema = collectionItemSchema
+export type GetUserCollectionItemsByItemSchema = z.infer<typeof getUserCollectionItemsByItemSchema>;
+export const getUserCollectionItemsByItemSchema = collectionItemSchema
   .extend({ note: z.never().optional() })
   .merge(getAllUserCollectionsInputSchema)
   .refine(
@@ -81,3 +83,29 @@ export const getUserCollectionsByItemSchema = collectionItemSchema
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
     { message: 'Please pass a single resource to match collections to.' }
   );
+
+export type FollowCollectionInputSchema = z.infer<typeof followCollectionInputSchema>;
+
+export const followCollectionInputSchema = z.object({
+  collectionId: z.number(),
+});
+
+export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSchema>;
+export const getAllCollectionItemsSchema = z
+  .object({
+    limit: z.number().min(0).max(100),
+    page: z.number(),
+    cursor: z.number(),
+    collectionId: z.number(),
+    statuses: z.array(z.nativeEnum(CollectionItemStatus)),
+    forReview: z.boolean().optional(),
+  })
+  .partial()
+  .required({ collectionId: true });
+
+export type UpdateCollectionItemsStatusInput = z.infer<typeof updateCollectionItemsStatusInput>;
+export const updateCollectionItemsStatusInput = z.object({
+  collectionId: z.number(),
+  collectionItemIds: z.array(z.number()),
+  status: z.nativeEnum(CollectionItemStatus),
+});

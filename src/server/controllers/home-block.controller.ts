@@ -52,16 +52,20 @@ export const getHomeBlocksHandler = async ({
                   return null;
                 }
 
-                const collection = await getCollectionById({ id: metadata.collection.id });
+                const collection = await getCollectionById({
+                  input: { id: metadata.collection.id },
+                });
+
                 if (!collection) {
                   return null;
                 }
+
                 const items = await getCollectionItemsByCollectionId({
-                  id: collection.id,
                   ctx,
                   input: {
                     ...(input as UserPreferencesInput),
-                    // TODO.home-blocks: Set item limit as part of the input
+                    collectionId: collection.id,
+                    // TODO.home-blocks: Set item limit as part of the input?
                     limit: metadata.collection.limit,
                   },
                 });

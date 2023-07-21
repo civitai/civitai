@@ -1809,6 +1809,7 @@ model SearchIndexUpdateQueue {
 enum CollectionWriteConfiguration {
   Private
   Public
+  Review
 }
 
 enum CollectionReadConfiguration {

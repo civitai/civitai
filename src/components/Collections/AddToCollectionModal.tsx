@@ -107,11 +107,15 @@ function CollectionListForm({
 
   const { data: collections = [], isLoading: loadingCollections } =
     trpc.collection.getAllUser.useQuery({
-      permissions: [CollectionContributorPermission.ADD, CollectionContributorPermission.MANAGE],
+      permissions: [
+        CollectionContributorPermission.ADD,
+        CollectionContributorPermission.ADD_REVIEW,
+        CollectionContributorPermission.MANAGE,
+      ],
       type: CollectionType.Model,
     });
-  const { data: matchedCollections = [], isLoading: loadingStatus } =
-    trpc.collection.getUserCollectionsByItem.useQuery({
+  const { data: collectionItems = [], isLoading: loadingStatus } =
+    trpc.collection.getUserCollectionItemsByItem.useQuery({
       ...target,
     });
 
@@ -126,7 +130,7 @@ function CollectionListForm({
   const handleSubmit = (data: AddCollectionItemInput) => {
     addCollectionItemMutation.mutate(data, {
       async onSuccess() {
-        await queryUtils.collection.getUserCollectionsByItem.invalidate();
+        await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
         onSubmit();
         showNotification({
           title: 'Item added',
@@ -143,15 +147,17 @@ function CollectionListForm({
   };
 
   useEffect(() => {
-    if (matchedCollections.length === 0) return;
-    const collectionIds = matchedCollections.map((collection) => collection.id.toString());
+    if (collectionItems.length === 0) return;
+    const collectionIds = collectionItems.map((collectionItem) =>
+      collectionItem.collectionId.toString()
+    );
 
     // Ignoring because CheckboxGroup only accepts string[] to
     // keep track of the selected values but actual schema should be number[]
     // @ts-ignore: See above
     form.reset({ ...props, collectionIds });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchedCollections, props.articleId, props.imageId, props.modelId, props.postId]);
+  }, [collectionItems, props.articleId, props.imageId, props.modelId, props.postId]);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -210,21 +216,28 @@ function CollectionListForm({
             </Text>
             <ScrollArea.Autosize maxHeight={200}>
               <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                {contributingCollections.map((collection) => (
-                  <Checkbox
-                    key={collection.id}
-                    classNames={classes}
-                    value={collection.id.toString()}
-                    label={
-                      <Group spacing="xs" position="apart" w="100%" noWrap>
-                        <Text lineClamp={1} inherit>
-                          {collection.name}
-                        </Text>
-                        {privacyData[collection.read].icon}
-                      </Group>
-                    }
-                  />
-                ))}
+                {contributingCollections.map((collection) => {
+                  const collectionItem = collectionItems.find(
+                    (item) => item.collectionId === collection.id
+                  );
+
+                  return (
+                    <Checkbox
+                      key={collection.id}
+                      classNames={classes}
+                      value={collection.id.toString()}
+                      disabled={collectionItem && !collectionItem.canRemoveItem}
+                      label={
+                        <Group spacing="xs" position="apart" w="100%" noWrap>
+                          <Text lineClamp={1} inherit>
+                            {collection.name}
+                          </Text>
+                          {privacyData[collection.read].icon}
+                        </Group>
+                      }
+                    />
+                  );
+                })}
               </InputCheckboxGroup>
             </ScrollArea.Autosize>
           </Stack>
@@ -272,7 +285,7 @@ function NewCollectionForm({
     upsertCollectionMutation.mutate(data, {
       async onSuccess() {
         await queryUtils.collection.getAllUser.invalidate();
-        await queryUtils.collection.getUserCollectionsByItem.invalidate();
+        await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
         onSubmit();
         showSuccessNotification({
           title: 'Collection created',

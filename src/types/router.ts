@@ -78,3 +78,4 @@ export type HomeBlockGetAll = HomeBlockRouter['getHomeBlocks'];
 
 type CollectionRouter = RouterOutput['collection'];
 export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];
+export type CollectionByIdModel = CollectionRouter['getById']['collection'];

@@ -5,6 +5,7 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import {
+  CollectionItemStatus,
   CommercialUse,
   MetricTimeframe,
   ModelHashType,
@@ -57,7 +58,10 @@ import { isDefined } from '~/utils/type-guards';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelsSearchIndex } from '~/server/search-index';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -237,9 +241,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       user: sessionUser,
       id: collectionId,
     });
+
     if (!permissions.read) {
       return { items: [] };
     }
+
+    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+      getAvailableCollectionItemsFilterForUser({ permissions, user: sessionUser });
 
     const collectionItemModels = await dbRead.collectionItem.findMany({
       select: {
@@ -251,6 +259,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         modelId: {
           not: null,
         },
+        AND: collectionItemModelsAND,
       },
     });
 

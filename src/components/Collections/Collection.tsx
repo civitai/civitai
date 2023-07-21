@@ -4,24 +4,46 @@ import {
   Group,
   Stack,
   Title,
-  Popover,
   Text,
-  Button,
+  ThemeIcon,
+  Menu,
 } from '@mantine/core';
-import { IconDotsVertical, IconInfoCircle, IconPlus } from '@tabler/icons-react';
-import { ComingSoon } from '~/components/ComingSoon/ComingSoon';
+import { IconCloudOff, IconDotsVertical, IconPencil } from '@tabler/icons-react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { constants } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
+import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
+import { NextLink } from '@mantine/next';
 
 export function Collection({
   collectionId,
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
-  const { data: collection, isLoading } = trpc.collection.getById.useQuery({ id: collectionId });
+  const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
+    id: collectionId,
+  });
+
+  if (!isLoading && !collection) {
+    return (
+      <Stack w="100%" align="center">
+        <Stack spacing="md" align="center" maw={800}>
+          <Title order={1} lh={1}>
+            Whoops!
+          </Title>
+          <Text align="center">
+            It looks like you landed on the wrong place.The collection you are trying to access does
+            not exist or you do not have the sufficient permissions to see it.
+          </Text>
+          <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <IconCloudOff size={80} />
+          </ThemeIcon>
+        </Stack>
+      </Stack>
+    );
+  }
 
   return (
     <MasonryProvider
@@ -42,23 +64,29 @@ export function Collection({
                 </Text>
               )}
             </Stack>
-            <ComingSoon
-              message={`We're still working on adding the ability to follow collections. Check back soon!`}
-            >
-              <Button variant="outline" size="xs" pl={4} pr={8} ml="auto">
-                <Group spacing={4}>
-                  <IconPlus size={18} />
-                  Follow
-                </Group>
-              </Button>
-            </ComingSoon>
-            <ComingSoon
-              message={`We're still working on adding the ability to edit and delete your collections, but thought we'd get this into your hands anyway. Check back soon!`}
-            >
-              <ActionIcon variant="outline">
-                <IconDotsVertical size={16} />
-              </ActionIcon>
-            </ComingSoon>
+            {collection && permissions && (
+              <Group ml="auto">
+                <CollectionFollowAction collection={collection} permissions={permissions} />
+                {permissions.manage && (
+                  <Menu>
+                    <Menu.Target>
+                      <ActionIcon variant="outline">
+                        <IconDotsVertical size={16} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        component={NextLink}
+                        icon={<IconPencil size={14} stroke={1.5} />}
+                        href={`/collections/${collection.id}/review`}
+                      >
+                        Review Items
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                )}
+              </Group>
+            )}
           </Group>
 
           <IsClient>
