@@ -145,7 +145,7 @@ const ReviewCollection = () => {
         </Paper>
 
         <Stack spacing="sm" mb="lg">
-          <Title order={1}>Collection items that need Review</Title>
+          <Title order={1}>Collection items that need review</Title>
           <Text color="dimmed">
             You are reviewing items on the collection that are either pending review or have been
             rejected. You can change the status of these to be accepted or rejected.
@@ -154,6 +154,7 @@ const ReviewCollection = () => {
             <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
               <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
               <Chip value={CollectionItemStatus.REJECTED}>Rejected</Chip>
+              <Chip value={CollectionItemStatus.ACCEPTED}>Accepted</Chip>
             </Chip.Group>
           </Group>
         </Stack>
