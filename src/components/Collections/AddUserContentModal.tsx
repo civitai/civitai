@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Button,
   Divider,
   Group,
@@ -10,6 +11,7 @@ import {
   SimpleGrid,
   Stack,
 } from '@mantine/core';
+import { IconInfoCircle, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -18,6 +20,7 @@ import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -29,18 +32,19 @@ import { trpc } from '~/utils/trpc';
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
-  const clear = useStore((state) => state.clearSelectedImages);
-  const { files, uploadToCF } = useCFImageUpload();
-
-  const { query } = useImageQueryParams();
+  // const clear = useStore((state) => state.clearSelectedImages);
+  const { files, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
 
   const handleDropImages = async (droppedFiles: File[]) => {
-    await Promise.all(droppedFiles.map((file) => uploadToCF(file)));
+    for (const file of droppedFiles) {
+      uploadToCF(file);
+    }
   };
 
   const handleClose = () => {
+    resetFiles();
     onClose();
-    clear();
+    // clear();
   };
 
   const addSimpleImagePostCollectionMutation = trpc.collection.addSimpleImagePost.useMutation();
@@ -53,7 +57,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
       { collectionId, images: filteredImages },
       {
         onSuccess: async () => {
-          await queryUtils.image.getInfinite.invalidate({ collectionId });
+          await queryUtils.image.getInfinite.invalidate();
           handleClose();
         },
       }
@@ -70,51 +74,75 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
       size="80%"
       opened={opened}
       onClose={handleClose}
+      centered
     >
       <Stack spacing="xl">
         <ImageDropzone
           label="Drop or click to select your images to add to this collection"
           onDrop={handleDropImages}
+          count={files.length}
         />
         {files.length > 0 ? (
           <SimpleGrid
             spacing="sm"
             breakpoints={[
               { minWidth: 'xs', cols: 1 },
-              { minWidth: 'sm', cols: 2 },
-              { minWidth: 'md', cols: 3 },
+              { minWidth: 'sm', cols: 3 },
+              { minWidth: 'md', cols: 4 },
             ]}
           >
-            {files.map((file) => (
-              <Paper
-                key={file.id}
-                radius="sm"
-                p={0}
-                sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
-                withBorder
-              >
-                {file.status === 'success' ? (
-                  <EdgeImage
-                    placeholder="empty"
-                    src={file.id}
-                    alt={file.name ?? undefined}
-                    style={{ objectFit: 'cover', height: '100%' }}
-                  />
-                ) : (
-                  <>
-                    <MediaHash {...file} />
-                    <Progress
-                      size="xl"
-                      value={file.progress}
-                      label={`${Math.floor(file.progress)}%`}
-                      color={file.progress < 100 ? 'blue' : 'green'}
-                      striped
-                      animate
-                    />
-                  </>
-                )}
-              </Paper>
-            ))}
+            {files
+              .slice()
+              .reverse()
+              .map((file) => (
+                <Paper
+                  key={file.id}
+                  radius="sm"
+                  p={0}
+                  sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                  withBorder
+                >
+                  {file.status === 'success' ? (
+                    <>
+                      <EdgeImage
+                        placeholder="empty"
+                        src={file.id}
+                        alt={file.name ?? undefined}
+                        style={{ objectFit: 'cover', height: '100%' }}
+                      />
+                      <div style={{ position: 'absolute', top: 12, right: 12 }}>
+                        <ActionIcon
+                          variant="filled"
+                          size="lg"
+                          color="red"
+                          onClick={() => removeImage(file.id)}
+                        >
+                          <IconTrash size={26} strokeWidth={2.5} />
+                        </ActionIcon>
+                      </div>
+                      <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                        <ImageMetaPopover meta={file.meta}>
+                          <ActionIcon variant="light" color="dark" size="lg">
+                            <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                          </ActionIcon>
+                        </ImageMetaPopover>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <MediaHash {...file} />
+                      <Progress
+                        size="xl"
+                        value={file.progress}
+                        label={`${Math.floor(file.progress)}%`}
+                        color={file.progress < 100 ? 'blue' : 'green'}
+                        striped
+                        animate
+                      />
+                    </>
+                  )}
+                </Paper>
+              ))}
           </SimpleGrid>
         ) : (
           <>
@@ -124,19 +152,19 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
               maxColumnCount={4}
               maxSingleColumnWidth={450}
             >
-              <MasonryContainer fluid>
-                {currentUser && (
-                  <ImagesInfinite
-                    filters={{
-                      ...query,
-                      username: currentUser.username,
-                      period: 'AllTime',
-                      sort: ImageSort.Newest,
-                    }}
-                  />
-                )}
-                {/* <ScrollArea.Autosize maxHeight="calc(100vh - 200px)">
-            </ScrollArea.Autosize> */}
+              <MasonryContainer m={0} fluid>
+                <ScrollArea.Autosize maxHeight="500px">
+                  {currentUser && (
+                    <ImagesInfinite
+                      filters={{
+                        collectionId: undefined,
+                        username: currentUser.username,
+                        period: 'AllTime',
+                        sort: ImageSort.Newest,
+                      }}
+                    />
+                  )}
+                </ScrollArea.Autosize>
               </MasonryContainer>
             </MasonryProvider>
           </>
@@ -167,6 +195,9 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
 
 type Props = ModalProps & { collectionId: number };
 
+/**
+ * Experimental Stuff
+ */
 type Store = {
   selectedImages: number[];
   setSelectedImages: (ids: number[]) => void;

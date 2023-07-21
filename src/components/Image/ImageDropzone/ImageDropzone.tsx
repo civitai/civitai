@@ -7,14 +7,14 @@ export function ImageDropzone({
   max = 10,
   hasError,
   onDrop,
-  count = 0,
+  count,
   label,
   ...props
 }: Props) {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
 
-  const canAddFiles = count ? max - count > 0 : true;
+  const canAddFiles = max - count > 0;
   const disabled = !canAddFiles || initialDisabled;
   const handleDrop = (files: File[]) => {
     onDrop?.(files.slice(0, max - count));
@@ -80,8 +80,8 @@ const useStyles = createStyles((theme) => ({
 }));
 
 type Props = Omit<DropzoneProps, 'children'> & {
+  count: number;
   max?: number;
   hasError?: boolean;
-  count?: number;
   label?: string;
 };

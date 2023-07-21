@@ -267,7 +267,7 @@ export const addSimpleImagePostHandler = async ({
 }) => {
   try {
     const { user } = ctx;
-    const collection = await getCollectionById({ id: collectionId });
+    const collection = await getCollectionById({ input: { id: collectionId } });
     if (!collection) throw throwNotFoundError(`No collection with id ${collectionId}`);
 
     const permissions = await getUserCollectionPermissionsById({

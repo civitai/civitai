@@ -668,7 +668,7 @@ export const getAllImages = async ({
     tagReview = false;
     reportReview = false;
 
-    applyModRulesSql(AND, { userId });
+    applyModRulesSql(AND, { userId, publishedOnly: !collectionId });
   }
 
   if (needsReview) {
@@ -1429,11 +1429,14 @@ export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: 
   }
 };
 
-export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: number }) {
+export function applyModRulesSql(
+  AND: Prisma.Sql[],
+  { userId, publishedOnly = true }: { userId?: number; publishedOnly?: boolean }
+) {
   // Hide images that need review
   const needsReviewOr = [Prisma.sql`i."needsReview" IS NULL`];
   // Hide images that aren't published
-  const publishedOr = [Prisma.sql`p."publishedAt" < now()`];
+  const publishedOr = publishedOnly ? [Prisma.sql`p."publishedAt" < now()`] : [];
 
   if (userId) {
     const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
@@ -1441,7 +1444,7 @@ export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: numbe
     publishedOr.push(belongsToUser);
   }
   AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-  AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+  if (publishedOr.length > 0) AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
 }
 
 export async function applyAnonymousUserRules(excludedImageTags: number[]) {

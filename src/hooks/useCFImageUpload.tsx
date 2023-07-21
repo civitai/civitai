@@ -24,6 +24,7 @@ type UseS3UploadTools = {
   uploadToCF: UploadToCF;
   files: TrackedFile[];
   removeImage: (imageId: string) => void;
+  resetFiles: VoidFunction;
 };
 
 type UseCFImageUpload = () => UseS3UploadTools;
