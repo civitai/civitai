@@ -4,6 +4,7 @@ import {
   GetAllCollectionItemsSchema,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
+  UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
@@ -97,13 +98,11 @@ export const getUserCollectionPermissionsById = async ({
   }
 
   if (collection.write === CollectionWriteConfiguration.Public) {
-    permissions.write = true;
     // Follow will grant write permissions
     permissions.follow = true;
     permissions.followPermissions.push(CollectionContributorPermission.ADD);
   }
   if (collection.write === CollectionWriteConfiguration.Review) {
-    permissions.write_review = true;
     // Follow will grant write permissions
     permissions.follow = true;
     permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
@@ -288,6 +287,11 @@ export const saveItemInCollections = async ({
     await Promise.all(
       collectionIds.map(async (collectionId) => {
         const permission = await getUserCollectionPermissionsById({ user, id: collectionId });
+        if (!permission.isContributor && !permission.isOwner) {
+          // Person adding content to stuff they don't follow.
+          return null;
+        }
+
         if (!permission.write_review && !permission.write) {
           return null;
         }
@@ -759,4 +763,32 @@ export const getAvailableCollectionItemsFilterForUser = ({
     : [{ status: CollectionItemStatus.ACCEPTED }];
 
   return AND;
+};
+
+export const updateCollectionItemsStatus = async ({
+  user,
+  input,
+}: {
+  user: SessionUser;
+  input: UpdateCollectionItemsStatusInput;
+}) => {
+  const { collectionId, collectionItemIds, status } = input;
+  const { manage, isOwner } = await getUserCollectionPermissionsById({
+    id: collectionId,
+    user,
+  });
+
+  if (!manage && !isOwner) {
+    throw throwBadRequestError('You do not have permission manage contributor item status.');
+  }
+  try {
+    return await dbWrite.collectionItem.updateMany({
+      where: {
+        id: { in: collectionItemIds },
+      },
+      data: { status },
+    });
+  } catch {
+    // Ignore errors
+  }
 };

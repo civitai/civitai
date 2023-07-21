@@ -1,6 +1,14 @@
-import { ActionIcon, ContainerProps, Group, Stack, Title, Text, ThemeIcon } from '@mantine/core';
-import { IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
-import { ComingSoon } from '~/components/ComingSoon/ComingSoon';
+import {
+  ActionIcon,
+  ContainerProps,
+  Group,
+  Stack,
+  Title,
+  Text,
+  ThemeIcon,
+  Menu,
+} from '@mantine/core';
+import { IconCloudOff, IconDotsVertical, IconPencil } from '@tabler/icons-react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -8,6 +16,7 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { constants } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
+import { NextLink } from '@mantine/next';
 
 export function Collection({
   collectionId,
@@ -58,13 +67,24 @@ export function Collection({
             {collection && permissions && (
               <Group ml="auto">
                 <CollectionFollowAction collection={collection} permissions={permissions} />
-                <ComingSoon
-                  message={`We're still working on adding the ability to edit and delete your collections, but thought we'd get this into your hands anyway. Check back soon!`}
-                >
-                  <ActionIcon variant="outline">
-                    <IconDotsVertical size={16} />
-                  </ActionIcon>
-                </ComingSoon>
+                {permissions.manage && (
+                  <Menu>
+                    <Menu.Target>
+                      <ActionIcon variant="outline">
+                        <IconDotsVertical size={16} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        component={NextLink}
+                        icon={<IconPencil size={14} stroke={1.5} />}
+                        href={`/collections/${collection.id}/review`}
+                      >
+                        Review Items
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                )}
               </Group>
             )}
           </Group>

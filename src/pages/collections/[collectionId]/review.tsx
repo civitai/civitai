@@ -9,7 +9,6 @@ import {
   Container,
   Group,
   Loader,
-  Menu,
   Paper,
   Stack,
   Text,
@@ -20,8 +19,6 @@ import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
-  IconDotsVertical,
-  IconInfoCircle,
   IconReload,
   IconSquareCheck,
   IconSquareOff,
@@ -40,7 +37,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CollectionItemStatus } from '@prisma/client';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
@@ -49,10 +46,7 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
-import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { Reactions } from '~/components/Reaction/Reactions';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -90,7 +84,7 @@ const useStore = create<StoreState>()(
   }))
 );
 
-export default function ReviewCollection() {
+const ReviewCollection = () => {
   const { ref, inView } = useInView();
   const router = useRouter();
   const { collectionId: collectionIdString } = router.query;
@@ -192,7 +186,9 @@ export default function ReviewCollection() {
       </Stack>
     </Container>
   );
-}
+};
+
+export default ReviewCollection;
 
 const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItemProps) => {
   const router = useRouter();
@@ -202,6 +198,11 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   const toggleSelected = useStore((state) => state.toggleSelected);
   const { classes: sharedClasses, cx } = useCardStyles();
   const reviewData = getCollectionItemReviewData(collectionItem);
+  const badgeColor = {
+    [CollectionItemStatus.ACCEPTED]: 'green',
+    [CollectionItemStatus.REJECTED]: 'red',
+    [CollectionItemStatus.REVIEW]: 'yellow',
+  };
 
   return (
     <FeedCard>
@@ -238,14 +239,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                         <Group spacing={4}>
                           <ImageGuard.ToggleConnect position="static" />
                           {collectionItem.status && (
-                            <Badge
-                              variant="filled"
-                              color={
-                                collectionItem.status === CollectionItemStatus.REJECTED
-                                  ? 'red'
-                                  : 'yellow'
-                              }
-                            >
+                            <Badge variant="filled" color={badgeColor[collectionItem.status]}>
                               {collectionItem.status}
                             </Badge>
                           )}
@@ -301,29 +295,6 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             </UnstyledButton>
           )}
         </Stack>
-
-        {/*<Stack*/}
-        {/*  className={cx(*/}
-        {/*    sharedClasses.contentOverlay,*/}
-        {/*    sharedClasses.bottom,*/}
-        {/*    sharedClasses.gradientOverlay*/}
-        {/*  )}*/}
-        {/*  spacing="sm"*/}
-        {/*>*/}
-        {/*  {data.user.id !== -1 && (*/}
-        {/*    <UnstyledButton*/}
-        {/*      sx={{ color: 'white' }}*/}
-        {/*      onClick={(e) => {*/}
-        {/*        e.preventDefault();*/}
-        {/*        e.stopPropagation();*/}
-
-        {/*        router.push(`/users/${data.user.username}`);*/}
-        {/*      }}*/}
-        {/*    >*/}
-        {/*      <UserAvatar user={data.user} avatarProps={{ radius: 'md', size: 32 }} withUsername />*/}
-        {/*    </UnstyledButton>*/}
-        {/*  )}*/}
-        {/*</Stack>*/}
       </Box>
     </FeedCard>
   );
@@ -353,66 +324,37 @@ function ModerationControls({
     withinPortal: true,
   };
 
-  const moderateImagesMutation = trpc.image.moderate.useMutation({
-    async onMutate({ ids, needsReview, delete: deleted }) {
-      await queryUtils.image.getInfinite.cancel();
-      queryUtils.image.getInfinite.setInfiniteData(
-        filters,
-        produce((data) => {
-          if (!data?.pages?.length) return;
+  const updateCollectionItemsStatusMutation =
+    trpc.collection.updateCollectionItemsStatus.useMutation({
+      async onMutate({ collectionItemIds, status }) {
+        await queryUtils.collection.getAllCollectionItems.cancel();
 
-          for (const page of data.pages)
-            for (const item of page.items) {
-              if (ids.includes(item.id)) {
-                item.needsReview =
-                  deleted === true || needsReview === null ? null : item.needsReview;
+        queryUtils.collection.getAllCollectionItems.setInfiniteData(
+          filters,
+          produce((data) => {
+            if (!data?.pages?.length) return;
+
+            for (const page of data.pages)
+              for (const item of page.collectionItems) {
+                if (collectionItemIds.includes(item.id)) {
+                  item.status = status;
+                }
               }
-            }
-        })
-      );
-    },
-    onSuccess(_, input) {
-      const actions: string[] = [];
-      if (input.delete) actions.push('deleted');
-      else if (!input.needsReview) actions.push('approved');
-      else if (input.nsfw) actions.push('marked as NSFW');
+          })
+        );
+      },
+      onSuccess() {
+        showSuccessNotification({ message: `The items have been reviewed` });
+      },
+    });
 
-      showSuccessNotification({ message: `The images have been ${actions.join(', ')}` });
-    },
-  });
-
-  const reportMutation = trpc.report.bulkUpdateStatus.useMutation({
-    async onMutate({ ids, status }) {
-      await queryUtils.image.getInfinite.cancel();
-      queryUtils.image.getInfinite.setInfiniteData(
-        filters,
-        produce((data) => {
-          if (!data?.pages?.length) return;
-
-          for (const page of data.pages)
-            for (const item of page.items) {
-              if (item.report && ids.includes(item.report.id)) {
-                item.report.status = status;
-              }
-            }
-        })
-      );
-    },
-    async onSuccess() {
-      await queryUtils.report.getAll.invalidate();
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Failed to update',
-        error: new Error(error.message),
-        reason: 'Something went wrong while updating the reports. Please try again later.',
-      });
-    },
-  });
-
-  const handleDeleteSelected = () => {
+  const handleRejectSelected = () => {
     deselectAll();
-    console.log('Ahaa!');
+    updateCollectionItemsStatusMutation.mutate({
+      collectionItemIds: selected,
+      status: CollectionItemStatus.REJECTED,
+      collectionId: filters.collectionId,
+    });
   };
 
   const handleSelectAll = () => {
@@ -423,12 +365,16 @@ function ModerationControls({
 
   const handleApproveSelected = () => {
     deselectAll();
-    console.log('on Approve');
+    updateCollectionItemsStatusMutation.mutate({
+      collectionItemIds: selected,
+      status: CollectionItemStatus.ACCEPTED,
+      collectionId: filters.collectionId,
+    });
   };
 
   const handleRefresh = () => {
     handleClearAll();
-    queryUtils.image.getInfinite.invalidate(filters);
+    queryUtils.collection.getAllCollectionItems.invalidate(filters);
     showNotification({
       id: 'refreshing',
       title: 'Refreshing',
@@ -466,12 +412,12 @@ function ModerationControls({
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
-        message={`Are you sure you want to delete ${selected.length} image(s)?`}
+        message={`Are you sure you want to reject ${selected.length} image(s)?`}
         position="bottom-end"
-        onConfirm={handleDeleteSelected}
+        onConfirm={handleRejectSelected}
         withArrow
       >
-        <ButtonTooltip label="Delete" {...tooltipProps}>
+        <ButtonTooltip label="Reject" {...tooltipProps}>
           <ActionIcon variant="outline" disabled={!selected.length} color="red">
             <IconTrash size="1.25rem" />
           </ActionIcon>

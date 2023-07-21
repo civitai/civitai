@@ -6,6 +6,7 @@ import {
   GetAllCollectionItemsSchema,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
+  UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import {
@@ -19,13 +20,11 @@ import {
   removeContributorFromCollection,
   getUserCollectionItemsByItem,
   getCollectionItemsByCollectionId,
+  updateCollectionItemsStatus,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetAllCommentsSchema } from '~/server/schema/comment.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { getComments } from '~/server/services/comment.service';
-import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
 
 export const getAllUserCollectionsHandler = async ({
@@ -216,4 +215,21 @@ export const collectionItemsInfiniteHandler = async ({
     nextCursor,
     collectionItems,
   };
+};
+
+export const updateCollectionItemsStatusHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateCollectionItemsStatusInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return updateCollectionItemsStatus({
+      user: ctx.user,
+      input,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

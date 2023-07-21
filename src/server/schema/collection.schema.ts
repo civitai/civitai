@@ -102,3 +102,10 @@ export const getAllCollectionItemsSchema = z
   })
   .partial()
   .required({ collectionId: true });
+
+export type UpdateCollectionItemsStatusInput = z.infer<typeof updateCollectionItemsStatusInput>;
+export const updateCollectionItemsStatusInput = z.object({
+  collectionId: z.number(),
+  collectionItemIds: z.array(z.number()),
+  status: z.nativeEnum(CollectionItemStatus),
+});
