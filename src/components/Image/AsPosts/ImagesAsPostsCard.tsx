@@ -64,7 +64,9 @@ export function ImagesAsPostsCard({
     setSlidesInView(embla.slidesInView(true));
     const onSelect = () => setSlidesInView(embla.slidesInView(true));
     embla.on('select', onSelect);
-    return () => embla.off('select', onSelect);
+    return () => {
+      embla.off('select', onSelect);
+    };
   }, [embla]);
 
   const handleClick = () => {
