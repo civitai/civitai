@@ -30,13 +30,7 @@ import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { usersSearchIndex } from '~/server/search-index';
-// import { createCannyToken } from '~/server/canny/canny';
-
-// const xprisma = prisma.$extends({
-//   result: {
-//     user
-//   }
-// })
+// import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
   leaderboardId,
@@ -467,13 +461,15 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     if (value.includes(user.id)) permissions.push(key);
   }
 
-  // const cannyToken = await createCannyToken(user); // We don't need this for now
+  // let feedbackToken: string | undefined;
+  // if (!!user.username && !!user.email)
+  //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
 
   return {
     ...rest,
     tier,
     permissions,
-    /// cannyToken,
+    // feedbackToken,
   };
 };
 

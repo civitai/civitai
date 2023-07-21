@@ -203,9 +203,10 @@ export default function ImagesAsPostsInfinite({
                     const height = tallestImage?.height ?? 450;
                     return { width, height };
                   }}
-                  adjustHeight={({ height }, data) =>
-                    height + 57 + (data.images.length > 1 ? 8 : 0)
-                  }
+                  adjustHeight={({ height }, data) => {
+                    const imageHeight = Math.min(height, 600);
+                    return imageHeight + 57 + (data.images.length > 1 ? 8 : 0);
+                  }}
                   maxItemHeight={600}
                   render={ImagesAsPostsCard}
                   itemId={(data) => data.images.map((x) => x.id).join('_')}

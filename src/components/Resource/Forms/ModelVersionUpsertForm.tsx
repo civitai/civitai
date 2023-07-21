@@ -1,6 +1,6 @@
 import { Divider, Group, Input, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -53,6 +53,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     'Wildcards',
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
+
+  // Get VAE options
+  const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
+    { type: 'VAE' },
+    {
+      cacheTime: 60 * 1000,
+    }
+  );
+  const vaeOptions = useMemo(() => {
+    if (!vaes) return [];
+    return vaes.map((x) => ({ label: x.modelName, value: x.id }));
+  }, [vaes]);
 
   const defaultValues: Schema = {
     ...version,
@@ -263,15 +275,24 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             </Group>
           </Stack>
           <Stack spacing={4}>
-            <Divider label="Usage Tips" />
-            <InputNumber
-              name="clipSkip"
-              label="Recommended Clip Skip"
-              placeholder="Clip Skip"
-              min={1}
-              max={12}
-              sx={{ flexGrow: 1 }}
-            />
+            <Divider label="Recommended Settings" />
+            <Group spacing="xs" grow>
+              <InputNumber
+                name="clipSkip"
+                label="Clip Skip"
+                placeholder="Clip Skip"
+                min={1}
+                max={12}
+              />
+              <InputSelect
+                name="vaeId"
+                label="VAE"
+                placeholder="VAE"
+                data={vaeOptions}
+                clearable
+                searchable
+              />
+            </Group>
           </Stack>
         </Stack>
         {children({ loading: upsertVersionMutation.isLoading })}

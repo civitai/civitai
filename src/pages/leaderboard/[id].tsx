@@ -97,6 +97,8 @@ export default function Leaderboard() {
     );
   }
 
+  const endTime = useMemo(() => dayjs().utc().endOf('day').toDate(), []);
+
   const navLinks = (itemSize?: MantineSize) =>
     leaderboards.map((item) => (
       <NavLink
@@ -186,7 +188,7 @@ export default function Leaderboard() {
                   : 'loading..'}
                 . Refreshes in:{' '}
                 <Text span>
-                  <Countdown endTime={dayjs().utc().endOf('day').toDate()} />
+                  <Countdown endTime={endTime} />
                 </Text>
               </Text>
               {loadingLeaderboardResults ? (

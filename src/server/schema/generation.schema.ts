@@ -31,6 +31,7 @@ export const getGenerationRequestsSchema = z.object({
   cursor: z.number().optional(),
   status: z.nativeEnum(GenerationRequestStatus).array().optional(),
   requestId: z.number().array().optional(),
+  detailed: z.boolean().optional(),
 });
 
 export const generationResourceSchema = z.object({

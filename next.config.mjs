@@ -94,12 +94,22 @@ export default defineNextConfig(withAxiom({
       },
       {
         source: '/canny/feedback',
-        destination: 'https://civitai.canny.io/feature-requests',
+        destination: 'https://feedback.civitai.com/?b=feature-request',
+        permanent: true,
+      },
+      {
+        source: '/feedback',
+        destination: 'https://feedback.civitai.com/?b=feature-request',
         permanent: true,
       },
       {
         source: '/canny/bugs',
-        destination: 'https://civitai.canny.io/bugs',
+        destination: 'https://feedback.civitai.com/?b=bug',
+        permanent: true,
+      },
+      {
+        source: '/bugs',
+        destination: 'https://feedback.civitai.com/?b=bug',
         permanent: true,
       },
       {

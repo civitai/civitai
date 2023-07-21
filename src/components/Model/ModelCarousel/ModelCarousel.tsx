@@ -269,7 +269,6 @@ export function ModelCarousel({
                           cryCount: image.stats?.cryCountAllTime,
                         }}
                         readonly={!safe}
-                        withinPortal
                         className={classes.reactions}
                       />
                       {!image.hideMeta && image.meta && (

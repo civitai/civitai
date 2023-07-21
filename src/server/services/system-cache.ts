@@ -2,6 +2,7 @@ import { TagType } from '@prisma/client';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
+import { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -52,6 +53,13 @@ export async function getSystemPermissions(): Promise<Record<string, number[]>> 
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
   return {};
+}
+
+export async function addSystemPermission(permission: FeatureFlagKey, userIds: number | number[]) {
+  userIds = Array.isArray(userIds) ? userIds : [userIds];
+  const permissions = await getSystemPermissions();
+  permissions[permission] = [...new Set([...permissions[permission], ...userIds])];
+  await redis.set(`system:permissions`, JSON.stringify(permissions));
 }
 
 const colorPriority = [

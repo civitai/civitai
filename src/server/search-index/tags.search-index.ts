@@ -15,11 +15,16 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
+import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
 const INDEX_ID = 'tags';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
+/*
+  Only tags above this threshold will be indexed.
+ */
+const MINIMUM_METRICS_COUNT = 10;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
@@ -132,15 +137,26 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const indexReadyRecords = tags.map((tagRecord) => {
-    return {
-      ...tagRecord,
-      metrics: {
-        // Flattens metric array
-        ...(tagRecord.metrics[0] || {}),
-      },
-    };
-  });
+  const indexReadyRecords = tags
+    .map((tagRecord) => {
+      const metrics = tagRecord.metrics[0];
+      //perhaps posts + articles + model + imageCounts
+      const metricsCount =
+        metrics.articleCount + metrics.postCount + metrics.modelCount + metrics.imageCount;
+
+      if (metricsCount < MINIMUM_METRICS_COUNT) {
+        return null;
+      }
+
+      return {
+        ...tagRecord,
+        metrics: {
+          // Flattens metric array
+          ...(tagRecord.metrics[0] || {}),
+        },
+      };
+    })
+    .filter(isDefined);
 
   return indexReadyRecords;
 };

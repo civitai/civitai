@@ -50,7 +50,7 @@ export type ModelActivty =
   | 'Takedown'
   | 'Delete'
   | 'PermanentDelete';
-export type ResourceReviewType = 'Create' | 'Delete';
+export type ResourceReviewType = 'Create' | 'Delete' | 'Exclude' | 'Include' | 'Update';
 export type ReactionType =
   | 'Images_Create'
   | 'Images_Delete'

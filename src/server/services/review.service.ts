@@ -202,7 +202,6 @@ export const deleteReviewById = async ({ id }: GetByIdInput) => {
     })) ?? {};
 
   await dbWrite.review.delete({ where: { id } });
-  if (modelId) await modelMetrics.queueUpdate(modelId);
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
 };
 
@@ -238,7 +237,6 @@ export const convertReviewToComment = ({
     });
 
     await tx.review.delete({ where: { id } });
-    await modelMetrics.queueUpdate(modelId);
 
     return comment;
   });

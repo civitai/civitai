@@ -12,6 +12,7 @@ import {
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteExplorationPromptSchema,
+  getModelVersionByModelTypeSchema,
   getModelVersionSchema,
   modelVersionUpsertSchema2,
   publishVersionSchema,
@@ -21,6 +22,7 @@ import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model
 import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
+  getModelVersionsByModelType,
   getVersionById,
   upsertExplorationPrompt,
 } from '~/server/services/model-version.service';
@@ -90,4 +92,7 @@ export const modelVersionRouter = router({
     .use(isOwnerOrModerator)
     .mutation(requestReviewHandler),
   declineReview: protectedProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
+  getModelVersionsByModelType: protectedProcedure
+    .input(getModelVersionByModelTypeSchema)
+    .query(({ input }) => getModelVersionsByModelType(input)),
 });

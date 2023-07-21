@@ -112,6 +112,7 @@ const formatGenerationData = ({
   const additionalResources = resources.filter((x) =>
     generation.additionalResourceTypes.includes(x.modelType as any)
   );
+
   const aspectRatio =
     params?.height && params.width ? getClosestAspectRatio(params.width, params.height) : undefined;
 
@@ -124,6 +125,7 @@ const formatGenerationData = ({
     aspectRatio,
     ...params,
     sampler,
+    // seed: params?.seed === -1 ? undefined : params?.seed,
   };
   return {
     ...removeEmpty(formData),

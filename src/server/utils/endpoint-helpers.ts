@@ -108,7 +108,7 @@ export function MixedAuthEndpoint(
     req: AxiomAPIRequest,
     res: NextApiResponse,
     user: Session['user'] | undefined
-  ) => Promise<void>,
+  ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {

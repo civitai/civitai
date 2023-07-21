@@ -8,11 +8,13 @@ import {
   ModelVersionUpsertInput,
   PublishVersionInput,
   UpsertExplorationPromptInput,
+  GetModelVersionByModelTypeProps,
 } from '~/server/schema/model-version.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { TRPCError } from '@trpc/server';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { SessionUser } from 'next-auth';
+import { baseModelSets, BaseModel } from '~/server/common/constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -322,4 +324,37 @@ export const deleteExplorationPrompt = async ({
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
+};
+
+const baseModelSetsArray = Object.values(baseModelSets);
+export const getModelVersionsByModelType = async ({
+  type,
+  query,
+  baseModel,
+  take,
+}: GetModelVersionByModelTypeProps) => {
+  const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
+  if (baseModel) {
+    const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
+    if (baseModelSet)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+  }
+  if (query) {
+    const pgQuery = '%' + query + '%';
+    sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
+  }
+
+  const results = await dbRead.$queryRaw<Array<{ id: number; name: string; modelName: string }>>`
+    SELECT
+      mv.id,
+      mv.name,
+      m.name "modelName"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE ${Prisma.join(sqlAnd, ' AND ')}
+    ORDER BY m.name
+    LIMIT ${take}
+  `;
+
+  return results;
 };

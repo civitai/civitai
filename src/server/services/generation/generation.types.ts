@@ -27,7 +27,7 @@ export namespace Generation {
     sampler: string;
     steps: number;
     cfgScale: number;
-    seed: number;
+    seed?: number;
     clipSkip: number;
   };
 
@@ -59,6 +59,19 @@ export namespace Generation {
     covered?: boolean;
   };
 
+  export type QueuePosition = {
+    precedingJobs: number;
+    precedingCost: number;
+    jobs: number;
+    cost: number;
+    estimatedThroughputRate: number;
+    workers: number;
+    estimatedStartDuration: string;
+    estimatedCompletedDuration: string;
+    estimatedStartDate: Date;
+    estimatedCompletedDate: Date;
+  };
+
   export type Request = {
     id: number;
     createdAt: Date;
@@ -69,6 +82,7 @@ export namespace Generation {
     params: Params;
     resources: Resource[];
     images?: Image[];
+    queuePosition?: QueuePosition;
   };
 
   export type Coverage = {
@@ -99,6 +113,7 @@ export namespace Generation {
       status: string;
       job: Job;
       images?: Image[];
+      queuePosition?: QueuePosition;
     };
     export type Request = {
       cursor: number;

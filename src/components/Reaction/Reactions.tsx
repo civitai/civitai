@@ -22,7 +22,6 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   reactions: { userId: number; reaction: ReviewReactions }[];
   metrics?: ReactionMetrics;
   readonly?: boolean;
-  withinPortal?: boolean;
 };
 
 export function PostReactions({
@@ -62,7 +61,6 @@ export function Reactions({
   entityType,
   entityId,
   readonly,
-  withinPortal,
   ...groupProps
 }: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};

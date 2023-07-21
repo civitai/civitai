@@ -19,7 +19,7 @@ As a Senior Back-End Developer at Civitai, you'll play an instrumental role in s
 
 ## Qualifications
 
-- Bachelor’s degree in Computer Science or a related field.
+- Bachelor’s degree in Computer Science or a related field or equivalent experience.
 - A minimum of 8 years of experience as a Back-End Developer.
 - Strong proficiency in C# and .NET.
 - Solid understanding of back-end architecture, including experience with distributed system architecture.

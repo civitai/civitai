@@ -46,6 +46,7 @@ import {
   getModels,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getVaeFiles,
   permaDeleteModelById,
   publishModelById,
   restoreModelById,
@@ -109,6 +110,10 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       orderBy: { id: 'asc' },
     });
 
+    // recommended VAEs
+    const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
+    const vaeFiles = await getVaeFiles({ vaeIds });
+
     const suggestedResources = await dbRead.modelAssociations.count({
       where: { fromModelId: model.id },
     });
@@ -140,7 +145,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
 
         // sort version files by file type, 'Model' type goes first
-        const files = [...version.files].sort((a, b) => {
+        const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
+        version.files.push(...vaeFile);
+        const files = version.files.sort((a, b) => {
           const aType = a.type as ModelFileType;
           const bType = b.type as ModelFileType;
 
@@ -447,23 +454,33 @@ export const getModelsWithVersionsHandler = async ({
       currentUserId: ctx.user?.id,
     });
 
+    const vaeIds = rawResults.items
+      .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
+      .filter(isDefined);
+    const vaeFiles = await getVaeFiles({ vaeIds });
+
     const results = {
       count: rawResults.count,
       items: rawResults.items.map(({ rank, modelVersions, ...model }) => ({
         ...model,
-        modelVersions: modelVersions.map(({ rank, ...modelVersion }) => ({
-          ...modelVersion,
-          stats: {
-            downloadCount: rank?.downloadCountAllTime ?? 0,
-            ratingCount: rank?.ratingCountAllTime ?? 0,
-            rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
-          },
-          images: images
-            .filter((image) => image.modelVersionId === modelVersion.id)
-            .map(({ modelVersionId, name, userId, ...image }) => ({
-              ...image,
-            })),
-        })),
+        modelVersions: modelVersions.map(({ rank, files, ...modelVersion }) => {
+          const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
+          files.push(...vaeFile);
+          return {
+            ...modelVersion,
+            files,
+            stats: {
+              downloadCount: rank?.downloadCountAllTime ?? 0,
+              ratingCount: rank?.ratingCountAllTime ?? 0,
+              rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+            },
+            images: images
+              .filter((image) => image.modelVersionId === modelVersion.id)
+              .map(({ modelVersionId, name, userId, ...image }) => ({
+                ...image,
+              })),
+          };
+        }),
         stats: {
           downloadCount: rank?.downloadCountAllTime ?? 0,
           favoriteCount: rank?.favoriteCountAllTime ?? 0,

@@ -20,7 +20,13 @@ export const useGetGenerationRequests = (
     ...options,
   });
   const requests = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
-  const images = useMemo(() => requests.flatMap((x) => x.images ?? []), [requests]);
+  const images = useMemo(
+    () =>
+      requests
+        .filter((x) => x.status !== GenerationRequestStatus.Error)
+        .flatMap((x) => x.images ?? []),
+    [requests]
+  );
   return { data, requests, images, ...rest };
 };
 
@@ -47,6 +53,7 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
       requestId: requestIds,
       take: 100,
       status: !requestIds.length ? POLLABLE_STATUSES : undefined,
+      detailed: true,
     },
     {
       onError: () => debouncer(refetch),

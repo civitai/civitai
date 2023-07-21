@@ -1,4 +1,4 @@
-import { Carousel } from '@mantine/carousel';
+import { Carousel, Embla } from '@mantine/carousel';
 import {
   ActionIcon,
   createStyles,
@@ -7,11 +7,10 @@ import {
   Rating,
   Center,
   Tooltip,
-  Box,
   Text,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { InView } from 'react-intersection-observer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
@@ -29,14 +28,15 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '@mantine/next';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { isDefined } from '~/utils/type-guards';
 
 export function ImagesAsPostsCard({
   data,
   width: cardWidth,
+  height,
 }: {
   data: ImagesAsPostModel;
   width: number;
+  height: number;
 }) {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
@@ -47,28 +47,21 @@ export function ImagesAsPostsCard({
   const linkFilters = { ...filters, postId };
 
   const cover = data.images[0];
-
-  const imageHeight = useMemo(() => {
-    const tallestImage = data.images.sort((a, b) => {
-      const aHeight = a.height ?? 0;
-      const bHeight = b.height ?? 0;
-      const aAspectRatio = aHeight > 0 ? (a.width ?? 0) / aHeight : 0;
-      const bAspectRatio = bHeight > 0 ? (b.width ?? 0) / bHeight : 0;
-      if (aAspectRatio < 1 && bAspectRatio >= 1) return -1;
-      if (bAspectRatio < 1 && aAspectRatio <= 1) return 1;
-      if (aHeight === bHeight) return 0;
-      return aHeight > bHeight ? -1 : 1;
-    })[0];
-
-    if (!tallestImage.width || !tallestImage.height) return 300;
-    const width = cardWidth > 0 ? cardWidth : 300;
-    const aspectRatio = tallestImage.width / tallestImage.height;
-    const imageHeight = Math.floor(width / aspectRatio);
-    return Math.min(imageHeight, 600);
-  }, [cardWidth, data.images]);
-
-  const cardHeight = imageHeight + 57 + (data.images.length > 1 ? 8 : 0);
   const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const carouselHeight = height - 58 - 8;
+
+  const [embla, setEmbla] = useState<Embla | null>(null);
+  const [slidesInView, setSlidesInView] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (!embla) return;
+    setSlidesInView(embla.slidesInView(true));
+    const onSelect = () => setSlidesInView([...embla.slidesInView(true), ...embla.slidesInView()]);
+    embla.on('select', onSelect);
+    return () => {
+      embla.off('select', onSelect);
+    };
+  }, [embla]);
 
   const handleClick = () => {
     queryUtils.image.getInfinite.setInfiniteData({ ...linkFilters, browsingMode }, () => {
@@ -89,7 +82,7 @@ export function ImagesAsPostsCard({
           withBorder
           shadow="sm"
           p={0}
-          height={cardHeight}
+          height={height}
           ref={ref}
           className={classes.card}
         >
@@ -168,72 +161,62 @@ export function ImagesAsPostsCard({
                   render={(image) => (
                     <ImageGuard.Content>
                       {({ safe }) => (
-                        <>
-                          <div className={classes.imageContainer}>
-                            <ImageGuard.Report />
-                            <ImageGuard.ToggleImage position="top-left" />
-                            <RoutedContextLink
-                              modal="imageDetailModal"
-                              imageId={cover.id}
-                              onClick={handleClick}
-                              className={classes.link}
-                              {...linkFilters}
+                        <div className={classes.imageContainer}>
+                          <ImageGuard.Report />
+                          <ImageGuard.ToggleImage position="top-left" />
+                          <RoutedContextLink
+                            modal="imageDetailModal"
+                            imageId={image.id}
+                            onClick={handleClick}
+                            className={classes.link}
+                            {...linkFilters}
+                          >
+                            <>
+                              <MediaHash {...image} />
+                              {safe && (
+                                <EdgeImage
+                                  src={image.url}
+                                  name={image.name ?? image.id.toString()}
+                                  alt={image.name ?? undefined}
+                                  width={450}
+                                  placeholder="empty"
+                                  className={classes.image}
+                                />
+                              )}
+                            </>
+                          </RoutedContextLink>
+                          <Reactions
+                            entityId={image.id}
+                            entityType="image"
+                            reactions={image.reactions}
+                            metrics={{
+                              likeCount: image.stats?.likeCountAllTime,
+                              dislikeCount: image.stats?.dislikeCountAllTime,
+                              heartCount: image.stats?.heartCountAllTime,
+                              laughCount: image.stats?.laughCountAllTime,
+                              cryCount: image.stats?.cryCountAllTime,
+                            }}
+                            readonly={!safe}
+                            className={classes.reactions}
+                          />
+                          {!image.hideMeta && image.meta && (
+                            <ImageMetaPopover
+                              meta={image.meta as any}
+                              generationProcess={image.generationProcess ?? undefined}
+                              imageId={image.id}
                             >
-                              <>
-                                <Box className={classes.blur}>
-                                  <MediaHash {...image} />
-                                </Box>
-                                {safe && (
-                                  <EdgeImage
-                                    src={image.url}
-                                    name={image.name ?? image.id.toString()}
-                                    alt={image.name ?? undefined}
-                                    width={450}
-                                    placeholder="empty"
-                                    className={classes.image}
-                                  />
-                                )}
-                              </>
-                            </RoutedContextLink>
-
-                            <Reactions
-                              entityId={image.id}
-                              entityType="image"
-                              reactions={image.reactions}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
-                              readonly={!safe}
-                              withinPortal
-                              className={classes.reactions}
-                            />
-                            {!image.hideMeta && image.meta && (
-                              <ImageMetaPopover
-                                meta={image.meta as any}
-                                generationProcess={image.generationProcess ?? undefined}
-                                imageId={image.id}
-                              >
-                                <ActionIcon
-                                  className={classes.info}
-                                  variant="transparent"
-                                  size="lg"
-                                >
-                                  <IconInfoCircle
-                                    color="white"
-                                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                    opacity={0.8}
-                                    strokeWidth={2.5}
-                                    size={26}
-                                  />
-                                </ActionIcon>
-                              </ImageMetaPopover>
-                            )}
-                          </div>
-                        </>
+                              <ActionIcon className={classes.info} variant="transparent" size="lg">
+                                <IconInfoCircle
+                                  color="white"
+                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                  opacity={0.8}
+                                  strokeWidth={2.5}
+                                  size={26}
+                                />
+                              </ActionIcon>
+                            </ImageMetaPopover>
+                          )}
+                        </div>
                       )}
                     </ImageGuard.Content>
                   )}
@@ -244,12 +227,14 @@ export function ImagesAsPostsCard({
                   withControls
                   draggable
                   loop
-                  style={{ height: imageHeight }}
+                  style={{ flex: 1 }}
                   withIndicators
                   controlSize={32}
+                  height={carouselHeight}
+                  getEmblaApi={setEmbla}
                   styles={{
                     indicators: {
-                      bottom: -8,
+                      bottom: 0,
                       zIndex: 5,
                       display: 'flex',
                       gap: 1,
@@ -267,11 +252,11 @@ export function ImagesAsPostsCard({
                   <ImageGuard
                     images={data.images}
                     connect={postId ? { entityType: 'post', entityId: postId } : undefined}
-                    render={(image) => (
-                      <Carousel.Slide style={{ height: imageHeight }} className={classes.slide}>
-                        <ImageGuard.Content>
-                          {({ safe }) => (
-                            <>
+                    render={(image, index) => (
+                      <Carousel.Slide className={classes.slide} sx={{ height: carouselHeight }}>
+                        {slidesInView.includes(index) && (
+                          <ImageGuard.Content>
+                            {({ safe }) => (
                               <div className={classes.imageContainer}>
                                 <ImageGuard.Report />
                                 <ImageGuard.ToggleConnect position="top-left" />
@@ -283,9 +268,7 @@ export function ImagesAsPostsCard({
                                   {...linkFilters}
                                 >
                                   <>
-                                    <Box className={classes.blur}>
-                                      <MediaHash {...image} />
-                                    </Box>
+                                    <MediaHash {...image} />
                                     {safe && (
                                       <EdgeImage
                                         src={image.url}
@@ -298,7 +281,6 @@ export function ImagesAsPostsCard({
                                     )}
                                   </>
                                 </RoutedContextLink>
-                                <Box sx={{ height: 8, width: '100%' }}></Box>
                                 <Reactions
                                   entityId={image.id}
                                   entityType="image"
@@ -311,7 +293,6 @@ export function ImagesAsPostsCard({
                                     cryCount: image.stats?.cryCountAllTime,
                                   }}
                                   readonly={!safe}
-                                  withinPortal
                                   className={classes.reactions}
                                 />
                                 {!image.hideMeta && image.meta && (
@@ -336,9 +317,9 @@ export function ImagesAsPostsCard({
                                   </ImageMetaPopover>
                                 )}
                               </div>
-                            </>
-                          )}
-                        </ImageGuard.Content>
+                            )}
+                          </ImageGuard.Content>
+                        )}
                       </Carousel.Slide>
                     )}
                   />
@@ -407,13 +388,6 @@ const useStyles = createStyles((theme) => ({
     background: 'rgba(212,212,212,0.2)',
     backdropFilter: 'blur(7px)',
     cursor: 'pointer',
-  },
-  blur: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
   },
   image: {
     width: '100%',

@@ -8,6 +8,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import { ModelFileType, constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
+import { getVaeFiles } from '~/server/services/model.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -61,9 +62,6 @@ export default RateLimitedEndpoint(
     const { type, modelVersionId, format, size, fp } = queryResults.data;
     if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
 
-    const fileWhere: Prisma.ModelFileWhereInput = {};
-    if (type) fileWhere.type = type;
-
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { id: modelVersionId },
       select: {
@@ -85,31 +83,10 @@ export default RateLimitedEndpoint(
         trainedWords: true,
         earlyAccessTimeFrame: true,
         createdAt: true,
-        files: {
-          where: fileWhere,
-          select: {
-            id: true,
-            url: true,
-            name: true,
-            type: true,
-            metadata: true,
-            hashes: { select: { hash: true }, where: { type: 'SHA256' } },
-          },
-        },
+        vaeId: true,
       },
     });
     if (!modelVersion) return errorResponse(404, 'Model not found');
-
-    const { files } = modelVersion;
-    const metadata: FileMetadata = {
-      ...session?.user?.filePreferences,
-      ...removeEmpty({ format, size, fp }),
-    };
-    const castedFiles = files as Array<
-      Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
-    >;
-    const file = getPrimaryFile(castedFiles, { metadata });
-    if (!file) return errorResponse(404, 'Model file not found');
 
     // Handle non-published models
     const isMod = session?.user?.isModerator;
@@ -150,6 +127,36 @@ export default RateLimitedEndpoint(
           );
       }
     }
+
+    // Get the correct file
+    let file: FileResult | null = null;
+    if (type === 'VAE') {
+      if (!modelVersion.vaeId) return errorResponse(404, 'VAE not found');
+      const vae = await getVaeFiles({ vaeIds: [modelVersion.vaeId] });
+      if (!vae.length) return errorResponse(404, 'VAE not found');
+      file = vae[0];
+    } else {
+      const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
+      if (type) fileWhere.type = type;
+      const files = await dbRead.modelFile.findMany({
+        where: fileWhere,
+        select: {
+          id: true,
+          url: true,
+          name: true,
+          type: true,
+          metadata: true,
+          hashes: { select: { hash: true }, where: { type: 'SHA256' } },
+        },
+      });
+      const metadata: FileMetadata = {
+        ...session?.user?.filePreferences,
+        ...removeEmpty({ format, size, fp }),
+      };
+      const castedFiles = files as Array<Omit<FileResult, 'metadata'> & { metadata: FileMetadata }>;
+      file = getPrimaryFile(castedFiles, { metadata });
+    }
+    if (!file) return errorResponse(404, 'Model file not found');
 
     // Track download
     try {
@@ -253,3 +260,14 @@ export function getDownloadFilename({
   }
   return fileName;
 }
+
+type FileResult = {
+  type: string;
+  id: number;
+  name: string;
+  metadata: Prisma.JsonValue;
+  hashes: {
+    hash: string;
+  }[];
+  url: string;
+};
