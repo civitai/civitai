@@ -1,16 +1,16 @@
 import { useState } from 'react';
+import { getImageDataFromFile } from '~/utils/metadata';
 
-type TrackedFile = {
-  file: File;
+type TrackedFile = AsyncReturnType<typeof getImageDataFromFile> & {
   progress: number;
   uploaded: number;
   size: number;
   speed: number;
   timeRemaining: number;
-  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+  status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
   abort: () => void;
-  id?: string;
-  url?: string;
+  id: string;
+  url: string;
 };
 
 type UploadResult = {
@@ -34,7 +34,7 @@ const pendingTrackedFile = {
   size: 0,
   speed: 0,
   timeRemaining: 0,
-  status: 'pending',
+  status: 'pending' as const,
   abort: () => undefined,
 };
 
@@ -56,19 +56,26 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       body: JSON.stringify({ filename, metadata }),
     });
 
-    const data = await res.json();
+    const data: ImageUploadResponse = await res.json();
 
-    if (data.error) {
+    if ('error' in data) {
       console.error(data.error);
       throw data.error;
     }
 
     const { id, uploadURL: url } = data;
+    const imageData = await getImageDataFromFile(file);
 
     const xhr = new XMLHttpRequest();
     setFiles((x) => [
       ...x,
-      { file, ...pendingTrackedFile, abort: xhr.abort.bind(xhr), id, url } as TrackedFile,
+      {
+        ...imageData,
+        ...pendingTrackedFile,
+        abort: xhr.abort.bind(xhr),
+        id,
+        url,
+      },
     ]);
 
     function updateFile(trackedFile: Partial<TrackedFile>) {

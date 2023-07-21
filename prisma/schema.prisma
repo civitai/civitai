@@ -859,6 +859,8 @@ model Post {
   publishedAt    DateTime?
   metadata       Json?
   tosViolation   Boolean       @default(false)
+  collectionId   Int?
+  collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
 
   images          Image[]
   tags            TagsOnPost[]
@@ -1841,6 +1843,7 @@ model Collection {
   items        CollectionItem[]
   contributors CollectionContributor[]
   tags         TagsOnCollection[]
+  post         Post[]
 }
 
 enum CollectionItemStatus {

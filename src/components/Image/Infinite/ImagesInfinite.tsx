@@ -16,6 +16,7 @@ type ImagesInfiniteState = {
   modelId?: number;
   modelVersionId?: number;
   postId?: number;
+  collectionId?: number;
   username?: string;
   reviewId?: number;
   prioritizedUserIds?: number[];

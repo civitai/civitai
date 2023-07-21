@@ -109,7 +109,7 @@ export const getPostsInfinite = async ({
   const posts = await dbRead.post.findMany({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
-    where: { AND },
+    where: { AND, collectionId: null },
     orderBy,
     select: {
       id: true,

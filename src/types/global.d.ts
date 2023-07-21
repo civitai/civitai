@@ -53,7 +53,7 @@ declare global {
     speed: number;
     timeRemaining: number;
     name: string;
-    status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
+    status: 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
     abort: () => void;
     uuid: string;
     meta?: Record<string, unknown>;
@@ -81,4 +81,6 @@ declare global {
   type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };
 
   type UploadResult = { url: string; id: string };
+
+  type ImageUploadResponse = { id: string; uploadURL: string } | { error: string };
 }

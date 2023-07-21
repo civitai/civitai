@@ -7,13 +7,14 @@ export function ImageDropzone({
   max = 10,
   hasError,
   onDrop,
-  count,
+  count = 0,
+  label,
   ...props
-}: Omit<DropzoneProps, 'children'> & { max?: number; hasError?: boolean; count: number }) {
+}: Props) {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
 
-  const canAddFiles = max - count > 0;
+  const canAddFiles = count ? max - count > 0 : true;
   const disabled = !canAddFiles || initialDisabled;
   const handleDrop = (files: File[]) => {
     onDrop?.(files.slice(0, max - count));
@@ -51,7 +52,7 @@ export function ImageDropzone({
 
         <div>
           <Text size="xl" inline>
-            Drag images here or click to select files
+            {label ?? 'Drag images here or click to select files'}
           </Text>
           <Text size="sm" color="dimmed" inline mt={7}>
             {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
@@ -77,3 +78,10 @@ const useStyles = createStyles((theme) => ({
     marginBottom: theme.spacing.xs / 2,
   },
 }));
+
+type Props = Omit<DropzoneProps, 'children'> & {
+  max?: number;
+  hasError?: boolean;
+  count?: number;
+  label?: string;
+};

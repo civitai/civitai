@@ -8,6 +8,7 @@ import {
   CollectionWriteConfiguration,
 } from '@prisma/client';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
+import { imageSchema } from '~/server/schema/image.schema';
 
 const collectionItemSchema = z.object({
   type: z.nativeEnum(CollectionType).optional(),
@@ -50,6 +51,21 @@ export const saveCollectionItemInputSchema = collectionItemSchema
       return false;
     },
     { message: 'Please pass a valid item type.' }
+  );
+
+export type BulkSaveCollectionItemsInput = z.infer<typeof bulkSaveCollectionItemsInput>;
+export const bulkSaveCollectionItemsInput = z
+  .object({
+    collectionId: z.coerce.number(),
+    imageIds: z.coerce.number().array().optional(),
+    articleIds: z.coerce.number().array().optional(),
+    postIds: z.coerce.number().array().optional(),
+    modelIds: z.coerce.number().array().optional(),
+  })
+  .refine(
+    ({ articleIds, imageIds, postIds, modelIds }) =>
+      [articleIds, imageIds, postIds, modelIds].filter(isDefined).length === 1,
+    { message: 'Only one item can be added at a time.' }
   );
 
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
@@ -109,4 +125,10 @@ export const updateCollectionItemsStatusInput = z.object({
   collectionId: z.number(),
   collectionItemIds: z.array(z.number()),
   status: z.nativeEnum(CollectionItemStatus),
+});
+
+export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
+export const addSimpleImagePostInput = z.object({
+  collectionId: z.number(),
+  images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
 });
