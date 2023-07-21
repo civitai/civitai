@@ -7,7 +7,6 @@ import { Carousel } from '@mantine/carousel';
 import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/LeaderboardHomeBlockCreatorItem';
 import { Fragment } from 'react';
 import { IconArrowRight } from '@tabler/icons-react';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 
 type Props = { homeBlock: HomeBlockGetAll[number] };
@@ -25,7 +24,6 @@ const useStyles = createStyles((theme) => ({
 
 export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
   const { classes } = useStyles();
-  const isMobile = useIsMobile();
 
   if (!homeBlock.leaderboards || homeBlock.leaderboards.length === 0) {
     return null;

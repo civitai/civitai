@@ -98,7 +98,6 @@ export function ImageCard({ data, collectionId }: Props) {
                   laughCount: data.stats?.laughCountAllTime,
                   cryCount: data.stats?.cryCountAllTime,
                 }}
-                withinPortal
               />
               {!data.hideMeta && data.meta && (
                 <ImageMetaPopover
