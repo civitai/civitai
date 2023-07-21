@@ -23,19 +23,19 @@ export const useFeatureFlags = () => {
     return Object.keys(features).reduce((acc, key) => {
       const featureAccessKey = key as keyof FeatureAccess;
       const hasFeature = features[featureAccessKey];
-      const featureIsToggleable = toggleableFeatures.find(
+      const toggleableFeature = toggleableFeatures.find(
         (toggleableFeature) => toggleableFeature.key === key
       );
 
       // Non toggleable features will rely on our standard feature flag settings:
-      if (!featureIsToggleable) {
+      if (!toggleableFeature) {
         return {
           ...acc,
           [key]: hasFeature,
         };
       }
 
-      const isToggled = toggled[featureAccessKey];
+      const isToggled = toggled[featureAccessKey] ?? toggleableFeature.default;
       return { ...acc, [key]: hasFeature && isToggled } as FeatureAccess;
     }, {} as FeatureAccess);
   }, [features, toggled]);

@@ -73,6 +73,7 @@ import dayjs from 'dayjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 
 export function ModelVersionDetails({
   model,
@@ -85,7 +86,7 @@ export function ModelVersionDetails({
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useContext();
-  const flags = useFeatureFlags();
+  const features = useFeatureFlags();
 
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -102,9 +103,9 @@ export function ModelVersionDetails({
 
   const { data: resourceCovered } = trpc.generation.checkResourcesCoverage.useQuery(
     { id: version.id },
-    { enabled: flags.imageGeneration && !!version }
+    { enabled: features.imageGeneration && !!version }
   );
-  const canGenerate = flags.imageGeneration && !!resourceCovered;
+  const canGenerate = features.imageGeneration && !!resourceCovered;
 
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
@@ -256,6 +257,23 @@ export function ModelVersionDetails({
       label: 'Hash',
       value: <ModelHash hashes={hashes} />,
       visible: !!hashes.length,
+    },
+    {
+      label: (
+        <Group spacing="xs">
+          <Text weight={500}>AIR</Text>
+          <URNExplanation size={20} />
+        </Group>
+      ),
+      value: (
+        <ModelURN
+          baseModel={version.baseModel}
+          type={model.type}
+          modelId={model.id}
+          modelVersionId={version.id}
+        />
+      ),
+      visible: features.air,
     },
   ];
 

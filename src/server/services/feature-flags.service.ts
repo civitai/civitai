@@ -34,6 +34,13 @@ const featureFlags = createFeatureFlags({
     availability: ['dev'],
   },
   collections: ['mod', 'founder'],
+  air: {
+    toggleable: true,
+    default: false,
+    displayName: 'AI Resource Identifier',
+    description: `Show the Civitai AIR on resources to make it easier to pull them into the Civitai Comfy Nodes.`,
+    availability: ['user'],
+  },
 });
 
 // --------------------------
@@ -76,7 +83,7 @@ export const toggleableFeatures = Object.entries(featureFlags)
   }));
 
 type FeatureAvailability = (typeof featureAvailability)[number];
-type FeatureFlagKey = keyof typeof featureFlags;
+export type FeatureFlagKey = keyof typeof featureFlags;
 type FeatureFlag = {
   displayName: string;
   description?: string;
