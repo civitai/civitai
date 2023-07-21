@@ -17,6 +17,41 @@ import { constants } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { NextLink } from '@mantine/next';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { CollectionByIdModel } from '~/types/router';
+import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
+import { hideMobile } from '~/libs/sx-helpers';
+import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { useModelQueryParams } from '~/components/Model/model.utils';
+import { CollectionType } from '@prisma/client';
+
+const ModelCollection = ({ collection }: { collectionId: CollectionByIdModel }) => {
+  const { set, ...queryFilters } = useModelQueryParams();
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="models" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="models" />
+          <ModelFiltersDropdown />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ModelsInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection.id,
+        }}
+        title={collection.name}
+        sx={{ mt: 0 }}
+      />
+    </IsClient>
+  );
+};
 
 export function Collection({
   collectionId,
@@ -89,9 +124,9 @@ export function Collection({
             )}
           </Group>
 
-          <IsClient>
-            <ModelsInfinite filters={{ collectionId, period: 'AllTime' }} />
-          </IsClient>
+          {collection && collection.type === CollectionType.Model && (
+            <ModelCollection collection={collection} />
+          )}
         </Stack>
       </MasonryContainer>
     </MasonryProvider>

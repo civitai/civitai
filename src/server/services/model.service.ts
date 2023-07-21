@@ -5,7 +5,6 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import {
-  CollectionItemStatus,
   CommercialUse,
   MetricTimeframe,
   ModelHashType,
@@ -250,31 +249,12 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
       getAvailableCollectionItemsFilterForUser({ permissions, user: sessionUser });
 
-    const collectionItemModels = await dbRead.collectionItem.findMany({
-      select: {
-        id: true,
-        modelId: true,
-      },
-      where: {
-        collectionId,
-        modelId: {
-          not: null,
-        },
-        AND: collectionItemModelsAND,
-      },
-    });
-
-    const modelIds = collectionItemModels
-      .map((collectionItemModel) => collectionItemModel.modelId)
-      .filter(isDefined);
-
-    if (modelIds.length === 0) {
-      return { items: [] };
-    }
-
     AND.push({
-      id: {
-        in: modelIds,
+      collectionItems: {
+        some: {
+          collectionId,
+          AND: collectionItemModelsAND,
+        },
       },
     });
   }
