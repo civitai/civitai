@@ -51,7 +51,7 @@ async function applyUpvotes() {
         AND applied.disabled
         AND vote.vote > 5
     )
-    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = NOW()
     WHERE ("tagId", "imageId") IN (
       SELECT "tagId", "imageId" FROM affected
     );
@@ -71,7 +71,7 @@ async function applyUpvotes() {
         WHERE
           NOT toi.disabled
           AND toi."imageId" = i.id
-          AND toi."createdAt" > ${lastApplied}
+          AND toi."createdAt" > ${lastApplied} - INTERVAL '1 minute'
       )
     )
     SELECT update_nsfw_levels(ids)
@@ -189,7 +189,7 @@ async function applyDownvotes() {
         JOIN "Tag" t ON t.id = toi."tagId"
         WHERE
           toi.disabled AND t.type = 'Moderation' AND toi."imageId" = i.id
-          AND toi."disabledAt" > ${lastApplied}
+          AND toi."disabledAt" > ${lastApplied} - INTERVAL '1 minute'
       )
       -- And there aren't any remaining moderation tags
       AND NOT EXISTS (
