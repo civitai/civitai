@@ -1,5 +1,3 @@
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import {
   createStyles,
   Stack,
@@ -20,7 +18,7 @@ import {
   Loader,
 } from '@mantine/core';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -42,9 +40,16 @@ import {
   ImageIngestionProvider,
   useImageIngestionContext,
 } from '~/components/Image/Ingestion/ImageIngestionProvider';
+import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
+import {
+  postImageTransmitter,
+  usePostImageTransmitterStore,
+} from '~/store/post-image-transmitter.store';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
+  const transmittedFiles = usePostImageTransmitterStore((state) => state.data);
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
@@ -55,6 +60,16 @@ export function EditPostImages({ max }: { max?: number }) {
     .filter(isDefined);
 
   const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
+
+  // do something with files that were set externally
+  // this will duplicate the images being uploaded in dev due to reactStrictMode
+  useEffect(() => {
+    if (transmittedFiles) {
+      handleDrop(transmittedFiles);
+      postImageTransmitter.setData(undefined);
+    }
+    return () => postImageTransmitter.setData(undefined);
+  }, [transmittedFiles]);
 
   return (
     <Stack>

@@ -40,6 +40,10 @@ import {
   useGetGenerationRequests,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
+import { Generation } from '~/server/services/generation/generation.types';
+import { generationPanel } from '~/store/generation.store';
+import { postImageTransmitter } from '~/store/post-image-transmitter.store';
+import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 type State = {
@@ -186,6 +190,7 @@ export function Feed({
         </div>
       </ScrollArea>
       <FloatingActions
+        images={feed}
         onPostClick={() => console.log('post images')}
         onUpscaleClick={() => console.log('upscale images')}
       />
@@ -206,17 +211,14 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
 
-function FloatingActions({}: // selectCount,
-// onDeselectClick,
-
-FloatingActionsProps) {
+function FloatingActions({ images }: FloatingActionsProps) {
   const router = useRouter();
   const selected = generationImageSelect.useSelection();
   const handleDeselect = () => generationImageSelect.setSelected([]);
 
   const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
     onSuccess: () => {
-      generationImageSelect.setSelected([]);
+      handleDeselect();
     },
   });
 
@@ -233,7 +235,32 @@ FloatingActionsProps) {
     });
   };
 
-  const loading = bulkDeleteImagesMutation.isLoading;
+  const createPostMuation = trpc.post.create.useMutation();
+
+  const loading = bulkDeleteImagesMutation.isLoading || createPostMuation.isLoading;
+
+  const handlePostImages = async () => {
+    const selectedImages = images.filter((x) => selected.includes(x.id));
+    const files = (
+      await Promise.all(
+        selectedImages.map(async (image) => {
+          const result = await fetch(image.url);
+          if (!result.ok) return;
+          const blob = await result.blob();
+          const lastIndex = image.url.lastIndexOf('/');
+          const name = image.url.substring(lastIndex + 1);
+          return new File([blob], name, { type: blob.type });
+        })
+      )
+    ).filter(isDefined);
+    if (!files.length) return;
+    const post = await createPostMuation.mutateAsync({});
+    const pathname = `/posts/${post.id}/edit`;
+    await router.push(pathname);
+    postImageTransmitter.setData(files);
+    generationPanel.close();
+    handleDeselect();
+  };
 
   return (
     <Transition mounted={selected.length > 0} transition="slide-up">
@@ -263,11 +290,9 @@ FloatingActionsProps) {
                 </ActionIcon>
               </Tooltip>
               <Tooltip label="Post images" {...tooltipProps}>
-                <span>
-                  <ActionIcon size="md" variant="light" disabled>
-                    <IconCloudUpload size={20} />
-                  </ActionIcon>
-                </span>
+                <ActionIcon size="md" variant="light" onClick={handlePostImages}>
+                  <IconCloudUpload size={20} />
+                </ActionIcon>
               </Tooltip>
               <Tooltip label="Upscale images" {...tooltipProps}>
                 <span>
@@ -287,6 +312,7 @@ FloatingActionsProps) {
 type FloatingActionsProps = {
   // selectCount: number;
   // onDeselectClick: () => void;
+  images: Generation.Image[];
   onPostClick: () => void;
   onUpscaleClick: () => void;
 };
