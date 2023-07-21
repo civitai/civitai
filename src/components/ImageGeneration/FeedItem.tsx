@@ -47,7 +47,6 @@ export function FeedItem({
   const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
-    console.log({ image });
     generationStore.setData({
       type: 'remix',
       data: { ...request, params: { ...request.params, seed: image.seed ?? request.params.seed } },
