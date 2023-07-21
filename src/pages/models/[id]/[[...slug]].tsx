@@ -20,7 +20,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { ModelModifier, ModelStatus } from '@prisma/client';
+import { CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconBan,
   IconClock,
@@ -628,7 +628,10 @@ export default function ModelDetailsV2({
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            openContext('addToCollection', { modelId: model.id });
+                            openContext('addToCollection', {
+                              modelId: model.id,
+                              type: CollectionType.Model,
+                            });
                           }}
                         >
                           Add to Collection
