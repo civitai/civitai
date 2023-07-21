@@ -433,7 +433,7 @@ export const getCollectionItemsByCollectionId = async ({
     !permission.isOwner &&
     !permission.manage
   ) {
-    throw throwBadRequestError('You do not have permission to view review items');
+    throw throwAuthorizationError('You do not have permission to view review items');
   }
 
   const where: Prisma.CollectionItemWhereInput = {
