@@ -7,9 +7,7 @@ import {
   Rating,
   Center,
   Tooltip,
-  Box,
   Text,
-  AspectRatio,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -30,8 +28,6 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '@mantine/next';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { isDefined } from '~/utils/type-guards';
-import { usePrevious } from '@mantine/hooks';
 
 export function ImagesAsPostsCard({
   data,
@@ -56,13 +52,11 @@ export function ImagesAsPostsCard({
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   const [slidesInView, setSlidesInView] = useState<number[]>([]);
-  const previousSlidesInView = usePrevious(slidesInView);
-  const renderSlides = [...(previousSlidesInView ?? []), ...slidesInView];
 
   useEffect(() => {
     if (!embla) return;
     setSlidesInView(embla.slidesInView(true));
-    const onSelect = () => setSlidesInView(embla.slidesInView(true));
+    const onSelect = () => setSlidesInView([...embla.slidesInView(true), ...embla.slidesInView()]);
     embla.on('select', onSelect);
     return () => {
       embla.off('select', onSelect);
@@ -260,7 +254,7 @@ export function ImagesAsPostsCard({
                     connect={postId ? { entityType: 'post', entityId: postId } : undefined}
                     render={(image, index) => (
                       <Carousel.Slide className={classes.slide} sx={{ height: carouselHeight }}>
-                        {renderSlides.includes(index) && (
+                        {slidesInView.includes(index) && (
                           <ImageGuard.Content>
                             {({ safe }) => (
                               <div className={classes.imageContainer}>
