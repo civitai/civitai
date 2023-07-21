@@ -1,13 +1,5 @@
-import {
-  Button,
-  Container,
-  Grid,
-  Group,
-  ScrollArea,
-  Stack,
-  Title,
-  createStyles,
-} from '@mantine/core';
+import { Button, Group, Stack, Title, createStyles } from '@mantine/core';
+import { Fragment } from 'react';
 import { IconArrowRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { ImageCard } from '~/components/Cards/ImageCard';
@@ -15,9 +7,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockGetAll } from '~/types/router';
 
-const useStyles = createStyles((theme, _params, getRef) => {
-  const gridItem = getRef('gridItem');
-
+const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
     title: {
       fontSize: 32,
@@ -27,36 +17,22 @@ const useStyles = createStyles((theme, _params, getRef) => {
       },
     },
 
-    gridContainer: {
-      padding: 0,
+    grid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat( auto-fit, minmax(280px, 1fr) )',
+      gap: theme.spacing.md,
 
       [theme.fn.smallerThan('sm')]: {
-        paddingRight: '45px',
-      },
-    },
+        gridAutoFlow: 'column',
+        gridTemplateColumns: `repeat(${count}, 280px)`,
+        scrollSnapType: 'x mandatory',
+        overflowX: 'auto',
+        paddingLeft: theme.spacing.md,
+        paddingRight: theme.spacing.md,
 
-    cardGrid: {
-      [theme.fn.smallerThan('sm')]: {
-        flexWrap: 'nowrap',
-
-        [`& > .${gridItem}:last-child`]: {
-          paddingRight: theme.spacing.md,
+        '& > *': {
+          scrollSnapAlign: 'center',
         },
-      },
-    },
-
-    gridItem: {
-      ref: gridItem,
-
-      [theme.fn.smallerThan('sm')]: {
-        paddingTop: 0,
-        paddingBottom: 0,
-      },
-    },
-
-    viewport: {
-      [theme.fn.smallerThan('sm')]: {
-        overflowY: 'hidden',
       },
     },
 
@@ -67,7 +43,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
 });
 
 export const CollectionHomeBlock = ({ homeBlock }: Props) => {
-  const { classes } = useStyles();
+  const { classes } = useStyles({ count: homeBlock.collection?.items.length ?? 0 });
 
   if (!homeBlock.collection) {
     return null;
@@ -76,7 +52,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
   return (
     <HomeBlockWrapper py={32} px={0} bleedRight>
       <Stack spacing="xl">
-        <Group spacing="xs" position="apart" noWrap>
+        <Group spacing="xs" position="apart" noWrap px="md">
           <Title className={classes.title} order={1} lineClamp={1}>
             {homeBlock.metadata.title ?? homeBlock.collection.name}
           </Title>
@@ -93,20 +69,16 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
             </Link>
           )}
         </Group>
-        <ScrollArea type="never" viewportProps={{ style: { overflowY: 'hidden' } }}>
-          <Container className={classes.gridContainer} fluid>
-            <Grid className={classes.cardGrid} gutter="md" my={0}>
-              {homeBlock.collection.items.map((item) => (
-                <Grid.Col key={item.id} className={classes.gridItem} xs={12} sm={6} md={4} lg={3}>
-                  {item.type === 'model' && <ModelCard data={item.data} />}
-                  {item.type === 'image' && (
-                    <ImageCard data={item.data} collectionId={homeBlock.collection?.id} />
-                  )}
-                </Grid.Col>
-              ))}
-            </Grid>
-          </Container>
-        </ScrollArea>
+        <div className={classes.grid}>
+          {homeBlock.collection.items.map((item) => (
+            <Fragment key={item.id}>
+              {item.type === 'model' && <ModelCard data={item.data} />}
+              {item.type === 'image' && (
+                <ImageCard data={item.data} collectionId={homeBlock.collection?.id} />
+              )}
+            </Fragment>
+          ))}
+        </div>
       </Stack>
     </HomeBlockWrapper>
   );

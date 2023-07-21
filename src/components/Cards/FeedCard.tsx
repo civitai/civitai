@@ -4,11 +4,11 @@ import Link from 'next/link';
 type AspectRatio = 'portrait' | 'landscape' | 'square';
 const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number }> = {
   portrait: {
-    ratio: 9 / 16,
+    ratio: 7 / 9,
     height: 430,
   },
   landscape: {
-    ratio: 16 / 9,
+    ratio: 9 / 7,
     height: 300,
   },
   square: {
@@ -19,7 +19,6 @@ const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number }> 
 
 const useStyles = createStyles<string, { height: number }>((theme, { height }) => ({
   root: {
-    height,
     padding: '0 !important',
     color: 'white',
     borderRadius: theme.radius.sm,
@@ -37,7 +36,11 @@ export function FeedCard({ href, children, aspectRatio = 'portrait', className, 
       {...props}
       component={href ? 'a' : undefined}
     >
-      <AspectRatio h={height} ratio={ratio}>
+      <AspectRatio
+        // h={height}
+        ratio={ratio}
+        w="100%"
+      >
         {children}
       </AspectRatio>
     </Card>
