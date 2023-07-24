@@ -365,11 +365,11 @@ export async function refreshGenerationCoverage() {
     INSERT INTO "ModelVersionGenerationCoverage" ("modelVersionId", "workers", "serviceProviders")
     SELECT
       mv."id",
-      IIF(m."type" = 'VAE', 0, mc."workers") as "workers",
-      IIF(m."type" = 'VAE', ARRAY[]::text[], mc."serviceProviders") as "serviceProviders"
+      IIF(m."allowCommercialUse" IN ('Image', 'None'), 0, mc."workers") as "workers",
+      IIF(m."allowCommercialUse" IN ('Image', 'None'), ARRAY[]::text[], mc."serviceProviders") as "serviceProviders"
     FROM (VALUES ${values}) AS mc ("modelVersionId", "workers", "serviceProviders")
     JOIN "ModelVersion" mv ON mv."id" = mc."modelVersionId"
-    JOIN "Model" m ON mv."modelId" = m."id"
+    JOIN "Model" m ON m."id" = mv."modelId"
     ON CONFLICT ("modelVersionId")
     DO UPDATE
     SET "workers" = EXCLUDED."workers",
