@@ -31,8 +31,6 @@ export function FeedCard({ href, children, aspectRatio = 'portrait', className, 
   const { ratio, height } = aspectRatioValues[aspectRatio];
   const { classes, cx } = useStyles({ height });
 
-  console.log(height, ratio, aspectRatioValues);
-
   const card = (
     <Card<'a'>
       className={cx(classes.root, className)}
