@@ -30,7 +30,7 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 
-const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
 
   if (!collection) {
@@ -52,14 +52,14 @@ const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) =>
       <ModelsInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection?.id,
+          collectionId: collection.id,
         }}
       />
     </IsClient>
   );
 };
 
-const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { ...queryFilters } = useImageQueryParams();
 
   if (!collection) {
@@ -80,14 +80,14 @@ const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) =>
       <ImagesInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection?.id,
+          collectionId: collection.id,
         }}
         withTags
       />
     </IsClient>
   );
 };
-const PostCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = usePostQueryParams();
 
   if (!collection) {
@@ -108,14 +108,14 @@ const PostCollection = ({ collection }: { collection: CollectionByIdModel }) => 
       <PostsInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection?.id,
+          collectionId: collection.id,
         }}
       />
     </IsClient>
   );
 };
 
-const ArticleCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useArticleQueryParams();
 
   if (!collection) {
@@ -136,7 +136,7 @@ const ArticleCollection = ({ collection }: { collection: CollectionByIdModel }) 
       <ArticlesInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection?.id,
+          collectionId: collection.id,
         }}
       />
     </IsClient>

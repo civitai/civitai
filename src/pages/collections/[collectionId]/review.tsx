@@ -209,7 +209,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
       <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
         <Checkbox
           checked={selected}
-          onChange={() => toggleSelected(collectionItem.id)}
+          readOnly
           size="lg"
           sx={{
             position: 'absolute',

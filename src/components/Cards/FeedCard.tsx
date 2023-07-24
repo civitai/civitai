@@ -22,6 +22,7 @@ const useStyles = createStyles<string, { height: number }>((theme, { height }) =
     padding: '0 !important',
     color: 'white',
     borderRadius: theme.radius.sm,
+    cursor: 'pointer',
     // 280 = min column width based off of CollectionHomeBlock styles grid.
     // Min height based off of portrait as it's technically the smaller possible height wise.
     minHeight: 280 * aspectRatioValues['portrait'].ratio,
