@@ -10,6 +10,7 @@ import { PostsCard } from '~/components/Post/Infinite/PostsCard';
 import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
 import { PostSort } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
+import { PostCard } from '~/components/Cards/PostCard';
 
 type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
@@ -64,7 +65,7 @@ export default function PostsInfinite({
               return { width, height };
             }}
             maxItemHeight={600}
-            render={PostsCard}
+            render={PostCard}
             itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (

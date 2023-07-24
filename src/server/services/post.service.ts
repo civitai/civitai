@@ -115,7 +115,7 @@ export const getPostsInfinite = async ({
       id: true,
       nsfw: true,
       title: true,
-      // user: { select: userWithCosmeticsSelect },
+      user: { select: userWithCosmeticsSelect },
       publishedAt: true,
       stats: {
         select: {
