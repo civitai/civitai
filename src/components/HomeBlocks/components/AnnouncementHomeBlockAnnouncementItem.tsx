@@ -38,21 +38,25 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
   const { actions } = announcementMetadata || {};
   const isMobile = useIsMobile();
 
+  const dismissible = announcementMetadata?.dismissible ?? true;
+
   return (
     <Card radius="md" p="lg" display="flex" sx={{ minHeight: '100%' }}>
-      <ActionIcon
-        variant="subtle"
-        radius="xl"
-        color="red"
-        onClick={() => onAnnouncementDismiss(announcement.id)}
-        sx={(theme) => ({
-          position: 'absolute',
-          top: theme.spacing.xs,
-          right: theme.spacing.xs,
-        })}
-      >
-        <IconX size={20} />
-      </ActionIcon>
+      {dismissible && (
+        <ActionIcon
+          variant="subtle"
+          radius="xl"
+          color="red"
+          onClick={() => onAnnouncementDismiss(announcement.id)}
+          sx={(theme) => ({
+            position: 'absolute',
+            top: theme.spacing.xs,
+            right: theme.spacing.xs,
+          })}
+        >
+          <IconX size={20} />
+        </ActionIcon>
+      )}
       <Stack>
         <Group spacing="md" noWrap>
           {announcement.emoji && (

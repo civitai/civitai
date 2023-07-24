@@ -214,7 +214,7 @@ export function Collection({
             )}
           </Group>
 
-          {collection && collection.type === CollectionType.Model && (
+          {collection && (collection.type === CollectionType.Model || !collection.type) && (
             <ModelCollection collection={collection} />
           )}
 
