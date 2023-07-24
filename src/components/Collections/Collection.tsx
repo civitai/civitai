@@ -120,7 +120,7 @@ export function Collection({
   // TODO.collections: This is tied to images for now but
   // we will need to add a check for other resources later
   const canAddContent =
-    collectionType === CollectionType.Image && permissions?.write && permissions?.isContributor;
+    collectionType === CollectionType.Image && (permissions?.write || permissions?.writeReview);
 
   return (
     <>

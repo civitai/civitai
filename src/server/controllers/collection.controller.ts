@@ -274,7 +274,7 @@ export const addSimpleImagePostHandler = async ({
       id: collection.id,
       user,
     });
-    if (!permissions.write || !permissions.manage)
+    if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
 
     // create post
