@@ -251,7 +251,7 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
 
 export const saveItemInCollections = async ({
   user,
-  input: { collectionIds, ...input },
+  input: { collectionIds, type, ...input },
 }: {
   user: SessionUser;
   input: AddCollectionItemInput;
@@ -467,6 +467,7 @@ export const getCollectionItemsByCollectionId = async ({
     modelIds.length > 0
       ? await getModelsWithImagesAndModelVersions({
           input: {
+            limit: modelIds.length,
             sort: ModelSort.Newest,
             period: MetricTimeframe.AllTime,
             periodMode: 'stats',
@@ -517,9 +518,9 @@ export const getCollectionItemsByCollectionId = async ({
   const posts =
     postIds.length > 0
       ? await getPostsInfinite({
-          limit: 0,
+          limit: postIds.length,
           period: MetricTimeframe.AllTime,
-          periodMode: 'stats',
+          periodMode: 'published',
           sort: PostSort.Newest,
           ...userPreferencesInput,
           user: ctx.user,

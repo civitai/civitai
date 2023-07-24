@@ -25,8 +25,12 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { CollectionType } from '@prisma/client';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
+import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
+import { usePostQueryParams } from '~/components/Post/post.utils';
+import { useArticleQueryParams } from '~/components/Article/article.utils';
+import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 
-const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
 
   if (!collection) {
@@ -48,14 +52,14 @@ const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) =>
       <ModelsInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection?.id,
+          collectionId: collection.id,
         }}
       />
     </IsClient>
   );
 };
 
-const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { ...queryFilters } = useImageQueryParams();
 
   if (!collection) {
@@ -76,9 +80,64 @@ const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) =>
       <ImagesInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection?.id,
+          collectionId: collection.id,
         }}
         withTags
+      />
+    </IsClient>
+  );
+};
+const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+  const { set, ...queryFilters } = usePostQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="posts" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="posts" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <PostsInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection.id,
+        }}
+      />
+    </IsClient>
+  );
+};
+
+const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+  const { set, ...queryFilters } = useArticleQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="posts" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="posts" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ArticlesInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection.id,
+        }}
       />
     </IsClient>
   );
@@ -120,12 +179,12 @@ export function Collection({
       <MasonryContainer {...containerProps}>
         <Stack spacing="xs" w="100%">
           <Group align="center" spacing="xs" noWrap style={{ alignItems: 'flex-start' }}>
-            <Stack spacing={0}>
+            <Stack spacing="sm">
               <Title order={1} lh={1}>
                 {collection?.name ?? 'Loading...'}
               </Title>
               {collection?.description && (
-                <Text size="xs" color="dimmed">
+                <Text size="sm" color="dimmed">
                   {collection.description}
                 </Text>
               )}
@@ -161,6 +220,12 @@ export function Collection({
 
           {collection && collection.type === CollectionType.Image && (
             <ImageCollection collection={collection} />
+          )}
+          {collection && collection.type === CollectionType.Post && (
+            <PostCollection collection={collection} />
+          )}
+          {collection && collection.type === CollectionType.Article && (
+            <ArticleCollection collection={collection} />
           )}
         </Stack>
       </MasonryContainer>

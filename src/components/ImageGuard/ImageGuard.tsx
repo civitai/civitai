@@ -230,9 +230,11 @@ ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
 ImageGuard.Report = function ReportImage({
   position = 'top-right',
   withinPortal = false,
+  context = 'image',
 }: {
   position?: 'static' | 'top-left' | 'top-right';
   withinPortal?: boolean;
+  context?: 'post' | 'image';
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -313,9 +315,21 @@ ImageGuard.Report = function ReportImage({
     menuItems.push(
       <AddToCollectionMenuItem
         key="add-to-collection"
-        onClick={() =>
-          openContext('addToCollection', { imageId: image.id, type: CollectionType.Image })
-        }
+        onClick={() => {
+          switch (context) {
+            case 'post':
+              if (!image.postId) {
+                return;
+              }
+
+              openContext('addToCollection', { postId: image.postId, type: CollectionType.Post });
+              break;
+            default: {
+              openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
+              break;
+            }
+          }
+        }}
       />
     );
   }

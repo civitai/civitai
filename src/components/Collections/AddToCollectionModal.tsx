@@ -203,7 +203,9 @@ function CollectionListForm({
                 </InputCheckboxGroup>
               ) : (
                 <Center py="xl">
-                  <Text color="dimmed">{`You don't have any collections yet.`}</Text>
+                  <Text color="dimmed">{`You don't have any ${
+                    props.type?.toLowerCase() || ''
+                  } collections yet.`}</Text>
                 </Center>
               )}
             </ScrollArea.Autosize>

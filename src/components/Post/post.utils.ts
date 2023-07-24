@@ -24,6 +24,7 @@ const postQueryParamSchema = z
     view: z.enum(['categories', 'feed']),
     period: z.nativeEnum(MetricTimeframe),
     sort: z.nativeEnum(PostSort),
+    collectionId: numericString(),
   })
   .partial();
 type PostQueryParams = z.output<typeof postQueryParamSchema>;
