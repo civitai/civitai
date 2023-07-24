@@ -109,8 +109,6 @@ export const getHomeBlocksHandler = async ({
                 };
               }
               case HomeBlockType.Announcement: {
-                console.log('Here we go?', metadata);
-
                 if (!metadata.announcements) {
                   return null;
                 }
