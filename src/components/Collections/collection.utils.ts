@@ -59,14 +59,21 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
   };
 
   switch (collectionItem.type) {
-    case 'image':
+    case 'image': {
       reviewData.images = [collectionItem.data];
       reviewData.user = collectionItem.data.user;
       break;
-    case 'model':
+    }
+    case 'model': {
       reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
       reviewData.user = collectionItem.data.user;
       break;
+    }
+    case 'post': {
+      reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
+      reviewData.user = collectionItem.data.user;
+      break;
+    }
     default:
       break;
   }
