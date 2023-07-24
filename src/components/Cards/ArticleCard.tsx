@@ -74,7 +74,7 @@ export function ArticleCard({ data }: Props) {
                 e.preventDefault();
                 e.stopPropagation();
 
-                router.push(`/users/${user.username}`);
+                router.push(`/users/${user.username}/articles`);
               }}
             >
               <UserAvatar user={user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
