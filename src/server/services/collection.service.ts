@@ -139,6 +139,7 @@ export const getUserCollectionPermissionsById = async ({
   if (contributorItem.permissions.includes(CollectionContributorPermission.ADD)) {
     permissions.write = true;
   }
+
   if (contributorItem.permissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
     permissions.writeReview = true;
   }

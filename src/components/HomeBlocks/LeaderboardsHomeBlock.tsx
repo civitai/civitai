@@ -1,6 +1,6 @@
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockGetAll } from '~/types/router';
-import { Button, Card, createStyles, Divider, Group, Stack, Text } from '@mantine/core';
+import { Box, Button, Card, createStyles, Divider, Group, Stack, Text } from '@mantine/core';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import Link from 'next/link';
 import { Carousel } from '@mantine/carousel';
@@ -20,6 +20,11 @@ const useStyles = createStyles((theme) => ({
         ? theme.colors.dark[8]
         : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
+  metadata: {
+    [theme.fn.smallerThan('sm')]: {
+      padding: theme.spacing.md,
+    },
+  },
 }));
 
 export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
@@ -34,7 +39,9 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
 
   return (
     <HomeBlockWrapper className={classes.root} bleedRight>
-      <HomeBlockHeaderMeta metadata={metadata} />
+      <Box className={classes.metadata}>
+        <HomeBlockHeaderMeta metadata={metadata} />
+      </Box>
       <Carousel
         loop={false}
         slideSize="25%"

@@ -113,12 +113,12 @@ export const getHomeBlocksHandler = async ({
                   return null;
                 }
 
-                const announcementIds = metadata.announcements.map(
-                  (announcement) => announcement.id
-                );
+                const announcementIds = metadata.announcements.ids;
                 const announcements = await getAnnouncements({
                   ids: announcementIds,
                   dismissed: input.dismissed,
+                  limit: metadata.announcements.limit,
+                  user: ctx.user,
                 });
 
                 if (!announcements.length) {
@@ -130,14 +130,8 @@ export const getHomeBlocksHandler = async ({
                   ...homeBlock,
                   metadata,
                   announcements: announcements.sort((a, b) => {
-                    if (!metadata.announcements) {
-                      return 0;
-                    }
-
-                    const aIndex =
-                      metadata.announcements.find((item) => item.id === a.id)?.index ?? 0;
-                    const bIndex =
-                      metadata.announcements.find((item) => item.id === b.id)?.index ?? 0;
+                    const aIndex = a.metadata.index ?? 999;
+                    const bIndex = b.metadata.index ?? 999;
 
                     return aIndex - bIndex;
                   }),
