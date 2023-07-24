@@ -49,9 +49,13 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       const formData = getFormData();
       // may not need this...
       if (formData.resources) {
-        for (const resource of formData.resources) {
-          if (resource.modelType === ModelType.LORA) resource.strength = resource.strength ?? 1;
-        }
+        formData.resources = [
+          ...formData.resources.map((resource) => {
+            if (resource.modelType === ModelType.LORA)
+              return { ...resource, strength: resource.strength ?? 1 };
+            return resource;
+          }),
+        ];
       }
 
       /*
