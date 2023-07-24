@@ -108,7 +108,6 @@ const PostCollection = ({ collection }: { collection: CollectionByIdModel }) => 
           ...queryFilters,
           collectionId: collection?.id,
         }}
-        withTags
       />
     </IsClient>
   );
@@ -150,12 +149,12 @@ export function Collection({
       <MasonryContainer {...containerProps}>
         <Stack spacing="xs" w="100%">
           <Group align="center" spacing="xs" noWrap style={{ alignItems: 'flex-start' }}>
-            <Stack spacing={0}>
+            <Stack spacing="sm">
               <Title order={1} lh={1}>
                 {collection?.name ?? 'Loading...'}
               </Title>
               {collection?.description && (
-                <Text size="xs" color="dimmed">
+                <Text size="sm" color="dimmed">
                   {collection.description}
                 </Text>
               )}
