@@ -251,7 +251,7 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
 
 export const saveItemInCollections = async ({
   user,
-  input: { collectionIds, ...input },
+  input: { collectionIds, type, ...input },
 }: {
   user: SessionUser;
   input: AddCollectionItemInput;
@@ -266,7 +266,7 @@ export const saveItemInCollections = async ({
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
-    const type: CollectionType = inputToCollectionType[itemKey];
+    const type: CollectionType = inputToCollectionType[itemKey] || type;
     // check if all collections match the Model type
     const collections = await dbRead.collection.findMany({
       where: {

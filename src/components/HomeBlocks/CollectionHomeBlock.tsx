@@ -23,6 +23,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockGetAll } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { PostCard } from '~/components/Cards/PostCard';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -174,6 +175,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
           <Fragment key={item.id}>
             {item.type === 'model' && <ModelCard data={item.data} />}
             {item.type === 'image' && <ImageCard data={item.data} collectionId={collection?.id} />}
+            {item.type === 'post' && <PostCard data={item.data} />}
           </Fragment>
         ))}
       </div>
