@@ -77,7 +77,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                             />
                             {!image.hideMeta && image.meta && (
                               <ImageMetaPopover
-                                meta={image.meta as any}
+                                meta={image.meta}
                                 generationProcess={image.generationProcess ?? undefined}
                                 imageId={image.id}
                               >

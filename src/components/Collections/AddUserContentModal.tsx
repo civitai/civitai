@@ -1,7 +1,9 @@
 import {
   ActionIcon,
+  AspectRatio,
   Button,
   Center,
+  Checkbox,
   Divider,
   Group,
   Loader,
@@ -15,28 +17,44 @@ import {
   Text,
 } from '@mantine/core';
 import { IconInfoCircle, IconTrash } from '@tabler/icons-react';
+import { useCallback, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import {
+  addSimpleImagePostInput,
+  bulkSaveCollectionItemsInput,
+} from '~/server/schema/collection.schema';
+import { ImageGetInfinite } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
-  // const clear = useStore((state) => state.clearSelectedImages);
+
+  const selected = useStore((state) => Object.keys(state.selected).map(Number));
+  const deselectAll = useStore((state) => state.deselectAll);
+  const [error, setError] = useState('');
+
   const { files, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
 
   const handleDropImages = async (droppedFiles: File[]) => {
+    deselectAll();
+    setError('');
     for (const file of droppedFiles) {
       uploadToCF(file);
     }
@@ -45,14 +63,23 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
   const handleClose = () => {
     resetFiles();
     onClose();
-    // clear();
+    deselectAll();
+    setError('');
   };
 
   const addSimpleImagePostCollectionMutation = trpc.collection.addSimpleImagePost.useMutation();
-  const handleSubmit = () => {
+  const handleSubmitUploads = () => {
+    setError('');
     const filteredImages = files
       .filter((file) => file.status === 'success')
       .map(({ id, url, ...file }) => ({ ...file, url: id }));
+    const data = { collectionId, images: filteredImages };
+    // Manually check for input errors
+    const results = addSimpleImagePostInput.safeParse(data);
+    if (!results.success) {
+      setError('You must upload or select at least one image.');
+      return;
+    }
 
     addSimpleImagePostCollectionMutation.mutate(
       { collectionId, images: filteredImages },
@@ -61,8 +88,39 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
           handleClose();
           await queryUtils.image.getInfinite.invalidate();
         },
+        onError(error) {
+          showErrorNotification({
+            title: 'Unable to add images to collection',
+            error: new Error(error.message),
+          });
+        },
       }
     );
+  };
+
+  const saveCollectionItemsMutation = trpc.collection.bulkSaveItems.useMutation();
+  const handleSubmitExisting = () => {
+    setError('');
+    const data = { collectionId, imageIds: selected };
+    // Manually check for input errors
+    const results = bulkSaveCollectionItemsInput.safeParse(data);
+    if (!results.success) {
+      setError('You must upload or select at least one image');
+      return;
+    }
+
+    saveCollectionItemsMutation.mutate(data, {
+      onSuccess: async () => {
+        handleClose();
+        await queryUtils.image.getInfinite.invalidate();
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Unable to add images to collection',
+          error: new Error(error.message),
+        });
+      },
+    });
   };
 
   const uploading = files.some((file) => file.status === 'uploading');
@@ -78,8 +136,13 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
       centered
     >
       <Stack spacing="xl">
+        {error && (
+          <AlertWithIcon color="red" iconColor="red" size="sm" icon={<IconInfoCircle size={16} />}>
+            {error}
+          </AlertWithIcon>
+        )}
         {addSimpleImagePostCollectionMutation.isLoading ? (
-          <Center py="xl" h="500px">
+          <Center py="xl" h="250px">
             <Stack align="center">
               <Loader />
               <Text color="dimmed">
@@ -164,7 +227,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                   maxColumnCount={4}
                   maxSingleColumnWidth={450}
                 >
-                  <MasonryContainer m={0} fluid>
+                  <MasonryContainer m={0} p={0} fluid>
                     <ScrollArea.Autosize maxHeight="500px">
                       {currentUser && (
                         <ImagesInfinite
@@ -174,6 +237,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                             period: 'AllTime',
                             sort: ImageSort.Newest,
                           }}
+                          renderItem={SelectableImageCard}
                         />
                       )}
                     </ScrollArea.Autosize>
@@ -198,7 +262,10 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
           <Button variant="default" onClick={handleClose}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={loading}>
+          <Button
+            onClick={selected.length > 0 ? handleSubmitExisting : handleSubmitUploads}
+            loading={loading}
+          >
             Add
           </Button>
         </Group>
@@ -209,25 +276,100 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
 
 type Props = ModalProps & { collectionId: number };
 
-/**
- * Experimental Stuff
- */
-type Store = {
-  selectedImages: number[];
-  setSelectedImages: (ids: number[]) => void;
-  clearSelectedImages: () => void;
+function SelectableImageCard({ data }: { data: ImageGetInfinite[number] }) {
+  const toggleSelected = useStore((state) => state.toggleSelected);
+  const selected = useStore(useCallback((state) => !!state.selected[data.id], [data.id]));
+
+  return (
+    <MasonryCard
+      shadow="sm"
+      p={0}
+      onClick={() => toggleSelected(data.id)}
+      sx={{ opacity: selected ? 0.6 : 1, cursor: 'pointer' }}
+      withBorder
+    >
+      <div style={{ position: 'relative' }}>
+        <ImageGuard
+          images={[data]}
+          render={(image) => (
+            <ImageGuard.Content>
+              {({ safe }) => (
+                <>
+                  <ImageGuard.ToggleImage position="top-left" />
+                  {!safe ? (
+                    <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                      <MediaHash {...image} />
+                    </AspectRatio>
+                  ) : (
+                    <EdgeImage
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={image.name ?? undefined}
+                      width={450}
+                      placeholder="empty"
+                      style={{ width: '100%' }}
+                    />
+                  )}
+                </>
+              )}
+            </ImageGuard.Content>
+          )}
+        />
+        <Checkbox
+          size="lg"
+          checked={selected}
+          sx={{ position: 'absolute', top: 5, right: 5 }}
+          readOnly
+        />
+        {!data.hideMeta && data.meta && (
+          <ImageMetaPopover meta={data.meta}>
+            <ActionIcon
+              variant="light"
+              color="dark"
+              size="lg"
+              sx={{ position: 'absolute', bottom: 5, right: 5 }}
+            >
+              <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+            </ActionIcon>
+          </ImageMetaPopover>
+        )}
+      </div>
+    </MasonryCard>
+  );
+}
+
+type StoreState = {
+  selected: Record<number, boolean>;
+  getSelected: () => number[];
+  toggleSelected: (value: number) => void;
+  selectMany: (values: number[]) => void;
+  deselectAll: () => void;
 };
 
-const useStore = create<Store>()(
-  immer((set) => ({
-    selectedImages: [],
-    setSelectedImages: (ids) =>
+const useStore = create<StoreState>()(
+  immer((set, get) => ({
+    selected: {},
+    getSelected: () => {
+      const dict = get().selected;
+      return Object.keys(dict).map(Number);
+    },
+    toggleSelected: (value) => {
       set((state) => {
-        state.selectedImages = ids;
-      }),
-    clearSelectedImages: () =>
+        if (state.selected[value]) delete state.selected[value];
+        else state.selected[value] = true;
+      });
+    },
+    selectMany: (values) => {
       set((state) => {
-        state.selectedImages = [];
-      }),
+        values.map((value) => {
+          state.selected[value] = true;
+        });
+      });
+    },
+    deselectAll: () => {
+      set((state) => {
+        state.selected = {};
+      });
+    },
   }))
 );

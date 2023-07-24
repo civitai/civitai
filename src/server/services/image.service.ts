@@ -17,6 +17,7 @@ import {
   GetImageInput,
   GetImagesByCategoryInput,
   GetInfiniteImagesInput,
+  ImageMetaProps,
   ImageModerationSchema,
   IngestImageInput,
   ingestImageSchema,
@@ -598,7 +599,7 @@ type GetAllImagesRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: Prisma.JsonValue;
+  meta: ImageMetaProps;
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
@@ -994,11 +995,12 @@ export const getAllImages = async ({
   }
 
   const images: Array<
-    ImageV2Model & {
+    Omit<ImageV2Model, 'meta'> & {
       tags: VotableTagModel[] | undefined;
       report: (typeof reportVar)[number] | undefined;
       publishedAt: Date | null;
       modelVersionId: number | null;
+      meta: ImageMetaProps;
     }
   > = rawImages.map(
     ({
