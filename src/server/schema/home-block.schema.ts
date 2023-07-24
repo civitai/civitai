@@ -20,14 +20,10 @@ export const homeBlockMetaSchema = z
         // TODO.home-blocks: perhaps we want other useful info here, such as maximum number of places, size of the category, etc.
       })
     ),
-    announcements: z.array(
-      z.object({
-        id: z.number(),
-        // TODO.home-blocks: define what props will be needed for announcements. Based off of design, at least colSpan is needed.
-        colSpan: z.number().default(12),
-        index: z.number().default(0),
-      })
-    ),
+    announcements: z.object({
+      ids: z.array(z.number()).optional(),
+      limit: z.number().optional(),
+    }),
     link: z.string(),
     linkText: z.string(),
   })

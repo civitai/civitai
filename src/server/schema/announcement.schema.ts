@@ -18,6 +18,10 @@ export const announcementMetaSchema = z
         icon: z.string().optional(),
       })
     ),
+    displayTo: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
+    dismissible: z.boolean().default(true),
+    colSpan: z.number().default(6),
+    index: z.number().optional(),
   })
   .partial();
 
@@ -25,4 +29,5 @@ export type GetAnnouncementsInput = z.infer<typeof getAnnouncementsSchema>;
 export const getAnnouncementsSchema = z.object({
   dismissed: z.array(z.number()).optional(),
   ids: z.array(z.number()).optional(),
+  limit: z.number().optional(),
 });

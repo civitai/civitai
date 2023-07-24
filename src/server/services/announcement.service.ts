@@ -29,19 +29,31 @@ export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementS
 };
 
 export type GetAnnouncement = Awaited<ReturnType<typeof getAnnouncements>>[number];
-export const getAnnouncements = async ({ dismissed, ids }: GetAnnouncementsInput) => {
+export const getAnnouncements = async ({ dismissed, limit, ids }: GetAnnouncementsInput) => {
   const now = new Date();
+  const AND: Prisma.Enumerable<Prisma.AnnouncementWhereInput> = [
+    {
+      OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
+    },
+    {
+      OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
+    },
+  ];
+
+  if (ids) {
+    AND.push({ id: { in: ids } });
+  }
+
+  if (dismissed) {
+    AND.push({
+      OR: [{ id: { notIn: dismissed } }, { metadata: { path: ['dismissible'], equals: false } }],
+    });
+  }
+
   const announcements = await dbRead.announcement.findMany({
+    take: limit,
     where: {
-      id: { notIn: dismissed, in: ids },
-      AND: [
-        {
-          OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
-        },
-        {
-          OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
-        },
-      ],
+      AND,
     },
     orderBy: { id: 'desc' },
     select: {
