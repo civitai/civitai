@@ -15,6 +15,7 @@ import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@ta
 import { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
+import { ModelCard } from '~/components/Cards/ModelCard';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
@@ -53,6 +54,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
           ...queryFilters,
           collectionId: collection.id,
         }}
+        // renderItem={ModelCard}
       />
     </IsClient>
   );
