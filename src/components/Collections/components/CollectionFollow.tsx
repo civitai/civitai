@@ -62,7 +62,6 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
 
   return (
     <Button
-      variant="outline"
       size="xs"
       pl={4}
       pr={8}

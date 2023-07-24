@@ -12,13 +12,11 @@ import {
   Stack,
 } from '@mantine/core';
 import { IconInfoCircle, IconTrash } from '@tabler/icons-react';
-import { useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { useImageQueryParams } from '~/components/Image/image.utils';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';

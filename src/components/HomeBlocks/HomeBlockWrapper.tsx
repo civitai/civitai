@@ -2,9 +2,7 @@ import { Container, ContainerProps, createStyles } from '@mantine/core';
 
 const useStyles = createStyles((theme) => ({
   bleedRight: {
-    [theme.fn.smallerThan('sm')]: {
-      paddingRight: 0,
-    },
+    padding: 0,
   },
 }));
 

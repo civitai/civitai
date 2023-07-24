@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Button,
   ContainerProps,
   Group,
   Menu,
@@ -8,19 +9,83 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
-import { IconCloudOff, IconDotsVertical, IconPencil, IconPlus } from '@tabler/icons-react';
+import { IconCloudOff, IconDotsVertical, IconPencil } from '@tabler/icons-react';
 import { useState } from 'react';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
+import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
+import { useModelQueryParams } from '~/components/Model/model.utils';
 import { constants } from '~/server/common/constants';
+import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { NextLink } from '@mantine/next';
+
+const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+  const { set, ...queryFilters } = useModelQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="models" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="models" />
+          <ModelFiltersDropdown />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ModelsInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection?.id,
+        }}
+      />
+    </IsClient>
+  );
+};
+
+const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+  const { ...queryFilters } = useImageQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="images" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="images" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ImagesInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection.id,
+        }}
+        withTags
+      />
+    </IsClient>
+  );
+};
 
 export function Collection({
   collectionId,
@@ -50,7 +115,11 @@ export function Collection({
       </Stack>
     );
   }
+
   const collectionType = collection?.type;
+  // This is tied to images for now but we will need to add a check for other resources later
+  const canAddContent =
+    collectionType === CollectionType.Image && permissions?.write && permissions?.isContributor;
 
   return (
     <>
@@ -75,6 +144,11 @@ export function Collection({
               {collection && permissions && (
                 <Group ml="auto">
                   <CollectionFollowAction collection={collection} permissions={permissions} />
+                  {canAddContent && (
+                    <Button size="xs" onClick={() => setOpened(true)}>
+                      Add from your library
+                    </Button>
+                  )}
                   {permissions.manage && (
                     <Menu>
                       <Menu.Target>
@@ -83,14 +157,6 @@ export function Collection({
                         </ActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        {collectionType === CollectionType.Image && (
-                          <Menu.Item
-                            icon={<IconPlus size={14} stroke={1.5} />}
-                            onClick={() => setOpened(true)}
-                          >
-                            Add from your library
-                          </Menu.Item>
-                        )}
                         <Menu.Item
                           component={NextLink}
                           icon={<IconPencil size={14} stroke={1.5} />}
@@ -104,19 +170,16 @@ export function Collection({
                 </Group>
               )}
             </Group>
-
-            <IsClient>
-              {collectionType === CollectionType.Model && (
-                <ModelsInfinite filters={{ collectionId, period: 'AllTime' }} />
-              )}
-              {collectionType === CollectionType.Image && (
-                <ImagesInfinite filters={{ collectionId, period: 'AllTime' }} />
-              )}
-            </IsClient>
+            {collection && collectionType === CollectionType.Model && (
+              <ModelCollection collection={collection} />
+            )}
+            {collection && collectionType === CollectionType.Image && (
+              <ImageCollection collection={collection} />
+            )}
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-      {collection && collectionType === CollectionType.Image && (
+      {collection && canAddContent && (
         <AddUserContentModal
           collectionId={collection.id}
           opened={opened}

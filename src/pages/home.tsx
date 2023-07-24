@@ -1,4 +1,4 @@
-import { Center, Container, Loader, Title } from '@mantine/core';
+import { Center, Container, Loader } from '@mantine/core';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
