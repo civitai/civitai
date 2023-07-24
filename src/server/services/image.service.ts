@@ -665,7 +665,7 @@ export const getAllImages = async ({
   // otherwise, bring scanned images or all images created by the current user
   else
     AND.push(
-      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" OR i."userId" = ${userId}`
+      Prisma.sql`(i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" OR i."userId" = ${userId})`
     );
 
   // If User Isn't mod
