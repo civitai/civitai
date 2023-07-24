@@ -17,6 +17,7 @@ import {
   GetImageInput,
   GetImagesByCategoryInput,
   GetInfiniteImagesInput,
+  ImageMetaProps,
   ImageModerationSchema,
   IngestImageInput,
   ingestImageSchema,
@@ -598,7 +599,7 @@ type GetAllImagesRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: Prisma.JsonValue;
+  meta: ImageMetaProps;
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
@@ -659,8 +660,14 @@ export const getAllImages = async ({
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
 
-  // ensure that only scanned images make it to the main feed
-  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
+  // ensure that only scanned images make it to the main feed if no user is logged in
+  if (!userId)
+    AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
+  // otherwise, bring scanned images or all images created by the current user
+  else
+    AND.push(
+      Prisma.sql`(i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" OR i."userId" = ${userId})`
+    );
 
   // If User Isn't mod
   if (!isModerator) {
@@ -668,7 +675,7 @@ export const getAllImages = async ({
     tagReview = false;
     reportReview = false;
 
-    applyModRulesSql(AND, { userId });
+    applyModRulesSql(AND, { userId, publishedOnly: !collectionId });
   }
 
   if (needsReview) {
@@ -1429,11 +1436,14 @@ export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: 
   }
 };
 
-export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: number }) {
+export function applyModRulesSql(
+  AND: Prisma.Sql[],
+  { userId, publishedOnly = true }: { userId?: number; publishedOnly?: boolean }
+) {
   // Hide images that need review
   const needsReviewOr = [Prisma.sql`i."needsReview" IS NULL`];
   // Hide images that aren't published
-  const publishedOr = [Prisma.sql`p."publishedAt" < now()`];
+  const publishedOr = publishedOnly ? [Prisma.sql`p."publishedAt" < now()`] : [];
 
   if (userId) {
     const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
@@ -1441,7 +1451,7 @@ export function applyModRulesSql(AND: Prisma.Sql[], { userId }: { userId?: numbe
     publishedOr.push(belongsToUser);
   }
   AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-  AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+  if (publishedOr.length > 0) AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
 }
 
 export async function applyAnonymousUserRules(excludedImageTags: number[]) {

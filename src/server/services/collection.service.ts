@@ -1,5 +1,6 @@
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
+  BulkSaveCollectionItemsInput,
   AddCollectionItemInput,
   GetAllCollectionItemsSchema,
   GetAllUserCollectionsInputSchema,
@@ -250,6 +251,13 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
   });
 };
 
+const inputToCollectionType = {
+  modelId: CollectionType.Model,
+  articleId: CollectionType.Article,
+  imageId: CollectionType.Image,
+  postId: CollectionType.Post,
+} as const;
+
 export const saveItemInCollections = async ({
   user,
   input: { collectionIds, type, ...input },
@@ -257,17 +265,10 @@ export const saveItemInCollections = async ({
   user: SessionUser;
   input: AddCollectionItemInput;
 }) => {
-  const inputToCollectionType: Record<string, CollectionType> = {
-    modelId: CollectionType.Model,
-    articleId: CollectionType.Article,
-    imageId: CollectionType.Image,
-    postId: CollectionType.Post,
-  };
-
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
-    const type: CollectionType = inputToCollectionType[itemKey];
+    const type = inputToCollectionType[itemKey as keyof typeof inputToCollectionType];
     // check if all collections match the Model type
     const collections = await dbRead.collection.findMany({
       where: {
@@ -355,8 +356,22 @@ export const upsertCollection = async ({
         write,
       },
     });
-
     if (!updated) throw throwNotFoundError(`No collection with id ${id}`);
+
+    if (input.read === CollectionReadConfiguration.Public) {
+      // Set publishedAt for all post belonging to this collection if changing privacy to public
+      await dbWrite.post.updateMany({
+        where: { collectionId: updated.id },
+        data: { publishedAt: new Date() },
+      });
+    } else {
+      // otherwise set publishedAt to null
+      await dbWrite.post.updateMany({
+        where: { collectionId: updated.id },
+        data: { publishedAt: null },
+      });
+    }
+
     return updated;
   }
 
@@ -793,4 +808,65 @@ export const updateCollectionItemsStatus = async ({
   } catch {
     // Ignore errors
   }
+};
+
+export const bulkSaveItems = async ({
+  input: { collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
+  user,
+  permissions,
+}: {
+  input: BulkSaveCollectionItemsInput;
+  user: SessionUser;
+  permissions: CollectionContributorPermissionFlags;
+}) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { type: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  let data: Prisma.CollectionItemCreateManyInput[] = [];
+  if (
+    articleIds.length > 0 &&
+    (collection.type === CollectionType.Article || collection.type === null)
+  ) {
+    data = articleIds.map((articleId) => ({
+      articleId,
+      collectionId,
+      addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
+    }));
+  }
+  if (
+    modelIds.length > 0 &&
+    (collection.type === CollectionType.Model || collection.type === null)
+  ) {
+    data = modelIds.map((modelId) => ({
+      modelId,
+      collectionId,
+      addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
+    }));
+  }
+  if (
+    imageIds.length > 0 &&
+    (collection.type === CollectionType.Image || collection.type === null)
+  ) {
+    data = imageIds.map((imageId) => ({
+      imageId,
+      collectionId,
+      addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
+    }));
+  }
+  if (postIds.length > 0 && (collection.type === CollectionType.Post || collection.type === null)) {
+    data = postIds.map((postId) => ({
+      postId,
+      collectionId,
+      addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
+    }));
+  }
+
+  return dbWrite.collectionItem.createMany({ data });
 };

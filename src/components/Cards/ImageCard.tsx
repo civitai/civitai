@@ -101,7 +101,7 @@ export function ImageCard({ data, collectionId }: Props) {
               />
               {!data.hideMeta && data.meta && (
                 <ImageMetaPopover
-                  meta={data.meta as any}
+                  meta={data.meta}
                   generationProcess={data.generationProcess ?? undefined}
                   imageId={data.id}
                 >

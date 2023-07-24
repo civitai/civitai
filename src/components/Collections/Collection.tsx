@@ -1,41 +1,41 @@
 import {
   ActionIcon,
+  Button,
   ContainerProps,
   Group,
+  Menu,
   Stack,
-  Title,
   Text,
   ThemeIcon,
-  Menu,
+  Title,
 } from '@mantine/core';
-import { IconCloudOff, IconDotsVertical, IconPencil } from '@tabler/icons-react';
+import { NextLink } from '@mantine/next';
+import { CollectionType } from '@prisma/client';
+import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
+import { useState } from 'react';
+import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
+import { useArticleQueryParams } from '~/components/Article/article.utils';
+import { ModelCard } from '~/components/Cards/ModelCard';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
+import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
+import { PeriodFilter, SortFilter } from '~/components/Filters';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
-import { constants } from '~/server/common/constants';
-import { trpc } from '~/utils/trpc';
-import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { NextLink } from '@mantine/next';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { CollectionByIdModel } from '~/types/router';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { CollectionType } from '@prisma/client';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { useImageQueryParams } from '~/components/Image/image.utils';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
-import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
+import { constants } from '~/server/common/constants';
+import { CollectionByIdModel } from '~/types/router';
+import { trpc } from '~/utils/trpc';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
-
-  if (!collection) {
-    return null;
-  }
 
   return (
     <IsClient>
@@ -54,6 +54,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
           ...queryFilters,
           collectionId: collection.id,
         }}
+        // renderItem={ModelCard}
       />
     </IsClient>
   );
@@ -61,10 +62,6 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
 
 const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { ...queryFilters } = useImageQueryParams();
-
-  if (!collection) {
-    return null;
-  }
 
   return (
     <IsClient>
@@ -90,10 +87,6 @@ const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByI
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = usePostQueryParams();
 
-  if (!collection) {
-    return null;
-  }
-
   return (
     <IsClient>
       <Group position="apart" spacing={0}>
@@ -118,18 +111,14 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useArticleQueryParams();
 
-  if (!collection) {
-    return null;
-  }
-
   return (
     <IsClient>
       <Group position="apart" spacing={0}>
         <Group>
-          <SortFilter type="posts" />
+          <SortFilter type="articles" />
         </Group>
         <Group spacing={4}>
-          <PeriodFilter type="posts" />
+          <PeriodFilter type="articles" />
         </Group>
       </Group>
       <CategoryTags />
@@ -147,6 +136,8 @@ export function Collection({
   collectionId,
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
+  const [opened, setOpened] = useState(false);
+
   const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
     id: collectionId,
   });
@@ -170,65 +161,86 @@ export function Collection({
     );
   }
 
+  const collectionType = collection?.type;
+  // TODO.collections: This is tied to images for now but
+  // we will need to add a check for other resources later
+  const canAddContent =
+    collectionType === CollectionType.Image && (permissions?.write || permissions?.writeReview);
+
   return (
-    <MasonryProvider
-      columnWidth={constants.cardSizes.model}
-      maxColumnCount={7}
-      maxSingleColumnWidth={450}
-    >
-      <MasonryContainer {...containerProps}>
-        <Stack spacing="xs" w="100%">
-          <Group align="center" spacing="xs" noWrap style={{ alignItems: 'flex-start' }}>
-            <Stack spacing="sm">
-              <Title order={1} lh={1}>
-                {collection?.name ?? 'Loading...'}
-              </Title>
-              {collection?.description && (
-                <Text size="sm" color="dimmed">
-                  {collection.description}
-                </Text>
-              )}
-            </Stack>
-            {collection && permissions && (
-              <Group ml="auto">
-                <CollectionFollowAction collection={collection} permissions={permissions} />
-                {permissions.manage && (
-                  <Menu>
-                    <Menu.Target>
-                      <ActionIcon variant="outline">
-                        <IconDotsVertical size={16} />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item
-                        component={NextLink}
-                        icon={<IconPencil size={14} stroke={1.5} />}
-                        href={`/collections/${collection.id}/review`}
-                      >
-                        Review Items
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
+    <>
+      <MasonryProvider
+        columnWidth={constants.cardSizes.model}
+        maxColumnCount={7}
+        maxSingleColumnWidth={450}
+      >
+        <MasonryContainer {...containerProps}>
+          <Stack spacing="xs" w="100%">
+            <Group align="center" spacing="xs" position="apart" noWrap>
+              <Stack spacing={0}>
+                <Title order={1} lineClamp={1}>
+                  {collection?.name ?? 'Loading...'}
+                </Title>
+                {collection?.description && (
+                  <Text size="xs" color="dimmed">
+                    {collection.description}
+                  </Text>
                 )}
-              </Group>
+              </Stack>
+              {collection && permissions && (
+                <Group ml="auto">
+                  <CollectionFollowAction collection={collection} permissions={permissions} />
+                  {canAddContent && (
+                    <Button size="xs" pl={4} pr={8} onClick={() => setOpened(true)}>
+                      <Group spacing={4}>
+                        <IconPlaylistAdd size={18} />
+                        Add from your library
+                      </Group>
+                    </Button>
+                  )}
+                  {permissions.manage && (
+                    <Menu>
+                      <Menu.Target>
+                        <ActionIcon variant="outline">
+                          <IconDotsVertical size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          component={NextLink}
+                          icon={<IconPencil size={14} stroke={1.5} />}
+                          href={`/collections/${collection.id}/review`}
+                        >
+                          Review Items
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
+                </Group>
+              )}
+            </Group>
+            {collection && collectionType === CollectionType.Model && (
+              <ModelCollection collection={collection} />
             )}
-          </Group>
-
-          {collection && (collection.type === CollectionType.Model || !collection.type) && (
-            <ModelCollection collection={collection} />
-          )}
-
-          {collection && collection.type === CollectionType.Image && (
-            <ImageCollection collection={collection} />
-          )}
-          {collection && collection.type === CollectionType.Post && (
-            <PostCollection collection={collection} />
-          )}
-          {collection && collection.type === CollectionType.Article && (
-            <ArticleCollection collection={collection} />
-          )}
-        </Stack>
-      </MasonryContainer>
-    </MasonryProvider>
+            {collection && collectionType === CollectionType.Image && (
+              <ImageCollection collection={collection} />
+            )}
+            {collection && collectionType === CollectionType.Post && (
+              <PostCollection collection={collection} />
+            )}
+            {collection && collectionType === CollectionType.Article && (
+              <ArticleCollection collection={collection} />
+            )}
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
+      {collection && canAddContent && (
+        <AddUserContentModal
+          collectionId={collection.id}
+          opened={opened}
+          onClose={() => setOpened(false)}
+        />
+      )}
+    </>
   );
 }

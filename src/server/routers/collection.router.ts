@@ -1,4 +1,6 @@
 import {
+  addSimpleImagePostHandler,
+  bulkSaveItemsHandler,
   saveItemHandler,
   getAllUserCollectionsHandler,
   upsertCollectionHandler,
@@ -12,6 +14,8 @@ import {
 } from '~/server/controllers/collection.controller';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
+  addSimpleImagePostInput,
+  bulkSaveCollectionItemsInput,
   saveCollectionItemInputSchema,
   getAllUserCollectionsInputSchema,
   getUserCollectionItemsByItemSchema,
@@ -60,4 +64,12 @@ export const collectionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))
     .mutation(deleteUserCollectionHandler),
+  bulkSaveItems: protectedProcedure
+    .input(bulkSaveCollectionItemsInput)
+    .use(isFlagProtected('collections'))
+    .mutation(bulkSaveItemsHandler),
+  addSimpleImagePost: protectedProcedure
+    .input(addSimpleImagePostInput)
+    .use(isFlagProtected('collections'))
+    .mutation(addSimpleImagePostHandler),
 });

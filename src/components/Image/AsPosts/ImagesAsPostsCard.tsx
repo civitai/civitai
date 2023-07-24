@@ -201,7 +201,7 @@ export function ImagesAsPostsCard({
                           />
                           {!image.hideMeta && image.meta && (
                             <ImageMetaPopover
-                              meta={image.meta as any}
+                              meta={image.meta}
                               generationProcess={image.generationProcess ?? undefined}
                               imageId={image.id}
                             >
@@ -297,7 +297,7 @@ export function ImagesAsPostsCard({
                                 />
                                 {!image.hideMeta && image.meta && (
                                   <ImageMetaPopover
-                                    meta={image.meta as any}
+                                    meta={image.meta}
                                     generationProcess={image.generationProcess ?? undefined}
                                     imageId={image.id}
                                   >

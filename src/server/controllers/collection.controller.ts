@@ -1,6 +1,11 @@
 import { Context } from '~/server/createContext';
-import { throwDbError } from '~/server/utils/errorHandling';
 import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import {
+  BulkSaveCollectionItemsInput,
   AddCollectionItemInput,
   FollowCollectionInputSchema,
   GetAllCollectionItemsSchema,
@@ -8,6 +13,7 @@ import {
   GetUserCollectionItemsByItemSchema,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  AddSimpleImagePostInput,
 } from '~/server/schema/collection.schema';
 import {
   saveItemInCollections,
@@ -21,11 +27,14 @@ import {
   getUserCollectionItemsByItem,
   getCollectionItemsByCollectionId,
   updateCollectionItemsStatus,
+  bulkSaveItems,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { addPostImage, createPost } from '~/server/services/post.service';
+import { CollectionReadConfiguration } from '@prisma/client';
 
 export const getAllUserCollectionsHandler = async ({
   ctx,
@@ -100,6 +109,27 @@ export const saveItemHandler = ({
   try {
     return saveItemInCollections({ user, input });
   } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const bulkSaveItemsHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: BulkSaveCollectionItemsInput;
+}) => {
+  const { user } = ctx;
+  try {
+    const permissions = await getUserCollectionPermissionsById({
+      id: input.collectionId,
+      user,
+    });
+
+    return await bulkSaveItems({ input, user, permissions });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
@@ -231,5 +261,44 @@ export const updateCollectionItemsStatusHandler = async ({
     });
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const addSimpleImagePostHandler = async ({
+  input: { collectionId, images },
+  ctx,
+}: {
+  input: AddSimpleImagePostInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { user } = ctx;
+    const collection = await getCollectionById({ input: { id: collectionId } });
+    if (!collection) throw throwNotFoundError(`No collection with id ${collectionId}`);
+
+    const permissions = await getUserCollectionPermissionsById({
+      id: collection.id,
+      user,
+    });
+    if (!(permissions.write || permissions.writeReview))
+      throw throwAuthorizationError('You do not have permission to add items to this collection.');
+
+    // create post
+    const post = await createPost({
+      title: `${collection.name} Images`,
+      userId: user.id,
+      collectionId: collection.id,
+      publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
+    });
+    const postImages = await Promise.all(
+      images.map((image, index) =>
+        addPostImage({ ...image, postId: post.id, userId: user.id, index })
+      )
+    );
+    const imageIds = postImages.map((image) => image.id);
+    await bulkSaveItems({ input: { collectionId, imageIds }, user, permissions });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };

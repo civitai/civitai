@@ -24,12 +24,24 @@ import { getClampedSize } from '~/utils/blurhash';
 import { CSSProperties, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import { ImageGetInfinite } from '~/types/router';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
   aspectRatio?: number;
   // lightboxImages?: ImageModel[];
-  image: Omit<ImageModel, 'tags' | 'scannedAt' | 'userId' | 'postId'>;
+  image: Pick<
+    ImageGetInfinite[number],
+    | 'id'
+    | 'url'
+    | 'name'
+    | 'width'
+    | 'height'
+    | 'hash'
+    | 'meta'
+    | 'generationProcess'
+    | 'needsReview'
+  >;
   edgeImageProps?: Omit<EdgeImageProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
@@ -93,11 +105,7 @@ export function ImagePreview({
   );
 
   const Meta = !nsfw && withMeta && meta && (
-    <ImageMetaPopover
-      meta={meta as ImageMetaProps}
-      generationProcess={generationProcess ?? 'txt2img'}
-      imageId={id}
-    >
+    <ImageMetaPopover meta={meta} generationProcess={generationProcess ?? 'txt2img'} imageId={id}>
       <ActionIcon variant="transparent" size="lg">
         <IconInfoCircle
           color="white"
