@@ -45,6 +45,7 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -239,20 +240,23 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
     select: editPostSelect,
   });
   if (!postRaw) throw throwNotFoundError();
-  const imageIds = postRaw.images.map((x) => x.id);
+
+  const { images: rawImages, ...post } = postRaw;
+  const imageIds = rawImages.map((x) => x.id);
   const imageTagCounts = await getTagCountForImages(imageIds);
-  const images = postRaw.images.map((x) => ({
+  const images = rawImages.map((x) => ({
     ...x,
+    meta: x.meta as ImageMetaProps | null,
     _count: { tags: imageTagCounts[x.id] },
   }));
-  const post = {
-    ...postRaw,
+  const castedPost = {
+    ...post,
     images,
   };
 
   return {
-    ...post,
-    tags: post.tags.flatMap((x) => x.tag),
+    ...castedPost,
+    tags: castedPost.tags.flatMap((x) => x.tag),
   };
 };
 
@@ -269,6 +273,7 @@ export const createPost = async ({
   const imageTagCounts = await getTagCountForImages(imageIds);
   const images = rawResult.images.map((x) => ({
     ...x,
+    meta: x.meta as ImageMetaProps,
     _count: { tags: imageTagCounts[x.id] },
   }));
 
@@ -424,6 +429,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
 
   return {
     ...rawResult,
+    meta: rawResult.meta as ImageMetaProps | null,
     _count: { tags: imageTags[image.id] },
   };
 };

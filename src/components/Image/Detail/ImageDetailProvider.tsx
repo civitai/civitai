@@ -1,5 +1,4 @@
 import { useMemo, useRef, useEffect, useContext, createContext } from 'react';
-import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
@@ -9,10 +8,11 @@ import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
+import { ImageGetById, ImageGetInfinite } from '~/types/router';
 
 type ImageDetailState = {
-  images: ImageV2Model[];
-  image?: ImageV2Model;
+  images: ImageGetInfinite;
+  image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
   connect?: ImageGuardConnect;

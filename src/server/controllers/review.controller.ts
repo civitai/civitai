@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import {
   GetAllReviewsInput,
   GetReviewReactionsInput,
@@ -68,6 +69,7 @@ export const getReviewsInfiniteHandler = async ({
       let images = imagesOnReviews.map((x) => ({
         ...x.image,
         tags: x.image.tags.map(({ tag }) => tag),
+        meta: x.image.meta as ImageMetaProps,
       }));
       if (!isOwnerOrModerator) {
         images = images.filter(
@@ -209,8 +211,16 @@ export const getReviewDetailsHandler = async ({
               .sort((a, b) => {
                 return a.image.nsfw === b.image.nsfw ? 0 : a.image.nsfw ? 1 : -1;
               })
-              .map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) }))
-          : imagesOnReviews.map((x) => ({ ...x.image, tags: x.image.tags.map(({ tag }) => tag) })),
+              .map((x) => ({
+                ...x.image,
+                tags: x.image.tags.map(({ tag }) => tag),
+                meta: x.image.meta as ImageMetaProps,
+              }))
+          : imagesOnReviews.map((x) => ({
+              ...x.image,
+              tags: x.image.tags.map(({ tag }) => tag),
+              meta: x.image.meta as ImageMetaProps,
+            })),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

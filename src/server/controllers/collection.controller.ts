@@ -113,15 +113,21 @@ export const saveItemHandler = ({
   }
 };
 
-export const bulkSaveItemsHandler = ({
+export const bulkSaveItemsHandler = async ({
   ctx,
   input,
 }: {
   ctx: DeepNonNullable<Context>;
   input: BulkSaveCollectionItemsInput;
 }) => {
+  const { user } = ctx;
   try {
-    return bulkSaveItems({ input, user: ctx.user });
+    const permissions = await getUserCollectionPermissionsById({
+      id: input.collectionId,
+      user,
+    });
+
+    return await bulkSaveItems({ input, user, permissions });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -290,7 +296,7 @@ export const addSimpleImagePostHandler = async ({
       )
     );
     const imageIds = postImages.map((image) => image.id);
-    await bulkSaveItems({ input: { collectionId, imageIds }, user });
+    await bulkSaveItems({ input: { collectionId, imageIds }, user, permissions });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

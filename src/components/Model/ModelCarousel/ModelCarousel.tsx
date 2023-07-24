@@ -273,7 +273,7 @@ export function ModelCarousel({
                       />
                       {!image.hideMeta && image.meta && (
                         <ImageMetaPopover
-                          meta={image.meta as ImageMetaProps}
+                          meta={image.meta}
                           generationProcess={image.generationProcess ?? undefined}
                           imageId={image.id}
                         >

@@ -995,12 +995,11 @@ export const getAllImages = async ({
   }
 
   const images: Array<
-    Omit<ImageV2Model, 'meta'> & {
+    ImageV2Model & {
       tags: VotableTagModel[] | undefined;
       report: (typeof reportVar)[number] | undefined;
       publishedAt: Date | null;
       modelVersionId: number | null;
-      meta: ImageMetaProps;
     }
   > = rawImages.map(
     ({

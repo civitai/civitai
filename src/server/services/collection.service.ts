@@ -812,9 +812,11 @@ export const updateCollectionItemsStatus = async ({
 export const bulkSaveItems = async ({
   input: { collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
   user,
+  permissions,
 }: {
   input: BulkSaveCollectionItemsInput;
   user: SessionUser;
+  permissions: CollectionContributorPermissionFlags;
 }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
@@ -831,6 +833,7 @@ export const bulkSaveItems = async ({
       articleId,
       collectionId,
       addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
   if (
@@ -841,6 +844,7 @@ export const bulkSaveItems = async ({
       modelId,
       collectionId,
       addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
   if (
@@ -851,6 +855,7 @@ export const bulkSaveItems = async ({
       imageId,
       collectionId,
       addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
   if (postIds.length > 0 && (collection.type === CollectionType.Post || collection.type === null)) {
@@ -858,6 +863,7 @@ export const bulkSaveItems = async ({
       postId,
       collectionId,
       addedById: user.id,
+      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
 
