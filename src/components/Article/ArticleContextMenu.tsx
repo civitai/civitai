@@ -11,8 +11,12 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { ArticleGetAll } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { CollectionType } from '@prisma/client';
+import React from 'react';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function ArticleContextMenu({ article, ...props }: Props) {
+export function ArticleContextMenu({ article, withinPortal = true, ...props }: Props) {
   const queryUtils = trpc.useContext();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -21,6 +25,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
   const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
   const showUnpublish = atDetailsPage && article.publishedAt !== null;
+  const features = useFeatureFlags();
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
   const handleDeleteArticle = () => {
@@ -82,7 +87,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
   };
 
   return (
-    <Menu position="left-start" withArrow offset={-5} withinPortal>
+    <Menu position="left-start" withArrow offset={-5} withinPortal={withinPortal}>
       <Menu.Target>
         <ActionIcon
           {...props}
@@ -97,6 +102,17 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
+        {features.collections && (
+          <AddToCollectionMenuItem
+            key="add-to-collection"
+            onClick={() =>
+              openContext('addToCollection', {
+                articleId: article.id,
+                type: CollectionType.Article,
+              })
+            }
+          />
+        )}
         {currentUser && (isOwner || isModerator) && (
           <>
             <Menu.Item
@@ -155,4 +171,5 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
 type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
   article: Omit<ArticleGetAll['items'][number], 'stats'>;
+  withinPortal?: boolean;
 };

@@ -11,6 +11,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { ArticleGetAll } from '~/types/router';
+import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -29,32 +30,38 @@ export function ArticleCard({ data }: Props) {
   return (
     <FeedCard href={`/articles/${id}/${slugit(title)}`} aspectRatio="landscape">
       <div className={classes.root}>
+        <Group
+          spacing={4}
+          position="apart"
+          className={cx(classes.contentOverlay, classes.top)}
+          noWrap
+        >
+          {category && (
+            <Badge
+              color="dark"
+              size="sm"
+              variant="light"
+              radius="xl"
+              sx={(theme) => ({
+                position: 'absolute',
+                top: theme.spacing.xs,
+                left: theme.spacing.xs,
+                zIndex: 1,
+              })}
+            >
+              {category.name}
+            </Badge>
+          )}
+          <ArticleContextMenu article={data} ml="auto" />
+        </Group>
         {cover && (
-          <>
-            {category && (
-              <Badge
-                color="dark"
-                size="sm"
-                variant="light"
-                radius="xl"
-                sx={(theme) => ({
-                  position: 'absolute',
-                  top: theme.spacing.xs,
-                  left: theme.spacing.xs,
-                  zIndex: 1,
-                })}
-              >
-                {category.name}
-              </Badge>
-            )}
-            <EdgeImage
-              src={cover}
-              width={IMAGE_CARD_WIDTH}
-              placeholder="empty"
-              className={classes.image}
-              loading="lazy"
-            />
-          </>
+          <EdgeImage
+            src={cover}
+            width={IMAGE_CARD_WIDTH}
+            placeholder="empty"
+            className={classes.image}
+            loading="lazy"
+          />
         )}
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}

@@ -28,7 +28,6 @@ export const useCardStyles = createStyles((theme, _params, getRef) => {
     },
 
     fullOverlay: {
-      height: '100%',
       display: 'flex',
       justifyContent: 'end',
       background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
