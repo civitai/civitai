@@ -2,6 +2,7 @@ import dayjs from 'dayjs';
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { modelsSearchIndex } from '~/server/search-index';
 import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { chunk } from 'lodash-es';
 
 export const modelMetrics = createMetricProcessor({
   name: 'Model',
@@ -48,28 +49,19 @@ async function getAffectedModelIdsFromModelVersionIds({
 }: {
   affectedModelVersionIds: Array<number>;
   db: PrismaClient;
-}): Promise<Array<number>> {
-  const batchSize = 500;
-  const batchCount = Math.ceil(affectedModelVersionIds.length / batchSize);
-  const affectedModelIds: Array<number> = [];
-
-  for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-    const batch = affectedModelVersionIds.slice(
-      batchNumber * batchSize,
-      batchNumber * batchSize + batchSize
-    );
-
+}) {
+  const affectedModelIds: Set<number> = new Set();
+  const batches = chunk(affectedModelVersionIds, 500);
+  for (const batch of batches) {
     const batchAffectedModels: Array<{ modelId: number }> =
       await db.$queryRaw`SELECT "modelId" FROM "ModelVersion" WHERE "id" IN (${Prisma.join(
         batch
       )});`;
 
-    const batchAffectedModelIds = batchAffectedModels.map(({ modelId }) => modelId);
-
-    affectedModelIds.push(...batchAffectedModelIds);
+    for (const { modelId } of batchAffectedModels) affectedModelIds.add(modelId);
   }
 
-  return affectedModelIds;
+  return [...affectedModelIds];
 }
 
 async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
@@ -110,14 +102,8 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
   ];
 
   // We batch the affected model versions up when sending it to the db
-  const batchSize = 500;
-  const batchCount = Math.ceil(affectedModelVersions.length / batchSize);
-  for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-    const batch = affectedModelVersions.slice(
-      batchNumber * batchSize,
-      batchNumber * batchSize + batchSize
-    );
-
+  const batches = chunk(affectedModelVersions, 500);
+  for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
 
     await db.$executeRaw`
@@ -178,52 +164,53 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
     }
   ];
 
-  const affectedModelVersionsJson = JSON.stringify(
-    affectedModelVersions.map((x) => x.modelVersionId)
-  );
-
-  await db.$executeRaw`
-    INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
-    SELECT
-        rr."modelVersionId",
-        tf.timeframe,
-        COALESCE(SUM(
-            CASE
-                WHEN tf.timeframe = 'AllTime' THEN 1
-                WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
-                WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
-                WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
-                WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
-            END
-        ), 0),
-        COALESCE(AVG(
-            CASE
-                WHEN tf.timeframe = 'AllTime' THEN rating
-                WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', rating, NULL)
-                WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', rating, NULL)
-                WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', rating, NULL)
-                WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', rating, NULL)
-            END
-        ), 0)
-    FROM (
-        SELECT
-            r."userId",
-            r."modelVersionId",
-            MAX(r.rating) rating,
-            MAX(r."createdAt") AS created_at
-        FROM "ResourceReview" r
-        JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
-        WHERE r.exclude = FALSE
-        AND r."tosViolation" = FALSE
-        AND r."modelVersionId" = ANY (SELECT json_array_elements(${affectedModelVersionsJson}::json)::text::integer)
-        GROUP BY r."userId", r."modelVersionId"
-    ) rr
-    CROSS JOIN (
-      SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-    ) tf
-    GROUP BY rr."modelVersionId", tf.timeframe
-    ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
-  `;
+  const modelVersionIds = affectedModelVersions.map((x) => x.modelVersionId);
+  const batches = chunk(modelVersionIds, 500);
+  for (const batch of batches) {
+    const batchJson = JSON.stringify(batch);
+    await db.$executeRaw`
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
+      SELECT
+          rr."modelVersionId",
+          tf.timeframe,
+          COALESCE(SUM(
+              CASE
+                  WHEN tf.timeframe = 'AllTime' THEN 1
+                  WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
+                  WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
+                  WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
+                  WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
+              END
+          ), 0),
+          COALESCE(AVG(
+              CASE
+                  WHEN tf.timeframe = 'AllTime' THEN rating
+                  WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', rating, NULL)
+                  WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', rating, NULL)
+                  WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', rating, NULL)
+                  WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', rating, NULL)
+              END
+          ), 0)
+      FROM (
+          SELECT
+              r."userId",
+              r."modelVersionId",
+              MAX(r.rating) rating,
+              MAX(r."createdAt") AS created_at
+          FROM "ResourceReview" r
+          JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
+          WHERE r.exclude = FALSE
+          AND r."tosViolation" = FALSE
+          AND r."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+          GROUP BY r."userId", r."modelVersionId"
+      ) rr
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      GROUP BY rr."modelVersionId", tf.timeframe
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
+    `;
+  }
 
   if (affectedModelVersions.length > 0) {
     // Get affected models from version IDs:
@@ -313,45 +300,56 @@ async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcess
     }
   ];
 
-  const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
+  const modelIds = affectedModels.map((x) => x.modelId);
+  const batches = chunk(modelIds, 500);
+  for (const batch of batches) {
+    const batchJson = JSON.stringify(batch);
 
-  await db.$executeRaw`
-    INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "commentCount")
-    SELECT
-        mv."id",
-        tf.timeframe,
-        COALESCE(SUM(
-            CASE
-                WHEN tf.timeframe = 'AllTime' THEN 1
-                WHEN tf.timeframe = 'Year' THEN IIF(c."createdAt" >= NOW() - interval '1 year', 1, 0)
-                WHEN tf.timeframe = 'Month' THEN IIF(c."createdAt" >= NOW() - interval '1 month', 1, 0)
-                WHEN tf.timeframe = 'Week' THEN IIF(c."createdAt" >= NOW() - interval '1 week', 1, 0)
-                WHEN tf.timeframe = 'Day' THEN IIF(c."createdAt" >= NOW() - interval '1 day', 1, 0)
-            END
-        ), 0)
-    FROM (
-        SELECT
-            c."modelId",
-            c."createdAt"
-        FROM "Comment" c
-        WHERE c."tosViolation" = false
-        AND c."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)
-    ) c
-    JOIN "ModelVersion" mv ON c."modelId" = mv."modelId"
-    CROSS JOIN (
-      SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-    ) tf
-    GROUP BY mv.id, tf.timeframe
-    ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "commentCount" = EXCLUDED."commentCount";
-  `;
+    await db.$executeRaw`
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "commentCount")
+      SELECT
+          mv."id",
+          tf.timeframe,
+          COALESCE(SUM(
+              CASE
+                  WHEN tf.timeframe = 'AllTime' THEN 1
+                  WHEN tf.timeframe = 'Year' THEN IIF(c."createdAt" >= NOW() - interval '1 year', 1, 0)
+                  WHEN tf.timeframe = 'Month' THEN IIF(c."createdAt" >= NOW() - interval '1 month', 1, 0)
+                  WHEN tf.timeframe = 'Week' THEN IIF(c."createdAt" >= NOW() - interval '1 week', 1, 0)
+                  WHEN tf.timeframe = 'Day' THEN IIF(c."createdAt" >= NOW() - interval '1 day', 1, 0)
+              END
+          ), 0)
+      FROM (
+          SELECT
+              c."modelId",
+              c."createdAt"
+          FROM "Comment" c
+          WHERE c."tosViolation" = false
+          AND c."modelId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+      ) c
+      JOIN "ModelVersion" mv ON c."modelId" = mv."modelId"
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      GROUP BY mv.id, tf.timeframe
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "commentCount" = EXCLUDED."commentCount";
+    `;
+  }
 
-  return affectedModels.map(({ modelId }) => modelId);
+  return modelIds;
 }
 
 async function updateModelMetrics({ db }: MetricProcessorRunContext) {
   await db.$executeRaw`
     INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount")
-    SELECT mv."modelId", mvm.timeframe, SUM(mvm."downloadCount"), COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0), SUM(mvm."ratingCount"), MAX(mvm."favoriteCount"), MAX(mvm."commentCount")
+    SELECT
+      mv."modelId",
+      mvm.timeframe,
+      SUM(mvm."downloadCount") "downloadCount",
+      COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0) "rating",
+      SUM(mvm."ratingCount") "ratingCount",
+      MAX(mvm."favoriteCount") "favoriteCount",
+      MAX(mvm."commentCount") "commentCount"
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
     GROUP BY mv."modelId", mvm.timeframe

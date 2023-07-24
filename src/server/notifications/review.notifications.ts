@@ -51,41 +51,38 @@ export const reviewNotifications = createNotificationProcessor({
   'review-reminder': {
     displayName: 'Review reminders',
     prepareMessage: ({ details }) => ({
-      message: `Remember to review "${details.modelName}"`,
-      url: `/models/${details.modelId}`,
+      message: `Remember to review "${details.modelName} - ${details.modelVersionName}"`,
+      url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH pending_reviews AS (
-      SELECT DISTINCT
-         ua."userId" "ownerId",
-         m.id "modelId",
-         JSONB_BUILD_OBJECT(
-           'modelId', m.id,
-           'modelName', m.name
-         ) "details"
-      FROM "UserActivity" ua
-      JOIN "Model" m ON m.id = CAST(details->>'modelId' AS int)
-      WHERE ua."userId" IS NOT NULL
-        AND ua."createdAt" >= CURRENT_DATE-INTERVAL '72 hour'
-        AND ua."createdAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
-        AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
-      ), de_duped AS (
-        SELECT
-          *
-        FROM pending_reviews
-        WHERE NOT EXISTS (
-          SELECT 1 FROM "Notification" n
-          WHERE type = 'review-reminder' AND "modelId" = cast(n.details->'modelId' as int)
-        )
+        SELECT DISTINCT
+          ua."userId" "ownerId",
+          m.id "modelId",
+          mv.id "modelVersionId",
+          JSONB_BUILD_OBJECT(
+            'modelId', m.id,
+            'modelName', m.name,
+            'modelVersionId', mv.id,
+            'modelVersionName', mv.name
+          ) "details"
+        FROM "UserActivity" ua
+        JOIN "ModelVersion" mv ON mv.id = CAST(details->'modelVersionId' AS int) AND mv.status = 'Published'
+        JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
+        WHERE ua."userId" IS NOT NULL
+          AND ua."createdAt" >= CURRENT_DATE-INTERVAL '72 hour'
+          AND ua."createdAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
+          AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        CONCAT("ownerId",':','review-reminder',':',"modelVersionId") "id",
         "ownerId"    "userId",
         'review-reminder' "type",
         details
-      FROM de_duped
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder');
+      FROM pending_reviews
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder')
+      ON CONFLICT("id") DO NOTHING;
     `,
   },
 });
