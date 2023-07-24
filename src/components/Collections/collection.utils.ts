@@ -76,7 +76,6 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
       break;
     }
     case 'article': {
-      console.log(collectionItem);
       reviewData.imageSrc = collectionItem.data.cover;
       reviewData.user = collectionItem.data.user;
       reviewData.title = collectionItem.data.title;

@@ -16,7 +16,7 @@ import { CollectionType } from '@prisma/client';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function ArticleContextMenu({ article, withinPortal = true, ...props }: Props) {
+export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -87,7 +87,7 @@ export function ArticleContextMenu({ article, withinPortal = true, ...props }: P
   };
 
   return (
-    <Menu position="left-start" withArrow offset={-5} withinPortal={withinPortal}>
+    <Menu position="left-start" withArrow offset={-5} withinPortal>
       <Menu.Target>
         <ActionIcon
           {...props}
@@ -171,5 +171,4 @@ export function ArticleContextMenu({ article, withinPortal = true, ...props }: P
 
 type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
   article: Omit<ArticleGetAll['items'][number], 'stats'>;
-  withinPortal?: boolean;
 };
