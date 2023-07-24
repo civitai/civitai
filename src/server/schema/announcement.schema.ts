@@ -18,7 +18,7 @@ export const announcementMetaSchema = z
         icon: z.string().optional(),
       })
     ),
-    displayTo: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
+    targetAudience: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
     dismissible: z.boolean().default(true),
     colSpan: z.number().default(6),
     index: z.number().optional(),

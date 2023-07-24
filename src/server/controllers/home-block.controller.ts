@@ -120,9 +120,8 @@ export const getHomeBlocksHandler = async ({
                   ids: announcementIds,
                   dismissed: input.dismissed,
                   limit: metadata.announcements.limit,
+                  user: ctx.user,
                 });
-
-                console.log(announcements);
 
                 if (!announcements.length) {
                   // If the user cleared all announcements in home block, do not display this block.

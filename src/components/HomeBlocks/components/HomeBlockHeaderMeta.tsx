@@ -26,13 +26,12 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
           {metadata.link && (
             <Link href={metadata.link} passHref>
               <Button
-                rightIcon={<IconArrowRight size={16} />}
+                style={{ height: 34 }}
+                component="a"
                 variant="subtle"
-                size={isMobile ? 'sm' : 'md'}
-                compact
-                style={{ padding: 0 }}
+                rightIcon={<IconArrowRight size={16} />}
               >
-                {metadata.linkText ?? 'View more'}
+                {metadata.linkText ?? 'View All'}
               </Button>
             </Link>
           )}
