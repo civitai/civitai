@@ -207,18 +207,18 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   return (
     <FeedCard>
       <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
-        <Card.Section>
-          <Checkbox
-            checked={selected}
-            onChange={() => toggleSelected(collectionItem.id)}
-            size="lg"
-            sx={{
-              position: 'absolute',
-              top: 5,
-              right: 5,
-              zIndex: 9,
-            }}
-          />
+        <Checkbox
+          checked={selected}
+          onChange={() => toggleSelected(collectionItem.id)}
+          size="lg"
+          sx={{
+            position: 'absolute',
+            top: 5,
+            right: 5,
+            zIndex: 9,
+          }}
+        />
+        {reviewData.images.length > 0 && (
           <ImageGuard
             images={reviewData.images}
             connect={{ entityId: collectionItem.id, entityType: 'collectionItem' }}
@@ -268,7 +268,32 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               </ImageGuard.Content>
             )}
           />
-        </Card.Section>
+        )}
+        {reviewData.imageSrc && (
+          <>
+            <Group
+              spacing={4}
+              position="apart"
+              className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
+              noWrap
+            >
+              <Group spacing={4}>
+                {collectionItem.status && (
+                  <Badge variant="filled" color={badgeColor[collectionItem.status]}>
+                    {collectionItem.status}
+                  </Badge>
+                )}
+              </Group>
+            </Group>
+            <EdgeImage
+              placeholder="empty"
+              className={sharedClasses.image}
+              loading="lazy"
+              width={DEFAULT_EDGE_IMAGE_WIDTH}
+              src={reviewData.imageSrc}
+            />
+          </>
+        )}
         <Stack
           className={cx(
             sharedClasses.contentOverlay,
@@ -277,6 +302,11 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
           )}
           spacing="sm"
         >
+          {reviewData.title && (
+            <Text size="xl" weight={700} lineClamp={2} inline>
+              {reviewData.title}
+            </Text>
+          )}
           {reviewData.user && reviewData.user.id !== -1 && (
             <UnstyledButton
               sx={{ color: 'white' }}

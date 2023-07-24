@@ -46,6 +46,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     title: string;
     description: string;
     images: ImageProps[];
+    imageSrc?: string;
     addedBy: string;
     status: CollectionItemStatus;
     type?: string;
@@ -72,6 +73,13 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'post': {
       reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
       reviewData.user = collectionItem.data.user;
+      break;
+    }
+    case 'article': {
+      console.log(collectionItem);
+      reviewData.imageSrc = collectionItem.data.cover;
+      reviewData.user = collectionItem.data.user;
+      reviewData.title = collectionItem.data.title;
       break;
     }
     default:
