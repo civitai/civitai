@@ -22,7 +22,7 @@ const useStyles = createStyles<string, { height: number }>((theme, { height }) =
     padding: '0 !important',
     color: 'white',
     borderRadius: theme.radius.sm,
-    minHeight: 300,
+    minHeight: 280,
   },
 }));
 

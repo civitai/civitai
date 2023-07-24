@@ -1,4 +1,4 @@
-import { AspectRatio, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -12,7 +12,7 @@ import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 
-const IMAGE_CARD_WIDTH = 450;
+const IMAGE_CARD_WIDTH = 332;
 
 export function PostCard({ data }: Props) {
   const { classes, cx } = useCardStyles();
