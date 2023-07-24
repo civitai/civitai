@@ -266,7 +266,7 @@ export const saveItemInCollections = async ({
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
-    const type: CollectionType = inputToCollectionType[itemKey] || type;
+    const type: CollectionType = inputToCollectionType[itemKey];
     // check if all collections match the Model type
     const collections = await dbRead.collection.findMany({
       where: {

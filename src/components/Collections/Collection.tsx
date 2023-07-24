@@ -25,6 +25,8 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { CollectionType } from '@prisma/client';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
+import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
+import { usePostQueryParams } from '~/components/Post/post.utils';
 
 const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
   const { set, ...queryFilters } = useModelQueryParams();
@@ -74,6 +76,34 @@ const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) =>
       </Group>
       <CategoryTags />
       <ImagesInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection?.id,
+        }}
+        withTags
+      />
+    </IsClient>
+  );
+};
+const PostCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+  const { set, ...queryFilters } = usePostQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="posts" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="posts" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <PostsInfinite
         filters={{
           ...queryFilters,
           collectionId: collection?.id,
@@ -161,6 +191,9 @@ export function Collection({
 
           {collection && collection.type === CollectionType.Image && (
             <ImageCollection collection={collection} />
+          )}
+          {collection && collection.type === CollectionType.Post && (
+            <PostCollection collection={collection} />
           )}
         </Stack>
       </MasonryContainer>

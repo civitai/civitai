@@ -41,6 +41,10 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
 import { logToDb } from '~/utils/logging';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -58,6 +62,7 @@ export const getPostsInfinite = async ({
   tags,
   modelVersionId,
   ids,
+  collectionId,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
@@ -95,6 +100,28 @@ export const getPostsInfinite = async ({
     AND.push({
       id: {
         in: ids,
+      },
+    });
+  }
+  if (collectionId) {
+    const permissions = await getUserCollectionPermissionsById({
+      user,
+      id: collectionId,
+    });
+
+    if (!permissions.read) {
+      return { items: [] };
+    }
+
+    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+      getAvailableCollectionItemsFilterForUser({ permissions, user });
+
+    AND.push({
+      collectionItems: {
+        some: {
+          collectionId,
+          AND: collectionItemModelsAND,
+        },
       },
     });
   }
