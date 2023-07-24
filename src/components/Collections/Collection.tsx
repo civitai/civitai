@@ -27,6 +27,8 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { useArticleQueryParams } from '~/components/Article/article.utils';
+import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 
 const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
   const { set, ...queryFilters } = useModelQueryParams();
@@ -104,6 +106,34 @@ const PostCollection = ({ collection }: { collection: CollectionByIdModel }) => 
       </Group>
       <CategoryTags />
       <PostsInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection?.id,
+        }}
+      />
+    </IsClient>
+  );
+};
+
+const ArticleCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+  const { set, ...queryFilters } = useArticleQueryParams();
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="posts" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="posts" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ArticlesInfinite
         filters={{
           ...queryFilters,
           collectionId: collection?.id,
@@ -193,6 +223,9 @@ export function Collection({
           )}
           {collection && collection.type === CollectionType.Post && (
             <PostCollection collection={collection} />
+          )}
+          {collection && collection.type === CollectionType.Article && (
+            <ArticleCollection collection={collection} />
           )}
         </Stack>
       </MasonryContainer>
