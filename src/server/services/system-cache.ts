@@ -58,7 +58,22 @@ export async function getSystemPermissions(): Promise<Record<string, number[]>> 
 export async function addSystemPermission(permission: FeatureFlagKey, userIds: number | number[]) {
   userIds = Array.isArray(userIds) ? userIds : [userIds];
   const permissions = await getSystemPermissions();
+  if (!permissions[permission]) permissions[permission] = [];
   permissions[permission] = [...new Set([...permissions[permission], ...userIds])];
+  await redis.set(`system:permissions`, JSON.stringify(permissions));
+}
+
+export async function removeSystemPermission(
+  permission: FeatureFlagKey,
+  userIds: number | number[]
+) {
+  userIds = Array.isArray(userIds) ? userIds : [userIds];
+  const permissions = await getSystemPermissions();
+  if (!permissions[permission]) return;
+
+  permissions[permission] = permissions[permission].filter(
+    (x) => !(userIds as number[]).includes(x)
+  );
   await redis.set(`system:permissions`, JSON.stringify(permissions));
 }
 

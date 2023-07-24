@@ -42,6 +42,7 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
 });
+export const featureFlagKeys = Object.keys(featureFlags);
 
 // --------------------------
 // Logic
