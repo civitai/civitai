@@ -659,8 +659,14 @@ export const getAllImages = async ({
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
 
-  // ensure that only scanned images make it to the main feed
-  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
+  // ensure that only scanned images make it to the main feed if no user is logged in
+  if (!userId)
+    AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
+  // otherwise, bring scanned images or all images created by the current user
+  else
+    AND.push(
+      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" OR i."userId" = ${userId}`
+    );
 
   // If User Isn't mod
   if (!isModerator) {

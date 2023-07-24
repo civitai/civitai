@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
-import { IconCloudOff, IconDotsVertical, IconPencil } from '@tabler/icons-react';
+import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
 import { useState } from 'react';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
@@ -117,7 +117,8 @@ export function Collection({
   }
 
   const collectionType = collection?.type;
-  // This is tied to images for now but we will need to add a check for other resources later
+  // TODO.collections: This is tied to images for now but
+  // we will need to add a check for other resources later
   const canAddContent =
     collectionType === CollectionType.Image && permissions?.write && permissions?.isContributor;
 
@@ -145,8 +146,11 @@ export function Collection({
                 <Group ml="auto">
                   <CollectionFollowAction collection={collection} permissions={permissions} />
                   {canAddContent && (
-                    <Button size="xs" onClick={() => setOpened(true)}>
-                      Add from your library
+                    <Button size="xs" pl={4} pr={8} onClick={() => setOpened(true)}>
+                      <Group spacing={4}>
+                        <IconPlaylistAdd size={18} />
+                        Add from your library
+                      </Group>
                     </Button>
                   )}
                   {permissions.manage && (
