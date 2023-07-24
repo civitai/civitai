@@ -30,7 +30,7 @@ export function PostsCard({
                   <ImageGuard.Content>
                     {({ safe }) => (
                       <>
-                        <ImageGuard.Report />
+                        <ImageGuard.Report context="post" />
                         <ImageGuard.ToggleConnect position="top-left" />
                         <RoutedContextLink modal="postDetailModal" postId={id}>
                           {!safe ? (

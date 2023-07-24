@@ -11,7 +11,7 @@ import {
 } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { booleanString, numericStringArray } from '~/utils/zod-helpers';
+import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -28,6 +28,7 @@ const articleQueryParamSchema = z
     favorites: booleanString(),
     hidden: booleanString(),
     username: z.string(),
+    collectionId: numericString(),
   })
   .partial();
 export type ArticleQueryParams = z.output<typeof articleQueryParamSchema>;

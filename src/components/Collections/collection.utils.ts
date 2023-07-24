@@ -46,6 +46,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     title: string;
     description: string;
     images: ImageProps[];
+    imageSrc?: string;
     addedBy: string;
     status: CollectionItemStatus;
     type?: string;
@@ -59,14 +60,27 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
   };
 
   switch (collectionItem.type) {
-    case 'image':
+    case 'image': {
       reviewData.images = [collectionItem.data];
       reviewData.user = collectionItem.data.user;
       break;
-    case 'model':
+    }
+    case 'model': {
       reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
       reviewData.user = collectionItem.data.user;
       break;
+    }
+    case 'post': {
+      reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
+      reviewData.user = collectionItem.data.user;
+      break;
+    }
+    case 'article': {
+      reviewData.imageSrc = collectionItem.data.cover;
+      reviewData.user = collectionItem.data.user;
+      reviewData.title = collectionItem.data.title;
+      break;
+    }
     default:
       break;
   }

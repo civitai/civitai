@@ -28,6 +28,10 @@ import { isDefined } from '~/utils/type-guards';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 import { articlesSearchIndex } from '~/server/search-index';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 
 export const getArticles = async ({
   limit,
@@ -47,6 +51,7 @@ export const getArticles = async ({
   username,
   includeDrafts,
   ids,
+  collectionId,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
@@ -59,6 +64,28 @@ export const getArticles = async ({
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
     if (!!ids?.length) AND.push({ id: { in: ids } });
     if (username) AND.push({ user: { username } });
+    if (collectionId) {
+      const permissions = await getUserCollectionPermissionsById({
+        user: sessionUser,
+        id: collectionId,
+      });
+
+      if (!permissions.read) {
+        return { items: [] };
+      }
+
+      const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+        getAvailableCollectionItemsFilterForUser({ permissions, user: sessionUser });
+
+      AND.push({
+        collectionItems: {
+          some: {
+            collectionId,
+            AND: collectionItemModelsAND,
+          },
+        },
+      });
+    }
 
     if (!isOwnerRequest) {
       if (!!excludedUserIds?.length) AND.push({ userId: { notIn: excludedUserIds } });

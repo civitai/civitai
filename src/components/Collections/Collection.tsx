@@ -13,6 +13,8 @@ import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
 import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
 import { useState } from 'react';
+import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
+import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
@@ -25,16 +27,14 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
+import { usePostQueryParams } from '~/components/Post/post.utils';
 import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 
-const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
-
-  if (!collection) {
-    return null;
-  }
 
   return (
     <IsClient>
@@ -51,19 +51,15 @@ const ModelCollection = ({ collection }: { collection: CollectionByIdModel }) =>
       <ModelsInfinite
         filters={{
           ...queryFilters,
-          collectionId: collection?.id,
+          collectionId: collection.id,
         }}
       />
     </IsClient>
   );
 };
 
-const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) => {
+const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { ...queryFilters } = useImageQueryParams();
-
-  if (!collection) {
-    return null;
-  }
 
   return (
     <IsClient>
@@ -82,6 +78,53 @@ const ImageCollection = ({ collection }: { collection: CollectionByIdModel }) =>
           collectionId: collection.id,
         }}
         withTags
+      />
+    </IsClient>
+  );
+};
+const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+  const { set, ...queryFilters } = usePostQueryParams();
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="posts" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="posts" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <PostsInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection.id,
+        }}
+      />
+    </IsClient>
+  );
+};
+
+const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+  const { set, ...queryFilters } = useArticleQueryParams();
+
+  return (
+    <IsClient>
+      <Group position="apart" spacing={0}>
+        <Group>
+          <SortFilter type="articles" />
+        </Group>
+        <Group spacing={4}>
+          <PeriodFilter type="articles" />
+        </Group>
+      </Group>
+      <CategoryTags />
+      <ArticlesInfinite
+        filters={{
+          ...queryFilters,
+          collectionId: collection.id,
+        }}
       />
     </IsClient>
   );
@@ -179,6 +222,12 @@ export function Collection({
             )}
             {collection && collectionType === CollectionType.Image && (
               <ImageCollection collection={collection} />
+            )}
+            {collection && collectionType === CollectionType.Post && (
+              <PostCollection collection={collection} />
+            )}
+            {collection && collectionType === CollectionType.Article && (
+              <ArticleCollection collection={collection} />
             )}
           </Stack>
         </MasonryContainer>
