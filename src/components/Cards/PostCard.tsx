@@ -6,17 +6,17 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { useRouter } from 'next/router';
 import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 
+const IMAGE_CARD_WIDTH = 450;
+
 export function PostCard({ data }: Props) {
   const { classes, cx } = useCardStyles();
   const router = useRouter();
-
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square">
       <div className={classes.root}>
@@ -30,22 +30,18 @@ export function PostCard({ data }: Props) {
                   <>
                     <ImageGuard.Report context="post" />
                     <ImageGuard.ToggleConnect position="top-left" />
-                    <RoutedContextLink modal="postDetailModal" postId={data.id}>
-                      {!safe ? (
-                        <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                          <MediaHash {...image} />
-                        </AspectRatio>
-                      ) : (
-                        <EdgeImage
-                          src={image.url}
-                          name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
-                          width={450}
-                          placeholder="empty"
-                          style={{ width: '100%', position: 'relative' }}
-                        />
-                      )}
-                    </RoutedContextLink>
+                    {!safe ? (
+                      <MediaHash {...data.image} />
+                    ) : (
+                      <EdgeImage
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        width={IMAGE_CARD_WIDTH}
+                        placeholder="empty"
+                        style={{ width: '100%', position: 'relative' }}
+                      />
+                    )}
                   </>
                 )}
               </ImageGuard.Content>
@@ -56,23 +52,31 @@ export function PostCard({ data }: Props) {
           className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
           spacing="sm"
         >
-          {data.user?.id !== -1 && (
-            <UnstyledButton
-              sx={{ color: 'white' }}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
+          <Group position="apart" align="end" noWrap>
+            <Stack>
+              {data.user?.id !== -1 && (
+                <UnstyledButton
+                  sx={{ color: 'white' }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
 
-                router.push(`/users/${data.user.username}`);
-              }}
-            >
-              <UserAvatar user={data.user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
-            </UnstyledButton>
-          )}
-          <Group position="apart" noWrap>
-            <Text size="xl" weight={700} lineClamp={2} inline>
-              {data.title}
-            </Text>
+                    router.push(`/users/${data.user.username}`);
+                  }}
+                >
+                  <UserAvatar
+                    user={data.user}
+                    avatarProps={{ radius: 'md', size: 32 }}
+                    withUsername
+                  />
+                </UnstyledButton>
+              )}
+              {data.title && (
+                <Text size="xl" weight={700} lineClamp={2} inline>
+                  {data.title}
+                </Text>
+              )}
+            </Stack>
             <Group align="end">
               <IconBadge className={classes.iconBadge} icon={<IconPhoto size={14} />}>
                 <Text size="xs">{abbreviateNumber(data.imageCount)}</Text>
