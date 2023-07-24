@@ -22,13 +22,16 @@ const useStyles = createStyles<string, { height: number }>((theme, { height }) =
     padding: '0 !important',
     color: 'white',
     borderRadius: theme.radius.sm,
-    minHeight: 280,
+    // 280 = min column width based off of CollectionHomeBlock styles grid.
+    minHeight: 280 * aspectRatioValues['portrait'].ratio,
   },
 }));
 
 export function FeedCard({ href, children, aspectRatio = 'portrait', className, ...props }: Props) {
   const { ratio, height } = aspectRatioValues[aspectRatio];
   const { classes, cx } = useStyles({ height });
+
+  console.log(height, ratio, aspectRatioValues);
 
   const card = (
     <Card<'a'>

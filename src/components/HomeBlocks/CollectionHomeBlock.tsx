@@ -24,6 +24,7 @@ import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { HomeBlockGetAll } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
+import { ArticleCard } from '~/components/Cards/ArticleCard';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -37,7 +38,7 @@ const useStyles = createStyles<string, { count: number }>((theme, { count }) => 
 
     grid: {
       display: 'grid',
-      gridTemplateColumns: 'repeat( auto-fit, minmax(280px, 1fr) )',
+      gridTemplateColumns: 'repeat( 4, minmax(280px, 1fr) )',
       columnGap: theme.spacing.md,
       paddingLeft: theme.spacing.md,
       paddingRight: theme.spacing.md,
@@ -48,6 +49,12 @@ const useStyles = createStyles<string, { count: number }>((theme, { count }) => 
 
       '& > *': {
         marginTop: theme.spacing.md,
+      },
+
+      [theme.fn.smallerThan('md')]: {
+        gridAutoFlow: 'column',
+        gridTemplateColumns: 'repeat(2, minmax(280px, 1fr) )',
+        gridTemplateRows: 'auto',
       },
 
       [theme.fn.smallerThan('sm')]: {
@@ -176,6 +183,7 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
             {item.type === 'model' && <ModelCard data={item.data} />}
             {item.type === 'image' && <ImageCard data={item.data} collectionId={collection?.id} />}
             {item.type === 'post' && <PostCard data={item.data} />}
+            {item.type === 'article' && <ArticleCard data={item.data} />}
           </Fragment>
         ))}
       </div>
