@@ -3,6 +3,7 @@ import { IconExclamationMark } from '@tabler/icons-react';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -12,11 +13,23 @@ import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDr
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { PeriodMode } from '~/server/schema/base.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    const features = getFeatureFlags({ user: session?.user });
+    if (!features.alternateHome) return { notFound: true };
+  },
+});
 
 export default function ModelsPage() {
+  const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.models.view);
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
   const { username, favorites, hidden, query, collectionId } = queryFilters;
@@ -46,10 +59,16 @@ export default function ModelsPage() {
               },
             })}
           />
-          <HomeContentToggle sx={showMobile} />
+          <Group position="left">
+            {features.alternateHome ? (
+              <FullHomeContentToggle />
+            ) : (
+              <HomeContentToggle sx={showMobile} />
+            )}
+          </Group>
           <Group position="apart" spacing={0}>
             <Group>
-              <HomeContentToggle sx={hideMobile} />
+              {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
               <SortFilter type="models" />
             </Group>
             <Group spacing={4}>

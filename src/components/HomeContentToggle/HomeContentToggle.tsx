@@ -26,6 +26,9 @@ export function useHomeSelection() {
   return { home, url, set };
 }
 
+/**
+ * @deprecated Soon to be replaced by `FullHomeContentToggle`
+ */
 export function HomeContentToggle({ size, sx, ...props }: Props) {
   const router = useRouter();
   const { set } = useHomeSelection();

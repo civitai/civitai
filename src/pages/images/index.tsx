@@ -1,6 +1,7 @@
 import { Group, Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ImageCategoriesInfinite } from '~/components/Image/Categories/ImageCategoriesInfinite';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
@@ -12,10 +13,12 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 
 export default function ImagesPage() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { view } = useImageFilters('images');
 
   return (
@@ -43,10 +46,16 @@ export default function ImagesPage() {
                 },
               })}
             />
-            <HomeContentToggle sx={showMobile} />
+            <Group position="left">
+              {features.alternateHome ? (
+                <FullHomeContentToggle />
+              ) : (
+                <HomeContentToggle sx={showMobile} />
+              )}
+            </Group>
             <Group position="apart" spacing={0}>
               <Group>
-                <HomeContentToggle sx={hideMobile} />
+                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
                 <SortFilter type="images" />
               </Group>
               <Group spacing={4}>
