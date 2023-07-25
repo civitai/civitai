@@ -54,7 +54,6 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
           ...queryFilters,
           collectionId: collection.id,
         }}
-        // renderItem={ModelCard}
       />
     </IsClient>
   );

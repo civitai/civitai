@@ -2,11 +2,13 @@ import {
   ActionIcon,
   Badge,
   Group,
+  HoverCard,
   Indicator,
   Menu,
   Rating,
   Stack,
   Text,
+  ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -16,6 +18,7 @@ import {
   IconMessageCircle2,
   IconTagOff,
   IconDotsVertical,
+  IconBrush,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
