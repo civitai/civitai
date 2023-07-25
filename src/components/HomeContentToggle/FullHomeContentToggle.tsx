@@ -63,7 +63,7 @@ export function useHomeSelection() {
 }
 
 export function FullHomeContentToggle({ size, sx, ...props }: Props) {
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const router = useRouter();
   const { set } = useHomeSelection();
   const features = useFeatureFlags();
@@ -73,7 +73,28 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
     {
       label: (
         <Group align="center" spacing={8} noWrap>
-          <ThemeIcon size={30} color={activePath === 'models' ? 'dark' : 'gray'} p={6}>
+          <ThemeIcon
+            size={30}
+            color={activePath === 'home' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
+            <IconHome />
+          </ThemeIcon>
+          <Text size="sm" inline>
+            Home
+          </Text>
+        </Group>
+      ),
+      value: 'home',
+    },
+    {
+      label: (
+        <Group align="center" spacing={8} noWrap>
+          <ThemeIcon
+            size={30}
+            color={activePath === 'models' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
             <IconCategory />
           </ThemeIcon>
           <Text size="sm" inline>
@@ -86,7 +107,11 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
     {
       label: (
         <Group align="center" spacing={8} noWrap>
-          <ThemeIcon size={30} color={activePath === 'images' ? 'dark' : 'gray'} p={6}>
+          <ThemeIcon
+            size={30}
+            color={activePath === 'images' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
             <IconPhoto />
           </ThemeIcon>
           <Text size="sm" inline>
@@ -99,7 +124,11 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
     {
       label: (
         <Group align="center" spacing={8} noWrap>
-          <ThemeIcon size={30} color={activePath === 'posts' ? 'dark' : 'gray'} p={6}>
+          <ThemeIcon
+            size={30}
+            color={activePath === 'posts' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
             <IconLayoutList />
           </ThemeIcon>
           <Text size="sm" inline>
@@ -114,7 +143,11 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
     data.push({
       label: (
         <Group align="center" spacing={8} noWrap>
-          <ThemeIcon size={30} color={activePath === 'articles' ? 'dark' : 'gray'} p={6}>
+          <ThemeIcon
+            size={30}
+            color={activePath === 'articles' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
             <IconFileText />
           </ThemeIcon>
           <Text size="sm" inline>
@@ -123,20 +156,6 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         </Group>
       ),
       value: 'articles',
-    });
-  if (features.alternateHome)
-    data.unshift({
-      label: (
-        <Group align="center" spacing={8} noWrap>
-          <ThemeIcon size={30} color={activePath === 'home' ? 'dark' : 'gray'} p={6}>
-            <IconHome />
-          </ThemeIcon>
-          <Text size="sm" inline>
-            Home
-          </Text>
-        </Group>
-      ),
-      value: 'home',
     });
 
   return (
