@@ -7,7 +7,8 @@ export const homeBlockMetaSchema = z
   .object({
     title: z.string(),
     description: z.string(),
-    alwaysShowDescription: z.boolean(),
+    stackedHeader: z.boolean(),
+    descriptionAlwaysVisible: z.boolean(),
     withIcon: z.boolean(),
     collection: z.object({
       id: z.number(),
