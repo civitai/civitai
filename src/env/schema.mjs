@@ -89,6 +89,8 @@ export const serverSchema = z.object({
   PODNAME: z.string().optional(),
   FEATUREBASE_JWT_SECRET: z.string().optional(),
   FEATUREBASE_URL: z.string().url().optional(),
+  NEWSLETTER_ID: z.string().optional(),
+  NEWSLETTER_KEY: z.string().optional(),
 });
 
 /**

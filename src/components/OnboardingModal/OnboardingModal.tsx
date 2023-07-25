@@ -34,6 +34,7 @@ import { ModerationCard } from '~/components/Account/ModerationCard';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { usernameInputSchema } from '~/server/schema/user.schema';
+import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -184,9 +185,7 @@ export default function OnboardingModal() {
               />
               <Form form={form} onSubmit={handleSubmit}>
                 <Stack>
-                  {!user?.email && (
-                    <InputText size="lg" name="email" label="Email" type="email" withAsterisk />
-                  )}
+                  <InputText size="lg" name="email" label="Email" type="email" withAsterisk />
                   <InputText
                     size="lg"
                     name="username"
@@ -263,6 +262,11 @@ export default function OnboardingModal() {
                 iconColor="yellow"
                 size="sm"
               >{`This feature is in beta. There may still be some content visible to you that you've requested to hide.`}</AlertWithIcon>
+              <NewsletterToggle
+                label="Send me the Civitai Newsletter"
+                description="We'll send you model and creator highlights, AI news, as well as comprehensive guides from
+                leaders in the AI Content Universe. We hate spam as much as you do."
+              />
               <Button
                 size="lg"
                 onClick={handleCompleteOnboarding}

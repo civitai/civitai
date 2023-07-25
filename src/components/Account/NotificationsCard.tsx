@@ -1,4 +1,5 @@
-import { Card, Stack, Switch, Title } from '@mantine/core';
+import { Card, Divider, Stack, Switch, Title } from '@mantine/core';
+import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getNotificationTypes } from '~/server/notifications/utils.notifications';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -51,6 +52,7 @@ export function NotificationsCard() {
         <Title id="notification-settings" order={2}>
           Notifications Settings
         </Title>
+        <Divider label="On-site Notifications" />
         {settings.map(({ type, label }) => (
           <Switch
             key={type}
@@ -62,6 +64,8 @@ export function NotificationsCard() {
             }
           />
         ))}
+        <Divider label="Email Notifications" />
+        <NewsletterToggle />
       </Stack>
     </Card>
   );
