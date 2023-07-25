@@ -1,5 +1,6 @@
 import { Menu, Loader } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
+import { CollectionType } from '@prisma/client';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -9,6 +10,8 @@ import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProv
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useRouter } from 'next/router';
 import { NextLink } from '@mantine/next';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 /*
 TODO.gallery
@@ -73,6 +76,11 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
             </Menu.Item>
           )}
         </DeleteImage>
+        <AddToCollectionMenuItem
+          onClick={() =>
+            openContext('addToCollection', { imageId: image.id, type: CollectionType.Image })
+          }
+        />
         {isMod && (
           <TosViolationButton onSuccess={handleTosViolationSuccess}>
             {({ onClick, isLoading }) => (

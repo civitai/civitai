@@ -1,9 +1,11 @@
 import { Menu, useMantineTheme } from '@mantine/core';
+import { CollectionType } from '@prisma/client';
 import { IconEdit, IconFlag, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -51,6 +53,9 @@ export function PostControls({
             </Menu.Item>
           </>
         )}
+        <AddToCollectionMenuItem
+          onClick={() => openContext('addToCollection', { postId, type: CollectionType.Post })}
+        />
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">
             <Menu.Item
