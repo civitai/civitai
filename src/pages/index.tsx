@@ -10,7 +10,6 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   useSSG: true,
   resolver: async ({ session, ssg }) => {
-    console.log('REEEEE get server side props index');
     const features = getFeatureFlags({ user: session?.user });
     if (features.alternateHome && ssg) await ssg.homeBlock.getHomeBlocks.prefetch();
 
