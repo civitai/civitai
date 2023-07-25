@@ -46,6 +46,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { CollectionType } from '@prisma/client';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -190,6 +191,10 @@ export function ModelCard({ data }: Props) {
                               </Text>
                             </Badge>
                           </Group>
+
+                          <HoverActionButton label="Create me" size={38}>
+                            <IconBrush stroke={2.5} size={22} />
+                          </HoverActionButton>
 
                           {contextMenuItems.length > 0 && (
                             <Menu position="left-start" withArrow offset={-5}>
