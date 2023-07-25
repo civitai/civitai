@@ -86,7 +86,7 @@ export default function LinkRole({ providers, linked }: Props) {
               </Group>
             </Alert>
             <Button size="lg" leftIcon={<IconHome />} component={NextLink} href="/">
-              Back to the models!
+              Back home!
             </Button>
           </Stack>
         ) : (

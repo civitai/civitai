@@ -34,6 +34,7 @@ import {
 import { env } from '~/env/client.mjs';
 import { ActionsWrapper } from './ActionsWrapper';
 import { CustomSpotlightAction } from './CustomSpotlightAction';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -101,6 +102,7 @@ function prepareTagActions(hits: InstantSearchApi['results']['hits']): Spotlight
 function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.ReactNode }) {
   const { scopedResults } = useInstantSearch();
   const { refine, query } = useSearchBox(props);
+  const features = useFeatureFlags();
 
   const rawQuery = useSearchStore((state) => state.query);
   const setRawQuery = useSearchStore((state) => state.setQuery);
@@ -139,7 +141,10 @@ function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.
       group: 'search',
       title: 'Keyword search',
       description: 'Search for models using the keywords you entered',
-      onTrigger: () => Router.push(`/?query=${encodeURIComponent(query)}&view=feed`),
+      onTrigger: () =>
+        Router.push(
+          `${features.alternateHome ? '/models' : '/'}?query=${encodeURIComponent(query)}&view=feed`
+        ),
     });
   }
 

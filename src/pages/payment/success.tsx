@@ -16,9 +16,11 @@ import { useEffect } from 'react';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { enterFall, jelloVerical } from '~/libs/animations';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function PaymentSuccess() {
   const router = useRouter();
+  const features = useFeatureFlags();
   const { cid } = router.query as { cid: string };
   const { customerId, refresh } = useCurrentUser() ?? {};
 
@@ -63,7 +65,12 @@ export default function PaymentSuccess() {
         </Text>
 
         <Group grow>
-          <Button component={NextLink} href="/" size="md" leftIcon={<IconLayoutDashboard />}>
+          <Button
+            component={NextLink}
+            href={features.alternateHome ? '/models' : '/'}
+            size="md"
+            leftIcon={<IconLayoutDashboard />}
+          >
             View Models
           </Button>
           <Button

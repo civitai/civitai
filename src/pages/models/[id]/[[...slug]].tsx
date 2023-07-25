@@ -199,7 +199,8 @@ export default function ModelDetailsV2({
     async onSuccess(_, { permanently }) {
       await queryUtils.model.getAll.invalidate();
       if (!permanently) await queryUtils.model.getById.invalidate({ id });
-      if (!isModerator || permanently) await router.replace('/');
+      if (!isModerator || permanently)
+        await router.replace(features.alternateHome ? '/models' : '/');
 
       showSuccessNotification({
         title: 'Successfully deleted the model',

@@ -60,9 +60,11 @@ import { trpc } from '~/utils/trpc';
 import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
 import { NextLink } from '@mantine/next';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function Tags() {
   const queryUtils = trpc.useContext();
+  const features = useFeatureFlags();
   const [tagSearch, setTagSearch] = useState('');
   const [selected, setSelected] = useState({});
   const [sorting, setSorting] = useState<MRT_SortingState>([]);
@@ -186,7 +188,10 @@ export default function Tags() {
                 </NextLink>
               )}
               {tag.target.includes(TagTarget.Model) && (
-                <NextLink href={`/?tags=${row.id}&view=feed`} target="_blank">
+                <NextLink
+                  href={`${features.alternateHome ? '/models' : '/'}?tags=${row.id}&view=feed`}
+                  target="_blank"
+                >
                   <IconBadge icon={<IconBox size={14} />}>
                     {abbreviateNumber(tag.stats.modelCount)}
                   </IconBadge>

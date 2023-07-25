@@ -1,6 +1,5 @@
 import { Center, Container, Loader } from '@mantine/core';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { HomeBlockType } from '@prisma/client';
@@ -11,12 +10,9 @@ import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeB
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   useSSG: true,
-  resolver: async ({ session, ssg }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.alternateHome) return { notFound: true };
-    if (ssg) await ssg.homeBlock.getHomeBlocks.prefetch();
-
-    return { props: {} };
+  resolver: async () => {
+    // TODO.homepage: always return 404 not found until we migrate new homepage to index
+    return { notFound: true };
   },
 });
 

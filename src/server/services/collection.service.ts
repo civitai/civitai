@@ -471,6 +471,7 @@ export const getCollectionItemsByCollectionId = async ({
       status: input.forReview,
     },
     where,
+    orderBy: { createdAt: 'desc' },
   });
 
   if (collectionItems.length === 0) {
