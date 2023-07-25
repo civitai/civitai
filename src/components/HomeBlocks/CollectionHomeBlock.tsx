@@ -7,13 +7,14 @@ import {
   Text,
   ThemeIcon,
   Box,
-  StackProps,
+  Popover,
+  Anchor,
 } from '@mantine/core';
 import { Fragment } from 'react';
 import {
-  IconAlbum,
   IconArrowRight,
   IconCategory,
+  IconInfoCircle,
   IconLayoutList,
   IconPhoto,
 } from '@tabler/icons-react';
@@ -25,6 +26,7 @@ import { HomeBlockGetAll } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -107,6 +109,7 @@ const icons = {
 export const CollectionHomeBlock = ({ homeBlock }: Props) => {
   const { classes, cx } = useStyles({ count: homeBlock.collection?.items.length ?? 0 });
   const currentUser = useCurrentUser();
+  const isMobile = useIsMobile();
 
   if (!homeBlock.collection) {
     return null;
@@ -114,15 +117,54 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
 
   const { metadata, collection } = homeBlock;
 
-  const type = collection.items[0].type;
+  if (!collection.items.length) {
+    return null;
+  }
+
+  const type = collection.items[0]?.type;
   const Icon = icons[type];
 
-  const MetaData = currentUser ? (
+  const MetaDataTop = (
     <Stack spacing="sm">
       <Group spacing="xs" position="apart" noWrap>
-        <Title className={classes.title} order={1} lineClamp={1}>
-          {metadata.title ?? collection.name}
-        </Title>
+        <Group>
+          <Title className={classes.title} order={1} lineClamp={1}>
+            {metadata.title ?? collection.name}{' '}
+          </Title>
+          {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
+            <Popover withArrow width={380} position={isMobile ? 'bottom' : 'right-start'}>
+              <Popover.Target>
+                <Box
+                  display="inline-block"
+                  sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                  color="white"
+                >
+                  <IconInfoCircle size={20} />
+                </Box>
+              </Popover.Target>
+              <Popover.Dropdown maw="100%">
+                <Text weight={500} size="lg" mb="xs">
+                  {metadata.title ?? collection.name}
+                </Text>
+                {metadata.description && (
+                  <Text size="sm" mb="xs">
+                    {metadata.description}
+                  </Text>
+                )}
+                {metadata.link && (
+                  <Link href={metadata.link} passHref>
+                    <Anchor size="sm">
+                      <Group spacing={4}>
+                        <Text inherit>{metadata.linkText ?? 'View All'} </Text>
+                        <IconArrowRight size={16} />
+                      </Group>
+                    </Anchor>
+                  </Link>
+                )}
+              </Popover.Dropdown>
+            </Popover>
+          )}
+        </Group>
         {metadata.link && (
           <Link href={metadata.link} passHref>
             <Button
@@ -136,11 +178,13 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
           </Link>
         )}
       </Group>
-      {metadata.description && metadata.alwaysShowDescription && (
+      {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
         <Text>{metadata.description}</Text>
       )}
     </Stack>
-  ) : (
+  );
+
+  const MetaDataGrid = (
     <Stack justify="center">
       <Group align="center">
         {metadata.withIcon && (
@@ -171,13 +215,18 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
     </Stack>
   );
 
+  const useGrid =
+    metadata.description &&
+    !metadata.stackedHeader &&
+    (!currentUser || metadata.descriptionAlwaysVisible);
+
   return (
     <HomeBlockWrapper py={32} px={0} bleedRight>
-      <Box mb="md" px="md" className={cx({ [classes.meta]: !currentUser })}>
-        {MetaData}
+      <Box mb="md" px="md" className={cx({ [classes.meta]: useGrid })}>
+        {MetaDataTop}
       </Box>
       <div className={classes.grid}>
-        {!currentUser && <div className={classes.gridMeta}>{MetaData}</div>}
+        {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
         {collection.items.map((item) => (
           <Fragment key={item.id}>
             {item.type === 'model' && <ModelCard data={item.data} />}
