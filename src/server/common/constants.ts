@@ -140,6 +140,7 @@ export const constants = {
 
 export const POST_IMAGE_LIMIT = 20;
 export const CAROUSEL_LIMIT = 20;
+export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 
 export type BaseModel = (typeof constants.baseModels)[number];
 export const baseModelSets: Record<string, BaseModel[]> = {

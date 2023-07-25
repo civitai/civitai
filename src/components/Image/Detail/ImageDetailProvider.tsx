@@ -1,5 +1,4 @@
 import { useMemo, useRef, useEffect, useContext, createContext } from 'react';
-import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
@@ -9,10 +8,11 @@ import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
+import { ImageGetById, ImageGetInfinite } from '~/types/router';
 
 type ImageDetailState = {
-  images: ImageV2Model[];
-  image?: ImageV2Model;
+  images: ImageGetInfinite;
+  image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
   connect?: ImageGuardConnect;
@@ -61,7 +61,7 @@ export function ImageDetailProvider({
 
   // #region [data fetching]
   const shouldFetchMany = Object.keys(filters).length > 0;
-  const { images, isInitialLoading: imagesLoading } = useQueryImages(
+  const { images = [], isInitialLoading: imagesLoading } = useQueryImages(
     // TODO: Hacky way to prevent sending the username when filtering by reactions
     { ...filters, username: !!reactions?.length ? undefined : username },
     {
@@ -70,7 +70,7 @@ export function ImageDetailProvider({
   );
 
   const shouldFetchImage =
-    !imagesLoading && !!images?.length && !images.find((x) => x.id === imageId);
+    !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
   const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
     { id: imageId },
     { enabled: shouldFetchImage }

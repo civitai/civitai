@@ -11,11 +11,14 @@ import { IconCloudOff } from '@tabler/icons-react';
 import { MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { ImageGetInfinite } from '~/types/router';
 
 type ImagesInfiniteState = {
   modelId?: number;
   modelVersionId?: number;
   postId?: number;
+  collectionId?: number;
   username?: string;
   reviewId?: number;
   prioritizedUserIds?: number[];
@@ -34,12 +37,14 @@ type ImagesInfiniteProps = {
   withTags?: boolean;
   filters?: ImagesInfiniteState;
   showEof?: boolean;
+  renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
 };
 
 export default function ImagesInfinite({
   withTags,
   filters: filterOverrides = {},
   showEof = false,
+  renderItem: MasonryItem,
 }: ImagesInfiniteProps) {
   const { ref, inView } = useInView();
   const imageFilters = useImageFilters('images');
@@ -77,7 +82,7 @@ export default function ImagesInfinite({
                 return { width, height };
               }}
               maxItemHeight={600}
-              render={ImagesCard}
+              render={MasonryItem ?? ImagesCard}
               itemId={(data) => data.id}
             />
             {hasNextPage && !isLoading && !isRefetching && (

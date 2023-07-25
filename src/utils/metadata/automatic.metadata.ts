@@ -43,7 +43,6 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       p.innerHTML = generationDetails;
       p.remove();
       generationDetails = p.innerHTML;
-      console.log({ generationDetails });
     } else if (exif?.parameters) {
       generationDetails = exif.parameters;
     }

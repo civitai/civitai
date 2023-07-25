@@ -18,6 +18,7 @@ type PostsInfiniteState = {
   username?: string;
   period?: MetricTimeframe;
   sort?: PostSort;
+  collectionId?: number;
 };
 
 type PostsInfiniteProps = {

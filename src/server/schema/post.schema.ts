@@ -29,6 +29,8 @@ export const postsQuerySchema = postsFilterSchema.extend({
     .transform((data) => postgresSlugify(data))
     .nullish(),
   modelVersionId: z.number().optional(),
+  ids: z.array(z.number()).optional(),
+  collectionId: z.number().optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
@@ -36,6 +38,8 @@ export const postCreateSchema = z.object({
   modelVersionId: z.number().optional(),
   title: z.string().trim().optional(),
   tag: z.number().optional(),
+  publishedAt: z.date().optional(),
+  collectionId: z.number().optional(),
 });
 
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
@@ -45,6 +49,7 @@ export const postUpdateSchema = z.object({
   title: z.string().optional(),
   detail: z.string().optional(),
   publishedAt: z.date().optional(),
+  collectionId: z.number().nullish(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
@@ -94,7 +99,7 @@ export const addPostImageSchema = z.object({
   postId: z.number(),
   modelVersionId: z.number().optional(),
   index: z.number(),
-  mimeType: z.string(),
+  mimeType: z.string().optional(),
   meta: z.preprocess((value) => {
     if (typeof value !== 'object') return null;
     if (value && !Object.keys(value).length) return null;

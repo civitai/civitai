@@ -28,6 +28,7 @@ export const articleWhereSchema = z.object({
   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
   includeDrafts: z.boolean().optional(),
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
+  collectionId: z.number().optional(),
 });
 
 // export const articleSortSchema = z.object({

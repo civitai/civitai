@@ -92,7 +92,7 @@ export function PostImages({
 
                 {image.meta && !image.hideMeta && (
                   <ImageMetaPopover
-                    meta={image.meta as ImageMetaProps}
+                    meta={image.meta}
                     generationProcess={image.generationProcess ?? 'txt2img'}
                     imageId={image.id}
                   >

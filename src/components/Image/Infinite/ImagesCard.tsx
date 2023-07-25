@@ -1,4 +1,4 @@
-import { ActionIcon, AspectRatio, createStyles } from '@mantine/core';
+import { ActionIcon, AspectRatio, Center, Overlay, Text, createStyles } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
@@ -55,6 +55,17 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                             />
                           )}
                         </RoutedContextLink>
+                        {/* TODO.collections: remove the overlay and use the ImageIngestionProvider to display ingestion progress on images card */}
+                        {!image.scannedAt && (
+                          <Overlay opacity={0.75} color="#000">
+                            <Center h="100%" px="xs">
+                              <Text align="center">
+                                This image is still being analyzed. It will be visible to the
+                                community once it finishes
+                              </Text>
+                            </Center>
+                          </Overlay>
+                        )}
                         {showVotes ? (
                           <div className={classes.footer}>
                             <VotableTags entityType="image" entityId={image.id} tags={tags} />
@@ -77,7 +88,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                             />
                             {!image.hideMeta && image.meta && (
                               <ImageMetaPopover
-                                meta={image.meta as any}
+                                meta={image.meta}
                                 generationProcess={image.generationProcess ?? undefined}
                                 imageId={image.id}
                               >

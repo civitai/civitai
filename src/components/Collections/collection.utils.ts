@@ -2,6 +2,10 @@ import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { removeEmpty } from '~/utils/object-helpers';
+import { CollectionItemExpanded } from '~/server/services/collection.service';
+import { CollectionItemStatus } from '@prisma/client';
+import { ImageProps } from '~/components/ImageGuard/ImageGuard';
+import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 const collectionQueryParamSchema = z
   .object({
@@ -35,4 +39,51 @@ export const useCollectionQueryParams = () => {
       },
     };
   }, [query, pathname, push]);
+};
+
+export const getCollectionItemReviewData = (collectionItem: CollectionItemExpanded) => {
+  const reviewData: {
+    title: string;
+    description: string;
+    images: ImageProps[];
+    imageSrc?: string;
+    addedBy: string;
+    status: CollectionItemStatus;
+    type?: string;
+    user?: Partial<UserWithCosmetics> | null;
+  } = {
+    title: '',
+    description: '',
+    images: [],
+    addedBy: '',
+    status: CollectionItemStatus.REVIEW,
+  };
+
+  switch (collectionItem.type) {
+    case 'image': {
+      reviewData.images = [collectionItem.data];
+      reviewData.user = collectionItem.data.user;
+      break;
+    }
+    case 'model': {
+      reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
+      reviewData.user = collectionItem.data.user;
+      break;
+    }
+    case 'post': {
+      reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
+      reviewData.user = collectionItem.data.user;
+      break;
+    }
+    case 'article': {
+      reviewData.imageSrc = collectionItem.data.cover;
+      reviewData.user = collectionItem.data.user;
+      reviewData.title = collectionItem.data.title;
+      break;
+    }
+    default:
+      break;
+  }
+
+  return reviewData;
 };

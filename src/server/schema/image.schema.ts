@@ -199,6 +199,7 @@ export const getInfiniteImagesSchema = z
     cursor: z.union([z.bigint(), z.number()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
+    collectionId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
     imageId: z.number().optional(),
@@ -221,6 +222,7 @@ export const getInfiniteImagesSchema = z
     include: z.array(imageInclude).optional().default(['cosmetics']),
     excludeCrossPosts: z.boolean().optional(),
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
+    ids: z.array(z.number()).optional(),
   })
   .transform((value) => {
     if (value.withTags) {

@@ -57,7 +57,10 @@ import { isDefined } from '~/utils/type-guards';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelsSearchIndex } from '~/server/search-index';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
@@ -238,34 +241,20 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       user: sessionUser,
       id: collectionId,
     });
+
     if (!permissions.read) {
       return { items: [] };
     }
 
-    const collectionItemModels = await dbRead.collectionItem.findMany({
-      select: {
-        id: true,
-        modelId: true,
-      },
-      where: {
-        collectionId,
-        modelId: {
-          not: null,
-        },
-      },
-    });
-
-    const modelIds = collectionItemModels
-      .map((collectionItemModel) => collectionItemModel.modelId)
-      .filter(isDefined);
-
-    if (modelIds.length === 0) {
-      return { items: [] };
-    }
+    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+      getAvailableCollectionItemsFilterForUser({ permissions, user: sessionUser });
 
     AND.push({
-      id: {
-        in: modelIds,
+      collectionItems: {
+        some: {
+          collectionId,
+          AND: collectionItemModelsAND,
+        },
       },
     });
   }
@@ -297,6 +286,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   let orderBy: Prisma.ModelOrderByWithRelationInput = {
     lastVersionAt: { sort: 'desc', nulls: 'last' },
   };
+
   if (sort === ModelSort.HighestRated) orderBy = { rank: { [`rating${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostLiked)
     orderBy = { rank: { [`favoriteCount${period}Rank`]: 'asc' } };
@@ -320,6 +310,119 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   return { items };
+};
+
+export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
+  typeof getModelsWithImagesAndModelVersions
+>['items'][0];
+
+export const getModelsWithImagesAndModelVersions = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllModelsOutput;
+  ctx: Context;
+}) => {
+  input.limit = input.limit ?? 100;
+  const take = input.limit + 1;
+
+  const { items } = await getModels({
+    input: { ...input, take },
+    user: ctx.user,
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      status: true,
+      createdAt: true,
+      lastVersionAt: true,
+      publishedAt: true,
+      locked: true,
+      earlyAccessDeadline: true,
+      mode: true,
+      rank: {
+        select: {
+          [`downloadCount${input.period}`]: true,
+          [`favoriteCount${input.period}`]: true,
+          [`commentCount${input.period}`]: true,
+          [`ratingCount${input.period}`]: true,
+          [`rating${input.period}`]: true,
+        },
+      },
+      modelVersions: {
+        orderBy: { index: 'asc' },
+        take: 1,
+        select: {
+          id: true,
+          earlyAccessTimeFrame: true,
+          createdAt: true,
+          modelVersionGenerationCoverage: { select: { workers: true } },
+        },
+      },
+      user: { select: simpleUserSelect },
+      hashes: {
+        select: modelHashSelect,
+        where: {
+          hashType: ModelHashType.SHA256,
+          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+        },
+      },
+    },
+  });
+
+  const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
+  const images = !!modelVersionIds.length
+    ? await getImagesForModelVersion({
+        modelVersionIds,
+        excludedTagIds: input.excludedImageTagIds,
+        excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
+        excludedUserIds: input.excludedUserIds,
+        currentUserId: ctx.user?.id,
+      })
+    : [];
+
+  let nextCursor: number | undefined;
+  if (items.length > input.limit) {
+    const nextItem = items.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  const result = {
+    nextCursor,
+    items: items
+      .map(({ hashes, modelVersions, rank, ...model }) => {
+        const [version] = modelVersions;
+        if (!version) return null;
+        const [image] = images.filter((i) => i.modelVersionId === version.id);
+        const showImageless =
+          (ctx.user?.isModerator || model.user.id === ctx.user?.id) &&
+          (input.user || input.username);
+        if (!image && !showImageless) return null;
+
+        const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+
+        return {
+          ...model,
+          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          rank: {
+            downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+            favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+            commentCount: rank?.[`commentCount${input.period}`] ?? 0,
+            ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
+            rating: rank?.[`rating${input.period}`] ?? 0,
+          },
+          image:
+            model.mode !== ModelModifier.TakenDown
+              ? (image as (typeof images)[0] | undefined)
+              : undefined,
+          canGenerate,
+        };
+      })
+      .filter(isDefined),
+  };
+
+  return result;
 };
 
 export const getModelVersionsMicro = ({

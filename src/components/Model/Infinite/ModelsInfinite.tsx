@@ -4,21 +4,26 @@ import { IconCloudOff } from '@tabler/icons-react';
 import { useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
 
+import { ModelCard } from '~/components/Cards/ModelCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
 import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
+import { ModelGetAll } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
   showEof?: boolean;
+  renderItem?: React.ComponentType<MasonryRenderItemProps<ModelGetAll['items'][number]>>;
 };
 
 export function ModelsInfinite({
   filters: filterOverrides = {},
   showEof = false,
+  renderItem: MasonryItem,
 }: InfiniteModelsProps) {
   const { ref, inView } = useInView();
   const modelFilters = useModelFilters();
@@ -57,7 +62,7 @@ export function ModelsInfinite({
             }}
             adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
             maxItemHeight={600}
-            render={AmbientModelCard}
+            render={MasonryItem ?? AmbientModelCard}
             itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (

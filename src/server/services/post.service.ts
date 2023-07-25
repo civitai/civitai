@@ -41,6 +41,11 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
 import { logToDb } from '~/utils/logging';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -57,6 +62,8 @@ export const getPostsInfinite = async ({
   user,
   tags,
   modelVersionId,
+  ids,
+  collectionId,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
@@ -90,6 +97,35 @@ export const getPostsInfinite = async ({
     if (!user?.isModerator)
       AND.push({ OR: [{ modelVersion: { status: 'Published' } }, { modelVersionId: null }] });
   }
+  if (ids) {
+    AND.push({
+      id: {
+        in: ids,
+      },
+    });
+  }
+  if (collectionId) {
+    const permissions = await getUserCollectionPermissionsById({
+      user,
+      id: collectionId,
+    });
+
+    if (!permissions.read) {
+      return { items: [] };
+    }
+
+    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
+      getAvailableCollectionItemsFilterForUser({ permissions, user });
+
+    AND.push({
+      collectionItems: {
+        some: {
+          collectionId,
+          AND: collectionItemModelsAND,
+        },
+      },
+    });
+  }
 
   // sorting
   if (sort === PostSort.MostComments)
@@ -101,13 +137,13 @@ export const getPostsInfinite = async ({
   const posts = await dbRead.post.findMany({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
-    where: { AND },
+    where: { AND, collectionId: null },
     orderBy,
     select: {
       id: true,
       nsfw: true,
       title: true,
-      // user: { select: userWithCosmeticsSelect },
+      user: { select: userWithCosmeticsSelect },
       publishedAt: true,
       stats: {
         select: {
@@ -204,20 +240,23 @@ export const getPostEditDetail = async ({ id }: GetByIdInput) => {
     select: editPostSelect,
   });
   if (!postRaw) throw throwNotFoundError();
-  const imageIds = postRaw.images.map((x) => x.id);
+
+  const { images: rawImages, ...post } = postRaw;
+  const imageIds = rawImages.map((x) => x.id);
   const imageTagCounts = await getTagCountForImages(imageIds);
-  const images = postRaw.images.map((x) => ({
+  const images = rawImages.map((x) => ({
     ...x,
+    meta: x.meta as ImageMetaProps | null,
     _count: { tags: imageTagCounts[x.id] },
   }));
-  const post = {
-    ...postRaw,
+  const castedPost = {
+    ...post,
     images,
   };
 
   return {
-    ...post,
-    tags: post.tags.flatMap((x) => x.tag),
+    ...castedPost,
+    tags: castedPost.tags.flatMap((x) => x.tag),
   };
 };
 
@@ -234,6 +273,7 @@ export const createPost = async ({
   const imageTagCounts = await getTagCountForImages(imageIds);
   const images = rawResult.images.map((x) => ({
     ...x,
+    meta: x.meta as ImageMetaProps,
     _count: { tags: imageTagCounts[x.id] },
   }));
 
@@ -389,6 +429,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
 
   return {
     ...rawResult,
+    meta: rawResult.meta as ImageMetaProps | null,
     _count: { tags: imageTags[image.id] },
   };
 };

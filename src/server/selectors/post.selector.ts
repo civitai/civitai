@@ -1,3 +1,4 @@
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { simpleTagSelect, imageTagCompositeSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
 
@@ -24,8 +25,8 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   // },
 });
 type PostImageNavigationProps = { previewUrl?: string };
-export type PostImage = Prisma.ImageGetPayload<typeof postImage> &
-  PostImageNavigationProps & { _count: { tags: number } };
+export type PostImage = Omit<Prisma.ImageGetPayload<typeof postImage>, 'meta'> &
+  PostImageNavigationProps & { _count: { tags: number }; meta: ImageMetaProps | null };
 const postImage = Prisma.validator<Prisma.ImageArgs>()({ select: editPostImageSelect });
 
 export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
@@ -41,4 +42,21 @@ export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
     select: editPostImageSelect,
   },
   tags: { select: { tag: { select: simpleTagSelect } } },
+});
+
+export const postForHomePageSelector = Prisma.validator<Prisma.PostSelect>()({
+  id: true,
+  nsfw: true,
+  title: true,
+  publishedAt: true,
+  stats: {
+    select: {
+      commentCountAllTime: true,
+      likeCountAllTime: true,
+      dislikeCountAllTime: true,
+      heartCountAllTime: true,
+      laughCountAllTime: true,
+      cryCountAllTime: true,
+    },
+  },
 });

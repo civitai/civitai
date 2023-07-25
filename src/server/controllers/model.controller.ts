@@ -44,6 +44,7 @@ import {
   getDraftModelsByUserId,
   getModel,
   getModels,
+  getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
   getVaeFiles,
   permaDeleteModelById,
@@ -80,6 +81,7 @@ import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { getArticles } from '~/server/services/article.service';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { modelsSearchIndex } from '~/server/search-index';
+import { getPostsInfinite } from '~/server/services/post.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -185,6 +187,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 };
 
 export type GetModelsInfiniteReturnType = AsyncReturnType<typeof getModelsInfiniteHandler>['items'];
+
 export const getModelsInfiniteHandler = async ({
   input,
   ctx,
@@ -192,105 +195,12 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
-  input.limit = input.limit ?? 100;
-  const take = input.limit + 1;
-
-  const { items } = await getModels({
-    input: { ...input, take },
-    user: ctx.user,
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      nsfw: true,
-      status: true,
-      createdAt: true,
-      lastVersionAt: true,
-      publishedAt: true,
-      locked: true,
-      earlyAccessDeadline: true,
-      mode: true,
-      rank: {
-        select: {
-          [`downloadCount${input.period}`]: true,
-          [`favoriteCount${input.period}`]: true,
-          [`commentCount${input.period}`]: true,
-          [`ratingCount${input.period}`]: true,
-          [`rating${input.period}`]: true,
-        },
-      },
-      modelVersions: {
-        orderBy: { index: 'asc' },
-        take: 1,
-        select: {
-          id: true,
-          earlyAccessTimeFrame: true,
-          createdAt: true,
-          modelVersionGenerationCoverage: { select: { workers: true } },
-        },
-      },
-      user: { select: simpleUserSelect },
-      hashes: {
-        select: modelHashSelect,
-        where: {
-          hashType: ModelHashType.SHA256,
-          fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-        },
-      },
-    },
-  });
-
-  const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
-  const images = !!modelVersionIds.length
-    ? await getImagesForModelVersion({
-        modelVersionIds,
-        excludedTagIds: input.excludedImageTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
-        excludedUserIds: input.excludedUserIds,
-        currentUserId: ctx.user?.id,
-      })
-    : [];
-
-  let nextCursor: number | undefined;
-  if (items.length > input.limit) {
-    const nextItem = items.pop();
-    nextCursor = nextItem?.id;
+  try {
+    return await getModelsWithImagesAndModelVersions({ input, ctx });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
-
-  const result = {
-    nextCursor,
-    items: items
-      .map(({ hashes, modelVersions, rank, ...model }) => {
-        const [version] = modelVersions;
-        if (!version) return null;
-        const [image] = images.filter((i) => i.modelVersionId === version.id);
-        const showImageless =
-          (ctx.user?.isModerator || model.user.id === ctx.user?.id) &&
-          (input.user || input.username);
-        if (!image && !showImageless) return null;
-
-        const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
-
-        return {
-          ...model,
-          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-          rank: {
-            downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
-            favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
-            commentCount: rank?.[`commentCount${input.period}`] ?? 0,
-            ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
-            rating: rank?.[`rating${input.period}`] ?? 0,
-          },
-          image:
-            model.mode !== ModelModifier.TakenDown
-              ? (image as (typeof images)[0] | undefined)
-              : undefined,
-          canGenerate,
-        };
-      })
-      .filter(isDefined),
-  };
-  return result;
 };
 
 export const getModelsPagedSimpleHandler = async ({

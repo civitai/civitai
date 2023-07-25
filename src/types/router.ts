@@ -47,6 +47,7 @@ export type UsersGetCosmetics = UserRouter['getCosmetics'];
 type ImageRouter = RouterOutput['image'];
 export type ImageGetGalleryInfinite = ImageRouter['getGalleryImagesInfinite']['items'];
 export type ImageGetInfinite = ImageRouter['getInfinite']['items'];
+export type ImageGetById = ImageRouter['get'];
 export type ImageGetByCategoryModel = ImageRouter['getImagesByCategory']['items'][number];
 export type ImageGetByCategoryImageModel = ImageGetByCategoryModel['items'][number];
 
@@ -73,5 +74,9 @@ export type ArticleGetByCategoryArticleModel = ArticleGetByCategoryModel['items'
 type LeaderboardRouter = RouterOutput['leaderboard'];
 export type LeaderboardGetModel = LeaderboardRouter['getLeaderboard'][number];
 
+type HomeBlockRouter = RouterOutput['homeBlock'];
+export type HomeBlockGetAll = HomeBlockRouter['getHomeBlocks'];
+
 type CollectionRouter = RouterOutput['collection'];
 export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];
+export type CollectionByIdModel = CollectionRouter['getById']['collection'];

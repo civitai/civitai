@@ -141,6 +141,47 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
 });
 
+export const modelForHomePageSelector = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  type: true,
+  nsfw: true,
+  status: true,
+  createdAt: true,
+  lastVersionAt: true,
+  publishedAt: true,
+  locked: true,
+  earlyAccessDeadline: true,
+  mode: true,
+  rank: {
+    select: {
+      downloadCountAllTime: true,
+      favoriteCountAllTime: true,
+      commentCountAllTime: true,
+      ratingCountAllTime: true,
+      ratingAllTime: true,
+    },
+  },
+  modelVersions: {
+    orderBy: { index: 'asc' },
+    take: 1,
+    select: {
+      id: true,
+      earlyAccessTimeFrame: true,
+      createdAt: true,
+      modelVersionGenerationCoverage: { select: { workers: true } },
+    },
+  },
+  user: { select: simpleUserSelect },
+  hashes: {
+    select: modelHashSelect,
+    where: {
+      hashType: ModelHashType.SHA256,
+      fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+    },
+  },
+});
+
 export const associatedResourceSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,

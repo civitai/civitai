@@ -11,6 +11,7 @@ import { commentRouter } from './comment.router';
 import { commentv2Router } from './commentv2.router';
 import { contentRouter } from './content.router';
 import { downloadRouter } from './download.router';
+import { homeBlockRouter } from './home-block.router';
 import { imageRouter } from './image.router';
 import { leaderboardRouter } from './leaderboard.router';
 import { modelFileRouter } from './model-file.router';
@@ -45,6 +46,7 @@ export const appRouter = router({
   commentv2: commentv2Router,
   content: contentRouter,
   download: downloadRouter,
+  homeBlock: homeBlockRouter,
   image: imageRouter,
   model: modelRouter,
   modelFile: modelFileRouter,
