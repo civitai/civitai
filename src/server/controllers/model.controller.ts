@@ -754,7 +754,7 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await getGetUrl(additionalFile.url, { fileName: additionalFileName })).url,
+          url: (await getDownloadUrl(additionalFile.url, additionalFileName)).url,
         },
       });
     }
