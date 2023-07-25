@@ -146,7 +146,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
     JOIN "User" u ON u.id = lr."userId"
     WHERE lr.date = date(${date})
       AND lr."leaderboardId" = ${input.id}
-      AND lr.position < 1000
+      AND lr.position < ${input.maxPosition ?? 1000}
       ${Prisma.raw(!input.isModerator ? 'AND l.public = true' : '')}
     ORDER BY lr.position
   `;
@@ -189,7 +189,13 @@ export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResul
 
   const leaderboardsWithResults = await Promise.all(
     leaderboards.map(async (leaderboard) => {
-      const results = await getLeaderboard({ id: leaderboard.id, isModerator, date: input.date });
+      const results = await getLeaderboard({
+        id: leaderboard.id,
+        isModerator,
+        date: input.date,
+        maxPosition: 5,
+      });
+
       const cosmetics = await dbRead.cosmetic.findMany({
         select: {
           id: true,

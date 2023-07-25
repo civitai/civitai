@@ -13,6 +13,7 @@ export const getLeaderboardSchema = z.object({
   id: z.string(),
   date: z.date().optional(),
   isModerator: z.boolean().optional().default(false),
+  maxPosition: z.number().optional().default(1000),
 });
 
 export type GetLeaderboardsInput = z.infer<typeof getLeaderboardsSchema>;
