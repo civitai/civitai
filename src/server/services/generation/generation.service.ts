@@ -29,7 +29,7 @@ import { env } from '~/env/server.mjs';
 
 import { BaseModel, baseModelSets, generation, Sampler } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { uniqBy } from 'lodash-es';
+import { chunk, uniqBy } from 'lodash-es';
 import { modelsSearchIndex } from '~/server/search-index';
 
 export function parseModelVersionId(assetId: string) {
@@ -350,32 +350,33 @@ export async function refreshGenerationCoverage() {
     }))
     .filter((x) => x.modelVersionId !== null);
 
+  const batches = chunk(modelVersionCoverage, 500);
+  for (const batch of batches) {
+    const values = batch
+      .map(
+        (data) =>
+          `(${data.modelVersionId}, ${data.workers}, ARRAY[${data.serviceProviders
+            .map((x) => `'${x}'`)
+            .join(',')}])`
+      )
+      .join(', ');
+    await dbWrite.$queryRawUnsafe(`
+      INSERT INTO "ModelVersionGenerationCoverage" ("modelVersionId", "workers", "serviceProviders")
+      SELECT
+        mv."id",
+        IIF(m."allowCommercialUse" IN ('Image', 'None'), 0, mc."workers") as "workers",
+        IIF(m."allowCommercialUse" IN ('Image', 'None'), ARRAY[]::text[], mc."serviceProviders") as "serviceProviders"
+      FROM (VALUES ${values}) AS mc ("modelVersionId", "workers", "serviceProviders")
+      JOIN "ModelVersion" mv ON mv."id" = mc."modelVersionId"
+      JOIN "Model" m ON m."id" = mv."modelId"
+      ON CONFLICT ("modelVersionId")
+      DO UPDATE
+      SET "workers" = EXCLUDED."workers",
+          "serviceProviders" = EXCLUDED."serviceProviders";
+    `);
+  }
+
   const modelVersionIds = modelVersionCoverage.map((data) => data.modelVersionId);
-
-  const values = modelVersionCoverage
-    .map(
-      (data) =>
-        `(${data.modelVersionId}, ${data.workers}, ARRAY[${data.serviceProviders
-          .map((x) => `'${x}'`)
-          .join(',')}])`
-    )
-    .join(', ');
-
-  await dbWrite.$queryRawUnsafe(`
-    INSERT INTO "ModelVersionGenerationCoverage" ("modelVersionId", "workers", "serviceProviders")
-    SELECT
-      mv."id",
-      IIF(m."allowCommercialUse" IN ('Image', 'None'), 0, mc."workers") as "workers",
-      IIF(m."allowCommercialUse" IN ('Image', 'None'), ARRAY[]::text[], mc."serviceProviders") as "serviceProviders"
-    FROM (VALUES ${values}) AS mc ("modelVersionId", "workers", "serviceProviders")
-    JOIN "ModelVersion" mv ON mv."id" = mc."modelVersionId"
-    JOIN "Model" m ON m."id" = mv."modelId"
-    ON CONFLICT ("modelVersionId")
-    DO UPDATE
-    SET "workers" = EXCLUDED."workers",
-        "serviceProviders" = EXCLUDED."serviceProviders";
-  `);
-
   const updatedModels = await dbRead.modelVersion.findMany({
     distinct: ['modelId'],
     select: {
