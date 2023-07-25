@@ -13,6 +13,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { ImageGetInfinite } from '~/types/router';
+import { ImageIngestionProvider } from '~/components/Image/Ingestion/ImageIngestionProvider';
 
 type ImagesInfiniteState = {
   modelId?: number;
@@ -74,17 +75,19 @@ export default function ImagesInfinite({
         ) : !!images.length ? (
           <div style={{ position: 'relative' }}>
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-            <MasonryColumns
-              data={images}
-              imageDimensions={(data) => {
-                const width = data?.width ?? 450;
-                const height = data?.height ?? 450;
-                return { width, height };
-              }}
-              maxItemHeight={600}
-              render={MasonryItem ?? ImagesCard}
-              itemId={(data) => data.id}
-            />
+            <ImageIngestionProvider ids={images.map(({ id }) => id)}>
+              <MasonryColumns
+                data={images}
+                imageDimensions={(data) => {
+                  const width = data?.width ?? 450;
+                  const height = data?.height ?? 450;
+                  return { width, height };
+                }}
+                maxItemHeight={600}
+                render={MasonryItem ?? ImagesCard}
+                itemId={(data) => data.id}
+              />
+            </ImageIngestionProvider>
             {hasNextPage && !isLoading && !isRefetching && (
               <Center ref={ref} sx={{ height: 36 }} mt="md">
                 {inView && <Loader />}

@@ -14,7 +14,9 @@ import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageGetInfinite } from '~/types/router';
 
 export function ImageCard({ data, collectionId }: Props) {
-  const { classes: sharedClasses, cx } = useCardStyles();
+  const { classes: sharedClasses, cx } = useCardStyles({
+    aspectRatio: data.width && data.height ? data.width / data.height : 1,
+  });
   const router = useRouter();
 
   return (

@@ -15,7 +15,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 const IMAGE_CARD_WIDTH = 332;
 
 export function PostCard({ data }: Props) {
-  const { classes, cx } = useCardStyles();
+  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square">

@@ -16,7 +16,7 @@ import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 const IMAGE_CARD_WIDTH = 332;
 
 export function ArticleCard({ data }: Props) {
-  const { classes, cx } = useCardStyles();
+  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, title, cover, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);

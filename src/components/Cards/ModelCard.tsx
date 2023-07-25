@@ -52,7 +52,12 @@ const querySchema = z.object({
 });
 
 export function ModelCard({ data }: Props) {
-  const { classes, cx, theme } = useCardStyles();
+  const { classes, cx, theme } = useCardStyles({
+    aspectRatio:
+      data.image && data.image.width && data.image.height
+        ? data.image.width / data.image.height
+        : 1,
+  });
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -245,7 +250,7 @@ export function ModelCard({ data }: Props) {
                   e.preventDefault();
                   e.stopPropagation();
 
-                  router.push(`/users/${data.user.username}`);
+                  router.push(`/user/${data.user.username}`);
                 }}
               >
                 <UserAvatar
