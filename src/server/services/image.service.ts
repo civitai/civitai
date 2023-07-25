@@ -751,11 +751,17 @@ export const getAllImages = async ({
   // Filter to a specific image
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
 
-  // Filter to a specfic collection
+  // Filter to a specific collection and relevant status:
   if (collectionId) {
+    const displayReviewItems = userId
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${userId})`
+      : '';
+
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${collectionId} AND ci."imageId" = i.id
+      WHERE ci."collectionId" = ${collectionId} 
+        AND ci."imageId" = i.id
+        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
     )`);
   }
 
