@@ -81,7 +81,7 @@ const filters: MatchedFilter[] = [
 const applyQueryMatchers = (query: string, appliedFilterIds: FilterIdentifier[] = []) => {
   const matchedFilters: MatchedFilter[] = filters
     .map((filter) => {
-      const { attributeRegexp, filterId } = filter;
+      const { attributeRegexp, filterId, attribute } = filter;
 
       if (filterId && appliedFilterIds.includes(filterId)) {
         return {
@@ -90,7 +90,9 @@ const applyQueryMatchers = (query: string, appliedFilterIds: FilterIdentifier[] 
       }
 
       const matches: string[] = [];
-      if (attributeRegexp.global) {
+      if (!query && attribute === 'nsfw') {
+        matches.push('false');
+      } else if (attributeRegexp.global) {
         for (const [, group] of query.matchAll(attributeRegexp)) {
           matches.push(group);
         }
