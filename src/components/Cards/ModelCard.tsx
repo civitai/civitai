@@ -260,7 +260,7 @@ export function ModelCard({ data }: Props) {
                 />
               </UnstyledButton>
             )}
-            <Text size="xl" weight={700} lineClamp={2} inline>
+            <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {data.name}
             </Text>
             <Group spacing={4} position="apart">

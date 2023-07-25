@@ -12,6 +12,7 @@ import { useRouter } from 'next/router';
 import { NextLink } from '@mantine/next';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /*
 TODO.gallery
@@ -24,6 +25,7 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const queryUtils = trpc.useContext();
+  const features = useFeatureFlags();
 
   const handleClose = () => {
     setLoading(false);
@@ -76,11 +78,13 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
             </Menu.Item>
           )}
         </DeleteImage>
-        <AddToCollectionMenuItem
-          onClick={() =>
-            openContext('addToCollection', { imageId: image.id, type: CollectionType.Image })
-          }
-        />
+        {features.collections && (
+          <AddToCollectionMenuItem
+            onClick={() =>
+              openContext('addToCollection', { imageId: image.id, type: CollectionType.Image })
+            }
+          />
+        )}
         {isMod && (
           <TosViolationButton onSuccess={handleTosViolationSuccess}>
             {({ onClick, isLoading }) => (

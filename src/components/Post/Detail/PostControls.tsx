@@ -9,6 +9,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 
 export function PostControls({
@@ -22,6 +23,7 @@ export function PostControls({
 }) {
   const router = useRouter();
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
@@ -53,9 +55,11 @@ export function PostControls({
             </Menu.Item>
           </>
         )}
-        <AddToCollectionMenuItem
-          onClick={() => openContext('addToCollection', { postId, type: CollectionType.Post })}
-        />
+        {features.collections && (
+          <AddToCollectionMenuItem
+            onClick={() => openContext('addToCollection', { postId, type: CollectionType.Post })}
+          />
+        )}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">
             <Menu.Item

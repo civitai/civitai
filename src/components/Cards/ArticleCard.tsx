@@ -80,16 +80,18 @@ export function ArticleCard({ data }: Props) {
               <UserAvatar user={user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
             </UnstyledButton>
           )}
-          {publishedAt && (
-            <Text size="xs" weight={510} color="white" lineClamp={1} inline>
-              {formatDate(publishedAt)}
-            </Text>
-          )}
-          {title && (
-            <Text size="xl" weight={700} lineClamp={2} inline>
-              {title}
-            </Text>
-          )}
+          <Stack spacing={0}>
+            {publishedAt && (
+              <Text size="xs" weight={500} color="white" inline>
+                {formatDate(publishedAt)}
+              </Text>
+            )}
+            {title && (
+              <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+                {title}
+              </Text>
+            )}
+          </Stack>
           <Group position="apart">
             <Group spacing={4}>
               <IconBadge icon={<IconBookmark size={14} />} color="dark">

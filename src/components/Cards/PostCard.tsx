@@ -53,7 +53,7 @@ export function PostCard({ data }: Props) {
           spacing="sm"
         >
           <Group position="apart" align="end" noWrap>
-            <Stack>
+            <Stack spacing="sm">
               {data.user?.id !== -1 && (
                 <UnstyledButton
                   sx={{ color: 'white' }}
@@ -72,7 +72,7 @@ export function PostCard({ data }: Props) {
                 </UnstyledButton>
               )}
               {data.title && (
-                <Text size="xl" weight={700} lineClamp={2} inline>
+                <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
                   {data.title}
                 </Text>
               )}
