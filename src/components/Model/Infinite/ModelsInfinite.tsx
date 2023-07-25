@@ -13,6 +13,7 @@ import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { ModelGetAll } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
@@ -23,10 +24,12 @@ type InfiniteModelsProps = {
 export function ModelsInfinite({
   filters: filterOverrides = {},
   showEof = false,
-  renderItem: MasonryItem,
+  renderItem,
 }: InfiniteModelsProps) {
+  const features = useFeatureFlags();
   const { ref, inView } = useInView();
   const modelFilters = useModelFilters();
+  const RenderItem = renderItem ?? features.modelCardV2 ? ModelCard : AmbientModelCard;
 
   const filters = { ...modelFilters, ...removeEmpty(filterOverrides) };
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
@@ -62,7 +65,7 @@ export function ModelsInfinite({
             }}
             adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
             maxItemHeight={600}
-            render={MasonryItem ?? AmbientModelCard}
+            render={RenderItem}
             itemId={(data) => data.id}
           />
           {hasNextPage && !isLoading && !isRefetching && (
