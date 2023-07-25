@@ -10,7 +10,9 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, session = null, features }) => {
     if (ssg) {
       if (session) {
-        ssg.collection.getAllUser.prefetch({ permission: CollectionContributorPermission.VIEW });
+        await ssg.collection.getAllUser.prefetch({
+          permission: CollectionContributorPermission.VIEW,
+        });
       }
       // TODO - prefetch top user collections and popular collections
     }
