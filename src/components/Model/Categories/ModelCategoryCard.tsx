@@ -15,7 +15,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { ModelStatus } from '@prisma/client';
+import { CollectionType, ModelStatus } from '@prisma/client';
 import {
   IconBrush,
   IconDotsVertical,
