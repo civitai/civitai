@@ -55,8 +55,13 @@ const querySchema = z.object({
   hidden: z.coerce.boolean().optional(),
 });
 
+const useStyles = createStyles((theme) => ({
+  generateHoverAction: {},
+}));
+
 export function ModelCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles();
+  const { classes: modelCardClasses } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -228,7 +233,7 @@ export function ModelCard({ data }: Props) {
                             <HoverActionButton
                               label="Create"
                               size={30}
-                              color="green"
+                              color="white"
                               variant="filled"
                               onClick={(e) => {
                                 e.preventDefault();

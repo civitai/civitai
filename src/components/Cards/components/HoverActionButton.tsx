@@ -11,11 +11,25 @@ import {
 } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 
+const CUSTOM_VARIANTS = ['white'] as const;
+type CustomVariantType = (typeof CUSTOM_VARIANTS)[number];
+
 const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
   const labelRef = getRef('label');
   const hoverIconRef = getRef('hover');
+  const customVariantsRef: Partial<Record<CustomVariantType, string>> = CUSTOM_VARIANTS.reduce(
+    (acc, variant) => ({ ...acc, [variant]: getRef(variant) }),
+    {}
+  );
+
+  const customVariantsClasses: Partial<Record<CustomVariantType, { ref: string }>> =
+    CUSTOM_VARIANTS.reduce(
+      (acc, variant) => ({ ...acc, [variant]: { ref: customVariantsRef[variant] } }),
+      {}
+    );
 
   return {
+    ...customVariantsClasses,
     wrapper: {
       position: 'relative',
       height: size,
@@ -35,6 +49,11 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
 
     icon: {
       zIndex: 1,
+
+      [`.${customVariantsRef.white} &`]: {
+        backgroundColor: theme.colors.gray[3],
+        color: theme.colors.dark[6],
+      },
     },
 
     hover: {
@@ -44,6 +63,11 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
       top: 0,
       left: 0,
       transition: 'opacity 200ms ease',
+
+      [`.${customVariantsRef.white} &`]: {
+        backgroundColor: theme.colors.gray[3],
+        color: theme.colors.dark[6],
+      },
     },
 
     label: {
@@ -57,7 +81,7 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
       height: '100%',
       overflow: 'hidden',
       position: 'absolute',
-      transformOrigin: '100% 100%',
+      transformOrigin: '90%',
       transition: 'transform 200ms ease, opacity 200ms ease',
       borderRadius: theme.radius.xl,
       display: 'flex',
@@ -68,6 +92,11 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
       justifyContent: 'flex-start',
       paddingLeft: theme.spacing.md,
       opacity: 0,
+
+      [`.${customVariantsRef.white} &`]: {
+        backgroundColor: theme.colors.gray[3],
+        color: theme.colors.dark[6],
+      },
     },
   };
 });
@@ -82,8 +111,15 @@ const HoverActionButton = ({
   ...props
 }: Props) => {
   const { classes } = useStyles({ size });
+  const isCustomVariant = CUSTOM_VARIANTS.includes(color as CustomVariantType);
+  const colorCustomVariant = color as CustomVariantType;
+
   return (
-    <UnstyledButton onClick={onClick} {...props}>
+    <UnstyledButton
+      onClick={onClick}
+      className={isCustomVariant ? classes[colorCustomVariant] : undefined}
+      {...props}
+    >
       <Box className={classes.wrapper}>
         <Badge className={classes.label} size="xs" variant={variant} color={color}>
           {label}
@@ -119,7 +155,7 @@ type Props = UnstyledButtonProps & {
   variant?: 'light' | 'filled';
   themeIconProps?: Omit<ThemeIconProps, 'children' | 'size' | 'color' | 'variant'>;
   size: number;
-  color?: MantineColor;
+  color?: MantineColor | CustomVariantType;
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 };
 export default HoverActionButton;
