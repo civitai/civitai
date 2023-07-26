@@ -46,3 +46,12 @@ export const getHomeBlocksInputSchema = z
   .merge(userPreferencesSchema)
   .partial()
   .default({ limit: 8 });
+
+export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
+
+export const getHomeBlockByIdInputSchema = z
+  .object({
+    id: z.number(),
+  })
+  .merge(userPreferencesSchema)
+  .partial();

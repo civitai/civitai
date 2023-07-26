@@ -76,6 +76,7 @@ export type LeaderboardGetModel = LeaderboardRouter['getLeaderboard'][number];
 
 type HomeBlockRouter = RouterOutput['homeBlock'];
 export type HomeBlockGetAll = HomeBlockRouter['getHomeBlocks'];
+export type HomeBlockGetById = HomeBlockRouter['getHomeBlock'];
 
 type CollectionRouter = RouterOutput['collection'];
 export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];

@@ -30,11 +30,11 @@ export default function Home() {
       {homeBlocks.map((homeBlock) => {
         switch (homeBlock.type) {
           case HomeBlockType.Collection:
-            return <CollectionHomeBlock key={homeBlock.id} homeBlock={homeBlock} />;
+            return <CollectionHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
           case HomeBlockType.Announcement:
-            return <AnnouncementHomeBlock key={homeBlock.id} homeBlock={homeBlock} />;
+            return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
           case HomeBlockType.Leaderboard:
-            return <LeaderboardsHomeBlock key={homeBlock.id} homeBlock={homeBlock} />;
+            return <LeaderboardsHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
         }
       })}
     </>

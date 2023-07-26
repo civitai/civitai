@@ -22,12 +22,13 @@ import Link from 'next/link';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { HomeBlockGetAll } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CollectionHomeBlockSkeleton } from '~/components/HomeBlocks/CollectionHomeBlockSkeleton';
+import { trpc } from '~/utils/trpc';
+import { CollectionType, HomeBlockType } from '@prisma/client';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -107,23 +108,23 @@ const icons = {
   article: IconLayoutList,
 };
 
-export const CollectionHomeBlock = ({ homeBlock }: Props) => {
-  const { classes, cx } = useStyles({ count: homeBlock.collection?.items.length ?? 0 });
+export const CollectionHomeBlock = ({ homeBlockId }: Props) => {
+  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+  const { classes, cx } = useStyles({ count: homeBlock?.collection?.items.length ?? 0 });
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
 
-  if (!homeBlock.collection) {
+  if (isLoading) {
+    return <CollectionHomeBlockSkeleton />;
+  }
+
+  if (!homeBlock || !homeBlock.collection) {
     return null;
   }
 
   const { metadata, collection } = homeBlock;
-
-  if (!collection.items.length) {
-    return null;
-  }
-
-  const type = collection.items[0]?.type;
-  const Icon = icons[type];
+  const itemType = collection.items?.[0]?.type || 'model';
+  const Icon = icons[itemType];
 
   const MetaDataTop = (
     <Stack spacing="sm">
@@ -221,10 +222,6 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
     !metadata.stackedHeader &&
     (!currentUser || metadata.descriptionAlwaysVisible);
 
-  if (true) {
-    return <CollectionHomeBlockSkeleton />;
-  }
-
   return (
     <HomeBlockWrapper py={32} px={0} bleedRight>
       <Box mb="md" px="md" className={cx({ [classes.meta]: useGrid })}>
@@ -245,8 +242,4 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
   );
 };
 
-type Props = { homeBlock: HomeBlockGetAll[number] };
-
-// function RenderMetaData({metadata, ...stackProps}: {metadata: HomeBlockMetaSchema;} & StackProps) {
-
-// }
+type Props = { homeBlockId: number };
