@@ -7,12 +7,14 @@ import { ArticleCategoriesInfinite } from '~/components/Article/Categories/Artic
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -34,6 +36,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ArticlesPage() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.articles.view);
   const { view: queryView, ...filters } = useArticleQueryParams();
 
@@ -66,10 +69,16 @@ export default function ArticlesPage() {
                 },
               })}
             />
-            <HomeContentToggle sx={showMobile} />
+            <Group position="left">
+              {features.alternateHome ? (
+                <FullHomeContentToggle />
+              ) : (
+                <HomeContentToggle sx={showMobile} />
+              )}
+            </Group>
             <Group position="apart" spacing={0}>
               <Group>
-                <HomeContentToggle sx={hideMobile} />
+                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
                 <SortFilter type="articles" />
               </Group>
               <Group spacing={4}>

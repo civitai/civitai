@@ -15,7 +15,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 const IMAGE_CARD_WIDTH = 332;
 
 export function PostCard({ data }: Props) {
-  const { classes, cx } = useCardStyles();
+  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square">
@@ -53,7 +53,7 @@ export function PostCard({ data }: Props) {
           spacing="sm"
         >
           <Group position="apart" align="end" noWrap>
-            <Stack>
+            <Stack spacing="sm">
               {data.user?.id !== -1 && (
                 <UnstyledButton
                   sx={{ color: 'white' }}
@@ -72,7 +72,7 @@ export function PostCard({ data }: Props) {
                 </UnstyledButton>
               )}
               {data.title && (
-                <Text size="xl" weight={700} lineClamp={2} inline>
+                <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
                   {data.title}
                 </Text>
               )}

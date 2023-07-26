@@ -47,7 +47,7 @@ export const getImageDataFromFile = async (file: File) => {
   const meta = await getMetadata(file);
   const img = await loadImage(url);
   const hashResult = blurHashImage(img);
-  const auditResult = await auditMetaData(meta, false);
+  const auditResult = auditMetaData(meta, true);
   const mimeType = file.type;
   const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
 

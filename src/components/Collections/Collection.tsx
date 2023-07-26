@@ -191,7 +191,13 @@ export function Collection({
                 <Group ml="auto">
                   <CollectionFollowAction collection={collection} permissions={permissions} />
                   {canAddContent && (
-                    <Button size="xs" pl={4} pr={8} onClick={() => setOpened(true)}>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      pl={4}
+                      pr={8}
+                      onClick={() => setOpened(true)}
+                    >
                       <Group spacing={4}>
                         <IconPlaylistAdd size={18} />
                         Add from your library

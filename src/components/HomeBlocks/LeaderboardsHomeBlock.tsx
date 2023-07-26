@@ -21,7 +21,7 @@ const useStyles = createStyles((theme) => ({
         : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
   metadata: {
-    [theme.fn.smallerThan('sm')]: {
+    [theme.fn.smallerThan('md')]: {
       padding: theme.spacing.md,
     },
   },
@@ -43,7 +43,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
         <HomeBlockHeaderMeta metadata={metadata} />
       </Box>
       <Carousel
-        loop={false}
+        loop
         slideSize="25%"
         slideGap="md"
         height="100%"
@@ -52,6 +52,7 @@ export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
           { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
         ]}
+        includeGapInSize={true}
         styles={{
           control: {
             '&[data-inactive]': {

@@ -46,29 +46,18 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         }
       };
 
-      const formData = getFormData();
-      // may not need this...
-      if (formData.resources) {
-        formData.resources = [
-          ...formData.resources.map((resource) => {
-            if (resource.modelType === ModelType.LORA)
-              return { ...resource, strength: resource.strength ?? 1 };
-            return resource;
-          }),
-        ];
-      }
-
       /*
         !important - form.reset won't work here
         use the schema keys to iterate over each form value
         when setting data, any keys that don't have data will be set to undefined
         this is necessary for 'remix' to work properly.
       */
-
+      const staticKeys: Array<keyof GenerateFormModel> = ['nsfw', 'quantity'];
+      const formData = getFormData();
       const keys = Object.keys(generateFormSchema.shape);
       for (const item of keys) {
         const key = item as keyof typeof formData;
-        if (key === 'nsfw') continue; // don't overwrite nsfw
+        if (staticKeys.includes(key)) continue; // don't overwrite nsfw
         form.setValue(key, formData[key]);
       }
     }

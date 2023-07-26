@@ -196,7 +196,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
     useCallback((state) => state.selected[collectionItem.id] ?? false, [collectionItem.id])
   );
   const toggleSelected = useStore((state) => state.toggleSelected);
-  const { classes: sharedClasses, cx } = useCardStyles();
+  const { classes: sharedClasses, cx } = useCardStyles({ aspectRatio: 1 });
   const reviewData = getCollectionItemReviewData(collectionItem);
   const badgeColor = {
     [CollectionItemStatus.ACCEPTED]: 'green',

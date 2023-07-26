@@ -73,8 +73,7 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelId: model.id,
     modelName: model.name,
     modelType: model.type,
-    //TODO.types: fix type casting
-    baseModel: x.baseModel as string,
+    baseModel: x.baseModel,
     strength: model.type === ModelType.LORA ? 1 : undefined,
   };
 }
@@ -203,8 +202,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
             modelId: model.id,
             modelName: model.name,
             modelType: model.type,
-            // TODO.types: fix type casting
-            baseModel: modelVersion.baseModel as string,
+            baseModel: modelVersion.baseModel,
             ...network,
           };
         })
@@ -561,7 +559,10 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   }
 
   return {
-    resources: deduped,
+    resources: deduped.map((resource) => ({
+      ...resource,
+      strength: resource.modelType === ModelType.LORA ? 1 : undefined,
+    })),
     params: {
       ...meta,
       clipSkip,

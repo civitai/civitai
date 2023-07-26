@@ -1,7 +1,7 @@
-import { Container, Group, Stack } from '@mantine/core';
+import { Group, Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { NotFound } from '~/components/AppLayout/NotFound';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -13,11 +13,13 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 
 export default function PostsPage() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.posts.view);
   const { view: queryView, ...filters } = usePostQueryParams();
 
@@ -45,10 +47,16 @@ export default function PostsPage() {
                 },
               })}
             />
-            <HomeContentToggle sx={showMobile} />
+            <Group position="left">
+              {features.alternateHome ? (
+                <FullHomeContentToggle />
+              ) : (
+                <HomeContentToggle sx={showMobile} />
+              )}
+            </Group>
             <Group position="apart" spacing={0}>
               <Group>
-                <HomeContentToggle sx={hideMobile} />
+                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
                 <SortFilter type="posts" />
               </Group>
               <Group spacing={4}>

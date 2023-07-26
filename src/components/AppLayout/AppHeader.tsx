@@ -258,7 +258,7 @@ export function AppHeader() {
         ),
       },
       {
-        href: '/?favorites=true',
+        href: `${features.alternateHome ? '/models' : '/'}?favorites=true`,
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
@@ -287,7 +287,7 @@ export function AppHeader() {
         ),
       },
       {
-        href: '/?hidden=true',
+        href: `${features.alternateHome ? '/models' : '/'}?hidden=true`,
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">

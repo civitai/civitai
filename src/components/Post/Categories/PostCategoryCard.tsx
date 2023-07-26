@@ -18,7 +18,7 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
         <ImageGuard.Content>
           {({ safe }) => (
             <div className={classes.container}>
-              <ImageGuard.Report />
+              <ImageGuard.Report context="post" />
               <ImageGuard.ToggleConnect className={classes.toggle} />
               <RoutedContextLink modal="postDetailModal" postId={data.id} className={classes.link}>
                 <AspectRatio

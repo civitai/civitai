@@ -94,6 +94,7 @@ export function Reactions({
           }
         }}
         {...groupProps}
+        noWrap
       >
         {!hasAllReactions && !readonly && (
           <Button
@@ -208,7 +209,7 @@ function ReactionBadge({
       color={color}
       compact
     >
-      <Group spacing={4} align="center">
+      <Group spacing={4} align="center" noWrap>
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
           {constants.availableReactions[reaction]}
         </Text>
