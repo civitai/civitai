@@ -41,6 +41,13 @@ const featureFlags = createFeatureFlags({
     description: `Show the Civitai AIR on resources to make it easier to pull them into the Civitai Comfy Nodes.`,
     availability: ['user'],
   },
+  modelCardV2: {
+    toggleable: true,
+    default: true,
+    displayName: 'Model Card V2',
+    description: `A fresh style for model cards with more information and a better layout.`,
+    availability: ['user'],
+  },
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 
