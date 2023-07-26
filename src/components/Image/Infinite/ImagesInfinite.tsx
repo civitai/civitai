@@ -65,6 +65,8 @@ export default function ImagesInfinite({
   }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
+  console.log({ images: images.filter((image) => !image.scannedAt).map(({ id }) => id) });
+
   return (
     <IsClient>
       <ImagesInfiniteContext.Provider value={filters}>
@@ -75,7 +77,9 @@ export default function ImagesInfinite({
         ) : !!images.length ? (
           <div style={{ position: 'relative' }}>
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-            <ImageIngestionProvider ids={images.map(({ id }) => id)}>
+            <ImageIngestionProvider
+              ids={images.filter((image) => !image.scannedAt).map(({ id }) => id)}
+            >
               <MasonryColumns
                 data={images}
                 imageDimensions={(data) => {

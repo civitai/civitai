@@ -33,12 +33,12 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
 
   const ingestionData = useImageIngestionContext(
     useCallback(
-      (state) => state.images[image.id] ?? { ingestion: ImageIngestionStatus.Pending },
+      (state) => state.images[image.id] ?? { ingestion: ImageIngestionStatus.Scanned },
       [image.id]
     )
   );
   const pending = useImageIngestionContext(
-    useCallback((state) => state.pending[image.id] ?? { attempts: 0, success: false }, [image.id])
+    useCallback((state) => state.pending[image.id] ?? { attempts: 0, success: true }, [image.id])
   );
   const isBlocked = ingestionData.ingestion === ImageIngestionStatus.Blocked;
   const isLoading = pending.attempts < 5 && !pending.success;
