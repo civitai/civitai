@@ -192,8 +192,8 @@ export function ModelCard({ data }: Props) {
                             </Badge>
                           </Group>
 
-                          <HoverActionButton label="Create me" size={38}>
-                            <IconBrush stroke={2.5} size={22} />
+                          <HoverActionButton label="Create me" size={30} color="white">
+                            <IconBrush stroke={2.5} size={16} color="dark" />
                           </HoverActionButton>
 
                           {contextMenuItems.length > 0 && (

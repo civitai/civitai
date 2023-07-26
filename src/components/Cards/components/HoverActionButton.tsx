@@ -44,6 +44,7 @@ const useStyles = createStyles(
         paddingLeft: theme.spacing.sm,
         flexWrap: 'nowrap',
         whiteSpace: 'nowrap',
+        zIndex: -1,
       },
     };
   }
