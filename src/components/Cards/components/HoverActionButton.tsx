@@ -1,82 +1,123 @@
 import React from 'react';
 import {
+  Badge,
   Box,
   createStyles,
   MantineColor,
-  Text,
   ThemeIcon,
   ThemeIconProps,
   UnstyledButton,
+  UnstyledButtonProps,
 } from '@mantine/core';
+import { IconArrowRight } from '@tabler/icons-react';
 
-const useStyles = createStyles(
-  (theme, { size, color }: { size: number; color: MantineColor }, getRef) => {
-    const labelRef = getRef('label');
+const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
+  const labelRef = getRef('label');
+  const hoverIconRef = getRef('hover');
 
-    return {
-      wrapper: {
-        position: 'relative',
-        height: size,
-        width: size,
+  return {
+    wrapper: {
+      position: 'relative',
+      height: size,
+      width: size,
+      zIndex: 0,
 
-        '&:hover': {
-          [`& .${labelRef}`]: {
-            width: 3 * size,
-            left: -2 * size,
-          },
+      '&:hover': {
+        [`& .${labelRef}`]: {
+          width: 3 * size,
+          left: -2 * size,
+          opacity: 1,
+        },
+        [`& .${hoverIconRef}`]: {
+          opacity: 1,
         },
       },
+    },
 
-      label: {
-        ref: labelRef,
-        position: 'absolute',
-        height: '100%',
-        width: size,
-        overflow: 'hidden',
-        top: 0,
-        left: 0,
-        transformOrigin: '100% 50%',
-        transition: 'all 200ms ease',
-        background: theme.colors[color],
-        borderRadius: theme.radius.xl,
-        display: 'flex',
-        alignItems: 'center',
-        paddingLeft: theme.spacing.sm,
-        flexWrap: 'nowrap',
-        whiteSpace: 'nowrap',
-        zIndex: -1,
-      },
-    };
-  }
-);
+    icon: {
+      zIndex: 1,
+    },
+
+    hover: {
+      ref: hoverIconRef,
+      opacity: 0,
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      transition: 'opacity 200ms ease',
+    },
+
+    label: {
+      ref: labelRef,
+      top: 0,
+      left: 0,
+      width: size,
+      height: '100%',
+      overflow: 'hidden',
+      position: 'absolute',
+      transformOrigin: '100% 50%',
+      transition: 'width 200ms ease, left 200ms ease, opacity 200ms ease',
+      borderRadius: theme.radius.xl,
+      display: 'flex',
+      alignItems: 'center',
+      flexWrap: 'nowrap',
+      whiteSpace: 'nowrap',
+      zIndex: 0,
+      justifyContent: 'flex-start',
+      paddingLeft: theme.spacing.md,
+      opacity: 0,
+    },
+  };
+});
 const HoverActionButton = ({
   label,
   children,
-  themeIconProps = {},
   size,
-  color = 'blue',
+  themeIconProps = {},
+  color = 'green',
+  variant = 'filled',
+  onClick,
   ...props
 }: Props) => {
-  const { classes } = useStyles({ size, color });
+  const { classes } = useStyles({ size });
   return (
-    <UnstyledButton {...props}>
+    <UnstyledButton onClick={onClick} {...props}>
       <Box className={classes.wrapper}>
-        <Box className={classes.label} color={color}>
-          <Text size="xs">{label}</Text>
-        </Box>
-        <ThemeIcon {...themeIconProps} color={color} radius="xl" size={size}>
+        <Badge className={classes.label} size="xs" variant={variant} color={color}>
+          {label}
+        </Badge>
+        <ThemeIcon
+          {...themeIconProps}
+          className={classes.icon}
+          color={color}
+          radius="xl"
+          size={size}
+          variant={variant}
+        >
           {children}
+        </ThemeIcon>
+        <ThemeIcon
+          {...themeIconProps}
+          className={classes.hover}
+          color={color}
+          radius="xl"
+          size={size}
+          variant={variant}
+        >
+          <IconArrowRight size={16} stroke={2.5} />
         </ThemeIcon>
       </Box>
     </UnstyledButton>
   );
 };
 
-type Props = {
+type Props = UnstyledButtonProps & {
   label: string;
   children: React.ReactNode;
-  themeIconProps?: Omit<ThemeIconProps, 'children' | 'size' | 'color'>;
+  variant?: 'light' | 'filled';
+  themeIconProps?: Omit<ThemeIconProps, 'children' | 'size' | 'color' | 'variant'>;
   size: number;
   color?: MantineColor;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 };
 export default HoverActionButton;

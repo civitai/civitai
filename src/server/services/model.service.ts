@@ -412,6 +412,7 @@ export const getModelsWithImagesAndModelVersions = async ({
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
+          version,
           image:
             model.mode !== ModelModifier.TakenDown
               ? (image as (typeof images)[0] | undefined)

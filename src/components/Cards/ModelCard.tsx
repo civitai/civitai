@@ -2,13 +2,11 @@ import {
   ActionIcon,
   Badge,
   Group,
-  HoverCard,
   Indicator,
   Menu,
   Rating,
   Stack,
   Text,
-  ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
 import {
@@ -47,6 +45,8 @@ import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { CollectionType } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { generationPanel } from '~/store/generation.store';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -96,7 +96,7 @@ export function ModelCard({ data }: Props) {
       onReport={() =>
         openContext('report', {
           entityType: ReportEntity.Image,
-          // Explicitly cast to number cause we know it's not undefined
+          // Explicitly cast to number because we know it's not undefined
           entityId: data.image?.id as number,
         })
       }
@@ -192,31 +192,65 @@ export function ModelCard({ data }: Props) {
                             </Badge>
                           </Group>
 
-                          <HoverActionButton label="Create me" size={30} color="white">
-                            <IconBrush stroke={2.5} size={16} color="dark" />
-                          </HoverActionButton>
-
-                          {contextMenuItems.length > 0 && (
-                            <Menu position="left-start" withArrow offset={-5}>
-                              <Menu.Target>
-                                <ActionIcon
-                                  variant="transparent"
-                                  p={0}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                  }}
+                          <Group spacing="xs">
+                            <CivitiaLinkManageButton
+                              modelId={data.id}
+                              modelName={data.name}
+                              modelType={data.type}
+                              hashes={data.hashes}
+                              noTooltip
+                              iconSize={16}
+                            >
+                              {({ color, onClick, icon, label }) => (
+                                <HoverActionButton
+                                  onClick={onClick}
+                                  label={label}
+                                  size={30}
+                                  color={color}
+                                  variant="filled"
                                 >
-                                  <IconDotsVertical
-                                    size={24}
-                                    color="#fff"
-                                    style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                                  />
-                                </ActionIcon>
-                              </Menu.Target>
-                              <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                            </Menu>
-                          )}
+                                  {icon}
+                                </HoverActionButton>
+                              )}
+                            </CivitiaLinkManageButton>
+
+                            {features.imageGeneration && data.canGenerate && data.version?.id && (
+                              <HoverActionButton
+                                label="Create"
+                                size={30}
+                                color="green"
+                                variant="filled"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  generationPanel.open({ type: 'model', id: data.version.id });
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            )}
+                            {contextMenuItems.length > 0 && (
+                              <Menu position="left-start" withArrow offset={-5}>
+                                <Menu.Target>
+                                  <ActionIcon
+                                    variant="transparent"
+                                    p={0}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                    }}
+                                  >
+                                    <IconDotsVertical
+                                      size={24}
+                                      color="#fff"
+                                      style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                    />
+                                  </ActionIcon>
+                                </Menu.Target>
+                                <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                              </Menu>
+                            )}
+                          </Group>
                         </Group>
                         {safe ? (
                           <EdgeImage
