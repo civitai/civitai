@@ -27,6 +27,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { CollectionHomeBlockSkeleton } from '~/components/HomeBlocks/CollectionHomeBlockSkeleton';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -219,6 +220,10 @@ export const CollectionHomeBlock = ({ homeBlock }: Props) => {
     metadata.description &&
     !metadata.stackedHeader &&
     (!currentUser || metadata.descriptionAlwaysVisible);
+
+  if (true) {
+    return <CollectionHomeBlockSkeleton />;
+  }
 
   return (
     <HomeBlockWrapper py={32} px={0} bleedRight>
