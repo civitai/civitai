@@ -15,6 +15,21 @@ export const useCardStyles = createStyles((theme, _params, getRef) => {
       },
     },
 
+    noImage: {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[3],
+      position: 'relative',
+
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        height: '100%',
+        width: '100%',
+        background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
+      },
+    },
+
     image: {
       ref: imageRef,
       height: '100%',

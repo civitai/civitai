@@ -1,4 +1,14 @@
-import { ActionIcon, Badge, Group, Menu, Rating, Stack, Text, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  createStyles,
+  Group,
+  Menu,
+  Rating,
+  Stack,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import {
   IconStar,
   IconDownload,
@@ -142,7 +152,10 @@ export function ModelCard({ data }: Props) {
   }, [modelId, data.id]);
 
   return (
-    <FeedCard href={`/models/${data.id}/${slugit(data.name)}`}>
+    <FeedCard
+      className={!data.image ? classes.noImage : undefined}
+      href={`/models/${data.id}/${slugit(data.name)}`}
+    >
       <div className={classes.root}>
         {data.image && (
           <ImageGuard
@@ -248,22 +261,30 @@ export function ModelCard({ data }: Props) {
                           </CivitiaLinkManageButton>
                         </Stack>
                       </Group>
-                      {safe ? (
-                        <EdgeImage
-                          src={image.url}
-                          name={image.name ?? image.id.toString()}
-                          alt={image.name ?? undefined}
-                          width={
-                            originalAspectRatio > 1
-                              ? IMAGE_CARD_WIDTH * originalAspectRatio
-                              : IMAGE_CARD_WIDTH
-                          }
-                          placeholder="empty"
-                          className={classes.image}
-                          loading="lazy"
-                        />
+                      {image ? (
+                        <>
+                          {safe ? (
+                            <EdgeImage
+                              src={image.url}
+                              name={image.name ?? image.id.toString()}
+                              alt={image.name ?? undefined}
+                              width={
+                                originalAspectRatio > 1
+                                  ? IMAGE_CARD_WIDTH * originalAspectRatio
+                                  : IMAGE_CARD_WIDTH
+                              }
+                              placeholder="empty"
+                              className={classes.image}
+                              loading="lazy"
+                            />
+                          ) : (
+                            <MediaHash {...data.image} />
+                          )}
+                        </>
                       ) : (
-                        <MediaHash {...data.image} />
+                        <>
+                          <Text color="dimmed">This model has no images</Text>
+                        </>
                       )}
                     </>
                   );
