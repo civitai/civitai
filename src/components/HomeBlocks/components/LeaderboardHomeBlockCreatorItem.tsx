@@ -21,19 +21,13 @@ export const LeaderHomeBlockCreatorItem = ({
   leaderboard: LeaderboardWithResults;
   data: LeaderboardGetModel;
 }) => {
-  const { classes, theme } = useStyles();
-
-  const isTop3 = position <= 3;
-  const iconColor = [
-    theme.colors.yellow[5], // Gold
-    theme.colors.gray[5], // Silver
-    theme.colors.orange[5], // Bronze
-  ][position - 1];
+  const { classes } = useStyles();
 
   const link = `/user/${user.username}`;
   const cosmetic = leaderboard.cosmetics.find(
-    (cosmetic) => cosmetic.leaderboardPosition >= position
+    (cosmetic) => cosmetic.leaderboardPosition && cosmetic.leaderboardPosition >= position
   );
+  const cosmeticData = cosmetic?.data as { url?: string };
 
   return (
     <div className={classes.wrapper}>
@@ -72,15 +66,14 @@ export const LeaderHomeBlockCreatorItem = ({
             </Grid.Col>
             <Grid.Col span={3}>
               <Stack align="flex-end">
-                {/*{false && <EdgeImage src={user} width={24} />}*/}
-                {cosmetic && (
+                {cosmetic && cosmeticData && (
                   <RankBadge
                     size="xs"
                     rank={{
                       leaderboardRank: position,
                       leaderboardId: leaderboard.id,
                       leaderboardTitle: leaderboard.title,
-                      leaderboardCosmetic: cosmetic?.data?.url as string,
+                      leaderboardCosmetic: cosmeticData.url,
                     }}
                   />
                 )}
