@@ -22,7 +22,7 @@ import {
   getCommentCountByModelSchema,
   getCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
-import { toggleReactionInput } from '~/server/schema/review.schema';
+import { toggleReactionInput } from '~/server/schema/comment.schema';
 import {
   guardedProcedure,
   middleware,

@@ -89,7 +89,7 @@ export const createReport = async ({
 }: CreateReportInput & { userId: number; isModerator?: boolean }) => {
   let isReportingLocked = false;
   if (type === ReportEntity.Image) {
-    const image = await dbRead.imagesOnModels.findFirst({
+    const image = await dbRead.imageResource.findFirst({
       where: { imageId: id, modelVersion: { model: { underAttack: true } } },
       select: { imageId: true },
     });
@@ -287,19 +287,6 @@ export const bulkUpdateReports = ({
 export const getReportCounts = ({ type }: GetReportCountInput) => {
   return dbRead.report.count({
     where: { [type]: { isNot: null }, status: ReportStatus.Pending },
-  });
-};
-
-export const getReviewReports = <TSelect extends Prisma.ReviewReportSelect>({
-  reviewId,
-  select,
-}: {
-  reviewId: number;
-  select: TSelect;
-}) => {
-  return dbRead.reviewReport.findMany({
-    select,
-    where: { reviewId },
   });
 };
 

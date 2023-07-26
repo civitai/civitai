@@ -51,7 +51,7 @@ export async function importModelFromHuggingFace(
   // check for previous models imported from same hfModel.id
   let model = await dbWrite.model.findFirst({
     where: { fromImport: { source } },
-    select: { id: true, modelVersions: { select: { files: true, images: true } } },
+    select: { id: true, modelVersions: { select: { files: true } } },
   });
 
   // Prepare modelVersions files
@@ -143,26 +143,27 @@ export async function importModelFromHuggingFace(
             userId,
             lastVersionAt: new Date(),
           },
-          select: { id: true, modelVersions: { select: { files: true, images: true } } },
+          select: { id: true, modelVersions: { select: { files: true } } },
         });
       }
 
-      for (const data of modelVersions) {
-        const versionImages = [];
-        for (const data of imagesToCreate) {
-          const image = await tx.image.create({
-            data,
-            select: { id: true },
-          });
-          versionImages.push(image);
-        }
+      // ! - commented out for type issues
+      // for (const data of modelVersions) {
+      //   const versionImages = [];
+      //   for (const data of imagesToCreate) {
+      //     const image = await tx.image.create({
+      //       data,
+      //       select: { id: true },
+      //     });
+      //     versionImages.push(image);
+      //   }
 
-        data.modelId = model.id;
-        data.images = {
-          create: versionImages.map((image, index) => ({ imageId: image.id, index })),
-        };
-        await tx.modelVersion.create({ data });
-      }
+      //   data.modelId = model.id;
+      //   data.images = {
+      //     create: versionImages.map((image, index) => ({ imageId: image.id, index })),
+      //   };
+      //   await tx.modelVersion.create({ data });
+      // }
     },
     {
       maxWait: 10000,

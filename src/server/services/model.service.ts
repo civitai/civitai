@@ -23,7 +23,6 @@ import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { ModelFileType } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
-import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -41,7 +40,7 @@ import {
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getImagesForModelVersion, ingestNewImages } from '~/server/services/image.service';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
@@ -616,94 +615,6 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
       },
     });
   }
-};
-
-export const createModel = async ({
-  modelVersions,
-  userId,
-  tagsOnModels,
-  ...data
-}: ModelInput & { userId: number }) => {
-  const parsedModelVersions = prepareModelVersions(modelVersions);
-  const allImagesNSFW = parsedModelVersions
-    .flatMap((version) => version.images)
-    .every((image) => image.nsfw);
-
-  const model = await dbWrite.$transaction(async (tx) => {
-    if (tagsOnModels)
-      await tx.tag.updateMany({
-        where: {
-          name: { in: tagsOnModels.map((x) => x.name.toLowerCase().trim()) },
-          NOT: { target: { has: TagTarget.Model } },
-        },
-        data: { target: { push: TagTarget.Model } },
-      });
-
-    return tx.model.create({
-      data: {
-        ...data,
-        checkpointType: data.type === ModelType.Checkpoint ? data.checkpointType : null,
-        publishedAt: data.status === ModelStatus.Published ? new Date() : null,
-        lastVersionAt: new Date(),
-        nsfw: data.nsfw || (allImagesNSFW && data.status === ModelStatus.Published),
-        userId,
-        modelVersions: {
-          create: parsedModelVersions.map(({ images, files, ...version }, versionIndex) => ({
-            ...version,
-            trainedWords: version.trainedWords?.map((x) => x.toLowerCase()),
-            index: versionIndex,
-            status: data.status,
-            files: files.length > 0 ? { create: files } : undefined,
-            images: {
-              create: images.map(({ ...image }, index) => ({
-                index,
-                image: {
-                  create: {
-                    ...image,
-                    userId,
-                    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                    generationProcess: image.meta
-                      ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-                      : null,
-                    // tags: {
-                    //   create: tags.map((tag) => ({
-                    //     tag: {
-                    //       connectOrCreate: {
-                    //         where: { id: tag.id },
-                    //         create: { ...tag, target: [TagTarget.Image] },
-                    //       },
-                    //     },
-                    //   })),
-                    // },
-                  } as Prisma.ImageUncheckedCreateWithoutImagesOnModelsInput,
-                },
-              })),
-            },
-          })),
-        },
-        tagsOnModels: tagsOnModels
-          ? {
-              create: tagsOnModels.map((tag) => {
-                const name = tag.name.toLowerCase().trim();
-                return {
-                  tag: {
-                    connectOrCreate: {
-                      where: { name },
-                      create: { name, target: [TagTarget.Model] },
-                    },
-                  },
-                };
-              }),
-            }
-          : undefined,
-      },
-      select: { id: true, nsfw: true },
-    });
-  });
-
-  await ingestNewImages({ modelId: model.id });
-
-  return model;
 };
 
 export const publishModelById = async ({

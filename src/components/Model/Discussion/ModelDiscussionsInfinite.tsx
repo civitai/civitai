@@ -1,7 +1,7 @@
-import { Button, Center, Grid, LoadingOverlay, Paper, Stack, Text, Loader } from '@mantine/core';
+import { LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import React, { useMemo } from 'react';
 
-import { CommentV2Sort, ReviewSort } from '~/server/common/enums';
+import { CommentV2Sort } from '~/server/common/enums';
 import { GetCommentsV2Input } from '~/server/schema/commentv2.schema';
 import { trpc } from '~/utils/trpc';
 import { ModelDiscussionsCard } from './ModelDiscussionsCard';

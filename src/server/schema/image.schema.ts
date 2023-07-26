@@ -138,38 +138,6 @@ export const getReviewImagesSchema = z.object({
   reviewId: z.number(),
 });
 
-export type GetGalleryImageInput = z.infer<typeof getGalleryImageSchema>;
-export const getGalleryImageSchema = z.object({
-  limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
-  cursor: z.union([z.bigint(), z.number()]).optional(),
-  modelId: z.number().optional(),
-  reviewId: z.number().optional(),
-  modelVersionId: z.number().optional(),
-  userId: z.number().optional(),
-  infinite: z.boolean().default(true),
-  period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
-  periodMode: periodModeSchema,
-  sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  tags: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  singleImageModel: z.boolean().optional(),
-  singleImageAlbum: z.boolean().optional(),
-  isFeatured: z.boolean().optional(),
-  types: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  needsReview: z.boolean().optional(),
-  tagReview: z.boolean().optional(),
-});
-
-export const getImageConnectionsSchema = z.object({
-  id: z.number(),
-  modelId: z.number().nullish(),
-  reviewId: z.number().nullish(),
-});
-export type GetImageConnectionsSchema = z.infer<typeof getImageConnectionsSchema>;
-
 export type UpdateImageInput = z.infer<typeof updateImageSchema>;
 export const updateImageSchema = z.object({
   id: z.number(),

@@ -478,7 +478,6 @@ export const removeAllContent = ({ id }: { id: number }) => {
     dbWrite.model.deleteMany({ where: { userId: id } }),
     dbWrite.comment.deleteMany({ where: { userId: id } }),
     dbWrite.commentV2.deleteMany({ where: { userId: id } }),
-    dbWrite.review.deleteMany({ where: { userId: id } }),
     dbWrite.resourceReview.deleteMany({ where: { userId: id } }),
     dbWrite.post.deleteMany({ where: { userId: id } }),
     dbWrite.image.deleteMany({ where: { userId: id } }),

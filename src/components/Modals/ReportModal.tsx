@@ -169,26 +169,10 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               break;
             case ReportEntity.Image:
               if (variables.reason === ReportReason.NSFW) {
-                await queryUtils.image.getGalleryImagesInfinite.invalidate();
-                await queryUtils.image.getGalleryImages.invalidate();
+                // await queryUtils.image.getGalleryImagesInfinite.invalidate();
+                // await queryUtils.image.getGalleryImages.invalidate();
                 await queryUtils.tag.getVotableTags.invalidate({ id: variables.id, type: 'image' });
               }
-
-              // review invalidate
-              // if (reviewId) {
-              //   queryUtils.review.getDetail.setData(
-              //     { id: reviewId },
-              //     produce((old) => {
-              //       if (old) {
-              //         if (variables.reason === ReportReason.NSFW) {
-              //           const index = old.images.findIndex((x) => x.id === variables.id);
-              //           if (index > -1) old.images[index].nsfw = NsfwLevel.Mature;
-              //         }
-              //       }
-              //     })
-              //   );
-              // }
-              await queryUtils.review.getAll.invalidate();
               // model invalidate
               if (modelId) {
                 await queryUtils.model.getAll.invalidate();

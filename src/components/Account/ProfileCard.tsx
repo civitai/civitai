@@ -60,7 +60,6 @@ export function ProfileCard() {
     async onSuccess(user, { badgeId, nameplateId }) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       // await utils.model.getAll.invalidate();
-      await queryUtils.review.getAll.invalidate();
       await queryUtils.comment.getAll.invalidate();
       currentUser?.refresh();
 

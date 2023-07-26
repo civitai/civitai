@@ -176,15 +176,6 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
     select: {
       id: true,
       meta: true,
-      imagesOnModels: {
-        select: {
-          modelVersion: {
-            select: {
-              modelId: true,
-            },
-          },
-        },
-      },
     },
   });
 
@@ -263,12 +254,12 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
     await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
 
     // add model to searchIndex queue since new image has been scanned
-    if (image.imagesOnModels && data.ingestion === ImageIngestionStatus.Scanned) {
-      const modelId = image.imagesOnModels.modelVersion.modelId;
-      await modelsSearchIndex.queueUpdate([
-        { id: modelId, action: SearchIndexUpdateQueueAction.Update },
-      ]);
-    }
+    // if (image.imagesOnModels && data.ingestion === ImageIngestionStatus.Scanned) {
+    //   const modelId = image.imagesOnModels.modelVersion.modelId;
+    //   await modelsSearchIndex.queueUpdate([
+    //     { id: modelId, action: SearchIndexUpdateQueueAction.Update },
+    //   ]);
+    // }
   } catch (e: any) {
     throw new Error(e.message);
   }

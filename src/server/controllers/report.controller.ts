@@ -148,9 +148,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
         status: true,
         internalNotes: true,
         alsoReportedBy: true,
-        // model: { select: { modelId: true } },
-        // review: { select: { reviewId: true } },
-        // comment: { select: { commentId: true } },
         model: {
           select: {
             model: {
@@ -160,19 +157,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
                 name: true,
                 nsfw: true,
                 tosViolation: true,
-              },
-            },
-          },
-        },
-        review: {
-          select: {
-            review: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-                modelId: true,
               },
             },
           },
@@ -214,13 +198,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
                 user: { select: simpleUserSelect },
                 nsfw: true,
                 tosViolation: true,
-                connections: {
-                  select: {
-                    modelId: true,
-                    modelVersionId: true,
-                    reviewId: true,
-                  },
-                },
               },
             },
           },
@@ -265,15 +242,9 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
         return {
           ...item,
           model: item.model?.model,
-          review: item.review?.review,
           comment: item.comment?.comment,
           resourceReview: item.resourceReview?.resourceReview,
-          image: item.image && {
-            ...item.image.image,
-            modelId: item.image.image.connections?.modelId,
-            modelVersionId: item.image.image.connections?.modelVersionId,
-            reviewId: item.image.image.connections?.reviewId,
-          },
+          image: item.image?.image,
           article: item.article?.article,
           post: item.post?.post,
           reportedUser: item.reportedUser?.user,

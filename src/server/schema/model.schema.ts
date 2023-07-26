@@ -1,12 +1,12 @@
 import {
-  ModelType,
   ModelStatus,
   MetricTimeframe,
   CommercialUse,
-  CheckpointType,
   ModelModifier,
   AssociationType,
   CollectionItemStatus,
+  ModelType,
+  CheckpointType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -288,3 +288,16 @@ export const getModelVersionsSchema = z.object({
   id: z.number(),
   excludeUnpublished: z.boolean().optional(),
 });
+
+export type ImageModelDetail = z.infer<typeof imageModelDetailSchema>;
+export type CharacterModelDetail = z.infer<typeof characterModelDetailSchema>;
+export type TextModelDetail = z.infer<typeof textModelDetailSchema>;
+export type AudioModelDetail = z.infer<typeof audioModelDetailSchema>;
+
+export const imageModelDetailSchema = z.object({
+  type: z.nativeEnum(ModelType),
+  checkpointType: z.nativeEnum(CheckpointType).optional(),
+});
+export const characterModelDetailSchema = z.object({});
+export const textModelDetailSchema = z.object({});
+export const audioModelDetailSchema = z.object({});

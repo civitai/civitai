@@ -14,7 +14,6 @@ export async function invalidateModeratedContent(
   if (changedTag) await queryUtils.tag.invalidate();
   await queryUtils.post.invalidate();
   await queryUtils.image.invalidate();
-  await queryUtils.review.invalidate();
 }
 
 export const invalidateModeratedContentDebounced = debounce(invalidateModeratedContent, 1000);

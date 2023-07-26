@@ -4,7 +4,6 @@ import { env } from '~/env/server.mjs';
 import { BrowsingMode } from '~/server/common/enums';
 import {
   changeModelModifierHandler,
-  createModelHandler,
   declineReviewHandler,
   deleteModelHandler,
   findResourcesToAssociateHandler,
@@ -161,7 +160,6 @@ export const modelRouter = router({
   getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
   getVersions: publicProcedure.input(getModelVersionsSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
-  add: guardedProcedure.input(modelSchema).use(checkFilesExistence).mutation(createModelHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)

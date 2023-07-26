@@ -4,7 +4,7 @@ import { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { modelMetrics, userMetrics } from '~/server/metrics';
+import { userMetrics } from '~/server/metrics';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
@@ -51,7 +51,6 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
     where: {
       modelId,
       userId: userId ? userId : excludedUserIds ? { notIn: excludedUserIds } : undefined,
-      reviewId: { equals: null },
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
       hidden,
@@ -134,7 +133,6 @@ export const createOrUpdateComment = ({
     select: {
       id: true,
       modelId: true,
-      reviewId: true,
       content: true,
       nsfw: true,
     },

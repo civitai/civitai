@@ -39,36 +39,6 @@ export { imageSelectWithoutName };
 const image = Prisma.validator<Prisma.ImageArgs>()({ select: imageSelect });
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 
-export const imageGallerySelect = ({ user }: { user?: SessionUser }) =>
-  Prisma.validator<Prisma.ImageSelect>()({
-    ...imageSelect,
-    createdAt: true,
-    needsReview: true,
-    user: { select: userWithCosmeticsSelect },
-    connections: {
-      select: {
-        index: true,
-        modelId: true,
-        reviewId: true,
-      },
-    },
-    stats: {
-      select: {
-        cryCountAllTime: true,
-        dislikeCountAllTime: true,
-        heartCountAllTime: true,
-        laughCountAllTime: true,
-        likeCountAllTime: true,
-        commentCountAllTime: true,
-      },
-    },
-    reactions: {
-      where: { userId: user?.id },
-      take: !user?.id ? 0 : undefined,
-      select: getReactionsSelectV2,
-    },
-  });
-
 export const prepareCreateImage = (image: ImageUploadProps) => {
   let name = image.name;
   if (!name && image.mimeType === 'image/gif') name = image.url + '.gif';

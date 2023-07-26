@@ -2,14 +2,6 @@ import { pathToRegexp } from 'path-to-regexp';
 import { createMiddleware, Middleware } from '~/server/middleware/middleware-utils';
 
 const redirects: Redirect[] = [];
-addRedirect({
-  matcher: ['/models/:path*'],
-  handler: async ({ redirect, request }) => {
-    const { searchParams } = new URL(request.url);
-    if (searchParams.get('modal') === 'reviewThread')
-      return redirect(`/redirect?to=review&reviewId=${searchParams.get('reviewId')}`);
-  },
-});
 
 const userNamePathRegexp = pathToRegexp('/user/:username/:path*');
 addRedirect({
