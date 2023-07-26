@@ -47,7 +47,7 @@ export const useCardStyles = createStyles((theme, _params, getRef) => {
     iconBadge: { color: 'white', backgroundColor: theme.fn.rgba('#000', 0.31) },
 
     infoChip: {
-      borderRadius: theme.radius.sm,
+      borderRadius: theme.radius.xl,
       backgroundColor: theme.fn.rgba('#000', 0.31),
     },
   };
