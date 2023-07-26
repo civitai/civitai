@@ -41,7 +41,7 @@ import { generationPanel } from '~/store/generation.store';
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
 const querySchema = z.object({
-  modelId: z.coerce.number().optional(),
+  model: z.coerce.number().optional(),
   hidden: z.coerce.boolean().optional(),
 });
 
@@ -58,7 +58,7 @@ export function ModelCard({ data }: Props) {
   const features = useFeatureFlags();
   const queryResult = querySchema.safeParse(router.query);
   const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
-  const modelId = queryResult.success ? queryResult.data.modelId : undefined;
+  const modelId = queryResult.success ? queryResult.data.model : undefined;
 
   const {
     data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
