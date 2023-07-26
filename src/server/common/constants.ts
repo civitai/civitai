@@ -39,6 +39,7 @@ export const constants = {
     'SD 2.1 768',
     'SD 2.1 Unclip',
     'SDXL 0.9',
+    'SDXL 1.0',
     'Other',
   ],
   modelFileTypes: [
@@ -146,7 +147,7 @@ export type BaseModel = (typeof constants.baseModels)[number];
 export const baseModelSets: Record<string, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SDXL: ['SDXL 0.9'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
