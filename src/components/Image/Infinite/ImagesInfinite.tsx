@@ -65,8 +65,6 @@ export default function ImagesInfinite({
   }, [fetchNextPage, inView, isFetching]);
   // #endregion
 
-  console.log({ images: images.filter((image) => !image.scannedAt).map(({ id }) => id) });
-
   return (
     <IsClient>
       <ImagesInfiniteContext.Provider value={filters}>

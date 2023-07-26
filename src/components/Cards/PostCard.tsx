@@ -39,7 +39,7 @@ export function PostCard({ data }: Props) {
                         alt={image.name ?? undefined}
                         width={IMAGE_CARD_WIDTH}
                         placeholder="empty"
-                        style={{ width: '100%', position: 'relative' }}
+                        className={classes.image}
                       />
                     )}
                   </>
