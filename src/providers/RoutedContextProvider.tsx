@@ -10,9 +10,6 @@ import useIsClient from '~/hooks/useIsClient';
 import { Freeze } from '~/components/Freeze/Freeze';
 
 const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
-const ReviewLightbox = dynamic(() => import('~/routed-context/modals/ReviewLightbox'));
-const ReviewEdit = dynamic(() => import('~/routed-context/modals/ReviewEdit'));
-const ReviewThread = dynamic(() => import('~/routed-context/modals/ReviewThread'));
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
@@ -54,22 +51,6 @@ const registry = {
       { shallow: true },
     ],
   },
-  reviewThread: {
-    Component: ReviewThread,
-    resolve: (args: React.ComponentProps<typeof ReviewThread>) => [
-      { query: { ...Router.query, ...args, modal: 'reviewThread' } },
-      undefined, // could be a page url for reviews here (/reviews/:reviewId)
-      { shallow: true },
-    ],
-  },
-  reviewEdit: {
-    Component: ReviewEdit,
-    resolve: (args: React.ComponentProps<typeof ReviewEdit>) => [
-      { query: { ...Router.query, ...args, modal: 'reviewEdit' } },
-      undefined, // could be a page url for reviews here (/reviews/:reviewId)
-      { shallow: true },
-    ],
-  },
   commentThread: {
     Component: CommentThread,
     resolve: (args: React.ComponentProps<typeof CommentThread>) => [
@@ -82,14 +63,6 @@ const registry = {
     Component: CommentEdit,
     resolve: (args: React.ComponentProps<typeof CommentEdit>) => [
       { query: { ...Router.query, ...args, modal: 'commentEdit' } },
-      undefined, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
-  },
-  reviewLightbox: {
-    Component: ReviewLightbox,
-    resolve: (args: React.ComponentProps<typeof ReviewLightbox>) => [
-      { query: { ...Router.query, ...args, modal: 'reviewLightbox' } },
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],

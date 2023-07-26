@@ -1,3 +1,4 @@
+import { ReviewReactions } from '@prisma/client';
 import { z } from 'zod';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
@@ -39,4 +40,10 @@ export type GetCommentCountByModelInput = z.infer<typeof getCommentCountByModelS
 export const getCommentCountByModelSchema = z.object({
   modelId: z.number(),
   hidden: z.boolean().optional(),
+});
+
+export type ToggleReactionInput = z.infer<typeof toggleReactionInput>;
+export const toggleReactionInput = z.object({
+  id: z.number(),
+  reaction: z.nativeEnum(ReviewReactions),
 });

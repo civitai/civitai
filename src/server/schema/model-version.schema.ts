@@ -105,3 +105,21 @@ export const getModelVersionByModelTypeSchema = z.object({
   baseModel: z.string().optional(),
   take: z.number().default(100),
 });
+
+export type ImageModelVersionDetail = z.infer<typeof imageModelVersionDetailSchema>;
+export type CharacterModelVersionDetail = z.infer<typeof characterModelVersionDetailSchema>;
+export type TextModelVersionDetail = z.infer<typeof textModelVersionDetailSchema>;
+export type AudioModelVersionDetail = z.infer<typeof audioModelVersionDetailSchema>;
+
+export const imageModelVersionDetailSchema = z.object({
+  trainedWords: z.string().array().default([]),
+  steps: z.number().optional(),
+  epochs: z.number().optional(),
+  baseModel: z.string(),
+  //modelversion recommendations
+  clipSkip: z.number().optional(),
+  vaeId: z.number().optional(),
+});
+export const characterModelVersionDetailSchema = z.object({});
+export const textModelVersionDetailSchema = z.object({});
+export const audioModelVersionDetailSchema = z.object({});

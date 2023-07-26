@@ -1,4 +1,4 @@
-import { applyBrowsingMode, cacheIt } from './../middleware.trpc';
+import { applyBrowsingMode } from './../middleware.trpc';
 import {
   getImageDetailHandler,
   getImageHandler,
@@ -10,29 +10,16 @@ import {
   updateImageSchema,
   getInfiniteImagesSchema,
   imageModerationSchema,
-  removeImageResourceSchema,
   getImagesByCategorySchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
-  getGalleryImageDetailHandler,
-  getGalleryImagesHandler,
-  getGalleryImagesInfiniteHandler,
-  getImageConnectionDataHandler,
-  // getModelVersionImagesHandler,
-  // getReviewImagesHandler,
   setTosViolationHandler,
   moderateImageHandler,
   updateImageHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import {
-  getGalleryImageSchema,
-  getImageConnectionsSchema,
-  getModelVersionImageSchema,
-  getReviewImagesSchema,
-} from '~/server/schema/image.schema';
 import {
   middleware,
   moderatorProcedure,
@@ -70,23 +57,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 // TODO.cleanup - remove unused router methods
 export const imageRouter = router({
-  // getModelVersionImages: publicProcedure
-  //   .input(getModelVersionImageSchema)
-  //   .query(getModelVersionImagesHandler),
-  // getReviewImages: publicProcedure.input(getReviewImagesSchema).query(getReviewImagesHandler),
-  getGalleryImagesInfinite: publicProcedure
-    .input(getGalleryImageSchema)
-    .use(applyUserPreferences())
-    .query(getGalleryImagesInfiniteHandler),
-
-  getGalleryImages: publicProcedure
-    .input(getGalleryImageSchema)
-    .use(applyUserPreferences())
-    .query(getGalleryImagesHandler),
-  getGalleryImageDetail: publicProcedure.input(getByIdSchema).query(getGalleryImageDetailHandler),
-  getConnectionData: publicProcedure
-    .input(getImageConnectionsSchema)
-    .query(getImageConnectionDataHandler),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)

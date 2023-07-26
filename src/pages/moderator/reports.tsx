@@ -1,13 +1,9 @@
 import {
-  Box,
   Container,
-  Table,
   Stack,
   Group,
-  Pagination,
   Text,
   Loader,
-  LoadingOverlay,
   Badge,
   Menu,
   SegmentedControl,
@@ -20,7 +16,6 @@ import {
   Input,
   MantineSize,
   Anchor,
-  ScrollArea,
   SelectItem,
 } from '@mantine/core';
 import { ReportReason, ReportStatus } from '@prisma/client';
@@ -28,12 +23,10 @@ import { IconExternalLink } from '@tabler/icons-react';
 import produce from 'immer';
 import { upperFirst } from 'lodash-es';
 import Link from 'next/link';
-import { GetServerSideProps } from 'next/types';
 import { useRouter } from 'next/router';
 import { useState, useMemo, useEffect } from 'react';
 import { z } from 'zod';
 
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { trpc } from '~/utils/trpc';
 import { QS } from '~/utils/qs';
 import { formatDate } from '~/utils/date-helpers';
@@ -438,21 +431,6 @@ function ReportDetails({ report }: { report: ReportDetail }) {
       return { label, value: value?.toString() };
     });
 
-  if (report.image) {
-    const sourceHref = report.image.reviewId
-      ? `/models/${report.image.modelId}/?modal=reviewThread&reviewId=${report.image.reviewId}`
-      : `/models/${report.image.modelId}`;
-
-    detailItems.push({
-      label: 'Source',
-      value: (
-        <Text component="a" href={sourceHref} variant="link" target="_blank">
-          {report.image.reviewId ? 'Review' : 'Model Samples'}
-        </Text>
-      ),
-    });
-  }
-
   if (report.reason === 'Ownership') {
     detailItems.unshift({
       label: 'Claiming User',
@@ -469,22 +447,13 @@ function ReportDetails({ report }: { report: ReportDetail }) {
 
 const getReportLink = (report: ReportDetail) => {
   if (report.model) return `/models/${report.model.id}`;
-  else if (report.review)
-    return `/models/${report.review.modelId}/?modal=reviewThread&reviewId=${report.review.id}`;
   else if (report.resourceReview) return `/reviews/${report.resourceReview.id}`;
   else if (report.comment)
     return `/models/${report.comment.modelId}/?modal=commentThread&commentId=${
       report.comment.parentId ?? report.comment.id
     }&highlight=${report.comment.id}`;
   else if (report.image) {
-    const returnUrl = report.image.reviewId
-      ? `/models/${report.image.modelId}/?modal=reviewThread&reviewId=${report.image.reviewId}`
-      : `/models/${report.image.modelId}`;
-    const parts = [`returnUrl=${encodeURIComponent(returnUrl)}`];
-    if (report.image.modelId) parts.push(`modelId=${report.image.modelId}`);
-    if (report.image.modelVersionId) parts.push(`modelVersionId=${report.image.modelVersionId}`);
-    if (report.image.reviewId) parts.push(`reviewId=${report.image.reviewId}`);
-    return `/images/${report.image.id}/?${parts.join('&')}`;
+    return `/images/${report.image.id}`;
   } else if (report.article) {
     return `/articles/${report.article.id}`;
   } else if (report.post) {

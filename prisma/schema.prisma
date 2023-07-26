@@ -78,8 +78,6 @@ model User {
 
   accounts             Account[]
   sessions             Session[]
-  reviews              Review[]
-  reviewReactions      ReviewReaction[]
   images               Image[]
   models               Model[]                    @relation("creator")
   deletedModels        Model[]                    @relation("deletedBy")
@@ -114,7 +112,6 @@ model User {
   stats                   UserStat?
   rank                    UserRank?
   downloads               DownloadHistory[]
-  imageConnections        ImageConnection[]
   purchases               Purchase[]
   cosmetics               UserCosmetic[]
   postReactions           PostReaction[]
@@ -318,6 +315,13 @@ enum ModelModifier {
   TakenDown
 }
 
+enum ContentType {
+  Image
+  Character
+  Text
+  Audio
+}
+
 model Model {
   id                  Int             @id @default(autoincrement())
   name                String          @db.Citext
@@ -352,7 +356,6 @@ model Model {
   allowDifferentLicense Boolean       @default(true)
 
   modelVersions     ModelVersion[]
-  reviews           Review[]
   tagsOnModels      TagsOnModels[]
   tagsOnModelsVotes TagsOnModelsVote[]
   tags              ModelTag[]
@@ -366,7 +369,6 @@ model Model {
   rank              ModelRank?
   reportStats       ModelReportStat?
   downloads         DownloadHistory[]
-  imageConnections  ImageConnection[]
   hashes            ModelHash[]
   threads           Thread[]
   resourceReviews   ResourceReview[]
@@ -437,15 +439,12 @@ model ModelVersion {
   meta                 Json          @default("{}")
   earlyAccessTimeFrame Int           @default(0)
 
-  reviews                        Review[]
-  images                         ImagesOnModels[]
   metrics                        ModelVersionMetric[]
   files                          ModelFile[]
   runStrategies                  RunStrategy[]
   engagements                    ModelVersionEngagement[]
   rank                           ModelVersionRank?
   downloads                      DownloadHistory[]
-  imageConnections               ImageConnection[]
   imageResources                 ImageResource[]
   posts                          Post[]
   resourceReviews                ResourceReview[]
@@ -668,7 +667,6 @@ model Report {
   statusSetBy             Int?
 
   model          ModelReport?
-  review         ReviewReport?
   comment        CommentReport?
   commentV2      CommentV2Report?
   image          ImageReport?
@@ -694,15 +692,6 @@ model ModelReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, modelId])
-}
-
-model ReviewReport {
-  reviewId Int
-  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  reportId Int    @unique
-  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
-
-  @@id([reportId, reviewId])
 }
 
 model CommentReport {
@@ -759,32 +748,6 @@ model UserReport {
   @@id([reportId, userId])
 }
 
-model Review {
-  id             Int           @id @default(autoincrement())
-  model          Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId        Int
-  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
-  modelVersionId Int?
-  user           User          @relation(fields: [userId], references: [id])
-  userId         Int
-  text           String?
-  rating         Int
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  nsfw           Boolean       @default(false)
-  tosViolation   Boolean       @default(false)
-  exclude        Boolean       @default(false)
-  locked         Boolean       @default(false)
-
-  reactions        ReviewReaction[]
-  imagesOnReviews  ImagesOnReviews[]
-  reports          ReviewReport[]
-  comments         Comment[]
-  imageConnections ImageConnection[]
-
-  @@index([modelId], type: Hash)
-}
-
 model ResourceReview {
   id             Int                      @id @default(autoincrement())
   modelId        Int
@@ -830,19 +793,6 @@ enum ReviewReactions {
   Laugh
   Cry
   Heart
-}
-
-model ReviewReaction {
-  id        Int             @id @default(autoincrement())
-  review    Review          @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  reviewId  Int
-  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int
-  reaction  ReviewReactions
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-
-  @@unique([reviewId, userId, reaction])
 }
 
 model Post {
@@ -917,6 +867,12 @@ enum ImageIngestionStatus {
   NotFound
 }
 
+enum MediaType {
+  image
+  video
+  audio
+}
+
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -946,8 +902,6 @@ model Image {
   ingestion         ImageIngestionStatus    @default(Pending)
   blockedFor        String?
 
-  imagesOnModels  ImagesOnModels?
-  imagesOnReviews ImagesOnReviews?
   reports         ImageReport[]
   reactions       ImageReaction[]
   thread          Thread?
@@ -955,7 +909,6 @@ model Image {
   tagVotes        TagsOnImageVote[]
   tagComposites   ImageTag[]
   metrics         ImageMetric[]
-  connections     ImageConnection?
   stats           ImageStat?
   rank            ImageRank?
   modHelper       ImageModHelper?
@@ -1018,28 +971,6 @@ model ImageMetric {
 enum ImageOnModelType {
   Example
   Training
-}
-
-model ImagesOnModels {
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  modelVersionId Int
-  image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId        Int          @unique
-  index          Int?
-
-  @@id([imageId, modelVersionId])
-  @@index([modelVersionId], type: Hash)
-}
-
-model ImagesOnReviews {
-  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  reviewId Int
-  image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId  Int    @unique
-  index    Int?
-
-  @@id([imageId, reviewId])
-  @@index([reviewId], type: Hash)
 }
 
 enum TagTarget {
@@ -1309,8 +1240,6 @@ model Comment {
   userId       Int
   model        Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId      Int
-  review       Review?  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  reviewId     Int?
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
 
@@ -1319,7 +1248,6 @@ model Comment {
   reports   CommentReport[]
 
   @@index([modelId], type: Hash)
-  @@index([reviewId], type: Hash)
   @@index([parentId], type: Hash)
 }
 
@@ -2413,22 +2341,6 @@ model DownloadHistory {
   modelId        Int
   model          Model        @relation(fields: [modelId], references: [id], onDelete: NoAction)
   createdAt      DateTime
-}
-
-/// @view
-model ImageConnection {
-  imageId        Int           @id
-  image          Image         @relation(fields: [imageId], references: [id], onDelete: NoAction)
-  userId         Int
-  user           User          @relation(fields: [userId], references: [id], onDelete: NoAction)
-  modelId        Int?
-  model          Model?        @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  modelVersionId Int?
-  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
-  reviewId       Int?
-  review         Review?       @relation(fields: [reviewId], references: [id], onDelete: NoAction)
-  index          Int?
-  visible        Boolean       @default(false)
 }
 
 /// @view

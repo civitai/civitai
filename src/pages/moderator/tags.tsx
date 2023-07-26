@@ -1,59 +1,18 @@
-import {
-  ActionIcon,
-  AspectRatio,
-  Badge,
-  Box,
-  Card,
-  Center,
-  Checkbox,
-  Container,
-  Divider,
-  Group,
-  Loader,
-  Menu,
-  Paper,
-  Stack,
-  Table,
-  Text,
-  Title,
-  SelectItem,
-  Popover,
-  Input,
-} from '@mantine/core';
-import { useListState } from '@mantine/hooks';
-import { showNotification } from '@mantine/notifications';
+import { ActionIcon, Badge, Container, Group, Stack, Title, SelectItem } from '@mantine/core';
 import { TagTarget, TagType } from '@prisma/client';
 import {
   IconAlbum,
-  IconBan,
   IconBox,
-  IconCheck,
-  IconInfoCircle,
   IconPhoto,
-  IconReload,
-  IconSquareCheck,
-  IconSquareOff,
   IconTag,
   IconTagOff,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { GetServerSideProps } from 'next';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useInView } from 'react-intersection-observer';
+import { useMemo, useState } from 'react';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
-import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { ImageGetGalleryInfinite } from '~/types/router';
-import { showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';

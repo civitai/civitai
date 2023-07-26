@@ -17,7 +17,6 @@ export function SettingsCard() {
   const { mutate, isLoading } = trpc.user.update.useMutation({
     async onSuccess() {
       await utils.model.getAll.invalidate();
-      await utils.review.getAll.invalidate();
       user?.refresh();
       showSuccessNotification({ message: 'User profile updated' });
     },

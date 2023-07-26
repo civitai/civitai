@@ -8,7 +8,7 @@ import { createContext, useContext, useMemo } from 'react';
 
 import { constants } from '~/server/common/constants';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
-import { ReviewGetReactions } from '~/types/router';
+import { CommentGetReactions } from '~/types/router';
 import { toStringList } from '~/utils/array-helpers';
 
 const ReactionPickerContext = createContext<{
@@ -61,7 +61,7 @@ export function ReactionPicker({ reactions, disabled = false, onSelect }: Reacti
 }
 
 type ReactionPickerProps = {
-  reactions: NonNullable<ReviewGetReactions>;
+  reactions: NonNullable<CommentGetReactions>;
   onSelect: (reaction: ReviewReactions) => void;
   disabled?: boolean;
 };

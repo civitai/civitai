@@ -91,3 +91,23 @@ export enum ArticleSort {
   MostComments = 'Most Comments',
   Newest = 'Newest',
 }
+
+export enum ModelType {
+  Checkpoint = 'Checkpoint',
+  TextualInversion = 'TextualInversion',
+  Hypernetwork = 'Hypernetwork',
+  AestheticGradient = 'AestheticGradient',
+  LORA = 'LORA',
+  LoCon = 'LoCon',
+  Controlnet = 'Controlnet',
+  Upscaler = 'Upscaler',
+  VAE = 'VAE',
+  Poses = 'Poses',
+  Wildcards = 'Wildcards',
+  Other = 'Other',
+}
+
+export enum CheckpointType {
+  Trained = 'Trained',
+  Merge = 'Merge',
+}

@@ -22,7 +22,6 @@ import {
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
-  ModelInput,
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
@@ -39,7 +38,6 @@ import {
 } from '~/server/selectors/model.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
-  createModel,
   deleteModelById,
   getDraftModelsByUserId,
   getModel,
@@ -67,7 +65,6 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
-import { getGetUrl } from '~/utils/s3-utils';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -81,7 +78,6 @@ import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { getArticles } from '~/server/services/article.service';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { modelsSearchIndex } from '~/server/search-index';
-import { getPostsInfinite } from '~/server/services/post.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -253,30 +249,6 @@ export const getModelVersionsHandler = async ({ input }: { input: GetModelVersio
     return modelVersions;
   } catch (error) {
     throw throwDbError(error);
-  }
-};
-
-export const createModelHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ModelInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    const { user } = ctx;
-    const model = await createModel({ ...input, userId: user.id });
-
-    await ctx.track.modelEvent({
-      type: 'Create',
-      modelId: model.id,
-      nsfw: model.nsfw,
-    });
-
-    return model;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
   }
 };
 
@@ -564,15 +536,15 @@ export const getDownloadCommandHandler = async ({
             nsfw: true,
           },
         },
-        images: {
-          select: {
-            image: { select: { url: true } },
-          },
-          orderBy: prioritizeSafeImages
-            ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
-            : [{ index: 'asc' }],
-          take: 1,
-        },
+        // images: {
+        //   select: {
+        //     image: { select: { url: true } },
+        //   },
+        //   orderBy: prioritizeSafeImages
+        //     ? [{ image: { nsfw: 'asc' } }, { index: 'asc' }]
+        //     : [{ index: 'asc' }],
+        //   take: 1,
+        // },
         name: true,
         trainedWords: true,
         createdAt: true,
@@ -645,7 +617,7 @@ export const getDownloadCommandHandler = async ({
         name: fileName,
         modelName: model.name,
         modelVersionName: modelVersion.name,
-        previewImage: modelVersion.images[0]?.image?.url,
+        // previewImage: modelVersion.images[0]?.image?.url,
         url,
       },
     });
