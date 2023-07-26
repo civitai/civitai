@@ -31,19 +31,9 @@ export const LeaderHomeBlockCreatorItem = ({
   ][position - 1];
 
   const link = `/user/${user.username}`;
-  const leaderboardCosmeticItem = user.cosmetics.find((cosmeticItem) => {
-    const cosmetic = cosmeticItem?.cosmetic;
-    if (!cosmetic) {
-      return false;
-    }
-
-    return cosmetic.leaderboardId === leaderboard.id;
-  });
-
-  const leaderboardCosmetic = leaderboardCosmeticItem?.cosmetic;
-  const leaderboardCosmeticData = leaderboardCosmetic?.data
-    ? (leaderboardCosmetic?.data as unknown as { url: string })
-    : null;
+  const cosmetic = leaderboard.cosmetics.find(
+    (cosmetic) => cosmetic.leaderboardPosition >= position
+  );
 
   return (
     <div className={classes.wrapper}>
@@ -83,19 +73,16 @@ export const LeaderHomeBlockCreatorItem = ({
             <Grid.Col span={3}>
               <Stack align="flex-end">
                 {/*{false && <EdgeImage src={user} width={24} />}*/}
-                {leaderboardCosmetic && (
+                {cosmetic && (
                   <RankBadge
                     size="xs"
                     rank={{
-                      leaderboardRank: leaderboardCosmetic.leaderboardPosition,
+                      leaderboardRank: position,
                       leaderboardId: leaderboard.id,
                       leaderboardTitle: leaderboard.title,
-                      leaderboardCosmetic: leaderboardCosmeticData?.url,
+                      leaderboardCosmetic: cosmetic?.data?.url as string,
                     }}
                   />
-                )}
-                {isTop3 && !leaderboardCosmetic && (
-                  <IconCrown size={24} color={iconColor} style={{ fill: iconColor }} />
                 )}
               </Stack>
             </Grid.Col>
