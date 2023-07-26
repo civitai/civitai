@@ -25,7 +25,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         transition: 'transform 400ms ease',
         minWidth: '100%',
       },
-      
+
       noImage: {
         backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[3],
         position: 'relative',
@@ -40,7 +40,6 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
           background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
         },
       },
-
 
       gradientOverlay: {
         background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
@@ -69,8 +68,8 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         borderRadius: theme.radius.sm,
         backgroundColor: theme.fn.rgba('#000', 0.31),
       },
-        
-       chip: {
+
+      chip: {
         borderRadius: theme.radius.xl,
         height: '26px',
       },

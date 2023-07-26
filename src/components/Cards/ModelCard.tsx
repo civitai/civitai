@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Badge,
-  createStyles,
-  Group,
-  Menu,
-  Rating,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { ActionIcon, Badge, Group, Menu, Rating, Stack, Text, UnstyledButton } from '@mantine/core';
 import {
   IconStar,
   IconDownload,
@@ -55,18 +45,14 @@ const querySchema = z.object({
   hidden: z.coerce.boolean().optional(),
 });
 
-const useStyles = createStyles((theme) => ({
-  generateHoverAction: {},
-}));
-
 export function ModelCard({ data }: Props) {
- const { classes, cx, theme } = useCardStyles({
+  const { classes, cx, theme } = useCardStyles({
     aspectRatio:
       data.image && data.image.width && data.image.height
         ? data.image.width / data.image.height
         : 1,
   });
-  const { classes: modelCardClasses } = useStyles();
+
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -311,7 +297,7 @@ export function ModelCard({ data }: Props) {
                         </>
                       )}
                     </>
-                  )
+                  );
                 }}
               </ImageGuard.Content>
             )}
