@@ -118,7 +118,6 @@ export const upsertModelVersion = async (
     ]);
     return version;
   } else {
-    console.log({ data });
     const version = await dbWrite.modelVersion.update({
       where: { id: data.id },
       data,
