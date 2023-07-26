@@ -15,7 +15,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { ModelStatus } from '@prisma/client';
+import { CollectionType, ModelStatus } from '@prisma/client';
 import {
   IconBrush,
   IconDotsVertical,
@@ -40,6 +40,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -218,6 +219,16 @@ export function ModelCategoryCard({
     </Menu.Item>
   );
   let contextMenuItems: React.ReactNode[] = [];
+  if (features.collections) {
+    contextMenuItems = contextMenuItems.concat([
+      <AddToCollectionMenuItem
+        key="add-to-collection"
+        onClick={() =>
+          openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
+        }
+      />,
+    ]);
+  }
   if (currentUser?.id !== user.id)
     contextMenuItems = contextMenuItems.concat([
       <HideModelButton key="hide-model" as="menu-item" modelId={id} />,

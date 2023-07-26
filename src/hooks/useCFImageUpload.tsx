@@ -71,8 +71,8 @@ export const useCFImageUpload: UseCFImageUpload = () => {
     setFiles((x) => [
       ...x,
       {
-        ...imageData,
         ...pendingTrackedFile,
+        ...imageData,
         abort: xhr.abort.bind(xhr),
         id,
         url,

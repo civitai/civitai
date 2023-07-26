@@ -1,12 +1,15 @@
 import { Menu, useMantineTheme } from '@mantine/core';
+import { CollectionType } from '@prisma/client';
 import { IconEdit, IconFlag, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 
 export function PostControls({
@@ -20,6 +23,7 @@ export function PostControls({
 }) {
   const router = useRouter();
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
@@ -50,6 +54,11 @@ export function PostControls({
               Edit Post
             </Menu.Item>
           </>
+        )}
+        {features.collections && (
+          <AddToCollectionMenuItem
+            onClick={() => openContext('addToCollection', { postId, type: CollectionType.Post })}
+          />
         )}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">

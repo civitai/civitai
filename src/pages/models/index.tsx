@@ -47,8 +47,6 @@ export default function ModelsPage() {
       <MasonryContainer fluid>
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         {favorites && <Title>Your Liked Models</Title>}
-        {/*TODO.collection: Add relevant collection title*/}
-        {collectionId && <Title>Collection</Title>}
         {hidden && <Title>Your Hidden Models</Title>}
         <Stack spacing="xs">
           <Announcements

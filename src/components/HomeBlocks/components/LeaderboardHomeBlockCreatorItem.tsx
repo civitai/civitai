@@ -21,29 +21,13 @@ export const LeaderHomeBlockCreatorItem = ({
   leaderboard: LeaderboardWithResults;
   data: LeaderboardGetModel;
 }) => {
-  const { classes, theme } = useStyles();
-
-  const isTop3 = position <= 3;
-  const iconColor = [
-    theme.colors.yellow[5], // Gold
-    theme.colors.gray[5], // Silver
-    theme.colors.orange[5], // Bronze
-  ][position - 1];
+  const { classes } = useStyles();
 
   const link = `/user/${user.username}`;
-  const leaderboardCosmeticItem = user.cosmetics.find((cosmeticItem) => {
-    const cosmetic = cosmeticItem?.cosmetic;
-    if (!cosmetic) {
-      return false;
-    }
-
-    return cosmetic.leaderboardId === leaderboard.id;
-  });
-
-  const leaderboardCosmetic = leaderboardCosmeticItem?.cosmetic;
-  const leaderboardCosmeticData = leaderboardCosmetic?.data
-    ? (leaderboardCosmetic?.data as unknown as { url: string })
-    : null;
+  const cosmetic = leaderboard.cosmetics.find(
+    (cosmetic) => cosmetic.leaderboardPosition && cosmetic.leaderboardPosition >= position
+  );
+  const cosmeticData = cosmetic?.data as { url?: string };
 
   return (
     <div className={classes.wrapper}>
@@ -82,20 +66,16 @@ export const LeaderHomeBlockCreatorItem = ({
             </Grid.Col>
             <Grid.Col span={3}>
               <Stack align="flex-end">
-                {/*{false && <EdgeImage src={user} width={24} />}*/}
-                {leaderboardCosmetic && (
+                {cosmetic && cosmeticData && (
                   <RankBadge
                     size="xs"
                     rank={{
-                      leaderboardRank: leaderboardCosmetic.leaderboardPosition,
+                      leaderboardRank: position,
                       leaderboardId: leaderboard.id,
                       leaderboardTitle: leaderboard.title,
-                      leaderboardCosmetic: leaderboardCosmeticData?.url,
+                      leaderboardCosmetic: cosmeticData.url,
                     }}
                   />
-                )}
-                {isTop3 && !leaderboardCosmetic && (
-                  <IconCrown size={24} color={iconColor} style={{ fill: iconColor }} />
                 )}
               </Stack>
             </Grid.Col>

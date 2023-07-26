@@ -1,4 +1,4 @@
-import { ActionIcon, Group, Stack, UnstyledButton, createStyles } from '@mantine/core';
+import { ActionIcon, Group, Stack, UnstyledButton } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -14,7 +14,9 @@ import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageGetInfinite } from '~/types/router';
 
 export function ImageCard({ data, collectionId }: Props) {
-  const { classes: sharedClasses, cx } = useCardStyles();
+  const { classes: sharedClasses, cx } = useCardStyles({
+    aspectRatio: data.width && data.height ? data.width / data.height : 1,
+  });
   const router = useRouter();
 
   return (
@@ -37,6 +39,8 @@ export function ImageCard({ data, collectionId }: Props) {
 
                   return (
                     <>
+                      <ImageGuard.Report context="image" position="top-right" />
+                      <ImageGuard.ToggleImage position="top-left" />
                       {safe ? (
                         <EdgeImage
                           src={image.url}

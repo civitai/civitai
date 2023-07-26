@@ -204,9 +204,13 @@ export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResul
           description: true,
           source: true,
           type: true,
+          leaderboardPosition: true,
         },
         where: {
           leaderboardId: leaderboard.id,
+        },
+        orderBy: {
+          leaderboardPosition: 'asc',
         },
       });
 

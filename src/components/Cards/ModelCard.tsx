@@ -60,7 +60,12 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function ModelCard({ data }: Props) {
-  const { classes, cx, theme } = useCardStyles();
+ const { classes, cx, theme } = useCardStyles({
+    aspectRatio:
+      data.image && data.image.width && data.image.height
+        ? data.image.width / data.image.height
+        : 1,
+  });
   const { classes: modelCardClasses } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -242,7 +247,6 @@ export function ModelCard({ data }: Props) {
                               <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
                             </Menu>
                           )}
-
                           {features.imageGeneration && data.canGenerate && data.version?.id && (
                             <HoverActionButton
                               label="Create"
@@ -307,7 +311,7 @@ export function ModelCard({ data }: Props) {
                         </>
                       )}
                     </>
-                  );
+                  )
                 }}
               </ImageGuard.Content>
             )}
