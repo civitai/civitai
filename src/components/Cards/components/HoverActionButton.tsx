@@ -48,6 +48,7 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
     },
 
     icon: {
+      position: 'relative',
       zIndex: 1,
 
       [`.${customVariantsRef.white} &`]: {
@@ -63,6 +64,7 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
       top: 0,
       left: 0,
       transition: 'opacity 200ms ease',
+      zIndex: 2,
 
       [`.${customVariantsRef.white} &`]: {
         backgroundColor: theme.colors.gray[3],
@@ -88,7 +90,6 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
       alignItems: 'center',
       flexWrap: 'nowrap',
       whiteSpace: 'nowrap',
-      zIndex: 0,
       justifyContent: 'flex-start',
       paddingLeft: theme.spacing.md,
       opacity: 0,
@@ -108,6 +109,7 @@ const HoverActionButton = ({
   color = 'green',
   variant = 'filled',
   onClick,
+  keepIconOnHover = false,
   ...props
 }: Props) => {
   const { classes } = useStyles({ size });
@@ -134,16 +136,18 @@ const HoverActionButton = ({
         >
           {children}
         </ThemeIcon>
-        <ThemeIcon
-          {...themeIconProps}
-          className={classes.hover}
-          color={color}
-          radius="xl"
-          size={size}
-          variant={variant}
-        >
-          <IconArrowRight size={16} stroke={2.5} />
-        </ThemeIcon>
+        {!keepIconOnHover && (
+          <ThemeIcon
+            {...themeIconProps}
+            className={classes.hover}
+            color={color}
+            radius="xl"
+            size={size}
+            variant={variant}
+          >
+            <IconArrowRight size={16} stroke={2.5} />
+          </ThemeIcon>
+        )}
       </Box>
     </UnstyledButton>
   );
@@ -157,5 +161,6 @@ type Props = UnstyledButtonProps & {
   size: number;
   color?: MantineColor | CustomVariantType;
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  keepIconOnHover?: boolean;
 };
 export default HoverActionButton;

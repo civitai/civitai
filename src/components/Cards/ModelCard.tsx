@@ -183,22 +183,36 @@ export function ModelCard({ data }: Props) {
                         noWrap
                       >
                         <Group spacing={4}>
-                          <ImageGuard.ToggleConnect position="static" />
-                          <Badge className={classes.infoChip} variant="light" radius="xl">
+                          <ImageGuard.ToggleConnect className={classes.chip} position="static" />
+                          <Badge
+                            className={cx(classes.infoChip, classes.chip)}
+                            variant="light"
+                            radius="xl"
+                          >
                             <Text color="white" size="xs" transform="capitalize" inline>
                               {getDisplayName(data.type)}
                             </Text>
                           </Badge>
 
                           {isUpdated && (
-                            <Badge variant="filled" color="green" radius="xl">
+                            <Badge
+                              className={classes.chip}
+                              variant="filled"
+                              color="green"
+                              radius="xl"
+                            >
                               <Text color="white" size="xs" transform="capitalize" inline>
                                 Updated
                               </Text>
                             </Badge>
                           )}
                           {isNew && (
-                            <Badge variant="filled" color="red" radius="xl">
+                            <Badge
+                              className={classes.chip}
+                              variant="filled"
+                              color="red"
+                              radius="xl"
+                            >
                               <Text color="white" size="xs" transform="capitalize" inline>
                                 New
                               </Text>
@@ -259,6 +273,7 @@ export function ModelCard({ data }: Props) {
                                 size={30}
                                 color={color}
                                 variant="filled"
+                                keepIconOnHover
                               >
                                 {icon}
                               </HoverActionButton>

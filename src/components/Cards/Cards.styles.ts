@@ -65,5 +65,10 @@ export const useCardStyles = createStyles((theme, _params, getRef) => {
       borderRadius: theme.radius.xl,
       backgroundColor: theme.fn.rgba('#000', 0.31),
     },
+
+    chip: {
+      borderRadius: theme.radius.xl,
+      height: '26px',
+    },
   };
 });
