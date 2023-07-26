@@ -1047,6 +1047,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 ? (image as (typeof images)[0] | undefined)
                 : undefined,
             canGenerate,
+            version,
           };
         })
         .filter(isDefined);
