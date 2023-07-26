@@ -24,8 +24,7 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
 
       '&:hover': {
         [`& .${labelRef}`]: {
-          width: 3 * size,
-          left: -2 * size,
+          transform: 'scaleX(1)',
           opacity: 1,
         },
         [`& .${hoverIconRef}`]: {
@@ -50,13 +49,16 @@ const useStyles = createStyles((theme, { size }: { size: number }, getRef) => {
     label: {
       ref: labelRef,
       top: 0,
-      left: 0,
-      width: size,
+      right: 0,
+      width: 'auto',
+      paddingRight: size,
+      minWidth: 3 * size,
+      transform: 'scaleX(0)',
       height: '100%',
       overflow: 'hidden',
       position: 'absolute',
-      transformOrigin: '100% 50%',
-      transition: 'width 200ms ease, left 200ms ease, opacity 200ms ease',
+      transformOrigin: '100% 100%',
+      transition: 'transform 200ms ease, opacity 200ms ease',
       borderRadius: theme.radius.xl,
       display: 'flex',
       alignItems: 'center',
