@@ -203,6 +203,7 @@ export const getInfiniteImagesHandler = async ({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
+      headers: { src: 'getInfiniteImagesHandler' },
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -241,6 +242,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         cursor,
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
         userId: ctx.user?.id,
+        headers: { src: 'getImagesAsPostsInfiniteHandler' },
       });
 
       // Merge images by postId
