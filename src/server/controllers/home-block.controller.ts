@@ -1,5 +1,5 @@
 import { Context } from '~/server/createContext';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   getHomeBlockById,
   getHomeBlockData,
@@ -66,7 +66,7 @@ export const getHomeBlocksByIdHandler = async ({
     });
 
     if (!homeBlock) {
-      throw throwDbError('Home block not found');
+      throw throwNotFoundError('Home block not found');
     }
 
     return homeBlock;
