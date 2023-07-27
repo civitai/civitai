@@ -8,7 +8,6 @@ import {
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import {
-  deleteCollectionById,
   getCollectionById,
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
@@ -18,19 +17,20 @@ import {
   GetHomeBlocksInputSchema,
   HomeBlockMetaSchema,
 } from '~/server/schema/home-block.schema';
-import { isDefined } from '~/utils/type-guards';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
 import { HomeBlockType } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
+import { isDefined } from '~/utils/type-guards';
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
 type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
 };
-type HomeBlockWithData = Omit<AsyncReturnType<typeof getHomeBlocks>[number], 'metadata'> & {
+type HomeBlockWithData = Omit<AsyncReturnType<typeof getHomeBlocks>[number], 'metadata' | 'id'> & {
+  id: number;
   metadata: HomeBlockMetaSchema;
   collection?: GetCollectionWithItems;
   leaderboards?: GetLeaderboardsWithResults;
@@ -43,7 +43,8 @@ export const getHomeBlocksHandler = async ({
 }: {
   ctx: Context;
   input: GetHomeBlocksInputSchema;
-}) => {
+}): Promise<HomeBlockWithData[]> => {
+  const { ownedOnly } = input || {};
   try {
     const homeBlocks = await getHomeBlocks({
       select: {
@@ -52,10 +53,25 @@ export const getHomeBlocksHandler = async ({
         type: true,
         userId: true,
       },
-      ctx,
+      user: ctx.user,
+      ownedOnly,
     });
 
-    return homeBlocks;
+    if (input.withCoreData) {
+      // Get the core data for each home block:
+      const homeBlocksWithData = await Promise.all(
+        homeBlocks.map((homeBlock) => {
+          return getHomeBlockData({ homeBlock, user: ctx.user, input });
+        })
+      );
+
+      return homeBlocksWithData.filter(isDefined);
+    }
+
+    return homeBlocks.map((homeBlock) => ({
+      ...homeBlock,
+      metadata: homeBlock.metadata as HomeBlockMetaSchema,
+    }));
   } catch (error) {
     throw throwDbError(error);
   }
@@ -71,7 +87,7 @@ export const getHomeBlocksByIdHandler = async ({
   try {
     const homeBlock = await getHomeBlockById({
       ...input,
-      ctx,
+      user: ctx.user,
     });
 
     if (!homeBlock) {
@@ -110,7 +126,7 @@ export const createCollectionHomeBlockHandler = async ({
       type: HomeBlockType.Collection,
       metadata,
     },
-    ctx,
+    user: ctx.user,
   });
 };
 
@@ -122,7 +138,7 @@ export const deleteUserHomeBlockHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    await deleteHomeBlockById({ input, ctx });
+    await deleteHomeBlockById({ input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

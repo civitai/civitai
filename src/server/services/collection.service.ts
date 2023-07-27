@@ -424,10 +424,10 @@ export type CollectionItemExpanded = { id: number; status?: CollectionItemStatus
 );
 
 export const getCollectionItemsByCollectionId = async ({
-  ctx,
   input,
+  user,
 }: {
-  ctx: Context;
+  user?: SessionUser;
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
 }) => {
   const { statuses = [CollectionItemStatus.ACCEPTED], limit, collectionId, page, cursor } = input;
@@ -438,7 +438,7 @@ export const getCollectionItemsByCollectionId = async ({
 
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
-    user: ctx.user,
+    user,
   });
 
   if (
@@ -490,7 +490,7 @@ export const getCollectionItemsByCollectionId = async ({
             ...userPreferencesInput,
             ids: modelIds,
           },
-          ctx,
+          user,
         })
       : { items: [] };
 
@@ -505,7 +505,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
           browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
-          sessionUser: ctx.user,
+          sessionUser: user,
           ids: articleIds,
         })
       : { items: [] };
@@ -521,8 +521,8 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ImageSort.Newest,
           ...userPreferencesInput,
-          userId: ctx.user?.id,
-          isModerator: ctx.user?.isModerator,
+          userId: user?.id,
+          isModerator: user?.isModerator,
           ids: imageIds,
         })
       : { items: [] };
@@ -537,7 +537,7 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'published',
           sort: PostSort.Newest,
           ...userPreferencesInput,
-          user: ctx.user,
+          user,
           browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
           ids: postIds,
         })

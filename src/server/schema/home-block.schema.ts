@@ -44,6 +44,8 @@ export const getHomeBlocksInputSchema = z
   .object({
     limit: z.number().default(8),
     dismissed: z.array(z.number()).optional(),
+    withCoreData: z.boolean().optional(),
+    ownedOnly: z.boolean().optional(),
   })
   .merge(userPreferencesSchema)
   .partial()

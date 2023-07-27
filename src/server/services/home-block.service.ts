@@ -1,10 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  CollectionContributorPermission,
-  CollectionReadConfiguration,
-  HomeBlockType,
-  Prisma,
-} from '@prisma/client';
+import { HomeBlockType, Prisma } from '@prisma/client';
 import {
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
@@ -20,35 +15,49 @@ import { getLeaderboardsWithResults } from '~/server/services/leaderboard.servic
 import { getAnnouncements } from '~/server/services/announcement.service';
 import { Context } from '~/server/createContext';
 import { SessionUser } from 'next-auth';
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { isDefined } from '~/utils/type-guards';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
 >({
   select,
-  ctx,
+  user,
+  ...input
 }: {
   select: TSelect;
-  ctx: Context;
+  user?: SessionUser;
+  ownedOnly?: boolean;
 }) => {
-  const hasCustomHomeBlocks = await userHasCustomHomeBlocks(ctx.user);
+  const hasCustomHomeBlocks = await userHasCustomHomeBlocks(user);
+  const { ownedOnly } = input || {};
+
+  if (ownedOnly && !user) {
+    throw throwBadRequestError('You must be logged in to view your home blocks.');
+  }
 
   return dbRead.homeBlock.findMany({
     select,
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
-    where: {
-      OR: [
-        {
-          // Either the user has custom home blocks of their own,
-          // or we return the default Civitai ones (user -1).
-          userId: hasCustomHomeBlocks ? ctx.user?.id : -1,
+    where: ownedOnly
+      ? { userId: user?.id }
+      : {
+          OR: [
+            {
+              // Either the user has custom home blocks of their own,
+              // or we return the default Civitai ones (user -1).
+              userId: hasCustomHomeBlocks ? user?.id : -1,
+            },
+            {
+              permanent: true,
+            },
+          ],
         },
-        {
-          permanent: true,
-        },
-      ],
-    },
   });
 };
 
@@ -68,9 +77,11 @@ export const getCivitaiHomeBlocks = async () => {
 
 export const getHomeBlockById = async ({
   id,
-  ctx,
+  user,
   ...input
-}: GetHomeBlockByIdInputSchema & { ctx: Context }) => {
+}: GetHomeBlockByIdInputSchema & {
+  user?: SessionUser;
+}) => {
   const homeBlock = await dbRead.homeBlock.findUniqueOrThrow({
     select: {
       id: true,
@@ -82,12 +93,12 @@ export const getHomeBlockById = async ({
     },
   });
 
-  return getHomeBlockData({ homeBlock, ctx, input });
+  return getHomeBlockData({ homeBlock, user, input });
 };
 
 export const getHomeBlockData = async ({
   homeBlock,
-  ctx,
+  user,
   input,
 }: {
   homeBlock: {
@@ -95,7 +106,7 @@ export const getHomeBlockData = async ({
     metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
     type: HomeBlockType;
   };
-  ctx: Context;
+  user?: SessionUser;
   input: GetHomeBlocksInputSchema;
 }) => {
   const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
@@ -114,15 +125,17 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      const items = await getCollectionItemsByCollectionId({
-        ctx,
-        input: {
-          ...(input as UserPreferencesInput),
-          collectionId: collection.id,
-          // TODO.home-blocks: Set item limit as part of the input?
-          limit: metadata.collection.limit,
-        },
-      });
+      const items = input.withCoreData
+        ? []
+        : await getCollectionItemsByCollectionId({
+            user,
+            input: {
+              ...(input as UserPreferencesInput),
+              collectionId: collection.id,
+              // TODO.home-blocks: Set item limit as part of the input?
+              limit: metadata.collection.limit,
+            },
+          });
 
       return {
         ...homeBlock,
@@ -143,7 +156,7 @@ export const getHomeBlockData = async ({
 
       const leaderboardsWithResults = await getLeaderboardsWithResults({
         ids: leaderboardIds,
-        isModerator: ctx.user?.isModerator || false,
+        isModerator: user?.isModerator || false,
       });
 
       return {
@@ -171,7 +184,7 @@ export const getHomeBlockData = async ({
         ids: announcementIds,
         dismissed: input.dismissed,
         limit: metadata.announcements.limit,
-        user: ctx.user,
+        user,
       });
 
       if (!announcements.length) {
@@ -213,13 +226,12 @@ export const userHasCustomHomeBlocks = async (user?: SessionUser) => {
 
 export const upsertHomeBlock = async ({
   input,
-  ctx,
+  user,
 }: {
   input: UpsertHomeBlockInput;
-  ctx: DeepNonNullable<Context>;
+  user: SessionUser;
 }) => {
   const { id, metadata, type, sourceId, index } = input;
-  const { user } = ctx;
 
   if (id) {
     const homeBlock = await dbRead.homeBlock.findUnique({
@@ -259,16 +271,16 @@ export const upsertHomeBlock = async ({
 
 export const deleteHomeBlockById = async ({
   input,
-  ctx,
+  user,
 }: {
   input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
+  user: SessionUser;
 }) => {
   try {
     const { id } = input;
     const homeBlock = await dbRead.homeBlock.findFirst({
       // Confirm the homeBlock belongs to the user:
-      where: { id, userId: ctx.user.isModerator ? undefined : ctx.user.id },
+      where: { id, userId: user.isModerator ? undefined : user.id },
       select: { id: true, userId: true },
     });
 
@@ -276,19 +288,19 @@ export const deleteHomeBlockById = async ({
       return null;
     }
 
-    const isOwner = homeBlock.userId === ctx.user.id;
+    const isOwner = homeBlock.userId === user.id;
 
     const deleteSuccess = await dbWrite.homeBlock.delete({ where: { id } });
     // See if the user has other home blocks:
 
     if (isOwner) {
       // Check that the user has other collections:
-      const hasOtherHomeBlocks = await userHasCustomHomeBlocks(ctx.user);
+      const hasOtherHomeBlocks = await userHasCustomHomeBlocks(user);
 
       if (!hasOtherHomeBlocks) {
         // Delete all cloned collections if any, this will
         // leave them with our default home blocks:
-        await dbWrite.homeBlock.deleteMany({ where: { userId: ctx.user.id } });
+        await dbWrite.homeBlock.deleteMany({ where: { userId: user.id } });
       }
     }
 
