@@ -1,6 +1,7 @@
 import { Group, useMantineTheme, createStyles, Text } from '@mantine/core';
-import { Dropzone, DropzoneProps, IMAGE_MIME_TYPE } from '@mantine/dropzone';
+import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconUpload, IconX, IconPhoto } from '@tabler/icons-react';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
 export function ImageDropzone({
   disabled: initialDisabled,
@@ -9,6 +10,7 @@ export function ImageDropzone({
   onDrop,
   count,
   label,
+  accept = IMAGE_MIME_TYPE,
   ...props
 }: Props) {
   const theme = useMantineTheme();
@@ -23,7 +25,7 @@ export function ImageDropzone({
   return (
     <Dropzone
       {...props}
-      accept={IMAGE_MIME_TYPE}
+      accept={accept}
       className={cx({ [classes.disabled]: disabled })}
       classNames={{
         root: hasError ? classes.error : undefined,
@@ -84,4 +86,5 @@ type Props = Omit<DropzoneProps, 'children'> & {
   max?: number;
   hasError?: boolean;
   label?: string;
+  accept?: string[];
 };

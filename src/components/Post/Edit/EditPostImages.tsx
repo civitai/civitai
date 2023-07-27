@@ -43,6 +43,7 @@ import {
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import { postImageTransmitter } from '~/store/post-image-transmitter.store';
+import { inferMediaType } from '~/client-utils/cf-images-utils';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
@@ -248,7 +249,7 @@ function ImageController({
   );
 }
 
-function ImageUpload({ url, name, uuid, status, message, file, type }: ImageUpload) {
+function ImageUpload({ url, name, uuid, status, message, file, mimeType }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.file === file);
@@ -262,7 +263,7 @@ function ImageUpload({ url, name, uuid, status, message, file, type }: ImageUplo
 
   return (
     <Card className={classes.container} withBorder p={0}>
-      <EdgeMedia src={url} alt={name ?? undefined} mimeType={mimeType} />
+      <EdgeMedia src={url} alt={name ?? undefined} type={inferMediaType(mimeType)} />
       {trackedFile && (
         <Alert
           radius={0}

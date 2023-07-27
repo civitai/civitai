@@ -9,7 +9,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
 import { Freeze } from '~/components/Freeze/Freeze';
 
-const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
@@ -63,14 +62,6 @@ const registry = {
     Component: CommentEdit,
     resolve: (args: React.ComponentProps<typeof CommentEdit>) => [
       { query: { ...Router.query, ...args, modal: 'commentEdit' } },
-      undefined, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
-  },
-  modelVersionLightbox: {
-    Component: ModelVersionLightbox,
-    resolve: (args: React.ComponentProps<typeof ModelVersionLightbox>) => [
-      { query: { ...Router.query, ...args, modal: 'modelVersionLightbox' } },
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],

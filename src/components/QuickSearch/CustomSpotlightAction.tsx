@@ -166,7 +166,8 @@ function ModelSpotlightAction({
             <EdgeMedia
               src={image.url}
               name={image.name ?? image.id.toString()}
-              mimeType={image.mimeType}
+              type={image.type}
+              anim={false}
               width={450}
               style={{
                 minWidth: '100%',

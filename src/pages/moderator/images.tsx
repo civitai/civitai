@@ -459,7 +459,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                   src={image.url}
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
-                  mimeType={image.mimeType}
+                  type={image.type}
                   width={450}
                   placeholder="empty"
                 />
