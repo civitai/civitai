@@ -885,6 +885,8 @@ model Image {
   hash              String?
   height            Int?
   width             Int?
+  type              MediaType               @default(image)
+  metadata          Json                    @default("{}")
   nsfw              NsfwLevel               @default(None)
   tosViolation      Boolean                 @default(false)
   analysis          Json?

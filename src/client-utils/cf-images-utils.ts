@@ -1,3 +1,4 @@
+import { MediaType, Prisma } from '@prisma/client';
 import { env } from '~/env/client.mjs';
 
 // from options available in CF Flexible variants:
@@ -24,6 +25,7 @@ export type EdgeUrlProps = {
   gamma?: number;
   optimized?: boolean;
   transcode?: boolean;
+  type?: MediaType;
   mimeType?: string;
 };
 
@@ -36,7 +38,18 @@ const mimeTypeExtensions: Record<MimeType, string> = {
   'image/webm': '.webm',
 };
 
-export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrlProps, 'src'>) {
+const IMAGE_MIME_TYPES =
+
+const typeExtensions: Record<MediaType, string> = {
+  image: '.jpeg',
+  video: '.webm',
+  audio: '.webm', // TODO - verify extension for audio
+};
+
+export function getEdgeUrl(
+  src: string,
+  { name, type, ...variantParams }: Omit<EdgeUrlProps, 'src'>
+) {
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
 
   const params = Object.entries(variantParams)
@@ -44,14 +57,15 @@ export function getEdgeUrl(src: string, { name, ...variantParams }: Omit<EdgeUrl
     .map(([key, value]) => `${key}=${value}`)
     .join(',');
 
-  const extension =
-    variantParams.anim === false
-      ? '.jpeg'
-      : mimeTypeExtensions[(variantParams.mimeType ?? 'image/jpeg') as MimeType];
+  const extension = typeExtensions[type ?? MediaType.image];
 
   name = name ?? src;
   if (name.includes('.')) name = name.split('.').slice(0, -1).join('.') + extension;
   else name = name + extension;
 
   return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name].filter(Boolean).join('/');
+}
+
+export function inferMediaType(mimeType: string) {
+
 }

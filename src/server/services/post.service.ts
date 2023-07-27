@@ -24,6 +24,7 @@ import {
   ImageGenerationProcess,
   NsfwLevel,
   ImageIngestionStatus,
+  MediaType,
 } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
@@ -481,7 +482,8 @@ type PostImageRaw = {
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
-  mimeType: string;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
   scannedAt: Date;
   needsReview: string | null;
   postId: number;
@@ -618,10 +620,11 @@ export const getPostsByCategory = async ({
           i.height,
           i.hash,
           i.meta,
+          i.type,
+          i.metadata,
           i."hideMeta",
           i."generationProcess",
           i."createdAt",
-          i."mimeType",
           i."scannedAt",
           i."needsReview",
           i."postId",

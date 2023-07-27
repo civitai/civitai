@@ -104,7 +104,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     src={image.url}
                     name={image.name ?? image.id.toString()}
                     alt={image.name ?? undefined}
-                    mimeType={image.mimeType}
+                    type={image.type}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
                     width={image.width ?? 1200}
                     anim

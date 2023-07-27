@@ -46,7 +46,7 @@ export function ImageCard({ data, collectionId }: Props) {
                           src={image.url}
                           name={image.name ?? image.id.toString()}
                           alt={image.name ?? undefined}
-                          mimeType={image.mimeType}
+                          type={image.type}
                           width={
                             originalAspectRatio > 1
                               ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio

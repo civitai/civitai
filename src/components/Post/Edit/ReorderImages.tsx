@@ -123,7 +123,7 @@ function SortableImage({
     >
       <EdgeMedia
         src={image.previewUrl ?? image.url}
-        mimeType={image.mimeType}
+        type={image.type}
         width={450}
         className={classes.image}
       />

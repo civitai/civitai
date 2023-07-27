@@ -69,7 +69,7 @@ export function PostImages({
                         src={image.url}
                         name={image.name}
                         alt={image.name ?? undefined}
-                        mimeType={image.mimeType}
+                        type={image.type}
                         width={width < maxWidth ? width : maxWidth}
                         className={cx({ [classes.blur]: !safe })}
                       />

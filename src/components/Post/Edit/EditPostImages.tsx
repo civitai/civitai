@@ -18,7 +18,7 @@ import {
   Loader,
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -97,6 +97,8 @@ function ImageController({
     resourceHelper,
     blockedFor,
     mimeType,
+    type,
+    metadata,
   },
 }: {
   image: PostEditImage;
@@ -121,7 +123,7 @@ function ImageController({
         src={previewUrl ?? url}
         alt={name ?? undefined}
         width={width ?? 1200}
-        mimeType={mimeType}
+        type={type}
         onLoad={() => setWithBorder(true)}
         className={cx({ [classes.blocked]: isBlocked })}
       />
@@ -246,7 +248,7 @@ function ImageController({
   );
 }
 
-function ImageUpload({ url, name, uuid, status, message, file, mimeType }: ImageUpload) {
+function ImageUpload({ url, name, uuid, status, message, file, type }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.file === file);

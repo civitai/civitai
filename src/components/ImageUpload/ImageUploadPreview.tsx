@@ -17,6 +17,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
 import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
+import { MediaType } from '@prisma/client';
 
 //TODO - handle what to display when there is an error
 type Props = {
@@ -59,14 +60,14 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
         {!ready && image.previewUrl ? (
           <EdgeMedia
             src={image.previewUrl}
-            mimeType={image.mimeType}
+            type={MediaType.image}
             height={410}
             className={classes.image}
           />
         ) : image.url && image.url != image.previewUrl ? (
           <EdgeMedia
             src={image.url}
-            mimeType={image.mimeType}
+            type={MediaType.image}
             height={410}
             className={classes.image}
             onLoad={() => {

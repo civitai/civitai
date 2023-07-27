@@ -37,7 +37,7 @@ export function PostCard({ data }: Props) {
                         src={image.url}
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
-                        mimeType={image.mimeType}
+                        type={image.type}
                         width={IMAGE_CARD_WIDTH}
                         placeholder="empty"
                         className={classes.image}

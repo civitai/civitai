@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
+import { MediaType } from '@prisma/client';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 
@@ -91,7 +92,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
               },
             })}
           >
-            <EdgeMedia src={image.previewUrl ?? image.url} mimeType={image.mimeType} width={450} />
+            <EdgeMedia src={image.previewUrl ?? image.url} type={MediaType.image} width={450} />
           </Box>
         </div>
       ) : (

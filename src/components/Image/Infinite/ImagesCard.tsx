@@ -80,7 +80,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               className={cx({ [classes.blocked]: isBlocked })}
                               name={image.name ?? image.id.toString()}
                               alt={image.name ?? undefined}
-                              mimeType={image.mimeType}
+                              type={image.type}
                               width={450}
                               placeholder="empty"
                               style={{ width: '100%' }}

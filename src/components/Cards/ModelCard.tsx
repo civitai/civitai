@@ -278,7 +278,7 @@ export function ModelCard({ data }: Props) {
                               src={image.url}
                               name={image.name ?? image.id.toString()}
                               alt={image.name ?? undefined}
-                              mimeType={image.mimeType}
+                              type={image.type}
                               width={
                                 originalAspectRatio > 1
                                   ? IMAGE_CARD_WIDTH * originalAspectRatio
