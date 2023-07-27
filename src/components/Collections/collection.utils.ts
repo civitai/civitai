@@ -45,20 +45,23 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         type: collectionItem.type,
         image: collectionItem.data,
         user: collectionItem.data.user,
+        url: `/images/${collectionItem.data.id}`,
       };
     }
     case 'model': {
       return {
         type: collectionItem.type,
-        images: collectionItem.data.image,
+        image: collectionItem.data.image,
         user: collectionItem.data.user,
+        url: `/models/${collectionItem.data.id}`,
       };
     }
     case 'post': {
       return {
         type: collectionItem.type,
-        images: collectionItem.data.image,
+        image: collectionItem.data.image,
         user: collectionItem.data.user,
+        url: `/posts/${collectionItem.data.id}`,
       };
     }
     case 'article': {
@@ -67,6 +70,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         cover: collectionItem.data.cover,
         user: collectionItem.data.user,
         title: collectionItem.data.title,
+        url: `/articles/${collectionItem.data.id}`,
       };
     }
     default:
