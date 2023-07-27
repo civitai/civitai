@@ -21,6 +21,7 @@ import { getAnnouncements } from '~/server/services/announcement.service';
 import { Context } from '~/server/createContext';
 import { SessionUser } from 'next-auth';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { GetByIdInput } from '~/server/schema/base.schema';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -47,6 +48,20 @@ export const getHomeBlocks = async <
           permanent: true,
         },
       ],
+    },
+  });
+};
+
+export const getCivitaiHomeBlocks = async () => {
+  dbRead.homeBlock.findMany({
+    select: {
+      id: true,
+      metadata: true,
+      type: true,
+    },
+    orderBy: { index: { sort: 'asc', nulls: 'last' } },
+    where: {
+      userId: -1,
     },
   });
 };
@@ -187,7 +202,7 @@ export const userHasCustomHomeBlocks = async (user?: SessionUser) => {
 
   const [row]: { exists: boolean }[] = await dbRead.$queryRaw`
     SELECT EXISTS(
-        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=${user.id}
+        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=${user.id} AND hb."sourceId" IS NULL
       )
   `;
 
@@ -240,4 +255,45 @@ export const upsertHomeBlock = async ({
       userId: user.id,
     },
   });
+};
+
+export const deleteHomeBlockById = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id } = input;
+    const homeBlock = await dbRead.homeBlock.findFirst({
+      // Confirm the homeBlock belongs to the user:
+      where: { id, userId: ctx.user.isModerator ? undefined : ctx.user.id },
+      select: { id: true, userId: true },
+    });
+
+    if (!homeBlock) {
+      return null;
+    }
+
+    const isOwner = homeBlock.userId === ctx.user.id;
+
+    const deleteSuccess = await dbWrite.homeBlock.delete({ where: { id } });
+    // See if the user has other home blocks:
+
+    if (isOwner) {
+      // Check that the user has other collections:
+      const hasOtherHomeBlocks = await userHasCustomHomeBlocks(ctx.user);
+
+      if (!hasOtherHomeBlocks) {
+        // Delete all cloned collections if any, this will
+        // leave them with our default home blocks:
+        await dbWrite.homeBlock.deleteMany({ where: { userId: ctx.user.id } });
+      }
+    }
+
+    return deleteSuccess;
+  } catch {
+    // Ignore errors
+  }
 };

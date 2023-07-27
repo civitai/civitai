@@ -1,12 +1,14 @@
 import { Context } from '~/server/createContext';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
+  deleteHomeBlockById,
   getHomeBlockById,
   getHomeBlockData,
   getHomeBlocks,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import {
+  deleteCollectionById,
   getCollectionById,
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
@@ -20,6 +22,8 @@ import { isDefined } from '~/utils/type-guards';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
 import { HomeBlockType } from '@prisma/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { TRPCError } from '@trpc/server';
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
 type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
@@ -46,6 +50,7 @@ export const getHomeBlocksHandler = async ({
         id: true,
         metadata: true,
         type: true,
+        userId: true,
       },
       ctx,
     });
@@ -107,4 +112,19 @@ export const createCollectionHomeBlockHandler = async ({
     },
     ctx,
   });
+};
+
+export const deleteUserHomeBlockHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    await deleteHomeBlockById({ input, ctx });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
 };
