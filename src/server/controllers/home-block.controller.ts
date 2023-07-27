@@ -4,12 +4,14 @@ import {
   getHomeBlockById,
   getHomeBlockData,
   getHomeBlocks,
+  upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
 import {
+  CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
   HomeBlockMetaSchema,
@@ -17,6 +19,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
+import { HomeBlockType } from '@prisma/client';
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
 type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
@@ -74,4 +77,34 @@ export const getHomeBlocksByIdHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const createCollectionHomeBlockHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: CreateCollectionHomeBlockInputSchema;
+}) => {
+  const collection = await getCollectionById({ input: { id: input.collectionId } });
+
+  if (!collection) {
+    throw throwNotFoundError('Collection not found');
+  }
+
+  const metadata: HomeBlockMetaSchema = {
+    collection: {
+      id: collection.id,
+      // Right now this is the standard.
+      limit: 8,
+    },
+  };
+
+  await upsertHomeBlock({
+    input: {
+      type: HomeBlockType.Collection,
+      metadata,
+    },
+    ctx,
+  });
 };

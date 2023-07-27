@@ -242,7 +242,6 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
       id: true,
       name: true,
       description: true,
-      coverImage: true,
       read: true,
       write: true,
       type: true,
@@ -343,7 +342,7 @@ export const upsertCollection = async ({
   input: UpsertCollectionInput;
   user: SessionUser;
 }) => {
-  const { id, name, description, coverImage, read, write, type, ...collectionItem } = input;
+  const { id, name, description, read, write, type, ...collectionItem } = input;
 
   if (id) {
     const updated = await dbWrite.collection.update({
@@ -351,7 +350,6 @@ export const upsertCollection = async ({
       data: {
         name,
         description,
-        coverImage,
         read,
         write,
       },
@@ -379,7 +377,6 @@ export const upsertCollection = async ({
     data: {
       name,
       description,
-      coverImage,
       read,
       write,
       userId: user.id,

@@ -11,7 +11,13 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
-import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
+import {
+  IconCloudOff,
+  IconDotsVertical,
+  IconHome,
+  IconPencil,
+  IconPlaylistAdd,
+} from '@tabler/icons-react';
 import { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -140,6 +146,15 @@ export function Collection({
   const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
     id: collectionId,
   });
+  const createCollectionHomeBlock = trpc.homeBlock.createCollectionHomeBlock.useMutation();
+
+  const onCreateCollectionHomeBlock = async () => {
+    await createCollectionHomeBlock.mutate({
+      collectionId: collectionId,
+    });
+  };
+
+  // createCollectionHomeBlock
 
   if (!isLoading && !collection) {
     return (
@@ -203,14 +218,25 @@ export function Collection({
                       </Group>
                     </Button>
                   )}
-                  {permissions.manage && (
-                    <Menu>
-                      <Menu.Target>
-                        <ActionIcon variant="outline">
-                          <IconDotsVertical size={16} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
+                  <Menu>
+                    <Menu.Target>
+                      <ActionIcon variant="outline">
+                        <IconDotsVertical size={16} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        icon={<IconHome size={14} stroke={1.5} />}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+
+                          onCreateCollectionHomeBlock();
+                        }}
+                      >
+                        Add to my home
+                      </Menu.Item>
+                      {permissions.manage && (
                         <Menu.Item
                           component={NextLink}
                           icon={<IconPencil size={14} stroke={1.5} />}
@@ -218,9 +244,9 @@ export function Collection({
                         >
                           Review Items
                         </Menu.Item>
-                      </Menu.Dropdown>
-                    </Menu>
-                  )}
+                      )}
+                    </Menu.Dropdown>
+                  </Menu>
                 </Group>
               )}
             </Group>

@@ -1,5 +1,6 @@
-import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
+import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
+  createCollectionHomeBlockHandler,
   getHomeBlocksByIdHandler,
   getHomeBlocksHandler,
 } from '~/server/controllers/home-block.controller';
@@ -7,6 +8,7 @@ import { applyUserPreferences } from '~/server/middleware.trpc';
 import {
   getHomeBlocksInputSchema,
   getHomeBlockByIdInputSchema,
+  createCollectionHomeBlockInputSchema,
 } from '~/server/schema/home-block.schema';
 
 export const homeBlockRouter = router({
@@ -20,4 +22,8 @@ export const homeBlockRouter = router({
     .use(isFlagProtected('alternateHome'))
     .use(applyUserPreferences())
     .query(getHomeBlocksByIdHandler),
+  createCollectionHomeBlock: protectedProcedure
+    .input(createCollectionHomeBlockInputSchema)
+    .use(isFlagProtected('alternateHome'))
+    .mutation(createCollectionHomeBlockHandler),
 });

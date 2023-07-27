@@ -1,9 +1,15 @@
-import { dbRead } from '~/server/db/client';
-import { HomeBlockType, Prisma } from '@prisma/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  CollectionContributorPermission,
+  CollectionReadConfiguration,
+  HomeBlockType,
+  Prisma,
+} from '@prisma/client';
 import {
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
   HomeBlockMetaSchema,
+  UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
 import { UserPreferencesInput } from '~/server/middleware.trpc';
 import {
@@ -14,6 +20,7 @@ import { getLeaderboardsWithResults } from '~/server/services/leaderboard.servic
 import { getAnnouncements } from '~/server/services/announcement.service';
 import { Context } from '~/server/createContext';
 import { SessionUser } from 'next-auth';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -30,9 +37,16 @@ export const getHomeBlocks = async <
     select,
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
     where: {
-      // Either the user has custom home blocks of their own,
-      // or we return the default Civitai ones (user -1).
-      userId: hasCustomHomeBlocks ? ctx.user?.id : -1,
+      OR: [
+        {
+          // Either the user has custom home blocks of their own,
+          // or we return the default Civitai ones (user -1).
+          userId: hasCustomHomeBlocks ? ctx.user?.id : -1,
+        },
+        {
+          permanent: true,
+        },
+      ],
     },
   });
 };
@@ -173,11 +187,57 @@ export const userHasCustomHomeBlocks = async (user?: SessionUser) => {
 
   const [row]: { exists: boolean }[] = await dbRead.$queryRaw`
     SELECT EXISTS(
-        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=22
+        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=${user.id}
       )
   `;
 
   const { exists } = row;
 
   return exists;
+};
+
+export const upsertHomeBlock = async ({
+  input,
+  ctx,
+}: {
+  input: UpsertHomeBlockInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { id, metadata, type, sourceId, index } = input;
+  const { user } = ctx;
+
+  if (id) {
+    const homeBlock = await dbRead.homeBlock.findUnique({
+      select: { userId: true },
+      where: { id },
+    });
+
+    if (!homeBlock) {
+      throw throwNotFoundError('Home block not found.');
+    }
+
+    if (user.id !== homeBlock.userId && !user.isModerator) {
+      throw throwAuthorizationError('You are not authorized to edit this home block.');
+    }
+
+    const updated = await dbWrite.homeBlock.updateMany({
+      where: { OR: [{ id }, { sourceId: id }] },
+      data: {
+        metadata,
+        index,
+      },
+    });
+
+    return updated;
+  }
+
+  return dbWrite.homeBlock.create({
+    data: {
+      metadata,
+      type,
+      sourceId,
+      index,
+      userId: user.id,
+    },
+  });
 };

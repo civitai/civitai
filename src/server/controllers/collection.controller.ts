@@ -53,7 +53,6 @@ export const getAllUserCollectionsHandler = async ({
         id: true,
         name: true,
         description: true,
-        coverImage: true,
         read: true,
         items: { select: { modelId: true, imageId: true, articleId: true, postId: true } },
         userId: true,
