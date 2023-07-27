@@ -13,15 +13,27 @@ import {
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
 import { Context } from '~/server/createContext';
+import { SessionUser } from 'next-auth';
 
-export const getHomeBlocks = <TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect>({
+export const getHomeBlocks = async <
+  TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
+>({
   select,
+  ctx,
 }: {
   select: TSelect;
+  ctx: Context;
 }) => {
+  const hasCustomHomeBlocks = await userHasCustomHomeBlocks(ctx.user);
+
   return dbRead.homeBlock.findMany({
     select,
     orderBy: { index: 'asc' },
+    where: {
+      // Either the user has custom home blocks of their own,
+      // or we return the default Civitai ones.
+      userId: hasCustomHomeBlocks ? ctx.user?.id : -1,
+    },
   });
 };
 
@@ -152,4 +164,16 @@ export const getHomeBlockData = async ({
     default:
       return { ...homeBlock, metadata };
   }
+};
+
+export const userHasCustomHomeBlocks = async (user?: SessionUser) => {
+  if (!user) {
+    return false;
+  }
+
+  return dbRead.$executeRaw`
+    SELECT EXISTS(
+        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=${user.id}
+      )
+  `;
 };
