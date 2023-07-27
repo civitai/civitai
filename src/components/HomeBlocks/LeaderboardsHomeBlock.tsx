@@ -1,5 +1,4 @@
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { HomeBlockGetAll } from '~/types/router';
 import { Box, Button, Card, createStyles, Divider, Group, Stack, Text } from '@mantine/core';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import Link from 'next/link';
@@ -8,8 +7,10 @@ import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/L
 import { Fragment } from 'react';
 import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
+import { LeaderboardsHomeBlockSkeleton } from '~/components/HomeBlocks/LeaderboardHomeBlockSkeleton';
+import { trpc } from '~/utils/trpc';
 
-type Props = { homeBlock: HomeBlockGetAll[number] };
+type Props = { homeBlockId: number };
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -27,10 +28,15 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const LeaderboardsHomeBlock = ({ homeBlock }: Props) => {
+export const LeaderboardsHomeBlock = ({ homeBlockId }: Props) => {
   const { classes } = useStyles();
+  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
 
-  if (!homeBlock.leaderboards || homeBlock.leaderboards.length === 0) {
+  if (isLoading) {
+    return <LeaderboardsHomeBlockSkeleton />;
+  }
+
+  if (!homeBlock || !homeBlock.leaderboards || homeBlock.leaderboards.length === 0) {
     return null;
   }
 
