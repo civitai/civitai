@@ -1,16 +1,8 @@
 import { MediaType } from '@prisma/client';
 import { env } from '~/env/client.mjs';
-import { AUDIO_MIME_TYPE, IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
-type MimeType =
-  | 'image/jpeg'
-  | 'image/png'
-  | 'image/webp'
-  | 'image/gif'
-  | 'image/mp4'
-  | 'image/webm';
 export type EdgeUrlProps = {
   src: string;
   name?: string | null;
@@ -53,11 +45,4 @@ export function getEdgeUrl(
   else name = name + extension;
 
   return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name].filter(Boolean).join('/');
-}
-
-export function inferMediaType(mimeType: string) {
-  if (IMAGE_MIME_TYPE.includes(mimeType as any)) return MediaType.image;
-  if (VIDEO_MIME_TYPE.includes(mimeType as any)) return MediaType.video;
-  if (AUDIO_MIME_TYPE.includes(mimeType as any)) return MediaType.audio;
-  return undefined;
 }

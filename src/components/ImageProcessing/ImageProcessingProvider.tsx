@@ -14,7 +14,7 @@ import {
 } from '~/workers/image-processing-worker-types';
 // @ts-ignore
 import SharedWorker from '@okikio/sharedworker';
-import { loadImage, getImageData, blurHashImage } from '~/utils/blurhash';
+import { loadImage, blurHashImage } from '~/utils/blurhash';
 import { bytesToKB } from '~/utils/number-helpers';
 
 type MessageCallback = (data: ScanImageMessage) => void;
