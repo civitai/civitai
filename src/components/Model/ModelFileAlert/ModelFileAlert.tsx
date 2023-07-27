@@ -87,7 +87,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
           >
             VAE
           </Anchor>
-          , download and place it along side the checkpoint.
+          , download and place it in the VAE folder.
         </AlertWithIcon>
       )}
     </>
