@@ -17,7 +17,7 @@ import {
   Skeleton,
   Loader,
 } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   IconDotsVertical,
@@ -96,6 +96,7 @@ function ImageController({
     needsReview,
     resourceHelper,
     blockedFor,
+    mimeType,
   },
 }: {
   image: PostEditImage;
@@ -116,10 +117,11 @@ function ImageController({
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
-      <EdgeImage
+      <EdgeMedia
         src={previewUrl ?? url}
         alt={name ?? undefined}
         width={width ?? 1200}
+        mimeType={mimeType}
         onLoad={() => setWithBorder(true)}
         className={cx({ [classes.blocked]: isBlocked })}
       />
@@ -244,7 +246,7 @@ function ImageController({
   );
 }
 
-function ImageUpload({ url, name, uuid, status, message, file }: ImageUpload) {
+function ImageUpload({ url, name, uuid, status, message, file, mimeType }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.file === file);
@@ -258,7 +260,7 @@ function ImageUpload({ url, name, uuid, status, message, file }: ImageUpload) {
 
   return (
     <Card className={classes.container} withBorder p={0}>
-      <EdgeImage src={url} alt={name ?? undefined} />
+      <EdgeMedia src={url} alt={name ?? undefined} mimeType={mimeType} />
       {trackedFile && (
         <Alert
           radius={0}

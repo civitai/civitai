@@ -14,7 +14,7 @@ import {
 import { arrayMove, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { isDefined } from '~/utils/type-guards';
 import { Button, Center, createStyles, Paper } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useDidUpdate } from '@mantine/hooks';
 import { trpc } from '~/utils/trpc';
 import { CSS } from '@dnd-kit/utilities';
@@ -121,7 +121,12 @@ function SortableImage({
       className={cx(classes.root, { [classes.hidden]: activeId === sortableId && isDragging })}
       style={style}
     >
-      <EdgeImage src={image.previewUrl ?? image.url} width={450} className={classes.image} />
+      <EdgeMedia
+        src={image.previewUrl ?? image.url}
+        mimeType={image.mimeType}
+        width={450}
+        className={classes.image}
+      />
       <Center className={classes.draggable} {...listeners} {...attributes}>
         <Paper className={classes.draggableIcon} p="xl" radius={100}>
           <IconArrowsMaximize

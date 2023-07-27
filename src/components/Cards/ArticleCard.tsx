@@ -2,7 +2,7 @@ import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
 import { IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
@@ -55,7 +55,7 @@ export function ArticleCard({ data }: Props) {
           <ArticleContextMenu article={data} ml="auto" />
         </Group>
         {cover && (
-          <EdgeImage
+          <EdgeMedia
             src={cover}
             width={IMAGE_CARD_WIDTH}
             placeholder="empty"

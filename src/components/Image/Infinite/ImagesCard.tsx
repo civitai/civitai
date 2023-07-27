@@ -15,7 +15,7 @@ import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesInfiniteContext } from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageIngestionContext } from '~/components/Image/Ingestion/ImageIngestionProvider';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -75,11 +75,12 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                               <MediaHash {...image} />
                             </AspectRatio>
                           ) : (
-                            <EdgeImage
+                            <EdgeMedia
                               src={image.url}
                               className={cx({ [classes.blocked]: isBlocked })}
                               name={image.name ?? image.id.toString()}
                               alt={image.name ?? undefined}
+                              mimeType={image.mimeType}
                               width={450}
                               placeholder="empty"
                               style={{ width: '100%' }}

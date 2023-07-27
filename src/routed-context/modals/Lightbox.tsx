@@ -17,7 +17,7 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { IconMinus, IconInfoCircle } from '@tabler/icons-react';
 import { useState, useRef } from 'react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
@@ -142,10 +142,11 @@ export function Lightbox({
                               </AspectRatio>
                             </ImageGuard.Unsafe>
                             <ImageGuard.Safe>
-                              <EdgeImage
+                              <EdgeMedia
                                 src={image.url}
                                 name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
+                                mimeType={image.mimeType}
                                 style={{ maxHeight: '100vh', maxWidth: '100vw' }}
                                 width={width}
                               />

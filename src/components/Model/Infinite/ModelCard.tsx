@@ -35,7 +35,7 @@ import { InView } from 'react-intersection-observer';
 
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -454,10 +454,11 @@ export function AmbientModelCard({ data, height }: Props) {
                             </AspectRatio>
                           </ImageGuard.Unsafe>
                           <ImageGuard.Safe>
-                            <EdgeImage
+                            <EdgeMedia
                               src={image.url}
                               name={image.name ?? image.id.toString()}
                               alt={image.name ?? undefined}
+                              mimeType={image.mimeType}
                               width={450}
                               placeholder="empty"
                               style={{ width: '100%', zIndex: 2, position: 'relative' }}

@@ -48,7 +48,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -404,7 +404,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                   {user.image && (
                     <div className={classes.outsideImage}>
                       <AspectRatio ratio={1 / 1} className={classes.image}>
-                        <EdgeImage
+                        <EdgeMedia
                           src={user.image}
                           name={user.username}
                           width={128}
@@ -418,7 +418,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                       {user.image && (
                         <div className={classes.insideImage}>
                           <AspectRatio ratio={1 / 1} className={classes.image}>
-                            <EdgeImage
+                            <EdgeMedia
                               src={user.image}
                               name={user.username}
                               width={128}

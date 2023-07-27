@@ -1,6 +1,6 @@
 import { Stack, Title, Text, Center, createStyles } from '@mantine/core';
 import { IconCirclePlus, IconClock } from '@tabler/icons-react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 
 type SubscriptionCardProps = {
@@ -26,7 +26,7 @@ export function PlanDetails({
       <Stack spacing={0} mb="md">
         {image && (
           <Center>
-            <EdgeImage src={image} width={128} className={classes.image} />
+            <EdgeMedia src={image} width={128} className={classes.image} />
           </Center>
         )}
         <Title className={classes.title} order={2} align="center">

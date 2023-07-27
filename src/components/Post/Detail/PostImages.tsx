@@ -10,7 +10,7 @@ import {
   Group,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -65,10 +65,11 @@ export function PostImages({
                 <ImageGuard.Content>
                   {({ safe }) => (
                     <>
-                      <EdgeImage
+                      <EdgeMedia
                         src={image.url}
                         name={image.name}
                         alt={image.name ?? undefined}
+                        mimeType={image.mimeType}
                         width={width < maxWidth ? width : maxWidth}
                         className={cx({ [classes.blur]: !safe })}
                       />

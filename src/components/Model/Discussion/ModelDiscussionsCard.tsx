@@ -13,7 +13,6 @@ import {
 } from '@mantine/core';
 import { useMemo } from 'react';
 import { InView } from 'react-intersection-observer';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';

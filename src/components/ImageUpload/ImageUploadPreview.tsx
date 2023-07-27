@@ -12,7 +12,7 @@ import {
   Code,
   Stack,
 } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
@@ -57,10 +57,16 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
         style={{ ...style, ...props.style }}
       >
         {!ready && image.previewUrl ? (
-          <EdgeImage src={image.previewUrl} height={410} className={classes.image} />
+          <EdgeMedia
+            src={image.previewUrl}
+            mimeType={image.mimeType}
+            height={410}
+            className={classes.image}
+          />
         ) : image.url && image.url != image.previewUrl ? (
-          <EdgeImage
+          <EdgeMedia
             src={image.url}
+            mimeType={image.mimeType}
             height={410}
             className={classes.image}
             onLoad={() => {

@@ -1,6 +1,6 @@
 import { BadgeProps, Box, Group, MantineColor, MantineSize, Text, Tooltip } from '@mantine/core';
 import { IconCrown } from '@tabler/icons-react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 const rankColors: Record<number, MantineColor> = {
@@ -28,7 +28,7 @@ export const RankBadge = ({ rank, size, textSize = 'sm', iconSize = 18, ...props
       <Group spacing={0} noWrap sx={{ position: 'relative' }}>
         {rank.leaderboardCosmetic ? (
           <Box pos="relative" sx={{ zIndex: 2 }}>
-            <EdgeImage src={rank.leaderboardCosmetic} width={32} />
+            <EdgeMedia src={rank.leaderboardCosmetic} width={32} />
           </Box>
         ) : null}
         <IconBadge

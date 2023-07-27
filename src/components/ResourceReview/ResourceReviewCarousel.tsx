@@ -20,7 +20,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { NextLink } from '@mantine/next';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { MetricTimeframe } from '@prisma/client';
 
@@ -112,10 +112,11 @@ export function ResourceReviewCarousel({
                             {!safe ? (
                               <MediaHash {...image} />
                             ) : (
-                              <EdgeImage
+                              <EdgeMedia
                                 src={image.url}
                                 name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
+                                mimeType={image.mimeType}
                                 width={450}
                                 placeholder="empty"
                                 style={{ width: '100%', objectPosition: 'top' }}

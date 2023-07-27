@@ -32,7 +32,7 @@ import React, { useEffect, useState } from 'react';
 
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -313,11 +313,12 @@ export function ModelCategoryCard({
                         <MediaHash {...image} />
                       </div>
                       {safe && (
-                        <EdgeImage
+                        <EdgeMedia
                           className={classes.image}
                           src={image.url}
                           name={image.name ?? image.id.toString()}
                           alt={image.name ?? undefined}
+                          mimeType={image.mimeType}
                           width={450}
                           placeholder="empty"
                         />

@@ -2,7 +2,7 @@ import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -33,10 +33,11 @@ export function PostCard({ data }: Props) {
                     {!safe ? (
                       <MediaHash {...data.image} />
                     ) : (
-                      <EdgeImage
+                      <EdgeMedia
                         src={image.url}
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
+                        mimeType={image.mimeType}
                         width={IMAGE_CARD_WIDTH}
                         placeholder="empty"
                         className={classes.image}

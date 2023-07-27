@@ -15,7 +15,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -91,7 +91,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
               },
             })}
           >
-            <EdgeImage src={image.previewUrl ?? image.url} width={450} />
+            <EdgeMedia src={image.previewUrl ?? image.url} mimeType={image.mimeType} width={450} />
           </Box>
         </div>
       ) : (

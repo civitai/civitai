@@ -32,7 +32,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -163,9 +163,10 @@ function ModelSpotlightAction({
           nsfw || image.nsfw !== 'None' ? (
             <MediaHash {...image} cropFocus="top" />
           ) : (
-            <EdgeImage
+            <EdgeMedia
               src={image.url}
               name={image.name ?? image.id.toString()}
+              mimeType={image.mimeType}
               width={450}
               style={{
                 minWidth: '100%',
@@ -365,7 +366,7 @@ function ArticleSpotlightAction({
           borderRadius: '10px',
         }}
       >
-        <EdgeImage
+        <EdgeMedia
           src={image}
           width={450}
           style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}

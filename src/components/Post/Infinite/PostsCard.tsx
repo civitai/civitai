@@ -1,6 +1,6 @@
 import { AspectRatio, createStyles } from '@mantine/core';
 import { InView } from 'react-intersection-observer';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -38,10 +38,11 @@ export function PostsCard({
                               <MediaHash {...image} />
                             </AspectRatio>
                           ) : (
-                            <EdgeImage
+                            <EdgeMedia
                               src={image.url}
                               name={image.name ?? image.id.toString()}
                               alt={image.name ?? undefined}
+                              mimeType={image.mimeType}
                               width={450}
                               placeholder="empty"
                               style={{ width: '100%', position: 'relative' }}

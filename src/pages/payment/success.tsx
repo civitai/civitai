@@ -13,7 +13,7 @@ import { NextLink } from '@mantine/next';
 import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { enterFall, jelloVerical } from '~/libs/animations';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -55,7 +55,7 @@ export default function PaymentSuccess() {
             animationIterationCount: '1, 1',
           }}
         >
-          <EdgeImage src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
+          <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
         </Center>
         <Title order={1} align="center">
           Thank you! 🎉

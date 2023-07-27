@@ -1,7 +1,7 @@
 import { Box, Group, MantineSize, Text, Tooltip } from '@mantine/core';
 import React from 'react';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -47,7 +47,7 @@ export function Username({
       {badge?.data.url && (
         <Tooltip color="dark" label={badge.name} withArrow style={{ flex: 1 }}>
           <div>
-            <EdgeImage src={badge.data.url} width={badgeSize} />
+            <EdgeMedia src={badge.data.url} width={badgeSize} />
           </div>
         </Tooltip>
       )}

@@ -21,7 +21,7 @@ import { useCallback, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -179,7 +179,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                     >
                       {file.status === 'success' ? (
                         <>
-                          <EdgeImage
+                          <EdgeMedia
                             placeholder="empty"
                             src={file.id}
                             alt={file.name ?? undefined}
@@ -301,10 +301,11 @@ function SelectableImageCard({ data }: { data: ImageGetInfinite[number] }) {
                       <MediaHash {...image} />
                     </AspectRatio>
                   ) : (
-                    <EdgeImage
+                    <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
                       alt={image.name ?? undefined}
+                      mimeType={image.mimeType}
                       width={450}
                       placeholder="empty"
                       style={{ width: '100%' }}

@@ -2,7 +2,7 @@ import { InputWrapperProps, LoadingOverlay, Text, Input, Paper, Group } from '@m
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
 import produce from 'immer';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -63,7 +63,7 @@ export function ProfileImageUpload({
 
           return (
             <div key={index}>
-              <EdgeImage src={image.previewUrl ?? image.url} width={previewWidth} />
+              <EdgeMedia src={image.previewUrl ?? image.url} width={previewWidth} />
             </div>
           );
         })}
