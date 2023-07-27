@@ -65,6 +65,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     cursor,
     periodMode: 'published',
     include: ['count'],
+    headers: { src: '/api/v1/images' },
   });
 
   const metadata: Metadata = {

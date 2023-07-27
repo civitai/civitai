@@ -382,10 +382,10 @@ export default function ModelDetailsV2({
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
     router.beforePopState(({ as, url }) => {
-      const homePath = features.alternateHome ? '/models' : '/';
+      const modelsPath = features.alternateHome ? '/models' : '/';
       if (
-        as === homePath ||
-        as.startsWith(homePath + '?') ||
+        as === modelsPath ||
+        as.startsWith(modelsPath + '?') ||
         as.startsWith('/user/') ||
         as.startsWith('/tag/')
       ) {
@@ -405,7 +405,7 @@ export default function ModelDetailsV2({
     });
 
     return () => router.beforePopState(() => true);
-  }, [id]); // Add any state variables to dependencies array if needed.
+  }, [id, features.alternateHome]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
 

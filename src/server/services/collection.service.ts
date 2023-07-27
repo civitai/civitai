@@ -527,6 +527,7 @@ export const getCollectionItemsByCollectionId = async ({
           userId: ctx.user?.id,
           isModerator: ctx.user?.isModerator,
           ids: imageIds,
+          headers: { src: 'getCollectionItemsByCollectionId' },
         })
       : { items: [] };
 

@@ -6,6 +6,7 @@ import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
 export const comfyMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => exif.prompt && exif.workflow,
   parse: (exif) => {
+    console.log(exif);
     const data = JSON.parse(exif.prompt as string) as Record<string, ComfyNode>;
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
@@ -21,11 +22,8 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       if (node.class_type == 'KSamplerAdvanced') {
         const simplifiedNode = { ...node.inputs };
 
-        const stepsNode = simplifiedNode.steps as ComfyNode;
-        simplifiedNode.steps = stepsNode.inputs.Value as number;
-
-        const cfgNode = simplifiedNode.cfg as ComfyNode;
-        simplifiedNode.cfg = cfgNode.inputs.Value as number;
+        simplifiedNode.steps = getNumberValue(simplifiedNode.steps as ComfyNumber);
+        simplifiedNode.cfg = getNumberValue(simplifiedNode.cfg as ComfyNumber);
 
         samplerNodes.push(simplifiedNode as SamplerNode);
       }
@@ -121,6 +119,12 @@ function getPromptText(node: ComfyNode) {
     return `${node.inputs.text_g}, ${node.inputs.text_l}`;
   }
   return '';
+}
+
+type ComfyNumber = ComfyNode | number;
+function getNumberValue(input: ComfyNumber) {
+  if (typeof input === 'number') return input;
+  return input.inputs.Value as number;
 }
 
 // #region [types]

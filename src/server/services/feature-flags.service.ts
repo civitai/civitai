@@ -43,7 +43,7 @@ const featureFlags = createFeatureFlags({
   },
   modelCardV2: {
     toggleable: true,
-    default: true,
+    default: false,
     displayName: 'Model Card V2',
     description: `A fresh style for model cards with more information and a better layout.`,
     availability: ['user'],

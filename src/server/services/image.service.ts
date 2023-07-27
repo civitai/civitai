@@ -339,7 +339,13 @@ export const getAllImages = async ({
   excludeCrossPosts,
   reactions,
   ids,
-}: GetInfiniteImagesInput & { userId?: number; isModerator?: boolean; nsfw?: NsfwLevel }) => {
+  headers,
+}: GetInfiniteImagesInput & {
+  userId?: number;
+  isModerator?: boolean;
+  nsfw?: NsfwLevel;
+  headers?: Record<string, string>;
+}) => {
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   let orderBy: string;
 
@@ -442,7 +448,7 @@ export const getAllImages = async ({
 
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${collectionId} 
+      WHERE ci."collectionId" = ${collectionId}
         AND ci."imageId" = i.id
         AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
     )`);
@@ -529,7 +535,22 @@ export const getAllImages = async ({
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
+  const exclusions =
+    (excludedImageIds?.length ?? 0) +
+    (excludedTagIds?.length ?? 0) +
+    (excludedUserIds?.length ?? 0);
+  const queryHeader = Object.entries({
+    exclusions,
+    cursor,
+    skip,
+    limit,
+    ...(headers ?? {}),
+  })
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join(', ');
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+    -- ${Prisma.raw(queryHeader)}
     SELECT
       i.id,
       i.name,

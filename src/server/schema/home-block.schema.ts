@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { userPreferencesSchema } from '~/server/middleware.trpc';
+import { getByIdSchema } from '~/server/schema/base.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
@@ -46,3 +47,7 @@ export const getHomeBlocksInputSchema = z
   .merge(userPreferencesSchema)
   .partial()
   .default({ limit: 8 });
+
+export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
+
+export const getHomeBlockByIdInputSchema = getByIdSchema.merge(userPreferencesSchema).partial();

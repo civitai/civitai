@@ -1,13 +1,13 @@
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { HomeBlockGetAll } from '~/types/router';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { createStyles, Grid } from '@mantine/core';
 import { AnnouncementHomeBlockAnnouncementItem } from '~/components/HomeBlocks/components/AnnouncementHomeBlockAnnouncementItem';
 import { useDismissedAnnouncements } from '~/hooks/useDismissedAnnouncements';
 import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
+import { trpc } from '~/utils/trpc';
 
-type Props = { homeBlock: HomeBlockGetAll[number] };
+type Props = { homeBlockId: number };
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -20,15 +20,17 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const AnnouncementHomeBlock = ({ homeBlock }: Props) => {
+export const AnnouncementHomeBlock = ({ homeBlockId }: Props) => {
   const { classes } = useStyles();
+  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+
   const announcementIds = useMemo(
-    () => (homeBlock.announcements ? homeBlock.announcements.map((item) => item.id) : []),
-    [homeBlock.announcements]
+    () => (homeBlock?.announcements ? homeBlock.announcements.map((item) => item.id) : []),
+    [homeBlock?.announcements]
   );
   const { dismissed, onAnnouncementDismiss } = useDismissedAnnouncements(announcementIds);
 
-  if (!homeBlock.announcements) {
+  if (!homeBlock || !homeBlock.announcements || isLoading) {
     return null;
   }
 
