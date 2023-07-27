@@ -7,6 +7,7 @@ import {
   GetUserCollectionItemsByItemSchema,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  GetAllCollectionsInfiniteSchema,
 } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
@@ -24,18 +25,27 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { UserPreferencesInput, userPreferencesSchema } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
 import { getArticles } from '~/server/services/article.service';
 import {
   getModelsWithImagesAndModelVersions,
   GetModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
-import { Context } from '~/server/createContext';
-import { ArticleSort, BrowsingMode, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import {
+  ArticleSort,
+  BrowsingMode,
+  CollectionSort,
+  ImageSort,
+  ModelSort,
+  PostSort,
+} from '~/server/common/enums';
 import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import {
+  GetByIdInput,
+  UserPreferencesInput,
+  userPreferencesSchema,
+} from '~/server/schema/base.schema';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -46,6 +56,35 @@ export type CollectionContributorPermissionFlags = {
   isContributor: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
+};
+
+export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
+  input: { limit, cursor, privacy, types, userId, sort, ids },
+  user,
+  select,
+}: {
+  input: GetAllCollectionsInfiniteSchema;
+  select: TSelect;
+  user?: SessionUser;
+}) => {
+  const orderBy: Prisma.CollectionFindManyArgs['orderBy'] = [{ createdAt: 'desc' }];
+  if (sort === CollectionSort.MostContributors)
+    orderBy.unshift({ contributors: { _count: 'desc' } });
+
+  const collections = await dbRead.collection.findMany({
+    take: limit,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: {
+      id: ids && ids.length > 0 ? { in: ids } : undefined,
+      read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
+      type: types && types.length > 0 ? { in: types } : undefined,
+      userId,
+    },
+    select,
+    orderBy,
+  });
+
+  return collections;
 };
 
 export const getUserCollectionPermissionsById = async ({
@@ -242,7 +281,7 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
       id: true,
       name: true,
       description: true,
-      coverImage: true,
+      image: true,
       read: true,
       write: true,
       type: true,
@@ -427,11 +466,11 @@ export type CollectionItemExpanded = { id: number; status?: CollectionItemStatus
 );
 
 export const getCollectionItemsByCollectionId = async ({
-  ctx,
   input,
+  user,
 }: {
-  ctx: Context;
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
+  user?: SessionUser;
 }) => {
   const { statuses = [CollectionItemStatus.ACCEPTED], limit, collectionId, page, cursor } = input;
 
@@ -441,7 +480,7 @@ export const getCollectionItemsByCollectionId = async ({
 
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
-    user: ctx.user,
+    user,
   });
 
   if (
@@ -483,6 +522,7 @@ export const getCollectionItemsByCollectionId = async ({
   const models =
     modelIds.length > 0
       ? await getModelsWithImagesAndModelVersions({
+          user,
           input: {
             limit: modelIds.length,
             sort: ModelSort.Newest,
@@ -493,7 +533,6 @@ export const getCollectionItemsByCollectionId = async ({
             ...userPreferencesInput,
             ids: modelIds,
           },
-          ctx,
         })
       : { items: [] };
 
@@ -508,7 +547,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
           browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
-          sessionUser: ctx.user,
+          sessionUser: user,
           ids: articleIds,
         })
       : { items: [] };
@@ -524,8 +563,8 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ImageSort.Newest,
           ...userPreferencesInput,
-          userId: ctx.user?.id,
-          isModerator: ctx.user?.isModerator,
+          userId: user?.id,
+          isModerator: user?.isModerator,
           ids: imageIds,
         })
       : { items: [] };
@@ -540,7 +579,7 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'published',
           sort: PostSort.Newest,
           ...userPreferencesInput,
-          user: ctx.user,
+          user,
           browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
           ids: postIds,
         })

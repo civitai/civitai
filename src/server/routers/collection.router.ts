@@ -1,32 +1,72 @@
 import {
   addSimpleImagePostHandler,
   bulkSaveItemsHandler,
-  saveItemHandler,
-  getAllUserCollectionsHandler,
-  upsertCollectionHandler,
-  deleteUserCollectionHandler,
-  getCollectionByIdHandler,
-  followHandler,
-  unfollowHandler,
-  getUserCollectionItemsByItemHandler,
   collectionItemsInfiniteHandler,
+  deleteUserCollectionHandler,
+  followHandler,
+  getAllCollectionsInfiniteHandler,
+  getAllUserCollectionsHandler,
+  getCollectionByIdHandler,
+  getUserCollectionItemsByItemHandler,
+  saveItemHandler,
+  unfollowHandler,
   updateCollectionItemsStatusHandler,
+  upsertCollectionHandler,
 } from '~/server/controllers/collection.controller';
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { dbRead } from '~/server/db/client';
+import { applyUserPreferences } from '~/server/middleware.trpc';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
-  saveCollectionItemInputSchema,
-  getAllUserCollectionsInputSchema,
-  getUserCollectionItemsByItemSchema,
-  upsertCollectionInput,
   followCollectionInputSchema,
   getAllCollectionItemsSchema,
+  getAllCollectionsInfiniteSchema,
+  getAllUserCollectionsInputSchema,
+  getUserCollectionItemsByItemSchema,
+  saveCollectionItemInputSchema,
   updateCollectionItemsStatusInput,
+  upsertCollectionInput,
 } from '~/server/schema/collection.schema';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import {
+  isFlagProtected,
+  middleware,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+
+const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
+  if (!ctx.user) throw throwAuthorizationError();
+
+  const { id } = input as { id: number };
+
+  const userId = ctx.user.id;
+  let ownerId = userId;
+  if (id) {
+    const isModerator = ctx?.user?.isModerator;
+    ownerId = (await dbRead.collection.findUnique({ where: { id } }))?.userId ?? 0;
+    if (!isModerator) {
+      if (ownerId !== userId) throw throwAuthorizationError();
+    }
+  }
+
+  return next({
+    ctx: {
+      // infers the `user` as non-nullable
+      user: ctx.user,
+      ownerId,
+    },
+  });
+});
 
 export const collectionRouter = router({
+  getInfinite: protectedProcedure
+    .input(getAllCollectionsInfiniteSchema)
+    .use(isFlagProtected('collections'))
+    .use(applyUserPreferences())
+    .query(getAllCollectionsInfiniteHandler),
   getAllUser: protectedProcedure
     .input(getAllUserCollectionsInputSchema)
     .use(isFlagProtected('collections'))
@@ -63,6 +103,7 @@ export const collectionRouter = router({
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))
+    .use(isOwnerOrModerator)
     .mutation(deleteUserCollectionHandler),
   bulkSaveItems: protectedProcedure
     .input(bulkSaveCollectionItemsInput)

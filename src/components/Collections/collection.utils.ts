@@ -6,12 +6,18 @@ import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { CollectionItemStatus } from '@prisma/client';
 import { ImageProps } from '~/components/ImageGuard/ImageGuard';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { CollectionSort } from '~/server/common/enums';
+import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
+import { trpc } from '~/utils/trpc';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 const collectionQueryParamSchema = z
   .object({
     collectionId: z
       .union([z.array(z.coerce.number()), z.coerce.number()])
       .transform((val) => (Array.isArray(val) ? val[0] : val)),
+    sort: z.nativeEnum(CollectionSort),
+    userId: z.coerce.number().optional(),
   })
   .partial();
 
@@ -86,4 +92,23 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
   }
 
   return reviewData;
+};
+export const useQueryCollections = (
+  filters?: Partial<GetAllCollectionsInfiniteSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  filters ??= {};
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const { data, ...rest } = trpc.collection.getInfinite.useInfiniteQuery(
+    { ...filters, browsingMode },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      trpc: { context: { skipBatch: true } },
+      ...options,
+    }
+  );
+
+  const collections = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+
+  return { data, collections, ...rest };
 };

@@ -5,7 +5,7 @@ import {
   GetHomeBlocksInputSchema,
   HomeBlockMetaSchema,
 } from '~/server/schema/home-block.schema';
-import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
@@ -86,7 +86,7 @@ export const getHomeBlockData = async ({
       }
 
       const items = await getCollectionItemsByCollectionId({
-        ctx,
+        user: ctx.user,
         input: {
           ...(input as UserPreferencesInput),
           collectionId: collection.id,

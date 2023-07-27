@@ -14,6 +14,7 @@ import {
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
   AddSimpleImagePostInput,
+  GetAllCollectionsInfiniteSchema,
 } from '~/server/schema/collection.schema';
 import {
   saveItemInCollections,
@@ -28,13 +29,70 @@ import {
   getCollectionItemsByCollectionId,
   updateCollectionItemsStatus,
   bulkSaveItems,
+  getAllCollections,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { UserPreferencesInput } from '~/server/middleware.trpc';
 import { addPostImage, createPost } from '~/server/services/post.service';
-import { CollectionReadConfiguration } from '@prisma/client';
+import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
+import { constants } from '~/server/common/constants';
+
+export const getAllCollectionsInfiniteHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllCollectionsInfiniteSchema;
+  ctx: Context;
+}) => {
+  input.limit = input.limit ?? constants.collectionFilterDefaults.limit;
+  const limit = input.limit + 1;
+
+  try {
+    const items = await getAllCollections({
+      input: { ...input, limit },
+      select: {
+        id: true,
+        name: true,
+        read: true,
+        type: true,
+        image: true,
+      },
+      user: ctx.user,
+    });
+
+    let nextCursor: number | undefined;
+    if (items.length > input.limit) {
+      const nextItem = items.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    if (input.withItems) {
+      const { withItems, cursor, sort, limit, privacy, types, userId, ids, ...userPreferences } =
+        input;
+      const collectionsWithItems = await Promise.all(
+        items.map(async (collection) => ({
+          ...collection,
+          items: await getCollectionItemsByCollectionId({
+            user: ctx.user,
+            input: {
+              ...userPreferences,
+              collectionId: collection.id,
+              limit: 4, // TODO.collections: only bring max four items per collection atm
+              statuses: [CollectionItemStatus.ACCEPTED],
+            },
+          }),
+        }))
+      );
+
+      return { nextCursor, items: collectionsWithItems };
+    }
+
+    return { nextCursor, items };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
 
 export const getAllUserCollectionsHandler = async ({
   ctx,
@@ -231,7 +289,7 @@ export const collectionItemsInfiniteHandler = async ({
   const limit = input.limit + 1;
   const collectionItems = await getCollectionItemsByCollectionId({
     input: { ...input, limit },
-    ctx,
+    user: ctx.user,
   });
 
   let nextCursor: number | undefined;

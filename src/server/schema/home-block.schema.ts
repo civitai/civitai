@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { userPreferencesSchema } from '~/server/middleware.trpc';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getByIdSchema, userPreferencesSchema } from '~/server/schema/base.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 

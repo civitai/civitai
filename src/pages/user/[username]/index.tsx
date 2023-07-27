@@ -23,17 +23,18 @@ import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { MetricTimeframe, ReviewReactions } from '@prisma/client';
 import {
-  IconAlbum,
   IconArrowBackUp,
   IconBan,
   IconBox,
+  IconCategory,
   IconDotsVertical,
   IconDownload,
+  IconFileText,
   IconFlag,
   IconHeart,
+  IconLayoutList,
   IconMicrophone,
   IconMicrophoneOff,
-  IconNotebook,
   IconPhoto,
   IconStar,
   IconTrash,
@@ -632,18 +633,23 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                     </Group>
                   </Card>
                   <Tabs.List position="center">
+                    <Tabs.Tab value="/models" icon={<IconCategory size="1rem" />}>
+                      Models
+                    </Tabs.Tab>
                     <Tabs.Tab value="/images" icon={<IconPhoto size="1rem" />}>
                       Images
                     </Tabs.Tab>
-                    <Tabs.Tab value="/posts" icon={<IconAlbum size="1rem" />}>
+                    <Tabs.Tab value="/posts" icon={<IconLayoutList size="1rem" />}>
                       Posts
                     </Tabs.Tab>
-                    <Tabs.Tab value="/models" icon={<IconBox size="1rem" />}>
-                      Models
-                    </Tabs.Tab>
                     {features.articles && (
-                      <Tabs.Tab value="/articles" icon={<IconNotebook size="1rem" />}>
+                      <Tabs.Tab value="/articles" icon={<IconFileText size="1rem" />}>
                         Articles
+                      </Tabs.Tab>
+                    )}
+                    {features.collections && (
+                      <Tabs.Tab value="/collections" icon={<IconBox size="1rem" />}>
+                        Collections
                       </Tabs.Tab>
                     )}
                   </Tabs.List>

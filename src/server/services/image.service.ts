@@ -29,7 +29,7 @@ import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
 import { ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpdateImageInput } from '~/server/schema/image.schema';
@@ -442,7 +442,7 @@ export const getAllImages = async ({
 
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${collectionId} 
+      WHERE ci."collectionId" = ${collectionId}
         AND ci."imageId" = i.id
         AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
     )`);

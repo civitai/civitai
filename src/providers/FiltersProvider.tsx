@@ -9,6 +9,7 @@ import {
 import {
   ArticleSort,
   BrowsingMode,
+  CollectionSort,
   ImageSort,
   ModelSort,
   PostSort,
@@ -82,6 +83,11 @@ const articleFilterSchema = z.object({
   view: viewModeSchema.default('categories'),
 });
 
+type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;
+const collectionFilterSchema = z.object({
+  sort: z.nativeEnum(CollectionSort).default(constants.collectionFilterDefaults.sort),
+});
+
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -93,6 +99,7 @@ type StorageState = {
   modelImages: ImageFilterSchema;
   posts: PostFilterSchema;
   articles: ArticleFilterSchema;
+  collections: CollectionFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
@@ -112,6 +119,7 @@ type StoreState = FilterState & {
   setModelImageFilters: (filters: Partial<ImageFilterSchema>) => void;
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
+  setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
 };
 
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
@@ -127,6 +135,7 @@ const localStorageSchemas: LocalStorageSchema = {
   modelImages: { key: 'model-image-filters', schema: modelImageFilterSchema },
   posts: { key: 'post-filters', schema: postFilterSchema },
   articles: { key: 'article-filters', schema: articleFilterSchema },
+  collections: { key: 'collections-filters', schema: collectionFilterSchema },
 };
 
 export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
@@ -204,6 +213,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'posts', data, state })),
       setArticleFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'articles', data, state })),
+      setCollectionFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
     }))
   );
 
@@ -254,6 +265,7 @@ export function useSetFilters(type: FilterSubTypes) {
           questions: state.setQuestionFilters,
           modelImages: state.setModelImageFilters,
           articles: state.setArticleFilters,
+          collections: state.setCollectionFilters,
         }[type]),
       [type]
     )
