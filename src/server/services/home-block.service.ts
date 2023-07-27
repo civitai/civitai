@@ -28,10 +28,10 @@ export const getHomeBlocks = async <
 
   return dbRead.homeBlock.findMany({
     select,
-    orderBy: { index: 'asc' },
+    orderBy: { index: { sort: 'asc', nulls: 'last' } },
     where: {
       // Either the user has custom home blocks of their own,
-      // or we return the default Civitai ones.
+      // or we return the default Civitai ones (user -1).
       userId: hasCustomHomeBlocks ? ctx.user?.id : -1,
     },
   });

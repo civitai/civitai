@@ -44,6 +44,7 @@ export const getHomeBlocksHandler = async ({
         metadata: true,
         type: true,
       },
+      ctx,
     });
 
     return homeBlocks;

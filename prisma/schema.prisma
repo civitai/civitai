@@ -1845,8 +1845,12 @@ model HomeBlock {
   userId    Int
   user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   metadata  Json          @default("{}")
-  index     Int
+  index     Int?
   type      HomeBlockType
+  permanent Boolean       @default(false)
+  sourceId  Int?
+  source    HomeBlock?    @relation("Clones", fields: [sourceId], references: [id], onDelete: SetNull)
+  clones    HomeBlock[]   @relation("Clones")
 }
 
 /// @view
