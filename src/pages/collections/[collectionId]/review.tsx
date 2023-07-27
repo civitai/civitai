@@ -210,7 +210,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
     <FeedCard>
       <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
         <Group
-          sx={{q
+          sx={{
             position: 'absolute',
             top: 5,
             right: 5,
