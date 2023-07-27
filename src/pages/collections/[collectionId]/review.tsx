@@ -218,9 +218,9 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             zIndex: 9,
           }}
         />
-        {reviewData.images.length > 0 && (
+        {reviewData.image && (
           <ImageGuard
-            images={reviewData.images}
+            images={[reviewData.image]}
             connect={{ entityId: collectionItem.id, entityType: 'collectionItem' }}
             render={(image) => (
               <ImageGuard.Content>
@@ -270,7 +270,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             )}
           />
         )}
-        {reviewData.imageSrc && (
+        {reviewData.cover && (
           <>
             <Group
               spacing={4}
@@ -291,7 +291,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               className={sharedClasses.image}
               loading="lazy"
               width={DEFAULT_EDGE_IMAGE_WIDTH}
-              src={reviewData.imageSrc}
+              src={reviewData.cover}
             />
           </>
         )}
