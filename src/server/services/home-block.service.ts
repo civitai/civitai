@@ -171,9 +171,13 @@ export const userHasCustomHomeBlocks = async (user?: SessionUser) => {
     return false;
   }
 
-  return dbRead.$executeRaw`
+  const [row]: { exists: boolean }[] = await dbRead.$queryRaw`
     SELECT EXISTS(
-        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=${user.id}
+        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=22
       )
   `;
+
+  const { exists } = row;
+
+  return exists;
 };
