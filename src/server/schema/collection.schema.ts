@@ -86,8 +86,8 @@ export const upsertCollectionInput = z
   .object({
     id: z.number().optional(),
     name: z.string().max(30).nonempty(),
-    description: z.string().max(300).optional(),
-    coverImage: z.string().optional(),
+    description: z.string().max(300).nullish(),
+    image: imageSchema.nullish(),
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),

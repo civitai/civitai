@@ -647,7 +647,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                         Articles
                       </Tabs.Tab>
                     )}
-                    {features.collections && (
+                    {features.profileCollections && (
                       <Tabs.Tab value="/collections" icon={<IconBox size="1rem" />}>
                         Collections
                       </Tabs.Tab>

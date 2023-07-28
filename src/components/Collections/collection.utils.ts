@@ -21,6 +21,11 @@ const collectionQueryParamSchema = z
   })
   .partial();
 
+export const useCollectionFilters = () => {
+  const storeFilters = useFiltersContext((state) => state.collections);
+  return removeEmpty(storeFilters);
+};
+
 export type CollectionQueryParams = z.output<typeof collectionQueryParamSchema>;
 export const useCollectionQueryParams = () => {
   const { query, pathname, push } = useRouter();

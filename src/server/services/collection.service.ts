@@ -16,6 +16,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  ImageIngestionStatus,
   MetricTimeframe,
   Prisma,
 } from '@prisma/client';
@@ -39,7 +40,7 @@ import {
   ModelSort,
   PostSort,
 } from '~/server/common/enums';
-import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.service';
+import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import {
   GetByIdInput,
@@ -382,15 +383,31 @@ export const upsertCollection = async ({
   input: UpsertCollectionInput;
   user: SessionUser;
 }) => {
-  const { id, name, description, coverImage, read, write, type, ...collectionItem } = input;
+  const { id, name, description, image, read, write, type, ...collectionItem } = input;
 
   if (id) {
     const updated = await dbWrite.collection.update({
+      select: { id: true, image: { select: { id: true, url: true, ingestion: true } } },
       where: { id },
       data: {
         name,
         description,
-        coverImage,
+        image:
+          image !== undefined
+            ? image === null
+              ? { disconnect: true }
+              : {
+                  connectOrCreate: {
+                    where: { id: image.id },
+                    create: {
+                      ...image,
+                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      userId: user.id,
+                      resources: undefined,
+                    },
+                  },
+                }
+            : undefined,
         read,
         write,
       },
@@ -411,14 +428,32 @@ export const upsertCollection = async ({
       });
     }
 
+    // Start image ingestion only if it's ingestion status is pending
+    if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending)
+      await ingestImage({ image: updated.image });
+
     return updated;
   }
 
-  return dbWrite.collection.create({
+  const collection = await dbWrite.collection.create({
+    select: { id: true, image: { select: { id: true, url: true } } },
+    // TODO.collections: check this ts error
+    // Ignoring ts error here cause image -> create is
+    // complaining about having userId as undefined when it's required
     data: {
       name,
       description,
-      coverImage,
+      // TODO.collections: make it possible to save images when creating a collection
+      // image: image
+      //   ? {
+      //       create: {
+      //         ...image,
+      //         meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      //         userId: user.id,
+      //         resources: undefined,
+      //       },
+      //     }
+      //   : undefined,
       read,
       write,
       userId: user.id,
@@ -436,6 +471,9 @@ export const upsertCollection = async ({
       items: { create: { ...collectionItem, addedById: user.id } },
     },
   });
+  if (collection.image) await ingestImage({ image: collection.image });
+
+  return collection;
 };
 
 interface ModelCollectionItem {

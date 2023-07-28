@@ -30,6 +30,7 @@ import {
   updateCollectionItemsStatus,
   bulkSaveItems,
   getAllCollections,
+  CollectionItemExpanded,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -37,6 +38,7 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
 import { constants } from '~/server/common/constants';
+import { imageSelect } from '~/server/selectors/image.selector';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -56,7 +58,12 @@ export const getAllCollectionsInfiniteHandler = async ({
         name: true,
         read: true,
         type: true,
-        image: true,
+        image: { select: imageSelect },
+        _count: {
+          select: {
+            items: { where: { status: CollectionItemStatus.ACCEPTED } },
+          },
+        },
       },
       user: ctx.user,
     });
@@ -88,7 +95,10 @@ export const getAllCollectionsInfiniteHandler = async ({
       return { nextCursor, items: collectionsWithItems };
     }
 
-    return { nextCursor, items };
+    return {
+      nextCursor,
+      items: items.map((item) => ({ ...item, items: [] as CollectionItemExpanded[] })),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -111,7 +121,7 @@ export const getAllUserCollectionsHandler = async ({
         id: true,
         name: true,
         description: true,
-        coverImage: true,
+        image: true,
         read: true,
         items: { select: { modelId: true, imageId: true, articleId: true, postId: true } },
         userId: true,
