@@ -513,19 +513,21 @@ export default function ModelDetailsV2({
                       {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
                     </Text>
                   </IconBadge>
-                  <LoginRedirect reason="add-to-collection">
-                    <IconBadge
-                      radius="sm"
-                      size="lg"
-                      icon={<IconPlaylistAdd size={18} />}
-                      sx={{ cursor: 'pointer' }}
-                      onClick={handleCollect}
-                    >
-                      <Text className={classes.modelBadgeText}>
-                        {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
-                      </Text>
-                    </IconBadge>
-                  </LoginRedirect>
+                  {features.collections && (
+                    <LoginRedirect reason="add-to-collection">
+                      <IconBadge
+                        radius="sm"
+                        size="lg"
+                        icon={<IconPlaylistAdd size={18} />}
+                        sx={{ cursor: 'pointer' }}
+                        onClick={handleCollect}
+                      >
+                        <Text className={classes.modelBadgeText}>
+                          {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
+                        </Text>
+                      </IconBadge>
+                    </LoginRedirect>
+                  )}
                   {!model.locked && (
                     <IconBadge
                       radius="sm"

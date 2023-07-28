@@ -33,7 +33,7 @@ export const postsQuerySchema = postsFilterSchema.extend({
   modelVersionId: z.number().optional(),
   ids: z.array(z.number()).optional(),
   collectionId: z.number().optional(),
-  include: z.array(postInclude).optional().default(['cosmetics']),
+  include: z.array(postInclude).default(['cosmetics']).optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;

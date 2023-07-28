@@ -10,6 +10,7 @@ import { SocialIconCollect } from '~/components/ShareButton/Icons/SocialIconColl
 import { CollectItemInput } from '~/server/schema/collection.schema';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ShareButton({
   children,
@@ -24,6 +25,7 @@ export function ShareButton({
 }) {
   const clipboard = useClipboard({ timeout: undefined });
   const { requireLogin } = useLoginRedirect({ reason: 'add-to-collection' });
+  const features = useFeatureFlags();
 
   const url =
     typeof window === 'undefined'
@@ -63,7 +65,7 @@ export function ShareButton({
     },
   ];
 
-  if (collect) {
+  if (collect && features.collections) {
     shareLinks.unshift({
       type: 'Collect',
       onClick: () => requireLogin(() => openContext('addToCollection', collect)),
