@@ -51,7 +51,7 @@ export const useQueryPosts = (
   filters ??= {};
   const browsingMode = useFiltersContext((state) => state.browsingMode);
   const { data, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
-    { ...filters, browsingMode },
+    { ...filters, browsingMode, include: [] },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),

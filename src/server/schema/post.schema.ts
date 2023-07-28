@@ -15,6 +15,8 @@ export const postsFilterSchema = z.object({
   sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
 });
 
+const postInclude = z.enum(['cosmetics']);
+export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
 export const postsQuerySchema = postsFilterSchema.extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(50),
@@ -31,6 +33,7 @@ export const postsQuerySchema = postsFilterSchema.extend({
   modelVersionId: z.number().optional(),
   ids: z.array(z.number()).optional(),
   collectionId: z.number().optional(),
+  include: z.array(postInclude).optional().default(['cosmetics']),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
