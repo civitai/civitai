@@ -296,9 +296,11 @@ const test = async (file: File) => {
     false
   );
   return {
-    ...processed,
+    file,
+    uuid: uuidv4(),
     status: blockedFor ? 'blocked' : 'uploading',
     message: blockedFor?.filter(isDefined).join(', '),
+    ...processed,
   };
 };
 

@@ -1,4 +1,3 @@
-import { MediaType } from '@prisma/client';
 import { MEDIA_TYPE } from '~/server/common/mime-types';
 import { preprocessImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { preprocessVideo } from '~/utils/media-preprocessors/video.preprocessor';
@@ -6,29 +5,26 @@ import { preprocessVideo } from '~/utils/media-preprocessors/video.preprocessor'
 export * from './image.preprocessor';
 export * from './video.preprocessor';
 
-export const preprocessFile = async (file: File) => {
+type SharedProps = { name: string; mimeType: string };
+type ProcessedImage = { type: 'image' } & AsyncReturnType<typeof preprocessImage>;
+type ProcessedVideo = { type: 'video' } & AsyncReturnType<typeof preprocessVideo>;
+
+type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
+
+export const preprocessFile = async (file: File): Promise<PreprocessFileReturnType> => {
   const type = MEDIA_TYPE[file.type];
   const data = {
-    type,
     name: file.name,
     mimeType: file.type,
   };
 
-  // if(data.type === MediaType.image) {
-  //   const imageData =
-
-  // } else if (data.type === MediaType.video) {
-
-  // } else
-  // throw new Error('unhandled preprocessFile type');
-
-  switch (data.type) {
-    case MediaType.image:
+  switch (type) {
+    case 'image':
       const imageData = await preprocessImage(file);
-      return { ...data, ...imageData };
-    case MediaType.video:
+      return { type, ...data, ...imageData };
+    case 'video':
       const videoData = await preprocessVideo(file);
-      return { ...data, ...videoData };
+      return { type, ...data, ...videoData };
     default:
       throw new Error('unhandled preprocessFile type');
   }

@@ -1,4 +1,5 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetadata } from '~/server/schema/media.schema';
 import { createBlurHash } from '~/utils/blurhash';
 import { getMetadata } from '~/utils/metadata';
 import { auditMetaData } from '~/utils/metadata/audit';
@@ -11,7 +12,7 @@ const loadImage = async (src: string) =>
     img.src = src;
   });
 
-const getImageData = async (url: string) => {
+const getImageData = async (url: string): Promise<ImageMetadata> => {
   const img = await loadImage(url);
   const width = img.width;
   const height = img.height;
