@@ -1,15 +1,12 @@
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
-import { removeEmpty } from '~/utils/object-helpers';
-import { CollectionItemExpanded } from '~/server/services/collection.service';
-import { CollectionItemStatus } from '@prisma/client';
-import { ImageProps } from '~/components/ImageGuard/ImageGuard';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
 import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
+import { CollectionItemExpanded } from '~/server/services/collection.service';
+import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 
 const collectionQueryParamSchema = z
   .object({

@@ -395,7 +395,7 @@ export const upsertCollection = async ({
                     create: {
                       ...image,
                       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                      userId: user.id,
+                      userId,
                       resources: undefined,
                     },
                   },
@@ -442,7 +442,7 @@ export const upsertCollection = async ({
       //       create: {
       //         ...image,
       //         meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      //         userId: user.id,
+      //         userId,
       //         resources: undefined,
       //       },
       //     }

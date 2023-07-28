@@ -1,25 +1,24 @@
-import { dbRead, dbWrite } from '~/server/db/client';
 import { HomeBlockType, Prisma } from '@prisma/client';
+import { SessionUser } from 'next-auth';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
   HomeBlockMetaSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
-import { UserPreferencesInput } from '~/server/schema/base.schema';
+import { getAnnouncements } from '~/server/services/announcement.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
-import { getAnnouncements } from '~/server/services/announcement.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { SessionUser } from 'next-auth';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect

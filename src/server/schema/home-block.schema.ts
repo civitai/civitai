@@ -1,6 +1,6 @@
+import { HomeBlockType } from '@prisma/client';
 import { z } from 'zod';
 import { getByIdSchema, userPreferencesSchema } from '~/server/schema/base.schema';
-import { HomeBlockType } from '@prisma/client';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
