@@ -2,7 +2,7 @@ import { Badge, Group, Stack, Text } from '@mantine/core';
 import { IconLayoutGrid } from '@tabler/icons-react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -52,7 +52,7 @@ export function CollectionCard({ data }: Props) {
                   if (!image) return <Text color="dimmed">This collection has no images</Text>;
 
                   return safe ? (
-                    <EdgeImage
+                    <EdgeMedia
                       src={image.url}
                       className={classes.image}
                       name={image.name ?? image.id.toString()}
