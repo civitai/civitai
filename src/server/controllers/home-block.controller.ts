@@ -6,6 +6,7 @@ import {
   getHomeBlockData,
   getHomeBlocks,
   getSystemHomeBlocks,
+  setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import {
@@ -19,6 +20,7 @@ import {
   GetSystemHomeBlocksInputSchema,
   getSystemHomeBlocksInputSchema,
   HomeBlockMetaSchema,
+  SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
@@ -55,6 +57,7 @@ export const getHomeBlocksHandler = async ({
         metadata: true,
         type: true,
         userId: true,
+        sourceId: true,
       },
       userId: ctx.user?.id,
       ownedOnly,
@@ -165,4 +168,14 @@ export const deleteUserHomeBlockHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+export const setHomeBlocksOrderHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: SetHomeBlocksOrderInputSchema;
+}) => {
+  await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id } });
 };

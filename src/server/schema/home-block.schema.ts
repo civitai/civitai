@@ -81,3 +81,15 @@ export const upsertHomeBlockInput = z.object({
   sourceId: z.number().optional(),
   index: z.number().optional(),
 });
+
+export type SetHomeBlocksOrderInputSchema = z.infer<typeof setHomeBlocksOrderInput>;
+export const setHomeBlocksOrderInput = z.object({
+  homeBlocks: z.array(
+    z.object({
+      id: z.number(),
+      index: z.number(),
+      // Used to clone system home blocks
+      userId: z.number().optional(),
+    })
+  ),
+});

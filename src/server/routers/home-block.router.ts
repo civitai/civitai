@@ -5,6 +5,7 @@ import {
   getHomeBlocksByIdHandler,
   getHomeBlocksHandler,
   getSystemHomeBlocksHandler,
+  setHomeBlocksOrderHandler,
 } from '~/server/controllers/home-block.controller';
 import { applyUserPreferences } from '~/server/middleware.trpc';
 import {
@@ -12,6 +13,7 @@ import {
   getHomeBlockByIdInputSchema,
   createCollectionHomeBlockInputSchema,
   getSystemHomeBlocksInputSchema,
+  setHomeBlocksOrderInput,
 } from '~/server/schema/home-block.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
@@ -35,6 +37,10 @@ export const homeBlockRouter = router({
     .input(createCollectionHomeBlockInputSchema)
     .use(isFlagProtected('alternateHome'))
     .mutation(createCollectionHomeBlockHandler),
+  setHomeBlockOrder: protectedProcedure
+    .input(setHomeBlocksOrderInput)
+    .use(isFlagProtected('alternateHome'))
+    .mutation(setHomeBlocksOrderHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('alternateHome'))

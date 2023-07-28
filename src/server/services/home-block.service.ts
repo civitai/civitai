@@ -7,6 +7,7 @@ import {
   GetHomeBlocksInputSchema,
   GetSystemHomeBlocksInputSchema,
   HomeBlockMetaSchema,
+  SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
 import { getAnnouncements } from '~/server/services/announcement.service';
@@ -20,6 +21,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -31,9 +33,10 @@ export const getHomeBlocks = async <
   select: TSelect;
   userId?: number;
   ownedOnly?: boolean;
+  ids?: number[];
 }) => {
   const hasCustomHomeBlocks = await userHasCustomHomeBlocks(userId);
-  const { ownedOnly } = input;
+  const { ownedOnly, ids } = input;
 
   if (ownedOnly && !userId) {
     throw throwBadRequestError('You must be logged in to view your home blocks.');
@@ -45,6 +48,7 @@ export const getHomeBlocks = async <
     where: ownedOnly
       ? { userId }
       : {
+          id: ids ? { in: ids } : undefined,
           OR: [
             {
               // Either the user has custom home blocks of their own,
@@ -65,6 +69,7 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
       id: true,
       metadata: true,
       type: true,
+      userId: true,
     },
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
     where: {
@@ -222,7 +227,7 @@ export const userHasCustomHomeBlocks = async (userId?: number) => {
 
   const [row]: { exists: boolean }[] = await dbRead.$queryRaw`
     SELECT EXISTS(
-        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=${userId} AND hb."sourceId" IS NULL
+        SELECT 1 FROM "HomeBlock" hb WHERE hb."userId"=${userId}
       )
   `;
 
@@ -311,4 +316,81 @@ export const deleteHomeBlockById = async ({
   } catch {
     // Ignore errors
   }
+};
+
+export const setHomeBlocksOrder = async ({
+  input,
+}: {
+  input: SetHomeBlocksOrderInputSchema & { userId: number };
+}) => {
+  const { userId, homeBlocks } = input;
+  if (homeBlocks.find((homeBlock) => homeBlock.userId !== -1 && homeBlock.userId !== userId)) {
+    throw throwBadRequestError('Cloning home blocks from other users is not supported.');
+  }
+
+  const homeBlockIds = homeBlocks.map((i) => i.id);
+  const homeBlocksToClone = homeBlocks.filter((i) => i.userId === -1);
+  const ownedHomeBlocks = homeBlocks.filter((i) => i.userId === userId);
+
+  const transactions = [];
+  const homeBlocksToRemove = await dbRead.homeBlock.findMany({
+    select: { id: true },
+    where: { userId, id: { not: { in: homeBlockIds } } },
+  });
+
+  // if we have items to remove, add a deleteMany mutation to the transaction
+  if (homeBlocksToRemove.length) {
+    transactions.push(
+      dbWrite.homeBlock.deleteMany({
+        where: { id: { in: homeBlocksToRemove.map((i) => i.id) } },
+      })
+    );
+  }
+
+  if (homeBlocksToClone.length) {
+    const homeBlockData = await getHomeBlocks({
+      select: {
+        id: true,
+        metadata: true,
+        type: true,
+      },
+      ids: homeBlocksToClone.map((i) => i.id),
+    });
+
+    const data = homeBlocksToClone
+      .map((i) => {
+        const source = homeBlockData.find((item) => item.id === i.id);
+
+        if (!source) {
+          return null;
+        }
+
+        return {
+          userId,
+          index: i.index,
+          type: source.type,
+          sourceId: source?.id,
+          metadata: source.metadata || {},
+        };
+      })
+      .filter(isDefined);
+
+    if (data.length > 0) {
+      transactions.push(
+        dbWrite.homeBlock.createMany({
+          data,
+        })
+      );
+    }
+  }
+
+  if (ownedHomeBlocks.length) {
+    transactions.push(
+      ...ownedHomeBlocks.map((homeBlock) =>
+        dbWrite.homeBlock.update({ where: { id: homeBlock.id }, data: { index: homeBlock.index } })
+      )
+    );
+  }
+
+  return dbWrite.$transaction(transactions);
 };

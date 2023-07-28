@@ -1,4 +1,4 @@
-import { CSSProperties, useEffect, useMemo, useState } from 'react';
+import React, { CSSProperties, useEffect, useMemo, useState } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -22,9 +22,22 @@ import { createContextModal } from '~/components/Modals/utils/createContextModal
 import { trpc } from '~/utils/trpc';
 import { HomeBlockGetAll } from '~/types/router';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { ActionIcon, Badge, Box, Card, Center, Group, Loader, Stack, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Center,
+  Group,
+  Loader,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { IconGripVertical, IconTrash, IconX } from '@tabler/icons-react';
 import { CSS, getEventCoordinates } from '@dnd-kit/utilities';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 const { openModal: openManageHomeBlocksModal, Modal } = createContextModal({
   name: 'manageHomeBlocks',
@@ -49,14 +62,31 @@ function ManageHomeBlocks() {
       permanent: false,
     });
 
-  const isLoading = isLoadingSystemHomeBlocks || isLoadingOwnedHomeBlocks;
+  const utils = trpc.useContext();
 
+  const isLoading = isLoadingSystemHomeBlocks || isLoadingOwnedHomeBlocks;
   const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks);
   const [activeItem, setActiveItem] = useState<HomeBlockGetAll[number] | null>(null);
   const [activeItemType, setActiveItemType] = useState<'user' | 'system' | null>(null);
-  const queryUtils = trpc.useContext();
   const { setNodeRef: userContentNodeRef } = useDroppable({ id: 'user' });
   const { setNodeRef: systemHomeBlocksNodeRef } = useDroppable({ id: 'system' });
+  const { mutate: setHomeBlocksOrder, isLoading: isUpdating } =
+    trpc.homeBlock.setHomeBlockOrder.useMutation({
+      async onSuccess() {
+        showSuccessNotification({
+          title: 'Home page has been updated',
+          message: `Your preferred order has been saved`,
+        });
+
+        await utils.homeBlock.getHomeBlocks.invalidate();
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'There was an error updating your home page',
+          error: new Error(error.message),
+        });
+      },
+    });
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -68,8 +98,6 @@ function ManageHomeBlocks() {
       );
     });
   }, [items, systemHomeBlocks, activeItem]);
-
-  console.log({ availableSystemHomeBlocks });
 
   const snapVerticalCenterToCursor = useMemo(() => {
     const mofifier: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
@@ -95,7 +123,7 @@ function ManageHomeBlocks() {
 
   useEffect(() => {
     setItems(homeBlocks);
-  }, [homeBlocks, systemHomeBlocks]);
+  }, [homeBlocks]);
 
   const isSystemBlock = useMemo(
     () => (id: number | null) =>
@@ -111,12 +139,14 @@ function ManageHomeBlocks() {
     );
   }
 
-  const activeItemIsSystemBlock =
-    activeItem &&
-    availableSystemHomeBlocks.find((systemHomeBlock) => activeItem.id === systemHomeBlock.id);
-
   const onRemoveItem = (id: number) => {
     setItems(items.filter((item) => item.id !== id));
+  };
+
+  const onSave = () => {
+    console.log(items);
+    const data = items.map((item, index) => ({ id: item.id, index, userId: item.userId }));
+    setHomeBlocksOrder({ homeBlocks: data });
   };
 
   return (
@@ -139,9 +169,8 @@ function ManageHomeBlocks() {
         const activeOnItemList = !!items.find((item) => item.id === active.id);
         const isOverItemList = over && !!items.find((item) => item.id === over.id);
 
-        console.log({ over, active, isOverItemList, activeOnItemList, activeItemType });
         if (isOverItemList && !activeOnItemList && activeItemType === 'system') {
-          // do nothing
+          // Add item at the start of the list.
           const item = availableSystemHomeBlocks.find((item) => item.id === active.id) || null;
           if (item) {
             setItems([item, ...items]);
@@ -149,7 +178,7 @@ function ManageHomeBlocks() {
         }
 
         if (!over && activeItemType === 'system' && activeOnItemList) {
-          // Add on top of the items list:
+          // Remove the item.
           setItems(items.filter((item) => item.id !== active.id));
         }
       }}
@@ -191,11 +220,23 @@ function ManageHomeBlocks() {
           ))}
         </SortableContext>
       </Stack>
+      {items.length === 0 && (
+        <Text>
+          By leaving this empty and saving you will end up with our default recommended home page
+          setup.
+        </Text>
+      )}
       <DragOverlay modifiers={[restrictToParentElement, snapVerticalCenterToCursor]}>
         {!activeItem || isSystemBlock(activeItem.id) ? null : (
           <SortableHomeBlock key={activeItem.id} homeBlock={activeItem} />
         )}
       </DragOverlay>
+
+      <Stack>
+        <Button mt="sm" disabled={isUpdating} onClick={onSave}>
+          {isUpdating ? 'Updating settings...' : 'Save'}
+        </Button>
+      </Stack>
     </DndContext>
   );
 }
