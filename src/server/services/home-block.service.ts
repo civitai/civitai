@@ -32,7 +32,7 @@ export const getHomeBlocks = async <
   ownedOnly?: boolean;
 }) => {
   const hasCustomHomeBlocks = await userHasCustomHomeBlocks(userId);
-  const { ownedOnly } = input || {};
+  const { ownedOnly } = input;
 
   if (ownedOnly && !userId) {
     throw throwBadRequestError('You must be logged in to view your home blocks.');

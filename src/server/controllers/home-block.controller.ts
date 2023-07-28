@@ -44,7 +44,7 @@ export const getHomeBlocksHandler = async ({
   ctx: Context;
   input: GetHomeBlocksInputSchema;
 }): Promise<HomeBlockWithData[]> => {
-  const { ownedOnly } = input || {};
+  const { ownedOnly } = input;
   try {
     const homeBlocks = await getHomeBlocks({
       select: {

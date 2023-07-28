@@ -11,14 +11,7 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
-import {
-  IconCheck,
-  IconCloudOff,
-  IconDotsVertical,
-  IconHome,
-  IconPencil,
-  IconPlaylistAdd,
-} from '@tabler/icons-react';
+import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -41,7 +34,7 @@ import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showNotification } from '@mantine/notifications';
+import { showSuccessNotification } from '~/utils/notifications';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
@@ -167,24 +160,18 @@ export function Collection({
 
   const createCollectionHomeBlock = trpc.homeBlock.createCollectionHomeBlock.useMutation({
     async onSuccess() {
-      showNotification({
-        id: 'home-page-updated',
+      showSuccessNotification({
         title: 'Home page has been updated',
         message: `This collection has been added to your home page`,
-        color: 'teal',
-        icon: <IconCheck size={18} />,
       });
       await utils.homeBlock.getHomeBlocks.invalidate();
     },
   });
   const deleteHomeBlock = trpc.homeBlock.delete.useMutation({
     async onSuccess() {
-      showNotification({
-        id: 'home-page-updated',
+      showSuccessNotification({
         title: 'Home page has been updated',
         message: `Collection has been removed from your home page`,
-        color: 'teal',
-        icon: <IconCheck size={18} />,
       });
       await utils.homeBlock.getHomeBlocks.invalidate();
     },
@@ -274,17 +261,18 @@ export function Collection({
                         </ActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        <Menu.Item
-                          icon={<IconHome size={14} stroke={1.5} />}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-
-                            onToggleCollectionHomeBlock();
-                          }}
-                        >
-                          {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
-                        </Menu.Item>
+                        {/*// TODO.PersonalizedHomePages: This is disabled for now until fully*/}
+                        {/*implemented*/}
+                        {/*<Menu.Item*/}
+                        {/*  icon={<IconHome size={14} stroke={1.5} />}*/}
+                        {/*  onClick={(e) => {*/}
+                        {/*    e.preventDefault();*/}
+                        {/*    e.stopPropagation();*/}
+                        {/*    onToggleCollectionHomeBlock();*/}
+                        {/*  }}*/}
+                        {/*>*/}
+                        {/*  {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}*/}
+                        {/*</Menu.Item>*/}
                         {permissions.manage && (
                           <Menu.Item
                             component={NextLink}
