@@ -512,6 +512,24 @@ export const getUserCosmetics = ({
   });
 };
 
+export const getCosmeticsForUsers = async (userIds: number[]) => {
+  const users = [...new Set(userIds)];
+  const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
+    where: { userId: { in: users }, equippedAt: { not: null } },
+    select: {
+      userId: true,
+      cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
+    },
+  });
+  const userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
+    acc[userId] = acc[userId] ?? [];
+    acc[userId].push(cosmetic);
+    return acc;
+  }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
+
+  return userCosmetics;
+};
+
 // #region [article engagement]
 export const getUserArticleEngagements = async ({ userId }: { userId: number }) => {
   const engagements = await dbRead.articleEngagement.findMany({

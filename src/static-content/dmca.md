@@ -1,4 +1,7 @@
-# Civitai DMCA Policy
+---
+title: Civitai DMCA Policy
+description: We will respond to legitimate requests under the Digital Millennium Copyright Act ("DMCA"), and we retain the right to remove user content on Civitai that we deem to be infringing the copyright of others.
+---
 
 We will respond to legitimate requests under the Digital Millennium Copyright Act ("DMCA"), and we retain the right to remove user content on Civitai that we deem to be infringing the copyright of others. If you become aware of user content on Civitai that infringes your copyright rights, you may submit a properly formatted DMCA request (see 17 U.S.C. § 512) to Civitai.
 

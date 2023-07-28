@@ -59,7 +59,7 @@ export function ModelFiltersDropdown() {
 
   return (
     <IsClient>
-      <Popover withArrow>
+      <Popover withArrow zIndex={200} withinPortal>
         <Popover.Target>
           <Indicator
             offset={4}
