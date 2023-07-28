@@ -180,7 +180,7 @@ export function ModelCard({ data }: Props) {
                             variant="light"
                             radius="xl"
                           >
-                            <Text color="white" size="xs" transform="capitalize" inline>
+                            <Text color="white" size="xs" transform="capitalize">
                               {getDisplayName(data.type)}
                             </Text>
                           </Badge>
@@ -189,10 +189,10 @@ export function ModelCard({ data }: Props) {
                             <Badge
                               className={classes.chip}
                               variant="filled"
-                              color="green"
+                              color="teal"
                               radius="xl"
                             >
-                              <Text color="white" size="xs" transform="capitalize" inline>
+                              <Text color="white" size="xs" transform="capitalize">
                                 Updated
                               </Text>
                             </Badge>
@@ -204,7 +204,7 @@ export function ModelCard({ data }: Props) {
                               color="red"
                               radius="xl"
                             >
-                              <Text color="white" size="xs" transform="capitalize" inline>
+                              <Text color="white" size="xs" transform="capitalize">
                                 New
                               </Text>
                             </Badge>
@@ -305,7 +305,7 @@ export function ModelCard({ data }: Props) {
         )}
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
-          spacing="sm"
+          spacing="xs"
         >
           {data.user.id !== -1 && (
             <UnstyledButton
@@ -320,7 +320,7 @@ export function ModelCard({ data }: Props) {
               <UserAvatar user={data.user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
             </UnstyledButton>
           )}
-          <Text size="xl" weight={700} lineClamp={2} inline>
+          <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
             {data.name}
           </Text>
           <Group spacing={4} position="apart">
