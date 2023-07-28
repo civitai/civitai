@@ -48,7 +48,8 @@ export function ManagePostStatus() {
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
   const canPublish =
-    tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
+    tags.filter((x) => !!x.id).length > 0 &&
+    images.filter((x) => x.discriminator === 'image').length > 0;
 
   const handlePublish = () => {
     if (!currentUser) return;

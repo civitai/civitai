@@ -53,7 +53,7 @@ export function EditPostImages({ max }: { max?: number }) {
   const images = useEditPostContext((state) => state.images);
 
   const imageIds = images
-    .map((x) => (x.type === 'image' ? x.data.id : undefined))
+    .map((x) => (x.discriminator === 'image' ? x.data.id : undefined))
     .filter(isDefined);
 
   const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
@@ -73,7 +73,7 @@ export function EditPostImages({ max }: { max?: number }) {
       />
       <ImageIngestionProvider ids={imageIds}>
         <Stack>
-          {images.map(({ type, data }, index) => (
+          {images.map(({ discriminator: type, data }, index) => (
             <Fragment key={index}>
               {type === 'image' && <ImageController image={data} />}
               {type === 'upload' && <ImageUpload {...data} />}

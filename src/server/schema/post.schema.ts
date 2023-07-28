@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { constants } from '~/server/common/constants';
-import { MetricTimeframe, NsfwLevel } from '@prisma/client';
+import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 import { periodModeSchema } from '~/server/schema/base.schema';
@@ -108,6 +108,8 @@ export const addPostImageSchema = z.object({
     if (value && !Object.keys(value).length) return null;
     return value;
   }, imageMetaSchema.nullish()),
+  type: z.nativeEnum(MediaType).default(MediaType.image),
+  metadata: z.object({}).passthrough(),
 });
 
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;

@@ -19,7 +19,9 @@ export type ImageUpload = {
   uuid: string;
   url: string;
   name: string;
-  meta: any;
+  meta?: any;
+  type: MediaType;
+  metadata: any;
   height: number;
   width: number;
   hash: string;
@@ -35,9 +37,9 @@ export type ImageBlocked = {
   tags?: { type: string; name: string }[];
 };
 type ImageProps =
-  | { type: 'image'; data: PostEditImage }
-  | { type: 'upload'; data: ImageUpload }
-  | { type: 'blocked'; data: ImageBlocked };
+  | { discriminator: 'image'; data: PostEditImage }
+  | { discriminator: 'upload'; data: ImageUpload }
+  | { discriminator: 'blocked'; data: ImageBlocked };
 type TagProps = { id?: number; name: string };
 type EditPostProps = {
   objectUrls: string[];
@@ -78,7 +80,7 @@ interface EditPostState extends EditPostProps {
 type EditPostStore = ReturnType<typeof createEditPostStore>;
 
 const prepareImages = (images: PostEditImage[]) =>
-  images.map((image): ImageProps => ({ type: 'image', data: image }));
+  images.map((image): ImageProps => ({ discriminator: 'image', data: image }));
 
 const processPost = (post?: PostEditDetail) => {
   return {
@@ -140,14 +142,16 @@ const createEditPostStore = ({
             }),
           setImage: (id, updateFn) =>
             set((state) => {
-              const index = state.images.findIndex((x) => x.type === 'image' && x.data.id === id);
+              const index = state.images.findIndex(
+                (x) => x.discriminator === 'image' && x.data.id === id
+              );
               if (index > -1)
                 state.images[index].data = updateFn(state.images[index].data as PostEditImage);
             }),
           setImages: (updateFn) =>
             set((state) => {
               // only allow calling setImages if uploads are finished
-              if (state.images.every((x) => x.type === 'image')) {
+              if (state.images.every((x) => x.discriminator === 'image')) {
                 const images = state.images.map(({ data }) => data as PostEditImage);
                 state.images = prepareImages(updateFn(images));
               }
@@ -164,18 +168,17 @@ const createEditPostStore = ({
             const images = get().images;
             const toUpload = await Promise.all(
               files.map(async (file, i) => {
-                const data = await getImageDataFromFile(file);
+                const data = await getDataFromFile(file);
                 return {
-                  type: 'upload',
-                  index: images.length + i,
                   ...data,
+                  index: images.length + i,
                 } as ImageUpload;
               })
             );
             set((state) => {
               state.objectUrls = [...state.objectUrls, ...toUpload.map((x) => x.url)];
               state.images = state.images.concat(
-                toUpload.map((data) => ({ type: 'upload', data }))
+                toUpload.map((data) => ({ discriminator: 'upload', data }))
               );
             });
             await Promise.all(
@@ -187,11 +190,11 @@ const createEditPostStore = ({
                     if (!created) return;
                     set((state) => {
                       const index = state.images.findIndex(
-                        (x) => x.type === 'upload' && x.data.uuid === data.uuid
+                        (x) => x.discriminator === 'upload' && x.data.uuid === data.uuid
                       );
                       if (index === -1) throw new Error('index out of bounds');
                       state.images[index] = {
-                        type: 'image',
+                        discriminator: 'image',
                         data: { ...created, previewUrl: data.url },
                       };
                     });
@@ -202,14 +205,18 @@ const createEditPostStore = ({
           removeFile: (uuid) =>
             set((state) => {
               const index = state.images.findIndex(
-                (x) => (x.type === 'upload' || x.type === 'blocked') && x.data.uuid === uuid
+                (x) =>
+                  (x.discriminator === 'upload' || x.discriminator === 'blocked') &&
+                  x.data.uuid === uuid
               );
               if (index === -1) throw new Error('index out of bounds');
               state.images.splice(index, 1);
             }),
           removeImage: (id) =>
             set((state) => {
-              const index = state.images.findIndex((x) => x.type === 'image' && x.data.id === id);
+              const index = state.images.findIndex(
+                (x) => x.discriminator === 'image' && x.data.id === id
+              );
               if (index === -1) throw new Error('index out of bounds');
               state.images.splice(index, 1);
             }),
@@ -289,7 +296,7 @@ export function useEditPostContext<T>(selector: (state: EditPostState) => T) {
   return useStore(store, selector);
 }
 
-const test = async (file: File) => {
+const getDataFromFile = async (file: File) => {
   const processed = await preprocessFile(file);
   const { blockedFor } = await auditImageMeta(
     processed.type === MediaType.image ? processed.meta : undefined,
@@ -301,6 +308,8 @@ const test = async (file: File) => {
     status: blockedFor ? 'blocked' : 'uploading',
     message: blockedFor?.filter(isDefined).join(', '),
     ...processed,
+    ...processed.metadata,
+    url: processed.objectUrl,
   };
 };
 

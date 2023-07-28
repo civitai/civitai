@@ -31,7 +31,7 @@ export function ReorderImages() {
 
   const items = images
     .map((x) => {
-      if (x.type === 'image') return x.data;
+      if (x.discriminator === 'image') return x.data;
     })
     .filter(isDefined);
   const activeItem = items.find((x) => x.id === activeId);
@@ -224,7 +224,7 @@ export function ReorderImagesButton({
         id,
         imageIds: images
           .map((x) => {
-            if (x.type === 'image') return x.data.id;
+            if (x.discriminator === 'image') return x.data.id;
           })
           .filter(isDefined),
       });
@@ -235,6 +235,6 @@ export function ReorderImagesButton({
     onClick,
     isLoading,
     isReordering,
-    canReorder: !images.filter((x) => x.type === 'upload').length,
+    canReorder: !images.filter((x) => x.discriminator === 'upload').length,
   });
 }
