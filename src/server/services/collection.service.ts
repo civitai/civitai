@@ -376,7 +376,8 @@ export const upsertCollection = async ({
 }: {
   input: UpsertCollectionInput & { userId: number };
 }) => {
-  const { userId, id, name, description, image, read, write, type, ...collectionItem } = input;
+  const { userId, id, name, description, image, read, write, type, nsfw, ...collectionItem } =
+    input;
 
   if (id) {
     const updated = await dbWrite.collection.update({
@@ -385,6 +386,9 @@ export const upsertCollection = async ({
       data: {
         name,
         description,
+        nsfw,
+        read,
+        write,
         image:
           image !== undefined
             ? image === null
@@ -401,8 +405,6 @@ export const upsertCollection = async ({
                   },
                 }
             : undefined,
-        read,
-        write,
       },
     });
     if (!updated) throw throwNotFoundError(`No collection with id ${id}`);
@@ -430,23 +432,10 @@ export const upsertCollection = async ({
 
   const collection = await dbWrite.collection.create({
     select: { id: true, image: { select: { id: true, url: true } } },
-    // TODO.collections: check this ts error
-    // Ignoring ts error here cause image -> create is
-    // complaining about having userId as undefined when it's required
     data: {
       name,
       description,
-      // TODO.collections: make it possible to save images when creating a collection
-      // image: image
-      //   ? {
-      //       create: {
-      //         ...image,
-      //         meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      //         userId,
-      //         resources: undefined,
-      //       },
-      //     }
-      //   : undefined,
+      nsfw,
       read,
       write,
       userId,
@@ -464,7 +453,6 @@ export const upsertCollection = async ({
       items: { create: { ...collectionItem, addedById: userId } },
     },
   });
-  if (collection.image) await ingestImage({ image: collection.image });
 
   return collection;
 };

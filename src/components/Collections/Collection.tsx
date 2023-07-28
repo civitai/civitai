@@ -3,16 +3,14 @@ import {
   Button,
   ContainerProps,
   Group,
-  Menu,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
-import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { IconCloudOff, IconDotsVertical, IconPlaylistAdd } from '@tabler/icons-react';
+import { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -32,9 +30,7 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showSuccessNotification } from '~/utils/notifications';
+import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
@@ -138,64 +134,16 @@ export function Collection({
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const [opened, setOpened] = useState(false);
-  const utils = trpc.useContext();
-  const user = useCurrentUser();
 
   const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
     id: collectionId,
   });
-  // Using this query might be more performant all together as there is a high likelyhood
-  // that it's been preloaded by the user.
-  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery();
-  const collectionHomeBlock = useMemo(() => {
-    if (!user) {
-      return null;
-    }
-
-    return homeBlocks.find((homeBlock) => {
-      const metadata = homeBlock.metadata as HomeBlockMetaSchema;
-      return metadata.collection?.id === collectionId && homeBlock.userId === user.id;
-    });
-  }, [homeBlocks, collectionId, user]);
-
-  const createCollectionHomeBlock = trpc.homeBlock.createCollectionHomeBlock.useMutation({
-    async onSuccess() {
-      showSuccessNotification({
-        title: 'Home page has been updated',
-        message: `This collection has been added to your home page`,
-      });
-      await utils.homeBlock.getHomeBlocks.invalidate();
-    },
-  });
-  const deleteHomeBlock = trpc.homeBlock.delete.useMutation({
-    async onSuccess() {
-      showSuccessNotification({
-        title: 'Home page has been updated',
-        message: `Collection has been removed from your home page`,
-      });
-      await utils.homeBlock.getHomeBlocks.invalidate();
-    },
-  });
-
-  const onToggleCollectionHomeBlock = async () => {
-    if (!collectionHomeBlock) {
-      await createCollectionHomeBlock.mutate({
-        collectionId: collectionId,
-      });
-    } else {
-      await deleteHomeBlock.mutate({
-        id: collectionHomeBlock.id,
-      });
-    }
-  };
-
-  // createCollectionHomeBlock
 
   if (!isLoading && !collection) {
     return (
       <Stack w="100%" align="center">
         <Stack spacing="md" align="center" maw={800}>
-          <Title order={1} lh={1}>
+          <Title order={1} inline>
             Whoops!
           </Title>
           <Text align="center">
@@ -253,38 +201,15 @@ export function Collection({
                       </Group>
                     </Button>
                   )}
-                  {user && (
-                    <Menu>
-                      <Menu.Target>
-                        <ActionIcon variant="outline">
-                          <IconDotsVertical size={16} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        {/*// TODO.PersonalizedHomePages: This is disabled for now until fully*/}
-                        {/*implemented*/}
-                        {/*<Menu.Item*/}
-                        {/*  icon={<IconHome size={14} stroke={1.5} />}*/}
-                        {/*  onClick={(e) => {*/}
-                        {/*    e.preventDefault();*/}
-                        {/*    e.stopPropagation();*/}
-                        {/*    onToggleCollectionHomeBlock();*/}
-                        {/*  }}*/}
-                        {/*>*/}
-                        {/*  {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}*/}
-                        {/*</Menu.Item>*/}
-                        {permissions.manage && (
-                          <Menu.Item
-                            component={NextLink}
-                            icon={<IconPencil size={14} stroke={1.5} />}
-                            href={`/collections/${collection.id}/review`}
-                          >
-                            Review Items
-                          </Menu.Item>
-                        )}
-                      </Menu.Dropdown>
-                    </Menu>
-                  )}
+                  <CollectionContextMenu
+                    collectionId={collection.id}
+                    ownerId={collection.userId}
+                    canManage={permissions.manage}
+                  >
+                    <ActionIcon variant="outline">
+                      <IconDotsVertical size={16} />
+                    </ActionIcon>
+                  </CollectionContextMenu>
                 </Group>
               )}
             </Group>

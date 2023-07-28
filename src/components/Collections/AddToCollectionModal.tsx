@@ -23,6 +23,7 @@ import { createContextModal } from '~/components/Modals/utils/createContextModal
 import {
   Form,
   InputCheckboxGroup,
+  InputCheckbox,
   InputSelect,
   InputText,
   InputTextArea,
@@ -343,6 +344,7 @@ function NewCollectionForm({
             data={Object.values(privacyData)}
             itemComponent={SelectItem}
           />
+          <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
         </Stack>
         <Group position="right">
           <Button type="submit" loading={upsertCollectionMutation.isLoading}>

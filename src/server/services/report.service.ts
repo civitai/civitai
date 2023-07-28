@@ -78,6 +78,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.ResourceReview]: 'review',
   [ReportEntity.Article]: 'article',
   [ReportEntity.Post]: 'post',
+  [ReportEntity.Collection]: 'collection',
 };
 
 export const createReport = async ({
@@ -214,10 +215,22 @@ export const createReport = async ({
             report,
           },
         });
+        break;
       case ReportEntity.User:
         await tx.userReport.create({
           data: {
             user: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Collection:
+        if (data.reason === ReportReason.NSFW)
+          await tx.collection.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.collectionReport.create({
+          data: {
+            collection: { connect: { id } },
             report,
           },
         });

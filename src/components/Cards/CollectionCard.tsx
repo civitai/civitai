@@ -1,7 +1,8 @@
-import { Badge, Group, Stack, Text } from '@mantine/core';
-import { IconLayoutGrid } from '@tabler/icons-react';
+import { ActionIcon, Badge, Group, Stack, Text } from '@mantine/core';
+import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
+import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
@@ -77,35 +78,36 @@ export function CollectionCard({ data }: Props) {
           className={cx(classes.contentOverlay, classes.top)}
           noWrap
         >
-          <Badge
-            color="dark"
-            size="sm"
-            variant="light"
-            radius="xl"
-            sx={(theme) => ({
-              position: 'absolute',
-              top: theme.spacing.xs,
-              left: theme.spacing.xs,
-              zIndex: 1,
-            })}
-          >
+          <Badge color="dark" size="sm" variant="light" radius="xl">
             {data.type ? data.type : 'Mixed'}
           </Badge>
-          {/* <ArticleContextMenu article={data} ml="auto" /> */}
+          <CollectionContextMenu collectionId={data.id} ownerId={data.userId} position="left-start">
+            <ActionIcon
+              variant="transparent"
+              p={0}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <IconDotsVertical />
+            </ActionIcon>
+          </CollectionContextMenu>
         </Group>
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
           spacing="sm"
         >
-          <Group position="apart" align="end" noWrap>
-            <Stack spacing="sm">
-              <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
-                {data.name}
-              </Text>
-            </Stack>
-            <Group align="end">
+          <Group position="apart" noWrap>
+            <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+              {data.name}
+            </Text>
+            <Group spacing={4} noWrap>
               <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
                 <Text size="xs">{abbreviateNumber(data._count.items)}</Text>
+              </IconBadge>
+              <IconBadge className={classes.iconBadge} icon={<IconUser size={14} />}>
+                <Text size="xs">{abbreviateNumber(data._count.contributors)}</Text>
               </IconBadge>
             </Group>
           </Group>
