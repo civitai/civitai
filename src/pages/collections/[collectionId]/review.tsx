@@ -19,6 +19,7 @@ import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
+  IconExternalLink,
   IconReload,
   IconSquareCheck,
   IconSquareOff,
@@ -47,6 +48,7 @@ import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import Link from 'next/link';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -207,20 +209,40 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   return (
     <FeedCard>
       <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
-        <Checkbox
-          checked={selected}
-          readOnly
-          size="lg"
+        <Group
           sx={{
             position: 'absolute',
             top: 5,
             right: 5,
-            zIndex: 9,
+            zIndex: 11,
           }}
-        />
-        {reviewData.images.length > 0 && (
+        >
+          {reviewData.url && (
+            <Link href={reviewData.url} passHref>
+              <ActionIcon
+                component="a"
+                variant="transparent"
+                size="lg"
+                target="_blank"
+                onClick={(e) => {
+                  e.stopPropagation();
+                }}
+              >
+                <IconExternalLink
+                  color="white"
+                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                  opacity={0.8}
+                  strokeWidth={2.5}
+                  size={26}
+                />
+              </ActionIcon>
+            </Link>
+          )}
+          <Checkbox checked={selected} readOnly size="lg" />
+        </Group>
+        {reviewData.image && (
           <ImageGuard
-            images={reviewData.images}
+            images={[reviewData.image]}
             connect={{ entityId: collectionItem.id, entityType: 'collectionItem' }}
             render={(image) => (
               <ImageGuard.Content>
@@ -269,7 +291,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             )}
           />
         )}
-        {reviewData.imageSrc && (
+        {reviewData.cover && (
           <>
             <Group
               spacing={4}
@@ -290,7 +312,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               className={sharedClasses.image}
               loading="lazy"
               width={DEFAULT_EDGE_IMAGE_WIDTH}
-              src={reviewData.imageSrc}
+              src={reviewData.cover}
             />
           </>
         )}

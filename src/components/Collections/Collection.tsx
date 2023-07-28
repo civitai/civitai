@@ -11,11 +11,17 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
-import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
-import { useState } from 'react';
+import {
+  IconCheck,
+  IconCloudOff,
+  IconDotsVertical,
+  IconHome,
+  IconPencil,
+  IconPlaylistAdd,
+} from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { ModelCard } from '~/components/Cards/ModelCard';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
@@ -33,6 +39,9 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showNotification } from '@mantine/notifications';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
@@ -136,10 +145,64 @@ export function Collection({
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const [opened, setOpened] = useState(false);
+  const utils = trpc.useContext();
+  const user = useCurrentUser();
 
   const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
     id: collectionId,
   });
+  // Using this query might be more performant all together as there is a high likelyhood
+  // that it's been preloaded by the user.
+  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery();
+  const collectionHomeBlock = useMemo(() => {
+    if (!user) {
+      return null;
+    }
+
+    return homeBlocks.find((homeBlock) => {
+      const metadata = homeBlock.metadata as HomeBlockMetaSchema;
+      return metadata.collection?.id === collectionId && homeBlock.userId === user.id;
+    });
+  }, [homeBlocks, collectionId, user]);
+
+  const createCollectionHomeBlock = trpc.homeBlock.createCollectionHomeBlock.useMutation({
+    async onSuccess() {
+      showNotification({
+        id: 'home-page-updated',
+        title: 'Home page has been updated',
+        message: `This collection has been added to your home page`,
+        color: 'teal',
+        icon: <IconCheck size={18} />,
+      });
+      await utils.homeBlock.getHomeBlocks.invalidate();
+    },
+  });
+  const deleteHomeBlock = trpc.homeBlock.delete.useMutation({
+    async onSuccess() {
+      showNotification({
+        id: 'home-page-updated',
+        title: 'Home page has been updated',
+        message: `Collection has been removed from your home page`,
+        color: 'teal',
+        icon: <IconCheck size={18} />,
+      });
+      await utils.homeBlock.getHomeBlocks.invalidate();
+    },
+  });
+
+  const onToggleCollectionHomeBlock = async () => {
+    if (!collectionHomeBlock) {
+      await createCollectionHomeBlock.mutate({
+        collectionId: collectionId,
+      });
+    } else {
+      await deleteHomeBlock.mutate({
+        id: collectionHomeBlock.id,
+      });
+    }
+  };
+
+  // createCollectionHomeBlock
 
   if (!isLoading && !collection) {
     return (
@@ -203,7 +266,7 @@ export function Collection({
                       </Group>
                     </Button>
                   )}
-                  {permissions.manage && (
+                  {user && (
                     <Menu>
                       <Menu.Target>
                         <ActionIcon variant="outline">
@@ -212,12 +275,25 @@ export function Collection({
                       </Menu.Target>
                       <Menu.Dropdown>
                         <Menu.Item
-                          component={NextLink}
-                          icon={<IconPencil size={14} stroke={1.5} />}
-                          href={`/collections/${collection.id}/review`}
+                          icon={<IconHome size={14} stroke={1.5} />}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+
+                            onToggleCollectionHomeBlock();
+                          }}
                         >
-                          Review Items
+                          {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
                         </Menu.Item>
+                        {permissions.manage && (
+                          <Menu.Item
+                            component={NextLink}
+                            icon={<IconPencil size={14} stroke={1.5} />}
+                            href={`/collections/${collection.id}/review`}
+                          >
+                            Review Items
+                          </Menu.Item>
+                        )}
                       </Menu.Dropdown>
                     </Menu>
                   )}

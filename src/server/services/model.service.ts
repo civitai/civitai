@@ -237,7 +237,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (collectionId) {
     const permissions = await getUserCollectionPermissionsById({
-      user: sessionUser,
+      userId: sessionUser?.id,
       id: collectionId,
     });
 
@@ -246,7 +246,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     }
 
     const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
-      getAvailableCollectionItemsFilterForUser({ permissions, user: sessionUser });
+      getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
     AND.push({
       collectionItems: {

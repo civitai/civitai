@@ -66,7 +66,7 @@ export const getArticles = async ({
     if (username) AND.push({ user: { username } });
     if (collectionId) {
       const permissions = await getUserCollectionPermissionsById({
-        user: sessionUser,
+        userId: sessionUser?.id,
         id: collectionId,
       });
 
@@ -75,7 +75,7 @@ export const getArticles = async ({
       }
 
       const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
-        getAvailableCollectionItemsFilterForUser({ permissions, user: sessionUser });
+        getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
       AND.push({
         collectionItems: {

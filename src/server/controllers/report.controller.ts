@@ -184,7 +184,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
                 nsfw: true,
                 tosViolation: true,
                 modelId: true,
-                reviewId: true,
                 parentId: true,
               },
             },

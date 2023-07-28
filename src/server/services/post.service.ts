@@ -106,7 +106,7 @@ export const getPostsInfinite = async ({
   }
   if (collectionId) {
     const permissions = await getUserCollectionPermissionsById({
-      user,
+      userId: user?.id,
       id: collectionId,
     });
 
@@ -115,7 +115,7 @@ export const getPostsInfinite = async ({
     }
 
     const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
-      getAvailableCollectionItemsFilterForUser({ permissions, user });
+      getAvailableCollectionItemsFilterForUser({ permissions, userId: user?.id });
 
     AND.push({
       collectionItems: {
