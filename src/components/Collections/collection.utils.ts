@@ -1,16 +1,27 @@
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
-import { removeEmpty } from '~/utils/object-helpers';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { CollectionSort } from '~/server/common/enums';
+import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 const collectionQueryParamSchema = z
   .object({
     collectionId: z
       .union([z.array(z.coerce.number()), z.coerce.number()])
       .transform((val) => (Array.isArray(val) ? val[0] : val)),
+    sort: z.nativeEnum(CollectionSort),
+    userId: z.coerce.number().optional(),
   })
   .partial();
+
+export const useCollectionFilters = () => {
+  const storeFilters = useFiltersContext((state) => state.collections);
+  return removeEmpty(storeFilters);
+};
 
 export type CollectionQueryParams = z.output<typeof collectionQueryParamSchema>;
 export const useCollectionQueryParams = () => {
@@ -76,4 +87,23 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     default:
       throw new Error('unsupported collection type');
   }
+};
+export const useQueryCollections = (
+  filters?: Partial<GetAllCollectionsInfiniteSchema>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  filters ??= {};
+  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const { data, ...rest } = trpc.collection.getInfinite.useInfiniteQuery(
+    { ...filters, browsingMode },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      trpc: { context: { skipBatch: true } },
+      ...options,
+    }
+  );
+
+  const collections = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+
+  return { data, collections, ...rest };
 };

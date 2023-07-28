@@ -1,6 +1,6 @@
+import { HomeBlockType } from '@prisma/client';
 import { z } from 'zod';
-import { userPreferencesSchema } from '~/server/middleware.trpc';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getByIdSchema, userPreferencesSchema } from '~/server/schema/base.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
@@ -43,6 +43,8 @@ export const getHomeBlocksInputSchema = z
   .object({
     limit: z.number().default(8),
     dismissed: z.array(z.number()).optional(),
+    withCoreData: z.boolean().optional(),
+    ownedOnly: z.boolean().optional(),
   })
   .merge(userPreferencesSchema)
   .partial()
@@ -51,3 +53,19 @@ export const getHomeBlocksInputSchema = z
 export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
 
 export const getHomeBlockByIdInputSchema = getByIdSchema.merge(userPreferencesSchema).partial();
+
+export type CreateCollectionHomeBlockInputSchema = z.infer<
+  typeof createCollectionHomeBlockInputSchema
+>;
+export const createCollectionHomeBlockInputSchema = z.object({
+  collectionId: z.number(),
+});
+
+export type UpsertHomeBlockInput = z.infer<typeof upsertHomeBlockInput>;
+export const upsertHomeBlockInput = z.object({
+  id: z.number().optional(),
+  metadata: homeBlockMetaSchema,
+  type: z.nativeEnum(HomeBlockType).default(HomeBlockType.Collection),
+  sourceId: z.number().optional(),
+  index: z.number().optional(),
+});

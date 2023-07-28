@@ -150,7 +150,7 @@ export const getPostsInfinite = async ({
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
   if (collectionId) {
     const permissions = await getUserCollectionPermissionsById({
-      user,
+      userId: user?.id,
       id: collectionId,
     });
 
@@ -158,7 +158,16 @@ export const getPostsInfinite = async ({
       return { items: [] };
     }
 
-    AND.push(Prisma.sql`p."collectionId" = ${collectionId}`);
+    const displayReviewItems = user?.id
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
+      : '';
+
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "CollectionItem" ci
+      WHERE ci."collectionId" = ${collectionId}
+        AND ci."imageId" = i.id
+        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+    )`);
   }
 
   // sorting
