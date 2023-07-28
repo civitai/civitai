@@ -30,7 +30,7 @@ import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
 import { ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { UserPreferencesInput } from '~/server/middleware.trpc';
+import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { UpdateImageInput } from '~/server/schema/image.schema';
@@ -49,6 +49,7 @@ import { deleteObject } from '~/utils/s3-utils';
 import { hashifyObject } from '~/utils/string-helpers';
 import { logToDb } from '~/utils/logging';
 import { imagesSearchIndex } from '~/server/search-index';
+import { getCosmeticsForUsers } from '~/server/services/user.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -648,34 +649,9 @@ export const getAllImages = async ({
   }
 
   // Get user cosmetics
-  const includeCosmetics = include?.includes('cosmetics');
-  let userCosmetics:
-    | Record<
-        number,
-        {
-          type: CosmeticType;
-          id: number;
-          data: Prisma.JsonValue;
-          source: CosmeticSource;
-          name: string;
-        }[]
-      >
-    | undefined;
-  if (includeCosmetics) {
-    const users = [...new Set(rawImages.map((i) => i.userId))];
-    const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-      where: { userId: { in: users }, equippedAt: { not: null } },
-      select: {
-        userId: true,
-        cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
-      },
-    });
-    userCosmetics = userCosmeticsRaw.reduce((acc, { userId, cosmetic }) => {
-      acc[userId] = acc[userId] ?? [];
-      acc[userId].push(cosmetic);
-      return acc;
-    }, {} as Record<number, (typeof userCosmeticsRaw)[0]['cosmetic'][]>);
-  }
+  const userCosmetics = include?.includes('cosmetics')
+    ? await getCosmeticsForUsers(rawImages.map((i) => i.userId))
+    : undefined;
 
   let reportVar: Array<{
     id: number;
@@ -1027,21 +1003,16 @@ export const getImagesForPosts = async ({
       Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
 
-    if (!!excludedTagIds?.length) {
-      const excludedTagsOr: Prisma.Sql[] = [
-        Prisma.sql`i."scannedAt" IS NOT NULL`,
-        Prisma.sql`NOT EXISTS ( SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
+    if (!!excludedTagIds?.length)
+      imageWhere.push(
+        Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i."id" AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
           excludedTagIds
-        )}) )`,
-      ];
-      imageWhere.push(Prisma.sql`(${Prisma.join(excludedTagsOr, ' OR ')})`);
-    }
-    if (!!excludedIds?.length) {
+        )}) )`
+      );
+    if (!!excludedIds?.length)
       imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
-    }
-    if (!!excludedUserIds?.length) {
+    if (!!excludedUserIds?.length)
       imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
-    }
   }
   const images = await dbRead.$queryRaw<
     {

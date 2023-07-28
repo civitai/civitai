@@ -674,6 +674,7 @@ model Report {
   article        ArticleReport?
   post           PostReport?
   reportedUser   UserReport?
+  collection     CollectionReport?
 }
 
 model ResourceReviewReport {
@@ -746,6 +747,15 @@ model UserReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, userId])
+}
+
+model CollectionReport {
+  collectionId Int
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  reportId     Int        @unique
+  report       Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, collectionId])
 }
 
 model ResourceReview {
@@ -918,6 +928,7 @@ model Image {
   resourceHelper  ImageResourceHelper[]
   engagements     ImageEngagement[]
   collectionItems CollectionItem[]
+  collections     Collection[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1761,11 +1772,13 @@ model Collection {
   id          Int                          @id @default(autoincrement())
   createdAt   DateTime?                    @default(now())
   updatedAt   DateTime?                    @updatedAt
-  coverImage  String?
   name        String
   description String?
+  nsfw        Boolean?                     @default(false)
   userId      Int
   user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId     Int?
+  image       Image?                       @relation(fields: [imageId], references: [id], onDelete: SetNull)
   write       CollectionWriteConfiguration @default(Private)
   read        CollectionReadConfiguration  @default(Private)
   type        CollectionType?
@@ -1774,6 +1787,9 @@ model Collection {
   contributors CollectionContributor[]
   tags         TagsOnCollection[]
   post         Post[]
+  reports      CollectionReport[]
+
+  @@index([userId])
 }
 
 enum CollectionItemStatus {
@@ -1847,8 +1863,12 @@ model HomeBlock {
   userId    Int
   user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   metadata  Json          @default("{}")
-  index     Int
+  index     Int?
   type      HomeBlockType
+  permanent Boolean       @default(false)
+  sourceId  Int?
+  source    HomeBlock?    @relation("Clones", fields: [sourceId], references: [id], onDelete: SetNull)
+  clones    HomeBlock[]   @relation("Clones")
 }
 
 /// @view

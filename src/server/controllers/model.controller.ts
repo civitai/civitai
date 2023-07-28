@@ -192,7 +192,7 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getModelsWithImagesAndModelVersions({ input, ctx });
+    return await getModelsWithImagesAndModelVersions({ input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

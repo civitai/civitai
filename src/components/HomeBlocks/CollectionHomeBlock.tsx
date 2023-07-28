@@ -14,6 +14,7 @@ import { Fragment } from 'react';
 import {
   IconArrowRight,
   IconCategory,
+  IconFileText,
   IconInfoCircle,
   IconLayoutList,
   IconPhoto,
@@ -105,7 +106,7 @@ const icons = {
   model: IconCategory,
   image: IconPhoto,
   post: IconLayoutList,
-  article: IconLayoutList,
+  article: IconFileText,
 };
 
 export const CollectionHomeBlock = ({ homeBlockId }: Props) => {

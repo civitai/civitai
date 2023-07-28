@@ -9,6 +9,7 @@ import { openResourceReviewEditModal } from '~/components/ResourceReview/EditRes
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openAddToCollectionModal } from '~/components/Collections/AddToCollectionModal';
+import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -37,6 +38,9 @@ const ResourceSelectModal = dynamic(
 );
 const BoostModal = dynamic(() => import('~/components/ImageGeneration/BoostModal'));
 const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
+const ManageHomeBlocksModal = dynamic(
+  () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
+);
 
 const registry = {
   blockModelTags: {
@@ -70,6 +74,10 @@ const registry = {
   addToCollection: {
     Component: AddToCollectionModal,
     fn: openAddToCollectionModal,
+  },
+  manageHomeBlocks: {
+    Component: ManageHomeBlocksModal,
+    fn: openManageHomeBlocksModal,
   },
 };
 

@@ -47,7 +47,26 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { getCosmeticsForUsers } from '~/server/services/user.service';
 
+type GetAllPostsRaw = {
+  id: number;
+  nsfw: boolean;
+  title: string | null;
+  userId: number;
+  username: string | null;
+  userImage: string | null;
+  deletedAt: Date | null;
+  publishedAt: Date | null;
+  stats: {
+    commentCount: number;
+    likeCount: number;
+    dislikeCount: number;
+    heartCount: number;
+    laughCount: number;
+    cryCount: number;
+  } | null;
+};
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
   limit,
@@ -65,49 +84,74 @@ export const getPostsInfinite = async ({
   modelVersionId,
   ids,
   collectionId,
+  include,
 }: PostsQueryInput & { user?: SessionUser }) => {
-  const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
-  const orderBy: Prisma.Enumerable<Prisma.PostOrderByWithRelationInput> = [];
+  // const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
+  const AND = [Prisma.sql`1 = 1`];
+
   const isOwnerRequest = user && user.username === username;
   if (username) {
     const targetUser = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
-    AND.push({ userId: targetUser?.id ?? 0 });
+    if (targetUser) AND.push(Prisma.sql`p."userId" = ${targetUser.id}`);
   }
-  if (modelVersionId) AND.push({ modelVersionId });
+  if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
   if (!isOwnerRequest) {
-    AND.push({
-      publishedAt:
-        period === 'AllTime' || periodMode === 'stats'
-          ? { lt: new Date() }
-          : { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) },
-    });
-    if (query) AND.push({ title: { in: query } });
-    if (!!excludedTagIds?.length) {
-      AND.push({
-        OR: [
-          { userId: user?.id },
-          {
-            tags: { none: { tagId: { in: excludedTagIds } } },
-            helper: { scanned: true },
-          },
-        ],
-      });
+    AND.push(Prisma.sql`p."publishedAt" < now()`);
+    if (period !== 'AllTime' && periodMode !== 'stats') {
+      AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));
     }
-    if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
-    if (!!excludedUserIds?.length) AND.push({ user: { id: { notIn: excludedUserIds } } });
-    if (!user?.isModerator)
-      AND.push({ OR: [{ modelVersion: { status: 'Published' } }, { modelVersionId: null }] });
+    if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
+    if (!!excludedTagIds?.length) {
+      const excludedOr = [
+        Prisma.sql`NOT EXISTS (
+          SELECT 1 FROM
+          "TagsOnPost" top
+          WHERE top."postId" = p.id
+          AND top."tagId" IN (${Prisma.join(excludedTagIds)})
+        ) AND EXISTS (
+          SELECT 1 FROM "Image" i
+          WHERE i."postId" = p.id AND i."ingestion" = 'Scanned'
+        )`,
+      ];
+      if (user?.id) excludedOr.push(Prisma.sql`p."userId" = ${user.id}`);
+      AND.push(Prisma.sql`(${Prisma.join(excludedOr, ' OR ')})`);
+    }
+    if (!!tags?.length)
+      AND.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM "TagsOnPost" top
+        WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
+      )`);
+
+    if (!!excludedUserIds?.length)
+      AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    if (!user?.isModerator) {
+      // Handle Post Visibility
+      AND.push(Prisma.sql`p."modelVersionId" IS NULL OR EXISTS (
+        SELECT 1 FROM "ModelVersion" mv
+        WHERE mv.id = p."modelVersionId" AND mv.status = 'Published'
+      )`);
+
+      // Handle Collection Visibility
+      const collectionOr = [
+        Prisma.sql`p."collectionId" IS NULL`,
+        Prisma.sql`EXISTS (
+        SELECT 1 FROM "Collection" c
+        WHERE c.id = p."collectionId" AND c.read != 'Private'
+      )`,
+      ];
+      if (user?.id)
+        collectionOr.push(Prisma.sql`EXISTS (
+          SELECT 1 FROM "CollectionContributor" cc
+          WHERE cc."collectionId" = p."collectionId" AND cc."userId" = ${user?.id} AND 'VIEW' = ANY(cc.permissions)'
+        )`);
+
+      AND.push(Prisma.sql`(${Prisma.join(collectionOr, ' OR ')})`);
+    }
   }
-  if (ids) {
-    AND.push({
-      id: {
-        in: ids,
-      },
-    });
-  }
+  if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
   if (collectionId) {
     const permissions = await getUserCollectionPermissionsById({
-      user,
+      userId: user?.id,
       id: collectionId,
     });
 
@@ -115,53 +159,74 @@ export const getPostsInfinite = async ({
       return { items: [] };
     }
 
-    const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
-      getAvailableCollectionItemsFilterForUser({ permissions, user });
+    const displayReviewItems = user?.id
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
+      : '';
 
-    AND.push({
-      collectionItems: {
-        some: {
-          collectionId,
-          AND: collectionItemModelsAND,
-        },
-      },
-    });
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "CollectionItem" ci
+      WHERE ci."collectionId" = ${collectionId}
+        AND ci."imageId" = i.id
+        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+    )`);
   }
 
   // sorting
-  if (sort === PostSort.MostComments)
-    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
-  else if (sort === PostSort.MostReactions)
-    orderBy.push({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
-  orderBy.push({ publishedAt: 'desc' });
+  let orderBy = 'p."publishedAt" DESC NULLS LAST';
+  if (sort === PostSort.MostComments) orderBy = `r."comment${period}Rank"`;
+  else if (sort === PostSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+  const includeRank = orderBy.startsWith('r.');
+  const optionalRank = !!(username || modelVersionId || ids || collectionId);
 
-  const posts = await dbRead.post.findMany({
-    take: limit + 1,
-    cursor: cursor ? { id: cursor } : undefined,
-    where: { AND, collectionId: null },
-    orderBy,
-    select: {
-      id: true,
-      nsfw: true,
-      title: true,
-      user: { select: userWithCosmeticsSelect },
-      publishedAt: true,
-      stats: {
-        select: {
-          [`commentCount${period}`]: true,
-          [`likeCount${period}`]: true,
-          [`dislikeCount${period}`]: true,
-          [`heartCount${period}`]: true,
-          [`laughCount${period}`]: true,
-          [`cryCount${period}`]: true,
-        },
-      },
-    },
-  });
+  // cursor
+  const [cursorProp, cursorDirection] = orderBy?.split(' ');
+  if (cursor) {
+    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+    const cursorValue = cursorProp === 'p."publishedAt"' ? new Date(cursor) : Number(cursor);
+    if (cursorProp) AND.push(Prisma.sql`${cursorProp} ${cursorOperator} ${cursorValue}`);
+  }
 
-  const images = posts.length
+  const postsRaw = await dbRead.$queryRaw<GetAllPostsRaw[]>`
+    SELECT
+      p.id,
+      p.nsfw,
+      p.title,
+      p."userId",
+      u.username,
+      u.image "userImage",
+      u."deletedAt",
+      p."publishedAt",
+      (
+        SELECT jsonb_build_object(
+          'cryCount', pm."cryCount",
+          'laughCount', pm."laughCount",
+          'likeCount', pm."likeCount",
+          'dislikeCount', pm."dislikeCount",
+          'heartCount', pm."heartCount",
+          'commentCount', pm."commentCount"
+        ) "stats"
+        FROM "PostMetric" pm
+        WHERE pm."postId" = p.id AND pm."timeframe" = ${period}::"MetricTimeframe"
+      ) "stats",
+      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+    FROM "Post" p
+    JOIN "User" u ON u.id = p."userId"
+    ${Prisma.raw(
+      includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "PostRank" r ON r."postId" = p.id` : ''
+    )}
+    WHERE ${Prisma.join(AND, ' AND ')}
+    ORDER BY ${Prisma.raw(orderBy)}
+    LIMIT ${limit + 1}`;
+
+  let nextCursor: number | undefined;
+  if (postsRaw.length > limit) {
+    const nextItem = postsRaw.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  const images = postsRaw.length
     ? await getImagesForPosts({
-        postIds: posts.map((x) => x.id),
+        postIds: postsRaw.map((x) => x.id),
         excludedTagIds,
         excludedUserIds,
         excludedIds: excludedImageIds,
@@ -170,32 +235,29 @@ export const getPostsInfinite = async ({
       })
     : [];
 
-  let nextCursor: number | undefined;
-  if (posts.length > limit) {
-    const nextItem = posts.pop();
-    nextCursor = nextItem?.id;
-  }
+  // Get user cosmetics
+  const userCosmetics = include?.includes('cosmetics')
+    ? await getCosmeticsForUsers(postsRaw.map((i) => i.userId))
+    : undefined;
 
   return {
     nextCursor,
-    items: posts
-      .map(({ stats, ...post }) => {
+    items: postsRaw
+      .map(({ stats, username, userId: creatorId, userImage, deletedAt, ...post }) => {
         const { imageCount, ...image } =
           images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
 
         return {
           ...post,
           imageCount: Number(imageCount ?? 0),
-          stats: stats
-            ? {
-                commentCount: stats[`commentCount${period}`],
-                likeCount: stats[`likeCount${period}`],
-                dislikeCount: stats[`dislikeCount${period}`],
-                heartCount: stats[`heartCount${period}`],
-                laughCount: stats[`laughCount${period}`],
-                cryCount: stats[`cryCount${period}`],
-              }
-            : undefined,
+          user: {
+            id: creatorId,
+            username,
+            image: userImage,
+            deletedAt,
+            cosmetics: userCosmetics?.[creatorId]?.map((cosmetic) => ({ cosmetic })) ?? [],
+          },
+          stats,
           image,
         };
       })

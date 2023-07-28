@@ -74,3 +74,4 @@ export type HomeBlockGetById = HomeBlockRouter['getHomeBlock'];
 type CollectionRouter = RouterOutput['collection'];
 export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];
 export type CollectionByIdModel = CollectionRouter['getById']['collection'];
+export type CollectionGetInfinite = CollectionRouter['getInfinite']['items'];
