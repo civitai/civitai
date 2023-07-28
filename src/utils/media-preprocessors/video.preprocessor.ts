@@ -14,7 +14,7 @@ const getVideoData = async (src: string) =>
         width,
         height,
         hash: createBlurHash(video, width, height),
-        duration: video.duration,
+        duration: Math.round(video.duration / 1000) * 1000,
       });
     };
     video.onerror = (...args) => reject(args);

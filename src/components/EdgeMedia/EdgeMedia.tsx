@@ -9,7 +9,6 @@ export type EdgeMediaProps = EdgeUrlProps &
 export function EdgeMedia({
   src,
   width,
-  height,
   fit,
   anim,
   blur,
@@ -18,46 +17,53 @@ export function EdgeMedia({
   className,
   name,
   type,
+  style,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width });
   const currentUser = useCurrentUser();
 
   if (width) width = Math.min(width, 4096);
-  if (height) height = Math.min(height, 4096);
   type ??=
     imgProps.alt?.endsWith('.gif') ||
     imgProps.alt?.endsWith('.mp4') ||
     imgProps.alt?.endsWith('.webm')
       ? 'video'
       : 'image';
-  const isVideo = type === 'video';
-  anim ??= isVideo && currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined;
-  if (anim && !isVideo) anim = undefined;
-  const transcode = isVideo && anim !== false ? true : undefined;
-  if (isVideo && anim === false) type = 'image';
+  const _anim = type === 'video' ? anim ?? currentUser?.autoplayGifs ?? true : undefined;
+  const _type = !_anim ? 'image' : type;
+  const transcode = type === 'video';
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
   const _src = getEdgeUrl(src, {
     width,
-    height,
     fit,
-    anim,
+    anim: _anim,
     transcode,
     blur,
     quality,
     gravity,
     optimized: optimized ? true : undefined,
     name,
+    type: _type,
   });
 
-  switch (type) {
+  switch (_type) {
     case 'image':
-      // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-      return <img className={cx(classes.responsive, className)} src={_src} {...imgProps} />;
+      return (
+        // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
+        <img className={cx(classes.responsive, className)} src={_src} style={style} {...imgProps} />
+      );
     case 'video':
       return (
-        <video className={cx(classes.responsive, className)} autoPlay={anim} loop muted playsInline>
+        <video
+          className={cx(classes.responsive, className)}
+          autoPlay={_anim ?? true}
+          loop
+          muted
+          playsInline
+          style={style}
+        >
           <source src={_src} type="video/webm" />
         </video>
       );

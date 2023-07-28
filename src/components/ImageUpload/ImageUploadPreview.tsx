@@ -61,14 +61,14 @@ export const ImageUploadPreview = forwardRef<HTMLDivElement, Props>(
           <EdgeMedia
             src={image.previewUrl}
             type={MediaType.image}
-            height={410}
+            width={450}
             className={classes.image}
           />
         ) : image.url && image.url != image.previewUrl ? (
           <EdgeMedia
             src={image.url}
             type={MediaType.image}
-            height={410}
+            width={450}
             className={classes.image}
             onLoad={() => {
               image.onLoad?.();

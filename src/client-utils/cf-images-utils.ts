@@ -29,11 +29,15 @@ const typeExtensions: Record<MediaType, string> = {
 
 export function getEdgeUrl(
   src: string,
-  { name, type, ...variantParams }: Omit<EdgeUrlProps, 'src'>
+  { name, type, anim, transcode, ...variantParams }: Omit<EdgeUrlProps, 'src'>
 ) {
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
-
-  const params = Object.entries(variantParams)
+  const modifiedParams = {
+    anim: anim ? undefined : anim,
+    transcode: transcode ? true : undefined,
+    ...variantParams,
+  };
+  const params = Object.entries(modifiedParams)
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `${key}=${value}`)
     .join(',');

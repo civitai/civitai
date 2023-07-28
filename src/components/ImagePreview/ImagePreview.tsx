@@ -41,6 +41,7 @@ type ImagePreviewProps = {
     | 'meta'
     | 'generationProcess'
     | 'needsReview'
+    | 'type'
   >;
   edgeImageProps?: Omit<EdgeMediaProps, 'src'>;
   withMeta?: boolean;
@@ -54,6 +55,7 @@ export function ImagePreview({
     id,
     url,
     name,
+    type,
     width,
     height,
     hash,
@@ -176,6 +178,7 @@ export function ImagePreview({
       src={url}
       name={name ?? id.toString()}
       alt={name ?? undefined}
+      type={type}
       {...edgeImageProps}
       onClick={onClick}
       style={edgeImageStyle}

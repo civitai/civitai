@@ -17,6 +17,7 @@ import {
 import { NextLink } from '@mantine/next';
 import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';

@@ -1,4 +1,3 @@
-import { IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
   ImageSort,
   PostSort,
@@ -9,6 +8,7 @@ import {
 } from './enums';
 import { MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
 export const constants = {
   modelFilterDefaults: {

@@ -8,6 +8,7 @@ import {
   Loader,
   Alert,
   Group,
+  AspectRatio,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -19,6 +20,9 @@ import { trpc } from '~/utils/trpc';
 import { useState, useMemo } from 'react';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { NsfwLevel } from '@prisma/client';
+import { Blurhash } from 'react-blurhash';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -65,6 +69,18 @@ export function PostImages({
                 <ImageGuard.Content>
                   {({ safe }) => (
                     <>
+                      {!safe && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            bottom: 0,
+                            aspectRatio: (image.width ?? 0) / (image.height ?? 0),
+                          }}
+                        >
+                          <MediaHash {...image} />
+                        </div>
+                      )}
                       <EdgeMedia
                         src={image.url}
                         name={image.name}
@@ -72,6 +88,8 @@ export function PostImages({
                         type={image.type}
                         width={width < maxWidth ? width : maxWidth}
                         className={cx({ [classes.blur]: !safe })}
+                        style={!safe ? { visibility: 'hidden' } : undefined}
+                        anim={safe}
                       />
                       <Reactions
                         p={4}

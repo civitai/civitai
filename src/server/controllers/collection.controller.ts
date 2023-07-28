@@ -379,8 +379,6 @@ export const addSimpleImagePostHandler = async ({
           postId: post.id,
           userId: user.id,
           index,
-          type: 'image',
-          metadata: { width: image.width, height: image.height, hash: image.hash },
         })
       )
     );

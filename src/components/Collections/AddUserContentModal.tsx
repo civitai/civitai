@@ -195,13 +195,15 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                               <IconTrash size={26} strokeWidth={2.5} />
                             </ActionIcon>
                           </div>
-                          <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
-                            <ImageMetaPopover meta={file.meta}>
-                              <ActionIcon variant="light" color="dark" size="lg">
-                                <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                              </ActionIcon>
-                            </ImageMetaPopover>
-                          </div>
+                          {file.type === 'image' && (
+                            <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                              <ImageMetaPopover meta={file.meta}>
+                                <ActionIcon variant="light" color="dark" size="lg">
+                                  <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                                </ActionIcon>
+                              </ImageMetaPopover>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <>

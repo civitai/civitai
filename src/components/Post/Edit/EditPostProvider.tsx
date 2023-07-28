@@ -13,6 +13,7 @@ import { PostImage } from '~/server/selectors/post.selector';
 import { getMetadata } from '~/utils/metadata';
 import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { MediaType } from '@prisma/client';
+import { showErrorNotification } from '~/utils/notifications';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -166,15 +167,17 @@ const createEditPostStore = ({
               state.modelVersionId = modelVersionId;
             });
             const images = get().images;
-            const toUpload = await Promise.all(
-              files.map(async (file, i) => {
-                const data = await getDataFromFile(file);
-                return {
-                  ...data,
-                  index: images.length + i,
-                } as ImageUpload;
-              })
-            );
+            const toUpload = (
+              await Promise.all(
+                files.map(async (file, i) => {
+                  const data = await getDataFromFile(file);
+                  return {
+                    ...data,
+                    index: images.length + i,
+                  } as ImageUpload;
+                })
+              )
+            ).filter(isDefined);
             set((state) => {
               state.objectUrls = [...state.objectUrls, ...toUpload.map((x) => x.url)];
               state.images = state.images.concat(
@@ -302,6 +305,18 @@ const getDataFromFile = async (file: File) => {
     processed.type === MediaType.image ? processed.meta : undefined,
     false
   );
+  if (processed.type === 'video') {
+    const { metadata } = processed;
+    try {
+      if (metadata.duration && metadata.duration > 60)
+        throw new Error('video duration can not be longer than 60s');
+      if (metadata.width > 1920 || metadata.height > 1920)
+        throw new Error('please reduce image dimensions');
+    } catch (error: any) {
+      showErrorNotification({ error });
+      return null;
+    }
+  }
   return {
     file,
     uuid: uuidv4(),
@@ -310,27 +325,5 @@ const getDataFromFile = async (file: File) => {
     ...processed,
     ...processed.metadata,
     url: processed.objectUrl,
-  };
-};
-
-const getImageDataFromFile = async (file: File) => {
-  const url = URL.createObjectURL(file);
-  const meta = await getMetadata(file);
-  const img = await loadImage(url);
-  const hashResult = blurHashImage(img);
-  const auditResult = await auditMetaData(meta, false);
-  const mimeType = file.type;
-  const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
-
-  return {
-    file,
-    uuid: uuidv4(),
-    name: file.name,
-    meta,
-    url,
-    mimeType,
-    ...hashResult,
-    status: blockedFor ? 'blocked' : 'uploading',
-    message: blockedFor?.filter(isDefined).join(', '),
   };
 };

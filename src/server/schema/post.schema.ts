@@ -109,7 +109,7 @@ export const addPostImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   type: z.nativeEnum(MediaType).default(MediaType.image),
-  metadata: z.object({}).passthrough(),
+  metadata: z.object({}).passthrough().optional(),
 });
 
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;
