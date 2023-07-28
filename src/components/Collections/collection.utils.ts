@@ -3,9 +3,6 @@ import { useMemo } from 'react';
 import { z } from 'zod';
 import { removeEmpty } from '~/utils/object-helpers';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
-import { CollectionItemStatus } from '@prisma/client';
-import { ImageProps } from '~/components/ImageGuard/ImageGuard';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
 
 const collectionQueryParamSchema = z
   .object({
@@ -42,48 +39,41 @@ export const useCollectionQueryParams = () => {
 };
 
 export const getCollectionItemReviewData = (collectionItem: CollectionItemExpanded) => {
-  const reviewData: {
-    title: string;
-    description: string;
-    images: ImageProps[];
-    imageSrc?: string;
-    addedBy: string;
-    status: CollectionItemStatus;
-    type?: string;
-    user?: Partial<UserWithCosmetics> | null;
-  } = {
-    title: '',
-    description: '',
-    images: [],
-    addedBy: '',
-    status: CollectionItemStatus.REVIEW,
-  };
-
   switch (collectionItem.type) {
     case 'image': {
-      reviewData.images = [collectionItem.data];
-      reviewData.user = collectionItem.data.user;
-      break;
+      return {
+        type: collectionItem.type,
+        image: collectionItem.data,
+        user: collectionItem.data.user,
+        url: `/images/${collectionItem.data.id}`,
+      };
     }
     case 'model': {
-      reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
-      reviewData.user = collectionItem.data.user;
-      break;
+      return {
+        type: collectionItem.type,
+        image: collectionItem.data.image,
+        user: collectionItem.data.user,
+        url: `/models/${collectionItem.data.id}`,
+      };
     }
     case 'post': {
-      reviewData.images = collectionItem.data.image ? [collectionItem.data.image] : [];
-      reviewData.user = collectionItem.data.user;
-      break;
+      return {
+        type: collectionItem.type,
+        image: collectionItem.data.image,
+        user: collectionItem.data.user,
+        url: `/posts/${collectionItem.data.id}`,
+      };
     }
     case 'article': {
-      reviewData.imageSrc = collectionItem.data.cover;
-      reviewData.user = collectionItem.data.user;
-      reviewData.title = collectionItem.data.title;
-      break;
+      return {
+        type: collectionItem.type,
+        cover: collectionItem.data.cover,
+        user: collectionItem.data.user,
+        title: collectionItem.data.title,
+        url: `/articles/${collectionItem.data.id}`,
+      };
     }
     default:
-      break;
+      throw new Error('unsupported collection type');
   }
-
-  return reviewData;
 };

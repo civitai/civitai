@@ -109,7 +109,7 @@ const useImageGuardContext = () => {
 //   analysis?: Prisma.JsonValue;
 // };
 
-export type ImageProps = {
+type ImageProps = {
   id: number;
   nsfw: NsfwLevel;
   imageNsfw?: boolean;
