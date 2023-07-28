@@ -1,4 +1,4 @@
-import { Button, Center, Container, Loader } from '@mantine/core';
+import { Center, Container, Loader } from '@mantine/core';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -6,9 +6,6 @@ import { HomeBlockType } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useMemo } from 'react';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -19,14 +16,6 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
-  const user = useCurrentUser();
-  const hasUserHomeBlocks = useMemo(() => {
-    if (!user) {
-      return false;
-    }
-
-    return homeBlocks.find((homeBlock) => homeBlock.userId === user.id);
-  }, [user, homeBlocks]);
 
   return (
     <>
@@ -37,15 +26,6 @@ export default function Home() {
         <Center sx={{ height: 36 }} mt="md">
           <Loader />
         </Center>
-      )}
-      {hasUserHomeBlocks && (
-        <Button
-          onClick={() => {
-            openContext('manageHomeBlocks', {});
-          }}
-        >
-          Manage home
-        </Button>
       )}
       {homeBlocks.map((homeBlock) => {
         switch (homeBlock.type) {

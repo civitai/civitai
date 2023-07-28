@@ -35,6 +35,7 @@ export default function Account({ providers }: Props) {
     <>
       <Meta title="Manage your Account - Civitai" />
       {hasUserHomeBlocks && (
+        // TODO.PersonalizedHomePage: Refactor button/action to be self-contained.
         <Button
           onClick={() => {
             openContext('manageHomeBlocks', {});
