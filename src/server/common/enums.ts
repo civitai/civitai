@@ -111,3 +111,8 @@ export enum CheckpointType {
   Trained = 'Trained',
   Merge = 'Merge',
 }
+
+export enum CollectionSort {
+  MostContributors = 'Most Followers',
+  Newest = 'Newest',
+}

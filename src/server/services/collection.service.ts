@@ -7,6 +7,7 @@ import {
   GetUserCollectionItemsByItemSchema,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  GetAllCollectionsInfiniteSchema,
 } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
@@ -15,6 +16,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  ImageIngestionStatus,
   MetricTimeframe,
   Prisma,
 } from '@prisma/client';
@@ -24,18 +26,27 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { UserPreferencesInput, userPreferencesSchema } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
 import { getArticles } from '~/server/services/article.service';
 import {
   getModelsWithImagesAndModelVersions,
   GetModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
-import { Context } from '~/server/createContext';
-import { ArticleSort, BrowsingMode, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
-import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.service';
+import {
+  ArticleSort,
+  BrowsingMode,
+  CollectionSort,
+  ImageSort,
+  ModelSort,
+  PostSort,
+} from '~/server/common/enums';
+import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import {
+  GetByIdInput,
+  UserPreferencesInput,
+  userPreferencesSchema,
+} from '~/server/schema/base.schema';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -48,11 +59,40 @@ export type CollectionContributorPermissionFlags = {
   followPermissions: CollectionContributorPermission[];
 };
 
-export const getUserCollectionPermissionsById = async ({
+export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
+  input: { limit, cursor, privacy, types, userId, sort, ids },
   user,
-  id,
-}: GetByIdInput & {
+  select,
+}: {
+  input: GetAllCollectionsInfiniteSchema;
+  select: TSelect;
   user?: SessionUser;
+}) => {
+  const orderBy: Prisma.CollectionFindManyArgs['orderBy'] = [{ createdAt: 'desc' }];
+  if (sort === CollectionSort.MostContributors)
+    orderBy.unshift({ contributors: { _count: 'desc' } });
+
+  const collections = await dbRead.collection.findMany({
+    take: limit,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: {
+      id: ids && ids.length > 0 ? { in: ids } : undefined,
+      read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
+      type: types && types.length > 0 ? { in: types } : undefined,
+      userId,
+    },
+    select,
+    orderBy,
+  });
+
+  return collections;
+};
+
+export const getUserCollectionPermissionsById = async ({
+  id,
+  userId,
+}: GetByIdInput & {
+  userId?: number;
 }) => {
   const permissions: CollectionContributorPermissionFlags = {
     read: false,
@@ -71,14 +111,14 @@ export const getUserCollectionPermissionsById = async ({
       read: true,
       write: true,
       userId: true,
-      contributors: user
+      contributors: userId
         ? {
             select: {
               permissions: true,
             },
             where: {
               user: {
-                id: user.id,
+                id: userId,
               },
             },
           }
@@ -113,12 +153,12 @@ export const getUserCollectionPermissionsById = async ({
     permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
   }
 
-  if (!user) {
+  if (!userId) {
     return permissions;
   }
 
-  if (user.id === collection.userId) {
-    permissions.isOwner = user.id === collection.userId;
+  if (userId === collection.userId) {
+    permissions.isOwner = true;
     permissions.manage = true;
     permissions.read = true;
     permissions.write = true;
@@ -154,17 +194,15 @@ export const getUserCollectionPermissionsById = async ({
 export const getUserCollectionsWithPermissions = async <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
 >({
-  user,
   input,
   select,
 }: {
-  user: SessionUser;
-  input: GetAllUserCollectionsInputSchema;
+  input: GetAllUserCollectionsInputSchema & { userId: number };
   select: TSelect;
 }) => {
-  const { permissions, permission, contributingOnly } = input;
+  const { userId, permissions, permission, contributingOnly } = input;
   // By default, owned collections will be always returned
-  const OR: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ userId: user.id }];
+  const OR: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ userId }];
 
   if (
     permissions &&
@@ -193,7 +231,7 @@ export const getUserCollectionsWithPermissions = async <
     OR.push({
       contributors: {
         some: {
-          userId: user.id,
+          userId,
           permissions: {
             hasSome: permission ? [permission] : permissions,
           },
@@ -229,9 +267,9 @@ export const getUserCollectionsWithPermissions = async <
   return collections
     .map((collection) => ({
       ...collection,
-      isOwner: collection.userId === user?.id,
+      isOwner: collection.userId === userId,
     }))
-    .sort(({ userId }) => (userId === user.id ? -1 : 1));
+    .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
 
 export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
@@ -242,7 +280,6 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
       id: true,
       name: true,
       description: true,
-      coverImage: true,
       read: true,
       write: true,
       type: true,
@@ -259,11 +296,9 @@ const inputToCollectionType = {
 } as const;
 
 export const saveItemInCollections = async ({
-  user,
-  input: { collectionIds, type, ...input },
+  input: { collectionIds, type, userId, ...input },
 }: {
-  user: SessionUser;
-  input: AddCollectionItemInput;
+  input: AddCollectionItemInput & { userId: number };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
 
@@ -292,7 +327,7 @@ export const saveItemInCollections = async ({
   const data: Prisma.CollectionItemCreateManyInput[] = (
     await Promise.all(
       collectionIds.map(async (collectionId) => {
-        const permission = await getUserCollectionPermissionsById({ user, id: collectionId });
+        const permission = await getUserCollectionPermissionsById({ userId, id: collectionId });
         if (!permission.isContributor && !permission.isOwner) {
           // Person adding content to stuff they don't follow.
           return null;
@@ -304,7 +339,7 @@ export const saveItemInCollections = async ({
 
         return {
           ...input,
-          addedById: user.id,
+          addedById: userId,
           collectionId,
           status: permission.writeReview
             ? CollectionItemStatus.REVIEW
@@ -320,7 +355,7 @@ export const saveItemInCollections = async ({
   const itemsToRemove = await dbRead.collectionItem.findMany({
     where: {
       ...input,
-      addedById: user.id,
+      addedById: userId,
       collectionId: { notIn: collectionIds },
     },
     select: { id: true },
@@ -338,20 +373,34 @@ export const saveItemInCollections = async ({
 
 export const upsertCollection = async ({
   input,
-  user,
 }: {
-  input: UpsertCollectionInput;
-  user: SessionUser;
+  input: UpsertCollectionInput & { userId: number };
 }) => {
-  const { id, name, description, coverImage, read, write, type, ...collectionItem } = input;
+  const { userId, id, name, description, image, read, write, type, ...collectionItem } = input;
 
   if (id) {
     const updated = await dbWrite.collection.update({
+      select: { id: true, image: { select: { id: true, url: true, ingestion: true } } },
       where: { id },
       data: {
         name,
         description,
-        coverImage,
+        image:
+          image !== undefined
+            ? image === null
+              ? { disconnect: true }
+              : {
+                  connectOrCreate: {
+                    where: { id: image.id },
+                    create: {
+                      ...image,
+                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      userId,
+                      resources: undefined,
+                    },
+                  },
+                }
+            : undefined,
         read,
         write,
       },
@@ -372,21 +421,39 @@ export const upsertCollection = async ({
       });
     }
 
+    // Start image ingestion only if it's ingestion status is pending
+    if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending)
+      await ingestImage({ image: updated.image });
+
     return updated;
   }
 
-  return dbWrite.collection.create({
+  const collection = await dbWrite.collection.create({
+    select: { id: true, image: { select: { id: true, url: true } } },
+    // TODO.collections: check this ts error
+    // Ignoring ts error here cause image -> create is
+    // complaining about having userId as undefined when it's required
     data: {
       name,
       description,
-      coverImage,
+      // TODO.collections: make it possible to save images when creating a collection
+      // image: image
+      //   ? {
+      //       create: {
+      //         ...image,
+      //         meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      //         userId,
+      //         resources: undefined,
+      //       },
+      //     }
+      //   : undefined,
       read,
       write,
-      userId: user.id,
+      userId,
       type,
       contributors: {
         create: {
-          userId: user.id,
+          userId,
           permissions: [
             CollectionContributorPermission.MANAGE,
             CollectionContributorPermission.ADD,
@@ -394,9 +461,12 @@ export const upsertCollection = async ({
           ],
         },
       },
-      items: { create: { ...collectionItem, addedById: user.id } },
+      items: { create: { ...collectionItem, addedById: userId } },
     },
   });
+  if (collection.image) await ingestImage({ image: collection.image });
+
+  return collection;
 };
 
 interface ModelCollectionItem {
@@ -427,11 +497,12 @@ export type CollectionItemExpanded = { id: number; status?: CollectionItemStatus
 );
 
 export const getCollectionItemsByCollectionId = async ({
-  ctx,
   input,
+  user,
 }: {
-  ctx: Context;
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
+  // Requires user here because models service uses it
+  user?: SessionUser;
 }) => {
   const { statuses = [CollectionItemStatus.ACCEPTED], limit, collectionId, page, cursor } = input;
 
@@ -441,7 +512,7 @@ export const getCollectionItemsByCollectionId = async ({
 
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
-    user: ctx.user,
+    userId: user?.id,
   });
 
   if (
@@ -483,6 +554,7 @@ export const getCollectionItemsByCollectionId = async ({
   const models =
     modelIds.length > 0
       ? await getModelsWithImagesAndModelVersions({
+          user,
           input: {
             limit: modelIds.length,
             sort: ModelSort.Newest,
@@ -493,7 +565,6 @@ export const getCollectionItemsByCollectionId = async ({
             ...userPreferencesInput,
             ids: modelIds,
           },
-          ctx,
         })
       : { items: [] };
 
@@ -508,7 +579,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
           browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
-          sessionUser: ctx.user,
+          sessionUser: user,
           ids: articleIds,
         })
       : { items: [] };
@@ -524,8 +595,8 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ImageSort.Newest,
           ...userPreferencesInput,
-          userId: ctx.user?.id,
-          isModerator: ctx.user?.isModerator,
+          userId: user?.id,
+          isModerator: user?.isModerator,
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
         })
@@ -541,7 +612,7 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'published',
           sort: PostSort.Newest,
           ...userPreferencesInput,
-          user: ctx.user,
+          user,
           browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
           ids: postIds,
           include: ['cosmetics'],
@@ -616,21 +687,19 @@ export const getCollectionItemsByCollectionId = async ({
 
 export const getUserCollectionItemsByItem = async ({
   input,
-  user,
 }: {
-  input: GetUserCollectionItemsByItemSchema;
-  user: SessionUser;
+  input: GetUserCollectionItemsByItemSchema & { userId: number };
 }) => {
-  const { modelId, imageId, articleId, postId } = input;
+  const { userId, modelId, imageId, articleId, postId } = input;
 
   const userCollections = await getUserCollectionsWithPermissions({
-    user,
     input: {
       permissions: [
         CollectionContributorPermission.ADD,
         CollectionContributorPermission.ADD_REVIEW,
         CollectionContributorPermission.MANAGE,
       ],
+      userId,
     },
     select: { id: true },
   });
@@ -658,22 +727,26 @@ export const getUserCollectionItemsByItem = async ({
   return Promise.all(
     collectionItems.map(async (collectionItem) => {
       const permission = await getUserCollectionPermissionsById({
-        user,
+        userId,
         id: collectionItem.collectionId,
       });
       return {
         ...collectionItem,
-        canRemoveItem: collectionItem.addedById === user.id || permission.manage,
+        canRemoveItem: collectionItem.addedById === userId || permission.manage,
       };
     })
   );
 };
 
-export const deleteCollectionById = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+export const deleteCollectionById = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) => {
   try {
     const collection = await dbRead.collection.findFirst({
       // Confirm the collection belongs to the user:
-      where: { id, userId: user.id },
+      where: { id, userId: isModerator ? undefined : userId },
       select: { id: true },
     });
 
@@ -690,18 +763,18 @@ export const deleteCollectionById = async ({ id, user }: GetByIdInput & { user: 
 export const addContributorToCollection = async ({
   collectionId,
   userId,
-  user,
+  targetUserId,
   permissions,
 }: {
-  user: SessionUser;
   userId: number;
+  targetUserId: number;
   collectionId: number;
   permissions?: CollectionContributorPermission[];
 }) => {
   // check if user can add contributors:
   const { followPermissions, manage, follow } = await getUserCollectionPermissionsById({
     id: collectionId,
-    user,
+    userId,
   });
 
   if (!manage && !follow) {
@@ -718,27 +791,27 @@ export const addContributorToCollection = async ({
   }
 
   return dbWrite.collectionContributor.upsert({
-    where: { userId_collectionId: { userId, collectionId } },
-    create: { userId, collectionId, permissions: contributorPermissions },
+    where: { userId_collectionId: { userId: targetUserId, collectionId } },
+    create: { userId: targetUserId, collectionId, permissions: contributorPermissions },
     update: { permissions: contributorPermissions },
   });
 };
 
 export const removeContributorFromCollection = async ({
-  user,
   userId,
+  targetUserId,
   collectionId,
 }: {
-  user: SessionUser;
   userId: number;
+  targetUserId: number;
   collectionId: number;
 }) => {
   const { manage } = await getUserCollectionPermissionsById({
     id: collectionId,
-    user,
+    userId,
   });
 
-  if (!manage && user.id !== userId) {
+  if (!manage && targetUserId !== userId) {
     throw throwAuthorizationError(
       'You do not have permission to remove contributors from this collection.'
     );
@@ -747,7 +820,7 @@ export const removeContributorFromCollection = async ({
     return await dbWrite.collectionContributor.delete({
       where: {
         userId_collectionId: {
-          userId,
+          userId: targetUserId,
           collectionId,
         },
       },
@@ -760,23 +833,23 @@ export const removeContributorFromCollection = async ({
 export const getAvailableCollectionItemsFilterForUser = ({
   statuses,
   permissions,
-  user,
+  userId,
 }: {
   statuses?: CollectionItemStatus[];
   permissions: CollectionContributorPermissionFlags;
-  user?: SessionUser;
+  userId?: number;
 }) => {
   // A user with relevant permissions can filter & manage these permissions
   if ((permissions.manage || permissions.isOwner) && statuses) {
     return [{ status: { in: statuses } }];
   }
 
-  const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = user
+  const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = userId
     ? [
         {
           OR: [
             { status: CollectionItemStatus.ACCEPTED },
-            { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: user.id }] },
+            { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: userId }] },
           ],
         },
       ]
@@ -786,16 +859,14 @@ export const getAvailableCollectionItemsFilterForUser = ({
 };
 
 export const updateCollectionItemsStatus = async ({
-  user,
   input,
 }: {
-  user: SessionUser;
-  input: UpdateCollectionItemsStatusInput;
+  input: UpdateCollectionItemsStatusInput & { userId: number };
 }) => {
-  const { collectionId, collectionItemIds, status } = input;
+  const { userId, collectionId, collectionItemIds, status } = input;
   const { manage, isOwner } = await getUserCollectionPermissionsById({
     id: collectionId,
-    user,
+    userId,
   });
 
   if (!manage && !isOwner) {
@@ -814,12 +885,10 @@ export const updateCollectionItemsStatus = async ({
 };
 
 export const bulkSaveItems = async ({
-  input: { collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
-  user,
+  input: { userId, collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
   permissions,
 }: {
-  input: BulkSaveCollectionItemsInput;
-  user: SessionUser;
+  input: BulkSaveCollectionItemsInput & { userId: number };
   permissions: CollectionContributorPermissionFlags;
 }) => {
   const collection = await dbRead.collection.findUnique({
@@ -836,7 +905,7 @@ export const bulkSaveItems = async ({
     data = articleIds.map((articleId) => ({
       articleId,
       collectionId,
-      addedById: user.id,
+      addedById: userId,
       status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
@@ -847,7 +916,7 @@ export const bulkSaveItems = async ({
     data = modelIds.map((modelId) => ({
       modelId,
       collectionId,
-      addedById: user.id,
+      addedById: userId,
       status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
@@ -858,7 +927,7 @@ export const bulkSaveItems = async ({
     data = imageIds.map((imageId) => ({
       imageId,
       collectionId,
-      addedById: user.id,
+      addedById: userId,
       status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
@@ -866,7 +935,7 @@ export const bulkSaveItems = async ({
     data = postIds.map((postId) => ({
       postId,
       collectionId,
-      addedById: user.id,
+      addedById: userId,
       status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }

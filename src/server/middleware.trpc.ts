@@ -9,14 +9,7 @@ import { fromJson, toJson } from '~/utils/json-helpers';
 import { applyAnonymousUserRules } from '~/server/services/image.service';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
-
-export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
-export const userPreferencesSchema = z.object({
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-});
+import { UserPreferencesInput } from '~/server/schema/base.schema';
 
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {

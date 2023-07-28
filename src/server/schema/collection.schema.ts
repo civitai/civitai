@@ -7,8 +7,11 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { imageSchema } from '~/server/schema/image.schema';
+import { infiniteQuerySchema, userPreferencesSchema } from '~/server/schema/base.schema';
+import { BrowsingMode, CollectionSort } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 // TODO.Fix: Type-safety. This isn't actually typesafe. You can choose a type and a id that don't match.
 const collectionItemSchema = z.object({
@@ -85,8 +88,8 @@ export const upsertCollectionInput = z
   .object({
     id: z.number().optional(),
     name: z.string().max(30).nonempty(),
-    description: z.string().max(300).optional(),
-    coverImage: z.string().optional(),
+    description: z.string().max(300).nullish(),
+    image: imageSchema.nullish(),
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
@@ -107,6 +110,7 @@ export type FollowCollectionInputSchema = z.infer<typeof followCollectionInputSc
 
 export const followCollectionInputSchema = z.object({
   collectionId: z.number(),
+  userId: z.number().optional(),
 });
 
 export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSchema>;
@@ -134,3 +138,19 @@ export const addSimpleImagePostInput = z.object({
   collectionId: z.number(),
   images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
 });
+
+export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;
+export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
+  .extend({
+    browsingMode: z
+      .nativeEnum(BrowsingMode)
+      .default(constants.collectionFilterDefaults.browsingMode),
+    userId: z.number(),
+    types: z.array(z.nativeEnum(CollectionType)),
+    privacy: z.array(z.nativeEnum(CollectionReadConfiguration)),
+    sort: z.nativeEnum(CollectionSort).default(constants.collectionFilterDefaults.sort),
+    ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }),
+    withItems: z.boolean(),
+  })
+  .merge(userPreferencesSchema)
+  .partial();

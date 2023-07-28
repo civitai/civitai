@@ -237,7 +237,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (collectionId) {
     const permissions = await getUserCollectionPermissionsById({
-      user: sessionUser,
+      userId: sessionUser?.id,
       id: collectionId,
     });
 
@@ -246,7 +246,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     }
 
     const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =
-      getAvailableCollectionItemsFilterForUser({ permissions, user: sessionUser });
+      getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
     AND.push({
       collectionItems: {
@@ -317,17 +317,17 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
 
 export const getModelsWithImagesAndModelVersions = async ({
   input,
-  ctx,
+  user,
 }: {
   input: GetAllModelsOutput;
-  ctx: Context;
+  user?: SessionUser;
 }) => {
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 
   const { items } = await getModels({
     input: { ...input, take },
-    user: ctx.user,
+    user,
     select: {
       id: true,
       name: true,
@@ -375,9 +375,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     ? await getImagesForModelVersion({
         modelVersionIds,
         excludedTagIds: input.excludedImageTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
+        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
         excludedUserIds: input.excludedUserIds,
-        currentUserId: ctx.user?.id,
+        currentUserId: user?.id,
       })
     : [];
 
@@ -395,8 +395,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) return null;
         const [image] = images.filter((i) => i.modelVersionId === version.id);
         const showImageless =
-          (ctx.user?.isModerator || model.user.id === ctx.user?.id) &&
-          (input.user || input.username);
+          (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!image && !showImageless) return null;
 
         const canGenerate = !!version.modelVersionGenerationCoverage?.workers;

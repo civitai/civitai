@@ -48,6 +48,7 @@ const featureFlags = createFeatureFlags({
     description: `A fresh style for model cards with more information and a better layout.`,
     availability: ['user'],
   },
+  profileCollections: ['dev'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

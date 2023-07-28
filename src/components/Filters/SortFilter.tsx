@@ -2,7 +2,14 @@ import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
-import { ArticleSort, ImageSort, ModelSort, PostSort, QuestionSort } from '~/server/common/enums';
+import {
+  ArticleSort,
+  CollectionSort,
+  ImageSort,
+  ModelSort,
+  PostSort,
+  QuestionSort,
+} from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type SortFilterProps = StatefulProps | DumbProps;
@@ -14,6 +21,7 @@ const sortOptions = {
   modelImages: Object.values(ImageSort),
   questions: Object.values(QuestionSort),
   articles: Object.values(ArticleSort),
+  collections: Object.values(CollectionSort),
 };
 
 export function SortFilter(props: SortFilterProps) {
@@ -23,8 +31,10 @@ export function SortFilter(props: SortFilterProps) {
 
 type DumbProps = {
   type: FilterSubTypes;
-  value: ModelSort | PostSort | ImageSort | QuestionSort | ArticleSort;
-  onChange: (value: ModelSort | PostSort | ImageSort | QuestionSort | ArticleSort) => void;
+  value: ModelSort | PostSort | ImageSort | QuestionSort | ArticleSort | CollectionSort;
+  onChange: (
+    value: ModelSort | PostSort | ImageSort | QuestionSort | ArticleSort | CollectionSort
+  ) => void;
 };
 function DumbSortFilter({ type, value, onChange }: DumbProps) {
   return (
