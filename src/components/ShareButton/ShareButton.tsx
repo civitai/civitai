@@ -6,17 +6,24 @@ import { SocialIconTwitter } from '~/components/ShareButton/Icons/SocialIconTwit
 import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
 import { useClipboard } from '@mantine/hooks';
 import { SocialIconOther } from '~/components/ShareButton/Icons/SocialIconOther';
+import { SocialIconCollect } from '~/components/ShareButton/Icons/SocialIconCollect';
+import { CollectItemInput } from '~/server/schema/collection.schema';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 export function ShareButton({
   children,
   url: initialUrl,
   title,
+  collect,
 }: {
   children: React.ReactElement;
   url?: string;
   title?: string;
+  collect?: CollectItemInput;
 }) {
   const clipboard = useClipboard({ timeout: undefined });
+  const { requireLogin } = useLoginRedirect({ reason: 'add-to-collection' });
 
   const url =
     typeof window === 'undefined'
@@ -56,8 +63,16 @@ export function ShareButton({
     },
   ];
 
+  if (collect) {
+    shareLinks.unshift({
+      type: 'Collect',
+      onClick: () => requireLogin(() => openContext('addToCollection', collect)),
+      render: <SocialIconCollect />,
+    });
+  }
+
   return (
-    <Popover position="bottom" withArrow styles={{ dropdown: { maxWidth: 400 } }}>
+    <Popover withArrow shadow="md" position="top-end" width={360}>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown>
         <Stack>

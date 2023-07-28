@@ -10,6 +10,7 @@ import {
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { imageSchema } from '~/server/schema/image.schema';
 
+// TODO.Fix: Type-safety. This isn't actually typesafe. You can choose a type and a id that don't match.
 const collectionItemSchema = z.object({
   type: z.nativeEnum(CollectionType).optional(),
   articleId: z.number().optional(),
@@ -18,6 +19,7 @@ const collectionItemSchema = z.object({
   imageId: z.number().optional(),
   note: z.string().optional(),
 });
+export type CollectItemInput = z.infer<typeof collectionItemSchema>;
 
 export type AddCollectionItemInput = z.infer<typeof saveCollectionItemInputSchema>;
 export const saveCollectionItemInputSchema = collectionItemSchema
