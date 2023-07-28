@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { ModelModifier, ModelStatus } from '@prisma/client';
+import { CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconClock,
   IconExclamationMark,
@@ -499,7 +499,11 @@ export function ModelVersionDetails({
                 {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
                 <Tooltip label="Share" position="top" withArrow>
                   <div>
-                    <ShareButton url={router.asPath} title={model.name}>
+                    <ShareButton
+                      url={router.asPath}
+                      title={model.name}
+                      collect={{ modelId: model.id, type: CollectionType.Model }}
+                    >
                       <Button
                         sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                         color="gray"
