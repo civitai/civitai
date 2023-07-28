@@ -75,3 +75,18 @@ export function blurHashImage(img: HTMLImageElement): HashResult {
   const hash = encode(data, width, height, 4, 4);
   return { hash, width: img.width, height: img.height };
 }
+
+export function createBlurHash(
+  media: HTMLImageElement | HTMLVideoElement,
+  width: number,
+  height: number
+) {
+  const clampedSize = getClampedSize(width, height, 64);
+  const canvas = document.createElement('canvas');
+  canvas.width = clampedSize.width;
+  canvas.height = clampedSize.height;
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+  ctx.drawImage(media, 0, 0, clampedSize.width, clampedSize.height);
+  const result = ctx.getImageData(0, 0, clampedSize.width, clampedSize.height);
+  return encode(result.data, result.width, result.height, 4, 4);
+}

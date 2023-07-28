@@ -11,6 +11,8 @@ import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { PostImage } from '~/server/selectors/post.selector';
 import { getMetadata } from '~/utils/metadata';
+import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
+import { MediaType } from '@prisma/client';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -286,6 +288,19 @@ export function useEditPostContext<T>(selector: (state: EditPostState) => T) {
   if (!store) throw new Error('Missing EditPostContext.Provider in the tree');
   return useStore(store, selector);
 }
+
+const test = async (file: File) => {
+  const processed = await preprocessFile(file);
+  const { blockedFor } = await auditImageMeta(
+    processed.type === MediaType.image ? processed.meta : undefined,
+    false
+  );
+  return {
+    ...processed,
+    status: blockedFor ? 'blocked' : 'uploading',
+    message: blockedFor?.filter(isDefined).join(', '),
+  };
+};
 
 const getImageDataFromFile = async (file: File) => {
   const url = URL.createObjectURL(file);
