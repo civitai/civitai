@@ -30,6 +30,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { CollectionType } from '@prisma/client';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
@@ -93,6 +94,7 @@ export function PostDetail({ postId }: { postId: number }) {
                 <ShareButton
                   url={`/posts/${post.id}`}
                   title={post.title ?? `Post by ${post.user.username}`}
+                  collect={{ type: CollectionType.Post, postId: post.id }}
                 >
                   <ActionIcon color="gray" variant="filled">
                     <IconShare3 size={16} />

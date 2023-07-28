@@ -41,6 +41,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { CollectionType } from '@prisma/client';
 
 export function ImageDetail() {
   const { classes, cx } = useStyles();
@@ -92,7 +93,11 @@ export function ImageDetail() {
                       linkToProfile
                     />
                     <Group spacing={4}>
-                      <ShareButton url={shareUrl} title={`Image by ${image.user.username}`}>
+                      <ShareButton
+                        url={shareUrl}
+                        title={`Image by ${image.user.username}`}
+                        collect={{ type: CollectionType.Image, imageId: image.id }}
+                      >
                         <ActionIcon size="lg">
                           <IconShare3 />
                         </ActionIcon>
