@@ -4,12 +4,14 @@ import {
   deleteUserHomeBlockHandler,
   getHomeBlocksByIdHandler,
   getHomeBlocksHandler,
+  getSystemHomeBlocksHandler,
 } from '~/server/controllers/home-block.controller';
 import { applyUserPreferences } from '~/server/middleware.trpc';
 import {
   getHomeBlocksInputSchema,
   getHomeBlockByIdInputSchema,
   createCollectionHomeBlockInputSchema,
+  getSystemHomeBlocksInputSchema,
 } from '~/server/schema/home-block.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
@@ -19,6 +21,11 @@ export const homeBlockRouter = router({
     .use(isFlagProtected('alternateHome'))
     .use(applyUserPreferences())
     .query(getHomeBlocksHandler),
+  getSystemHomeBlocks: publicProcedure
+    .input(getSystemHomeBlocksInputSchema)
+    .use(isFlagProtected('alternateHome'))
+    .use(applyUserPreferences())
+    .query(getSystemHomeBlocksHandler),
   getHomeBlock: publicProcedure
     .input(getHomeBlockByIdInputSchema)
     .use(isFlagProtected('alternateHome'))

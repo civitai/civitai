@@ -5,6 +5,7 @@ import {
   getHomeBlockById,
   getHomeBlockData,
   getHomeBlocks,
+  getSystemHomeBlocks,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import {
@@ -15,6 +16,8 @@ import {
   CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
+  GetSystemHomeBlocksInputSchema,
+  getSystemHomeBlocksInputSchema,
   HomeBlockMetaSchema,
 } from '~/server/schema/home-block.schema';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
@@ -72,6 +75,22 @@ export const getHomeBlocksHandler = async ({
       ...homeBlock,
       metadata: homeBlock.metadata as HomeBlockMetaSchema,
     }));
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getSystemHomeBlocksHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetSystemHomeBlocksInputSchema;
+  ctx: Context;
+}): Promise<HomeBlockWithData[]> => {
+  try {
+    const homeBlocks = await getSystemHomeBlocks({ input });
+
+    return homeBlocks;
   } catch (error) {
     throw throwDbError(error);
   }

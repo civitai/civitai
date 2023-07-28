@@ -5,6 +5,7 @@ import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema'
 import {
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
+  GetSystemHomeBlocksInputSchema,
   HomeBlockMetaSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
@@ -58,8 +59,8 @@ export const getHomeBlocks = async <
   });
 };
 
-export const getCivitaiHomeBlocks = async () => {
-  dbRead.homeBlock.findMany({
+export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlocksInputSchema }) => {
+  const homeBlocks = await dbRead.homeBlock.findMany({
     select: {
       id: true,
       metadata: true,
@@ -68,8 +69,14 @@ export const getCivitaiHomeBlocks = async () => {
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
     where: {
       userId: -1,
+      permanent: input.permanent !== undefined ? input.permanent : undefined,
     },
   });
+
+  return homeBlocks.map((homeBlock) => ({
+    ...homeBlock,
+    metadata: homeBlock.metadata as HomeBlockMetaSchema,
+  }));
 };
 
 export const getHomeBlockById = async ({

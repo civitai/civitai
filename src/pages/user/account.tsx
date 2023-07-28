@@ -1,6 +1,6 @@
-import { Container, Stack, Title, Text } from '@mantine/core';
+import { Container, Stack, Title, Text, Button } from '@mantine/core';
 import { getProviders } from 'next-auth/react';
-import React from 'react';
+import React, { useMemo } from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
@@ -15,15 +15,34 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { trpc } from '~/utils/trpc';
 
 export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();
+  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery();
+
   const currentUser = useCurrentUser();
+  const hasUserHomeBlocks = useMemo(() => {
+    if (!currentUser) {
+      return false;
+    }
+
+    return homeBlocks.find((homeBlock) => homeBlock.userId === currentUser.id);
+  }, [currentUser, homeBlocks]);
 
   return (
     <>
       <Meta title="Manage your Account - Civitai" />
-
+      {hasUserHomeBlocks && (
+        <Button
+          onClick={() => {
+            openContext('manageHomeBlocks', {});
+          }}
+        >
+          Manage home
+        </Button>
+      )}
       <Container pb="md" size="xs">
         <Stack>
           <Stack spacing={0}>
