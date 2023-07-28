@@ -1,5 +1,12 @@
 import { IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { ImageSort, PostSort, QuestionSort, BrowsingMode, ArticleSort } from './enums';
+import {
+  ImageSort,
+  PostSort,
+  QuestionSort,
+  BrowsingMode,
+  ArticleSort,
+  CollectionSort,
+} from './enums';
 import { MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 
@@ -27,6 +34,11 @@ export const constants = {
   articleFilterDefaults: {
     sort: ArticleSort.Newest,
     period: MetricTimeframe.AllTime,
+    browsingMode: BrowsingMode.SFW,
+    limit: 50,
+  },
+  collectionFilterDefaults: {
+    sort: CollectionSort.Newest,
     browsingMode: BrowsingMode.SFW,
     limit: 50,
   },

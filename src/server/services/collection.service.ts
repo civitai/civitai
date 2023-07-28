@@ -7,13 +7,16 @@ import {
   GetUserCollectionItemsByItemSchema,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  GetAllCollectionsInfiniteSchema,
 } from '~/server/schema/collection.schema';
+import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  ImageIngestionStatus,
   MetricTimeframe,
   Prisma,
 } from '@prisma/client';
@@ -23,18 +26,27 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { UserPreferencesInput, userPreferencesSchema } from '~/server/middleware.trpc';
 import { ArticleGetAll } from '~/types/router';
 import { getArticles } from '~/server/services/article.service';
 import {
   getModelsWithImagesAndModelVersions,
   GetModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
-import { ArticleSort, BrowsingMode, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
-import { getAllImages, ImagesInfiniteModel } from '~/server/services/image.service';
+import {
+  ArticleSort,
+  BrowsingMode,
+  CollectionSort,
+  ImageSort,
+  ModelSort,
+  PostSort,
+} from '~/server/common/enums';
+import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { SessionUser } from 'next-auth';
+import {
+  GetByIdInput,
+  UserPreferencesInput,
+  userPreferencesSchema,
+} from '~/server/schema/base.schema';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -45,6 +57,35 @@ export type CollectionContributorPermissionFlags = {
   isContributor: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
+};
+
+export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
+  input: { limit, cursor, privacy, types, userId, sort, ids },
+  user,
+  select,
+}: {
+  input: GetAllCollectionsInfiniteSchema;
+  select: TSelect;
+  user?: SessionUser;
+}) => {
+  const orderBy: Prisma.CollectionFindManyArgs['orderBy'] = [{ createdAt: 'desc' }];
+  if (sort === CollectionSort.MostContributors)
+    orderBy.unshift({ contributors: { _count: 'desc' } });
+
+  const collections = await dbRead.collection.findMany({
+    take: limit,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: {
+      id: ids && ids.length > 0 ? { in: ids } : undefined,
+      read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
+      type: types && types.length > 0 ? { in: types } : undefined,
+      userId,
+    },
+    select,
+    orderBy,
+  });
+
+  return collections;
 };
 
 export const getUserCollectionPermissionsById = async ({
@@ -335,14 +376,31 @@ export const upsertCollection = async ({
 }: {
   input: UpsertCollectionInput & { userId: number };
 }) => {
-  const { userId, id, name, description, read, write, type, ...collectionItem } = input;
+  const { userId, id, name, description, image, read, write, type, ...collectionItem } = input;
 
   if (id) {
     const updated = await dbWrite.collection.update({
+      select: { id: true, image: { select: { id: true, url: true, ingestion: true } } },
       where: { id },
       data: {
         name,
         description,
+        image:
+          image !== undefined
+            ? image === null
+              ? { disconnect: true }
+              : {
+                  connectOrCreate: {
+                    where: { id: image.id },
+                    create: {
+                      ...image,
+                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      userId,
+                      resources: undefined,
+                    },
+                  },
+                }
+            : undefined,
         read,
         write,
       },
@@ -363,13 +421,32 @@ export const upsertCollection = async ({
       });
     }
 
+    // Start image ingestion only if it's ingestion status is pending
+    if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending)
+      await ingestImage({ image: updated.image });
+
     return updated;
   }
 
-  return dbWrite.collection.create({
+  const collection = await dbWrite.collection.create({
+    select: { id: true, image: { select: { id: true, url: true } } },
+    // TODO.collections: check this ts error
+    // Ignoring ts error here cause image -> create is
+    // complaining about having userId as undefined when it's required
     data: {
       name,
       description,
+      // TODO.collections: make it possible to save images when creating a collection
+      // image: image
+      //   ? {
+      //       create: {
+      //         ...image,
+      //         meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      //         userId,
+      //         resources: undefined,
+      //       },
+      //     }
+      //   : undefined,
       read,
       write,
       userId,
@@ -387,6 +464,9 @@ export const upsertCollection = async ({
       items: { create: { ...collectionItem, addedById: userId } },
     },
   });
+  if (collection.image) await ingestImage({ image: collection.image });
+
+  return collection;
 };
 
 interface ModelCollectionItem {
@@ -420,9 +500,9 @@ export const getCollectionItemsByCollectionId = async ({
   input,
   user,
 }: {
+  input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
-  input: UserPreferencesInput & GetAllCollectionItemsSchema;
 }) => {
   const { statuses = [CollectionItemStatus.ACCEPTED], limit, collectionId, page, cursor } = input;
 
@@ -474,6 +554,7 @@ export const getCollectionItemsByCollectionId = async ({
   const models =
     modelIds.length > 0
       ? await getModelsWithImagesAndModelVersions({
+          user,
           input: {
             limit: modelIds.length,
             sort: ModelSort.Newest,
@@ -484,7 +565,6 @@ export const getCollectionItemsByCollectionId = async ({
             ...userPreferencesInput,
             ids: modelIds,
           },
-          user,
         })
       : { items: [] };
 

@@ -60,7 +60,7 @@ const updateUserLeaderboardRank = createJob(
     if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
 
     await updateLeaderboardRank();
-    // await applyDiscordLeaderboardRoles();
+    await applyDiscordLeaderboardRoles();
   }
 );
 
