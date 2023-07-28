@@ -53,7 +53,7 @@ export const getHomeBlocksHandler = async ({
         type: true,
         userId: true,
       },
-      user: ctx.user,
+      userId: ctx.user?.id,
       ownedOnly,
     });
 
@@ -125,8 +125,9 @@ export const createCollectionHomeBlockHandler = async ({
     input: {
       type: HomeBlockType.Collection,
       metadata,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
     },
-    user: ctx.user,
   });
 };
 
@@ -138,7 +139,9 @@ export const deleteUserHomeBlockHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    await deleteHomeBlockById({ input, user: ctx.user });
+    await deleteHomeBlockById({
+      input: { ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator },
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

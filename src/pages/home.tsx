@@ -38,7 +38,8 @@ export default function Home() {
           <Loader />
         </Center>
       )}
-      {hasUserHomeBlocks && (
+      {/*TODO.PersonalizedHomePage: Complete this flow. */}
+      {hasUserHomeBlocks && false && (
         <Button
           onClick={() => {
             openContext('manageHomeBlocks', {});

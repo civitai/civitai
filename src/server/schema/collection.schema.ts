@@ -105,6 +105,7 @@ export type FollowCollectionInputSchema = z.infer<typeof followCollectionInputSc
 
 export const followCollectionInputSchema = z.object({
   collectionId: z.number(),
+  userId: z.number().optional(),
 });
 
 export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSchema>;

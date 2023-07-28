@@ -47,8 +47,10 @@ export const getAllUserCollectionsHandler = async ({
 
   try {
     const collections = await getUserCollectionsWithPermissions({
-      input,
-      user,
+      input: {
+        ...input,
+        userId: user.id,
+      },
       select: {
         id: true,
         name: true,
@@ -75,7 +77,7 @@ export const getCollectionByIdHandler = async ({
   const { user } = ctx;
 
   try {
-    const permissions = await getUserCollectionPermissionsById({ user, ...input });
+    const permissions = await getUserCollectionPermissionsById({ userId: user?.id, ...input });
 
     // If the user has 0 permission over this collection, they have no business asking for it.
     if (!permissions.read && !permissions.write && !permissions.manage) {
@@ -106,7 +108,7 @@ export const saveItemHandler = ({
   const { user } = ctx;
 
   try {
-    return saveItemInCollections({ user, input });
+    return saveItemInCollections({ input: { ...input, userId: user.id } });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -123,10 +125,10 @@ export const bulkSaveItemsHandler = async ({
   try {
     const permissions = await getUserCollectionPermissionsById({
       id: input.collectionId,
-      user,
+      userId: user?.id,
     });
 
-    return await bulkSaveItems({ input, user, permissions });
+    return await bulkSaveItems({ input: { ...input, userId: user.id }, permissions });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -143,7 +145,7 @@ export const upsertCollectionHandler = async ({
   const { user } = ctx;
 
   try {
-    const collection = await upsertCollection({ input, user });
+    const collection = await upsertCollection({ input: { ...input, userId: user.id } });
 
     return collection;
   } catch (error) {
@@ -162,7 +164,9 @@ export const getUserCollectionItemsByItemHandler = async ({
   const { user } = ctx;
 
   try {
-    const collectionItems = await getUserCollectionItemsByItem({ input, user });
+    const collectionItems = await getUserCollectionItemsByItem({
+      input: { ...input, userId: user.id },
+    });
     return collectionItems;
   } catch (error) {
     throw throwDbError(error);
@@ -178,7 +182,7 @@ export const deleteUserCollectionHandler = async ({
 }) => {
   try {
     const { user } = ctx;
-    await deleteCollectionById({ id: input.id, user });
+    await deleteCollectionById({ id: input.id, userId: user.id, isModerator: user.isModerator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -196,7 +200,11 @@ export const followHandler = ({
   const { collectionId } = input;
 
   try {
-    return addContributorToCollection({ user, userId: user?.id, collectionId });
+    return addContributorToCollection({
+      targetUserId: input.userId || user?.id,
+      userId: user?.id,
+      collectionId,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -213,7 +221,11 @@ export const unfollowHandler = ({
   const { collectionId } = input;
 
   try {
-    return removeContributorFromCollection({ user, userId: user.id, collectionId });
+    return removeContributorFromCollection({
+      targetUserId: input.userId || user?.id,
+      userId: user?.id,
+      collectionId,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -230,7 +242,7 @@ export const collectionItemsInfiniteHandler = async ({
   const limit = input.limit + 1;
   const collectionItems = await getCollectionItemsByCollectionId({
     input: { ...input, limit },
-    ctx,
+    user: ctx.user,
   });
 
   let nextCursor: number | undefined;
@@ -255,8 +267,10 @@ export const updateCollectionItemsStatusHandler = async ({
 }) => {
   try {
     return updateCollectionItemsStatus({
-      user: ctx.user,
-      input,
+      input: {
+        ...input,
+        userId: ctx.user.id,
+      },
     });
   } catch (error) {
     throw throwDbError(error);
@@ -277,7 +291,7 @@ export const addSimpleImagePostHandler = async ({
 
     const permissions = await getUserCollectionPermissionsById({
       id: collection.id,
-      user,
+      userId: user?.id,
     });
     if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
@@ -295,7 +309,7 @@ export const addSimpleImagePostHandler = async ({
       )
     );
     const imageIds = postImages.map((image) => image.id);
-    await bulkSaveItems({ input: { collectionId, imageIds }, user, permissions });
+    await bulkSaveItems({ input: { collectionId, imageIds, userId: user?.id }, permissions });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
