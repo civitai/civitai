@@ -149,6 +149,10 @@ export const constants = {
   imageGeneration: {
     drawerZIndex: 301,
   },
+  tagVoting: {
+    voteDuration: 1000 * 60 * 60 * 24,
+    upvoteThreshold: 3,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

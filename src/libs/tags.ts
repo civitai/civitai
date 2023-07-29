@@ -18,6 +18,8 @@ export type VotableTagModel = {
   automated?: boolean;
   vote?: number;
   needsReview?: boolean;
+  concrete?: boolean;
+  lastUpvote?: Date | null;
 };
 
 const tagNameOverrides = {
