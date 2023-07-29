@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { toggleableFeatures } from '~/server/services/feature-flags.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useLocalStorage } from '@mantine/hooks';
@@ -18,6 +18,18 @@ export const useFeatureFlags = () => {
       {}
     ),
   });
+
+  useEffect(() => {
+    const toToggle: Partial<FeatureAccess> = {};
+    for (const feature of toggleable) {
+      if (
+        toggled[feature.key as keyof FeatureAccess] === undefined &&
+        feature.default !== undefined
+      )
+        toToggle[feature.key] = feature.default;
+    }
+    if (Object.keys(toToggle).length > 0) setToggled((prev) => ({ ...prev, ...toToggle }));
+  }, [toggleable, toggled, setToggled]);
 
   const featuresWithToggled = useMemo(() => {
     return Object.keys(features).reduce((acc, key) => {
