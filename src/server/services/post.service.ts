@@ -90,6 +90,8 @@ export const getPostsInfinite = async ({
     if (targetUser) AND.push(Prisma.sql`p."userId" = ${targetUser.id}`);
   }
   if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+
+  const joins: string[] = [];
   if (!isOwnerRequest) {
     AND.push(Prisma.sql`p."publishedAt" < now()`);
     if (period !== 'AllTime' && periodMode !== 'stats') {
@@ -121,24 +123,19 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
     if (!user?.isModerator) {
       // Handle Post Visibility
-      AND.push(Prisma.sql`(p."modelVersionId" IS NULL OR EXISTS (
-        SELECT 1 FROM "ModelVersion" mv
-        WHERE mv.id = p."modelVersionId" AND mv.status = 'Published'
-      ))`);
+      joins.push('LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id');
+      AND.push(Prisma.sql`(p."modelVersionId" IS NULL OR mv.status = 'Published')`);
 
       // Handle Collection Visibility
-      const collectionOr = [
-        Prisma.sql`p."collectionId" IS NULL`,
-        Prisma.sql`EXISTS (
-        SELECT 1 FROM "Collection" c
-        WHERE c.id = p."collectionId" AND c.read = 'Public'
-      )`,
-      ];
-      if (user?.id)
-        collectionOr.push(Prisma.sql`EXISTS (
-          SELECT 1 FROM "CollectionContributor" cc
-          WHERE cc."collectionId" = p."collectionId" AND cc."userId" = ${user?.id} AND 'VIEW' = ANY(cc.permissions)'
-        )`);
+      joins.push('LEFT JOIN "Collection" c ON p."collectionId" = c.id');
+      const collectionOr = [Prisma.sql`p."collectionId" IS NULL`, Prisma.sql`c.read = 'Public'`];
+      if (user?.id) {
+        joins.push(
+          `LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${user.id}`
+        );
+
+        collectionOr.push(Prisma.sql`'VIEW' = ANY(cc.permissions)`);
+      }
 
       AND.push(Prisma.sql`(${Prisma.join(collectionOr, ' OR ')})`);
     }
@@ -171,7 +168,10 @@ export const getPostsInfinite = async ({
   if (sort === PostSort.MostComments) orderBy = `r."comment${period}Rank"`;
   else if (sort === PostSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
   const includeRank = orderBy.startsWith('r.');
-  const optionalRank = !!(username || modelVersionId || ids || collectionId);
+  if (includeRank) {
+    const optionalRank = !!(username || modelVersionId || ids || collectionId);
+    joins.push(`${optionalRank ? 'LEFT ' : ''}JOIN "PostRank" r ON r."postId" = p.id`);
+  }
 
   // cursor
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
@@ -206,9 +206,7 @@ export const getPostsInfinite = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
     JOIN "User" u ON u.id = p."userId"
-    ${Prisma.raw(
-      includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "PostRank" r ON r."postId" = p.id` : ''
-    )}
+    ${Prisma.raw(joins.join('\n'))}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
