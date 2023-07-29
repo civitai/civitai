@@ -161,7 +161,7 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "CollectionItem" ci
       WHERE ci."collectionId" = ${collectionId}
-        AND ci."imageId" = i.id
+        AND ci."postId" = p.id
         AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
     )`);
   }
@@ -193,12 +193,12 @@ export const getPostsInfinite = async ({
       p."publishedAt",
       (
         SELECT jsonb_build_object(
-          'cryCount', pm."cryCount",
-          'laughCount', pm."laughCount",
-          'likeCount', pm."likeCount",
-          'dislikeCount', pm."dislikeCount",
-          'heartCount', pm."heartCount",
-          'commentCount', pm."commentCount"
+          'cryCount', COALESCE(pm."cryCount", 0),
+          'laughCount', COALESCE(pm."laughCount", 0),
+          'likeCount', COALESCE(pm."likeCount", 0),
+          'dislikeCount', COALESCE(pm."dislikeCount", 0),
+          'heartCount', COALESCE(pm."heartCount", 0),
+          'commentCount', COALESCE(pm."commentCount", 0)
         ) "stats"
         FROM "PostMetric" pm
         WHERE pm."postId" = p.id AND pm."timeframe" = ${period}::"MetricTimeframe"
