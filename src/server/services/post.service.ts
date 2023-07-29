@@ -121,10 +121,10 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
     if (!user?.isModerator) {
       // Handle Post Visibility
-      AND.push(Prisma.sql`p."modelVersionId" IS NULL OR EXISTS (
+      AND.push(Prisma.sql`(p."modelVersionId" IS NULL OR EXISTS (
         SELECT 1 FROM "ModelVersion" mv
         WHERE mv.id = p."modelVersionId" AND mv.status = 'Published'
-      )`);
+      ))`);
 
       // Handle Collection Visibility
       const collectionOr = [
