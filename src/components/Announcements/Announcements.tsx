@@ -25,7 +25,7 @@ export const Announcements = (props: AnnouncementsProps) => {
 
   const { data: latestAnnouncement, isFetching } = trpc.announcement.getLatest.useQuery(
     { dismissed },
-    { enabled: isClient && dismissed.length > 0 }
+    { enabled: isClient && (dismissed.length > 0 || !isIndex) }
   );
 
   if (!isClient) return null;

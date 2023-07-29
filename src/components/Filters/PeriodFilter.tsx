@@ -1,5 +1,6 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
+import { useCallback } from 'react';
 import { PeriodModeToggle } from '~/components/Filters/PeriodModeToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
@@ -55,7 +56,9 @@ type StatefulProps = {
 };
 function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
   const { query, pathname, replace } = useRouter();
-  const globalPeriod = useFiltersContext((state) => state[type].period);
+  const globalPeriod = useFiltersContext(
+    useCallback((state) => (type !== 'collections' ? state[type].period : undefined), [type])
+  );
   const queryPeriod = query.period as typeof globalPeriod | undefined;
 
   const setFilters = useSetFilters(type);
@@ -68,6 +71,7 @@ function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
   };
 
   const period = queryPeriod ? queryPeriod : globalPeriod;
+  if (!period) return null;
   return (
     <DumbPeriodFilter
       type={type}

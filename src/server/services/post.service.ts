@@ -37,10 +37,7 @@ import {
   getImagesForPosts,
   ingestImage,
 } from '~/server/services/image.service';
-import { decreaseDate } from '~/utils/date-helpers';
-import { ManipulateType } from 'dayjs';
 import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
-import { logToDb } from '~/utils/logging';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -85,7 +82,6 @@ export const getPostsInfinite = async ({
   collectionId,
   include,
 }: PostsQueryInput & { user?: SessionUser }) => {
-  // const AND: Prisma.Enumerable<Prisma.PostWhereInput> = [];
   const AND = [Prisma.sql`1 = 1`];
 
   const isOwnerRequest = user && user.username === username;
@@ -135,7 +131,7 @@ export const getPostsInfinite = async ({
         Prisma.sql`p."collectionId" IS NULL`,
         Prisma.sql`EXISTS (
         SELECT 1 FROM "Collection" c
-        WHERE c.id = p."collectionId" AND c.read != 'Private'
+        WHERE c.id = p."collectionId" AND c.read = 'Public'
       )`,
       ];
       if (user?.id)
