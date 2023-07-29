@@ -119,10 +119,10 @@ function ManageHomeBlocks() {
   }, [homeBlocks, isLoadingOwnedHomeBlocks]);
 
   useEffect(() => {
-    if (items.length === 0 && availableSystemHomeBlocks.length && !systemBlocksOpen) {
+    if (items.length === 0 && availableSystemHomeBlocks.length) {
       setSystemBlocksOpen(true);
     }
-  }, [items, availableSystemHomeBlocks, systemBlocksOpen]);
+  }, [items, availableSystemHomeBlocks]);
 
   if (isLoading) {
     return (
@@ -191,13 +191,13 @@ function ManageHomeBlocks() {
         <Stack>
           <Button
             size="xs"
+            fontSize="sm"
             variant="gradient"
             gradient={{ from: 'cyan', to: 'blue' }}
             onClick={() => setSystemBlocksOpen((o) => !o)}
             rightIcon={systemBlocksOpen ? <IconChevronUp /> : <IconChevronDown />}
           >
             Civitai Home Blocks
-            <Badge variant="gradient"></Badge>
           </Button>
           <Collapse in={systemBlocksOpen}>
             {availableSystemHomeBlocks.length > 0 ? (
@@ -228,7 +228,15 @@ function ManageHomeBlocks() {
 
       <Box>
         <Stack>
-          <Badge mt="md" size="md" gradient={{ from: 'cyan', to: 'blue' }} variant="gradient">
+          <Badge
+            mt="md"
+            size="md"
+            h={30}
+            fontSize="sm"
+            gradient={{ from: 'cyan', to: 'blue' }}
+            variant="gradient"
+            style={{ textTransform: 'capitalize' }}
+          >
             Your home
           </Badge>
           <SortableContext items={items} strategy={verticalListSortingStrategy}>
