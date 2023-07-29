@@ -296,23 +296,7 @@ export const deleteHomeBlockById = async ({
       return null;
     }
 
-    const isOwner = homeBlock.userId === userId;
-
-    const deleteSuccess = await dbWrite.homeBlock.delete({ where: { id } });
-    // See if the user has other home blocks:
-
-    if (isOwner) {
-      // Check that the user has other collections:
-      const hasOtherHomeBlocks = await userHasCustomHomeBlocks(userId);
-
-      if (!hasOtherHomeBlocks) {
-        // Delete all cloned collections if any, this will
-        // leave them with our default home blocks:
-        await dbWrite.homeBlock.deleteMany({ where: { userId } });
-      }
-    }
-
-    return deleteSuccess;
+    return await dbWrite.homeBlock.delete({ where: { id } });
   } catch {
     // Ignore errors
   }
