@@ -8,6 +8,7 @@ import {
   Text,
   ThemeIcon,
   Group,
+  Divider,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { CollectionContributorPermission } from '@prisma/client';
@@ -59,7 +60,6 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
 
   const Collections = (
     <Skeleton visible={isLoading} animate>
-      {ownedFilteredCollections.length > 0 && <Text weight="bold">Owned</Text>}
       {ownedFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
@@ -69,7 +69,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
           label={<Text>{c.name}</Text>}
         ></NavLink>
       ))}
-      {contributingFilteredCollections.length > 0 && <Text weight="bold">Shared with me</Text>}
+      {contributingFilteredCollections.length > 0 && <Divider label="Following" mt="sm" />}
       {contributingFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
