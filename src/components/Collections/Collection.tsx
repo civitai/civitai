@@ -266,32 +266,31 @@ export function Collection({
                           <IconDotsVertical size={16} />
                         </ActionIcon>
                       </Menu.Target>
-                      {permissions.read ||
-                        (permissions.manage && (
-                          <Menu.Dropdown>
-                            {permissions.read && (
-                              <Menu.Item
-                                icon={<IconHome size={14} stroke={1.5} />}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  onToggleCollectionHomeBlock();
-                                }}
-                              >
-                                {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
-                              </Menu.Item>
-                            )}
-                            {permissions.manage && (
-                              <Menu.Item
-                                component={NextLink}
-                                icon={<IconPencil size={14} stroke={1.5} />}
-                                href={`/collections/${collection.id}/review`}
-                              >
-                                Review Items
-                              </Menu.Item>
-                            )}
-                          </Menu.Dropdown>
-                        ))}
+                      {(permissions.read || permissions.manage) && (
+                        <Menu.Dropdown>
+                          {permissions.read && (
+                            <Menu.Item
+                              icon={<IconHome size={14} stroke={1.5} />}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onToggleCollectionHomeBlock();
+                              }}
+                            >
+                              {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
+                            </Menu.Item>
+                          )}
+                          {permissions.manage && (
+                            <Menu.Item
+                              component={NextLink}
+                              icon={<IconPencil size={14} stroke={1.5} />}
+                              href={`/collections/${collection.id}/review`}
+                            >
+                              Review Items
+                            </Menu.Item>
+                          )}
+                        </Menu.Dropdown>
+                      )}
                     </Menu>
                   )}
                 </Group>
