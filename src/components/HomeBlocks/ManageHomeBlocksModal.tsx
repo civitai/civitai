@@ -4,15 +4,9 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  closestCenter,
-  DragOverlay,
   Modifier,
-  useDraggable,
-  useDroppable,
   rectIntersection,
-  pointerWithin,
 } from '@dnd-kit/core';
-import { restrictToParentElement } from '@dnd-kit/modifiers';
 import {
   SortableContext,
   arrayMove,
@@ -31,15 +25,19 @@ import {
   Button,
   Card,
   Center,
+  Collapse,
   Group,
   Loader,
   Stack,
   Text,
 } from '@mantine/core';
 import {
+  IconChevronDown,
+  IconChevronUp,
   IconGripVertical,
   IconInfoCircle,
   IconPlayerPlay,
+  IconPlus,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -76,11 +74,9 @@ function ManageHomeBlocks() {
   const utils = trpc.useContext();
 
   const isLoading = isLoadingSystemHomeBlocks || isLoadingOwnedHomeBlocks;
+  const [systemBlocksOpen, setSystemBlocksOpen] = useState(false);
   const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks);
   const [activeItem, setActiveItem] = useState<HomeBlockGetAll[number] | null>(null);
-  const [activeItemType, setActiveItemType] = useState<'user' | 'system' | null>(null);
-  const { setNodeRef: userContentNodeRef, isOver } = useDroppable({ id: 'user' });
-  const { setNodeRef: systemContentNodeRef } = useDroppable({ id: 'system' });
   const { mutate: setHomeBlocksOrder, isLoading: isUpdating } =
     trpc.homeBlock.setHomeBlockOrder.useMutation({
       async onSuccess() {
@@ -116,39 +112,17 @@ function ManageHomeBlocks() {
     });
   }, [items, systemHomeBlocks, activeItem]);
 
-  const snapVerticalCenterToCursor = useMemo(() => {
-    const mofifier: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
-      if (draggingNodeRect && activatorEvent) {
-        const activatorCoordinates = getEventCoordinates(activatorEvent);
-
-        if (!activatorCoordinates) {
-          return transform;
-        }
-
-        const offsetY = activatorCoordinates.y - draggingNodeRect.top;
-        return {
-          ...transform,
-          y: transform.y + offsetY - draggingNodeRect.height / 2,
-        };
-      }
-
-      return transform;
-    };
-
-    return mofifier;
-  }, []);
-
   useEffect(() => {
     if (!isLoadingOwnedHomeBlocks) {
       setItems(homeBlocks);
     }
   }, [homeBlocks, isLoadingOwnedHomeBlocks]);
 
-  const isSystemBlock = useMemo(
-    () => (id: number | null) =>
-      availableSystemHomeBlocks.find((systemHomeBlock) => id === systemHomeBlock.id),
-    [availableSystemHomeBlocks]
-  );
+  useEffect(() => {
+    if (items.length === 0 && availableSystemHomeBlocks.length && !systemBlocksOpen) {
+      setSystemBlocksOpen(true);
+    }
+  }, [items, availableSystemHomeBlocks, systemBlocksOpen]);
 
   if (isLoading) {
     return (
@@ -162,6 +136,16 @@ function ManageHomeBlocks() {
     setItems(items.filter((item) => item.id !== id));
   };
 
+  const onAddSystemHomeBlock = (id: number) => {
+    const systemHomeBlock = availableSystemHomeBlocks.find(
+      (systemHomeBlock) => id === systemHomeBlock.id
+    );
+
+    if (systemHomeBlock) {
+      setItems([...items, systemHomeBlock]);
+    }
+  };
+
   const handleSave = () => {
     const data = items.map((item, index) => ({ id: item.id, index, userId: item.userId }));
     setHomeBlocksOrder({ homeBlocks: data });
@@ -171,39 +155,10 @@ function ManageHomeBlocks() {
     <DndContext
       sensors={sensors}
       onDragStart={({ active }) => {
-        const systemHomeBlock = availableSystemHomeBlocks.find((item) => item.id === active.id);
-
-        if (systemHomeBlock) {
-          setActiveItem(systemHomeBlock);
-          setActiveItemType('system');
-          return;
-        }
-
         const item = items.find((item) => item.id === active.id) || null;
-
-        if (item) {
-          setActiveItemType('user');
-          setActiveItem(item);
-        }
+        setActiveItem(item);
       }}
-      onDragOver={({ active, over }) => {
-        const activeOnItemList = !!items.find((item) => item.id === active.id);
-        const isOverItemList = over && !!items.find((item) => item.id === over.id);
-
-        if (isOverItemList && !activeOnItemList && activeItemType === 'system') {
-          // Add item at the start of the list.
-          const item = availableSystemHomeBlocks.find((item) => item.id === active.id) || null;
-          if (item) {
-            setItems([item, ...items]);
-          }
-        }
-
-        if (!over && activeItemType === 'system' && activeOnItemList) {
-          // Remove the item.
-          setItems(items.filter((item) => item.id !== active.id));
-        }
-      }}
-      onDragEnd={({ active, over, ...other }) => {
+      onDragEnd={({ active, over }) => {
         if (over && active.id !== over?.id) {
           const activeIndex = items.findIndex(({ id }) => id === active.id);
           const overIndex = items.findIndex(({ id }) => id === over.id);
@@ -212,7 +167,6 @@ function ManageHomeBlocks() {
         }
 
         setActiveItem(null);
-        setActiveItemType(null);
       }}
       collisionDetection={rectIntersection}
       onDragCancel={() => setActiveItem(null)}
@@ -233,23 +187,48 @@ function ManageHomeBlocks() {
           Expect frequent changes.
         </Text>
       </Group>
-      <Box ref={systemContentNodeRef}>
-        {availableSystemHomeBlocks.length > 0 && (
-          <Stack>
-            <Badge gradient={{ from: 'cyan', to: 'blue' }} variant="gradient">
-              Civitai Home Blocks
-            </Badge>
-
-            {availableSystemHomeBlocks.map((systemHomeBlock) => (
-              <SystemHomeBlock key={systemHomeBlock.id} homeBlock={systemHomeBlock} />
-            ))}
-          </Stack>
-        )}
+      <Box>
+        <Stack>
+          <Button
+            size="xs"
+            variant="gradient"
+            gradient={{ from: 'cyan', to: 'blue' }}
+            onClick={() => setSystemBlocksOpen((o) => !o)}
+            rightIcon={systemBlocksOpen ? <IconChevronUp /> : <IconChevronDown />}
+          >
+            Civitai Home Blocks
+            <Badge variant="gradient"></Badge>
+          </Button>
+          <Collapse in={systemBlocksOpen}>
+            {availableSystemHomeBlocks.length > 0 ? (
+              <Stack>
+                {availableSystemHomeBlocks.map((systemHomeBlock) => (
+                  <SystemHomeBlock
+                    key={systemHomeBlock.id}
+                    onAdd={onAddSystemHomeBlock}
+                    homeBlock={systemHomeBlock}
+                  />
+                ))}
+              </Stack>
+            ) : (
+              <AlertWithIcon
+                py={5}
+                my="xs"
+                title="All home blocks selected"
+                icon={<IconInfoCircle />}
+                iconSize="lg"
+                radius="md"
+              >
+                <Text>All civitai home blocks are already selected.</Text>
+              </AlertWithIcon>
+            )}
+          </Collapse>
+        </Stack>
       </Box>
 
-      <Box ref={userContentNodeRef}>
+      <Box>
         <Stack>
-          <Badge mt="md" gradient={{ from: 'cyan', to: 'blue' }} variant="gradient">
+          <Badge mt="md" size="md" gradient={{ from: 'cyan', to: 'blue' }} variant="gradient">
             Your home
           </Badge>
           <SortableContext items={items} strategy={verticalListSortingStrategy}>
@@ -263,8 +242,8 @@ function ManageHomeBlocks() {
                 radius="md"
               >
                 <Text>
-                  By removing all your home blocks and saving you will end up with our default
-                  recommended home page setup.
+                  By leaving this empty you will end up with our default recommended home page
+                  setup.
                 </Text>
               </AlertWithIcon>
             )}
@@ -275,12 +254,6 @@ function ManageHomeBlocks() {
           </SortableContext>
         </Stack>
       </Box>
-
-      <DragOverlay modifiers={[restrictToParentElement, snapVerticalCenterToCursor]}>
-        {!activeItem || isSystemBlock(activeItem.id) ? null : (
-          <SortableHomeBlock key={activeItem.id} homeBlock={activeItem} />
-        )}
-      </DragOverlay>
 
       <Stack>
         <Button mt="sm" disabled={isUpdating} onClick={handleSave}>
@@ -305,7 +278,7 @@ function SortableHomeBlock({
     transform: CSS.Transform.toString(transform),
     transition,
     cursor: isDragging ? 'grabbing' : 'pointer',
-    opacity: isDragging ? 0.4 : undefined,
+    zIndex: isDragging ? 1 : undefined,
   };
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
   const homeBlockName = metadata?.title || homeBlock.collection?.name;
@@ -327,26 +300,29 @@ function SortableHomeBlock({
   );
 }
 
-function SystemHomeBlock({ homeBlock }: { homeBlock: HomeBlockGetAll[number] }) {
-  const draggable = useDraggable({ id: homeBlock.id });
-  const { attributes, listeners, isDragging, setNodeRef, transform } = draggable;
-
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    cursor: isDragging ? 'grabbing' : 'pointer',
-    zIndex: isDragging ? 1 : undefined,
-  };
-
+function SystemHomeBlock({
+  homeBlock,
+  onAdd,
+}: {
+  homeBlock: HomeBlockGetAll[number];
+  onAdd?: (id: number) => void;
+}) {
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
   const homeBlockName = metadata?.title || homeBlock.collection?.name;
 
   return (
-    <Card withBorder style={style} {...attributes} {...listeners} ref={setNodeRef}>
+    <Card withBorder>
       <Group align="start">
         <IconGripVertical />
         <Text size="md" lineClamp={1}>
           {homeBlockName}
         </Text>
+
+        {onAdd && (
+          <ActionIcon ml="auto" onClick={() => onAdd(homeBlock.id)}>
+            <IconPlus size={16} />
+          </ActionIcon>
+        )}
       </Group>
     </Card>
   );

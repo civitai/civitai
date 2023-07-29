@@ -1,7 +1,6 @@
 import { ActionIcon } from '@mantine/core';
 import { openContext } from '~/providers/CustomModalsProvider';
-import React, { useMemo } from 'react';
-import { trpc } from '~/utils/trpc';
+import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconSettings } from '@tabler/icons-react';
 
@@ -12,23 +11,8 @@ export function ManageHomeBlockAction({
   children?: (props: { onClick: (e: React.MouseEvent) => void }) => React.ReactNode;
 }) {
   const currentUser = useCurrentUser();
-  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery(
-    {},
-    {
-      enabled: !!currentUser,
-    }
-  );
-
-  const hasUserHomeBlocks = useMemo(() => {
-    if (!currentUser) {
-      return false;
-    }
-
-    return homeBlocks.find((homeBlock) => homeBlock.userId === currentUser.id);
-  }, [currentUser, homeBlocks]);
-
-  if (!hasUserHomeBlocks) {
-    return null;
+  if (!currentUser) {
+    return;
   }
 
   const onClick = () => {
