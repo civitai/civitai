@@ -1,12 +1,5 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from 'react';
-import {
-  DndContext,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  Modifier,
-  rectIntersection,
-} from '@dnd-kit/core';
+import { DndContext, PointerSensor, useSensor, useSensors, rectIntersection } from '@dnd-kit/core';
 import {
   SortableContext,
   arrayMove,
@@ -19,13 +12,13 @@ import { HomeBlockGetAll } from '~/types/router';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import {
   ActionIcon,
-  Anchor,
   Badge,
   Box,
   Button,
   Card,
   Center,
   Collapse,
+  createStyles,
   Group,
   Loader,
   Stack,
@@ -36,17 +29,21 @@ import {
   IconChevronUp,
   IconGripVertical,
   IconInfoCircle,
-  IconPlayerPlay,
   IconPlus,
   IconTrash,
-  IconX,
 } from '@tabler/icons-react';
-import { CSS, getEventCoordinates } from '@dnd-kit/utilities';
-import { openContext } from '~/providers/CustomModalsProvider';
+import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { NextLink } from '@mantine/next';
-import { closeSpotlight } from '@mantine/spotlight';
+
+const useStyles = createStyles((theme) => ({
+  sectionHeader: {
+    height: 30,
+    fontSize: theme.fontSizes.sm,
+    textTransform: 'capitalize',
+    fontWeight: 500,
+  },
+}));
 
 const { openModal: openManageHomeBlocksModal, Modal } = createContextModal({
   name: 'manageHomeBlocks',
@@ -61,6 +58,7 @@ export { openManageHomeBlocksModal };
 export default Modal;
 
 function ManageHomeBlocks() {
+  const { classes } = useStyles();
   const { data: homeBlocks = [], isLoading: isLoadingOwnedHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({
       withCoreData: true,
@@ -191,7 +189,7 @@ function ManageHomeBlocks() {
         <Stack>
           <Button
             size="xs"
-            fontSize="sm"
+            className={classes.sectionHeader}
             variant="gradient"
             gradient={{ from: 'cyan', to: 'blue' }}
             onClick={() => setSystemBlocksOpen((o) => !o)}
@@ -232,10 +230,9 @@ function ManageHomeBlocks() {
             mt="md"
             size="md"
             h={30}
-            fontSize="sm"
             gradient={{ from: 'cyan', to: 'blue' }}
             variant="gradient"
-            style={{ textTransform: 'capitalize' }}
+            className={classes.sectionHeader}
           >
             Your home
           </Badge>
