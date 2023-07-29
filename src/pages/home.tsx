@@ -1,4 +1,4 @@
-import { Center, Container, Loader } from '@mantine/core';
+import { Center, Container, Group, Loader } from '@mantine/core';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -6,6 +6,7 @@ import { HomeBlockType } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
+import { ManageHomeBlockAction } from '~/components/HomeBlocks/ManageHomeBlockAction';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -20,7 +21,9 @@ export default function Home() {
   return (
     <>
       <Container size="xl" sx={{ overflow: 'hidden' }}>
-        <FullHomeContentToggle />
+        <Group>
+          <ManageHomeBlockAction /> <FullHomeContentToggle />
+        </Group>
       </Container>
       {isLoading && (
         <Center sx={{ height: 36 }} mt="md">

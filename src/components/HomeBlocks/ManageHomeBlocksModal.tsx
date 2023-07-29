@@ -10,6 +10,7 @@ import {
   useDraggable,
   useDroppable,
   rectIntersection,
+  pointerWithin,
 } from '@dnd-kit/core';
 import { restrictToParentElement } from '@dnd-kit/modifiers';
 import {
@@ -24,6 +25,7 @@ import { HomeBlockGetAll } from '~/types/router';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -34,10 +36,19 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconGripVertical, IconTrash, IconX } from '@tabler/icons-react';
+import {
+  IconGripVertical,
+  IconInfoCircle,
+  IconPlayerPlay,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import { CSS, getEventCoordinates } from '@dnd-kit/utilities';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { NextLink } from '@mantine/next';
+import { closeSpotlight } from '@mantine/spotlight';
 
 const { openModal: openManageHomeBlocksModal, Modal } = createContextModal({
   name: 'manageHomeBlocks',
@@ -68,8 +79,8 @@ function ManageHomeBlocks() {
   const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks);
   const [activeItem, setActiveItem] = useState<HomeBlockGetAll[number] | null>(null);
   const [activeItemType, setActiveItemType] = useState<'user' | 'system' | null>(null);
-  const { setNodeRef: userContentNodeRef } = useDroppable({ id: 'user' });
-  const { setNodeRef: systemHomeBlocksNodeRef } = useDroppable({ id: 'system' });
+  const { setNodeRef: userContentNodeRef, isOver } = useDroppable({ id: 'user' });
+  const { setNodeRef: systemContentNodeRef } = useDroppable({ id: 'system' });
   const { mutate: setHomeBlocksOrder, isLoading: isUpdating } =
     trpc.homeBlock.setHomeBlockOrder.useMutation({
       async onSuccess() {
@@ -88,7 +99,13 @@ function ManageHomeBlocks() {
       },
     });
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
 
   const availableSystemHomeBlocks = useMemo(() => {
     return systemHomeBlocks.filter((systemHomeBlock) => {
@@ -122,8 +139,10 @@ function ManageHomeBlocks() {
   }, []);
 
   useEffect(() => {
-    setItems(homeBlocks);
-  }, [homeBlocks]);
+    if (!isLoadingOwnedHomeBlocks) {
+      setItems(homeBlocks);
+    }
+  }, [homeBlocks, isLoadingOwnedHomeBlocks]);
 
   const isSystemBlock = useMemo(
     () => (id: number | null) =>
@@ -143,8 +162,7 @@ function ManageHomeBlocks() {
     setItems(items.filter((item) => item.id !== id));
   };
 
-  const onSave = () => {
-    console.log(items);
+  const handleSave = () => {
     const data = items.map((item, index) => ({ id: item.id, index, userId: item.userId }));
     setHomeBlocksOrder({ homeBlocks: data });
   };
@@ -161,9 +179,12 @@ function ManageHomeBlocks() {
           return;
         }
 
-        setActiveItemType('user');
         const item = items.find((item) => item.id === active.id) || null;
-        setActiveItem(item);
+
+        if (item) {
+          setActiveItemType('user');
+          setActiveItem(item);
+        }
       }}
       onDragOver={({ active, over }) => {
         const activeOnItemList = !!items.find((item) => item.id === active.id);
@@ -182,7 +203,7 @@ function ManageHomeBlocks() {
           setItems(items.filter((item) => item.id !== active.id));
         }
       }}
-      onDragEnd={({ active, over }) => {
+      onDragEnd={({ active, over, ...other }) => {
         if (over && active.id !== over?.id) {
           const activeIndex = items.findIndex(({ id }) => id === active.id);
           const overIndex = items.findIndex(({ id }) => id === over.id);
@@ -196,7 +217,23 @@ function ManageHomeBlocks() {
       collisionDetection={rectIntersection}
       onDragCancel={() => setActiveItem(null)}
     >
-      <Box ref={systemHomeBlocksNodeRef}>
+      <Group
+        spacing="xs"
+        py="xs"
+        sx={(theme) => ({
+          borderTop: `1px solid ${
+            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+          }`,
+        })}
+      >
+        <Badge color="yellow" variant="light" size="xs">
+          Beta
+        </Badge>
+        <Text size="xs" color="dimmed" inline>
+          Expect frequent changes.
+        </Text>
+      </Group>
+      <Box ref={systemContentNodeRef}>
         {availableSystemHomeBlocks.length > 0 && (
           <Stack>
             <Badge gradient={{ from: 'cyan', to: 'blue' }} variant="gradient">
@@ -210,22 +247,35 @@ function ManageHomeBlocks() {
         )}
       </Box>
 
-      <Stack ref={userContentNodeRef}>
-        <Badge mt="md" gradient={{ from: 'cyan', to: 'blue' }} variant="gradient">
-          Your home
-        </Badge>
-        <SortableContext items={items} strategy={verticalListSortingStrategy}>
-          {items.map((item) => (
-            <SortableHomeBlock key={item.id} onRemove={onRemoveItem} homeBlock={item} />
-          ))}
-        </SortableContext>
-      </Stack>
-      {items.length === 0 && (
-        <Text>
-          By leaving this empty and saving you will end up with our default recommended home page
-          setup.
-        </Text>
-      )}
+      <Box ref={userContentNodeRef}>
+        <Stack>
+          <Badge mt="md" gradient={{ from: 'cyan', to: 'blue' }} variant="gradient">
+            Your home
+          </Badge>
+          <SortableContext items={items} strategy={verticalListSortingStrategy}>
+            {items.length === 0 && (
+              <AlertWithIcon
+                py={5}
+                my="xs"
+                title="No home blocks selected"
+                icon={<IconInfoCircle />}
+                iconSize="lg"
+                radius="md"
+              >
+                <Text>
+                  By removing all your home blocks and saving you will end up with our default
+                  recommended home page setup.
+                </Text>
+              </AlertWithIcon>
+            )}
+
+            {items.map((item) => (
+              <SortableHomeBlock key={item.id} onRemove={onRemoveItem} homeBlock={item} />
+            ))}
+          </SortableContext>
+        </Stack>
+      </Box>
+
       <DragOverlay modifiers={[restrictToParentElement, snapVerticalCenterToCursor]}>
         {!activeItem || isSystemBlock(activeItem.id) ? null : (
           <SortableHomeBlock key={activeItem.id} homeBlock={activeItem} />
@@ -233,7 +283,7 @@ function ManageHomeBlocks() {
       </DragOverlay>
 
       <Stack>
-        <Button mt="sm" disabled={isUpdating} onClick={onSave}>
+        <Button mt="sm" disabled={isUpdating} onClick={handleSave}>
           {isUpdating ? 'Updating settings...' : 'Save'}
         </Button>
       </Stack>
@@ -294,7 +344,7 @@ function SystemHomeBlock({ homeBlock }: { homeBlock: HomeBlockGetAll[number] }) 
     <Card withBorder style={style} {...attributes} {...listeners} ref={setNodeRef}>
       <Group align="start">
         <IconGripVertical />
-        <Text size="md" lineClamp={2}>
+        <Text size="md" lineClamp={1}>
           {homeBlockName}
         </Text>
       </Group>

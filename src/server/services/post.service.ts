@@ -165,7 +165,7 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "CollectionItem" ci
       WHERE ci."collectionId" = ${collectionId}
-        AND ci."imageId" = i.id
+        AND ci."postId" = p.id
         AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
     )`);
   }

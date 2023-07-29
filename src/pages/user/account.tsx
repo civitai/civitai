@@ -11,39 +11,19 @@ import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
 import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();
-  const { data: homeBlocks = [] } = trpc.homeBlock.getHomeBlocks.useQuery();
-
   const currentUser = useCurrentUser();
-  const hasUserHomeBlocks = useMemo(() => {
-    if (!currentUser) {
-      return false;
-    }
-
-    return homeBlocks.find((homeBlock) => homeBlock.userId === currentUser.id);
-  }, [currentUser, homeBlocks]);
 
   return (
     <>
       <Meta title="Manage your Account - Civitai" />
-      {hasUserHomeBlocks && (
-        // TODO.PersonalizedHomePage: Refactor button/action to be self-contained.
-        <Button
-          onClick={() => {
-            openContext('manageHomeBlocks', {});
-          }}
-        >
-          Manage home
-        </Button>
-      )}
+
       <Container pb="md" size="xs">
         <Stack>
           <Stack spacing={0}>
