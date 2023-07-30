@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { VotableTagModel } from '~/libs/tags';
 import { GetIngestionResultsProps } from '~/server/services/image.service';
 import { QS } from '~/utils/qs';
 
@@ -108,6 +109,13 @@ export const ImageIngestionProvider = ({
           ...pendingRef.current[key],
           success: data[key].ingestion !== ImageIngestionStatus.Pending,
         };
+      }
+      // Fix date mapping
+      if (!!data[key].tags) {
+        for (const tag of data[key].tags as VotableTagModel[]) {
+          if (!tag.lastUpvote) continue;
+          tag.lastUpvote = new Date(tag.lastUpvote);
+        }
       }
     }
 
