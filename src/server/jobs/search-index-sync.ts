@@ -6,7 +6,7 @@ const searchIndexSets = {
   tags: searchIndex.tagsSearchIndex,
   users: searchIndex.usersSearchIndex,
   articles: searchIndex.articlesSearchIndex,
-  images: searchIndex.imagesSearchIndex,
+  // images: searchIndex.imagesSearchIndex,
 };
 
 export const searchIndexJobs = Object.entries(searchIndexSets)
