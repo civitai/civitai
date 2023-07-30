@@ -17,6 +17,7 @@ import { getReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { CommentGetById } from '~/types/router';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: {
@@ -136,6 +137,32 @@ export const createOrUpdateComment = ({
       content: true,
       nsfw: true,
     },
+  });
+};
+
+export const toggleHideComment = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator: boolean }) => {
+  const AND = [Prisma.sql`c.id = ${id}`];
+  // Only comment owner, model owner, or moderator can hide comment
+  if (!isModerator) AND.push(Prisma.sql`(m."userId" = ${userId} OR c."userId" = ${userId})`);
+
+  const comments = await dbWrite.$queryRaw<{ hidden: boolean }[]>`
+    SELECT
+      c.hidden
+    FROM "Comment" c
+    JOIN "Model" m ON m.id = c."modelId"
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+
+  if (!comments.length) throw throwNotFoundError(`You don't have permission to hide this comment`);
+  const hidden = comments[0].hidden;
+
+  await dbWrite.comment.updateMany({
+    where: { id },
+    data: { hidden: !hidden },
   });
 };
 
