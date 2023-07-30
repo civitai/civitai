@@ -68,79 +68,94 @@ async function getModelIdFromVersions({
 
 async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
-  const affectedModelVersionsResponse = await ch.query({
+  const affectedVersionIdsResponse = await ch.query({
     query: `
-      WITH CTE_AffectedModelVersions AS
-      (
-          SELECT DISTINCT modelVersionId
-          FROM modelVersionEvents
-          WHERE type = 'Download'
-          AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-      )
-      SELECT
-          mve.modelVersionId AS modelVersionId,
-          SUM(if(mve.time >= subtractDays(now(), 1), 1, null)) AS downloads24Hours,
-          SUM(if(mve.time >= subtractDays(now(), 7), 1, null)) AS downloads1Week,
-          SUM(if(mve.time >= subtractMonths(now(), 1), 1, null)) AS downloads1Month,
-          SUM(if(mve.time >= subtractYears(now(), 1), 1, null)) AS downloads1Year,
-          COUNT() AS downloadsAll
-      FROM CTE_AffectedModelVersions mv
-      JOIN modelVersionUniqueDownloads mve
-          ON mv.modelVersionId = mve.modelVersionId
-      GROUP BY mve.modelVersionId
+      SELECT DISTINCT modelVersionId
+      FROM modelVersionEvents
+      WHERE type = 'Download'
+      AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
     `,
     format: 'JSONEachRow',
   });
+  const versionIds = (
+    (await affectedVersionIdsResponse?.json()) as [
+      {
+        modelVersionId: number;
+      }
+    ]
+  ).map((x) => x.modelVersionId);
 
-  const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
-    {
-      modelVersionId: number;
-      downloads24Hours: string;
-      downloads1Week: string;
-      downloads1Month: string;
-      downloads1Year: string;
-      downloadsAll: string;
-    }
-  ];
-
-  // We batch the affected model versions up when sending it to the db
-  const batches = chunk(affectedModelVersions, 500);
+  const batches = chunk(versionIds, 5000);
   for (const batch of batches) {
-    const batchJson = JSON.stringify(batch);
-
-    await db.$executeRaw`
-      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
-      SELECT
-          mvm.modelVersionId, mvm.timeframe, mvm.downloads
-      FROM
-      (
+    try {
+      const affectedModelVersionsResponse = await ch.query({
+        query: `
           SELECT
-              CAST(mvs::json->>'modelVersionId' AS INT) AS modelVersionId,
-              tf.timeframe,
-              CAST(
-                CASE
-                  WHEN tf.timeframe = 'Day' THEN mvs::json->>'downloads24Hours'
-                  WHEN tf.timeframe = 'Week' THEN mvs::json->>'downloads1Week'
-                  WHEN tf.timeframe = 'Month' THEN mvs::json->>'downloads1Month'
-                  WHEN tf.timeframe = 'Year' THEN mvs::json->>'downloads1Year'
-                  WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'downloadsAll'
-                END
-              AS int) as downloads
-          FROM json_array_elements(${batchJson}::json) mvs
-          CROSS JOIN (
-              SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-          ) tf
-      ) mvm
-      WHERE mvm.downloads IS NOT NULL
-      AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-        SET "downloadCount" = EXCLUDED."downloadCount";
-    `;
+              mve.modelVersionId AS modelVersionId,
+              SUM(if(mve.time >= subtractDays(now(), 1), 1, null)) AS downloads24Hours,
+              SUM(if(mve.time >= subtractDays(now(), 7), 1, null)) AS downloads1Week,
+              SUM(if(mve.time >= subtractMonths(now(), 1), 1, null)) AS downloads1Month,
+              SUM(if(mve.time >= subtractYears(now(), 1), 1, null)) AS downloads1Year,
+              COUNT() AS downloadsAll
+          FROM modelVersionUniqueDownloads mve
+          WHERE mve.modelVersionId IN (${batch.join(',')})
+          GROUP BY mve.modelVersionId
+        `,
+        format: 'JSONEachRow',
+      });
+
+      const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
+        {
+          modelVersionId: number;
+          downloads24Hours: string;
+          downloads1Week: string;
+          downloads1Month: string;
+          downloads1Year: string;
+          downloadsAll: string;
+        }
+      ];
+
+      // We batch the affected model versions up when sending it to the db
+      const batches = chunk(affectedModelVersions, 1000);
+      for (const batch of batches) {
+        const batchJson = JSON.stringify(batch);
+
+        await db.$executeRaw`
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
+          SELECT
+              mvm.modelVersionId, mvm.timeframe, mvm.downloads
+          FROM
+          (
+              SELECT
+                  CAST(mvs::json->>'modelVersionId' AS INT) AS modelVersionId,
+                  tf.timeframe,
+                  CAST(
+                    CASE
+                      WHEN tf.timeframe = 'Day' THEN mvs::json->>'downloads24Hours'
+                      WHEN tf.timeframe = 'Week' THEN mvs::json->>'downloads1Week'
+                      WHEN tf.timeframe = 'Month' THEN mvs::json->>'downloads1Month'
+                      WHEN tf.timeframe = 'Year' THEN mvs::json->>'downloads1Year'
+                      WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'downloadsAll'
+                    END
+                  AS int) as downloads
+              FROM json_array_elements(${batchJson}::json) mvs
+              CROSS JOIN (
+                  SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+              ) tf
+          ) mvm
+          WHERE mvm.downloads IS NOT NULL
+          AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
+          ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+            SET "downloadCount" = EXCLUDED."downloadCount";
+        `;
+      }
+    } catch (e) {
+      throw e;
+    }
   }
 
-  if (affectedModelVersions.length > 0) {
+  if (versionIds.length > 0) {
     // Get affected models from version IDs:
-    const versionIds = affectedModelVersions.map(({ modelVersionId }) => modelVersionId);
     return getModelIdFromVersions({ versionIds, db });
   }
 
