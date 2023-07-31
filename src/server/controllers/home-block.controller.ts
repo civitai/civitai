@@ -177,5 +177,10 @@ export const setHomeBlocksOrderHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: SetHomeBlocksOrderInputSchema;
 }) => {
-  await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id } });
+  try {
+    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id } });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
 };
