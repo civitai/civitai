@@ -110,7 +110,7 @@ export function CollectionCard({ data }: Props) {
           className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
           spacing="sm"
         >
-          <Group position="apart" noWrap>
+          <Group position="apart" align="flex-end" noWrap>
             <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {data.name}
             </Text>
@@ -138,14 +138,17 @@ function CollectionCardHeader({
   return (
     <Group spacing={4} position="apart" className={cx(classes.contentOverlay, classes.top)} noWrap>
       <Group spacing="xs">
-        <Badge color="dark" size="sm" variant="light" radius="xl">
-          {data.type ? data.type : 'Mixed'}
-        </Badge>
         {withinImageGuard && (
           <ImageGuard.GroupToggleConnect
+            className={classes.chip}
             sx={(theme) => ({ position: 'inherit', borderRadius: theme.radius.xl })}
           />
         )}
+        <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+          <Text color="white" size="xs" transform="capitalize">
+            {data.type ? data.type + 's' : 'Mixed'}
+          </Text>
+        </Badge>
       </Group>
       <CollectionContextMenu collectionId={data.id} ownerId={data.userId} position="left-start">
         <ActionIcon

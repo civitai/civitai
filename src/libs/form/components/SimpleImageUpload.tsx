@@ -13,7 +13,8 @@ import {
 import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { isEqual } from 'lodash-es';
+import { useEffect, useState } from 'react';
 
 import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -28,9 +29,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
   const theme = useMantineTheme();
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
-  const [image, setImage] = useState<CustomFile | undefined>(
-    typeof value === 'string' ? (value.length > 0 ? { url: value } : undefined) : value
-  );
+  const [image, setImage] = useState<CustomFile | undefined>();
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const [file] = droppedFiles;
@@ -46,6 +45,14 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
     setImage(undefined);
     onChange?.(null);
   };
+
+  useEffect(() => {
+    const newValue =
+      typeof value === 'string' ? (value.length > 0 ? { url: value } : undefined) : value;
+
+    if (!isEqual(image, newValue))
+      setImage(typeof value === 'string' ? (value.length > 0 ? { url: value } : undefined) : value);
+  }, [image, value]);
 
   useDidUpdate(() => {
     const [imageFile] = imageFiles;

@@ -50,9 +50,7 @@ export default createRoutedContext({
     useEffect(() => {
       if (data && data.collection) {
         const result = upsertCollectionInput.safeParse(data.collection);
-        console.log({ result, data: data.collection });
         if (result.success) form.reset({ ...result.data });
-        else console.error(result.error);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data]);
