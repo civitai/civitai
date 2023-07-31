@@ -10,6 +10,7 @@ import {
   setTosViolationHandler,
   toggleLockHandler,
   upsertCommentHandler,
+  toggleHideCommentHandler,
 } from '~/server/controllers/comment.controller';
 import { getCommentCountByModel } from '~/server/services/comment.service';
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
@@ -107,6 +108,7 @@ export const commentRouter = router({
       input: { entityType: 'commentOld', entityId: input.id, reaction: input.reaction },
     })
   ),
+  toggleHide: protectedProcedure.input(getByIdSchema).mutation(toggleHideCommentHandler),
   toggleLock: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)

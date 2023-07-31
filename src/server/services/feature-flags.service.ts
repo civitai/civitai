@@ -18,7 +18,13 @@ const featureFlags = createFeatureFlags({
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'founder'],
   stripe: ['mod'],
-  imageGeneration: ['user'],
+  imageGeneration: {
+    toggleable: true,
+    default: true,
+    displayName: 'Image Generation (Preview)',
+    description: `Generate images with any supported AI resource. This is still in tech preview, so please report any issues you find!`,
+    availability: ['user'],
+  },
   enhancedSearch: {
     toggleable: true,
     default: true,
@@ -33,7 +39,7 @@ const featureFlags = createFeatureFlags({
     description: `A new home page with a more modern design and more features. This is a beta feature, so please report any issues you find!`,
     availability: ['mod'],
   },
-  collections: ['mod', 'founder'],
+  collections: ['public'],
   air: {
     toggleable: true,
     default: false,

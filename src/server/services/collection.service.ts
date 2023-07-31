@@ -615,6 +615,7 @@ export const getCollectionItemsByCollectionId = async ({
           user,
           browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
           ids: postIds,
+          include: ['cosmetics'],
         })
       : { items: [] };
 

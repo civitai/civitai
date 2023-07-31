@@ -15,6 +15,7 @@ import {
   getCommentById,
   getCommentReactions,
   getComments,
+  toggleHideComment,
   updateCommentById,
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
@@ -97,6 +98,24 @@ export const upsertCommentHandler = async ({
       else if (input.hidden === false)
         await ctx.track.commentEvent({ type: 'Unhide', commentId: comment.id });
     }
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleHideCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    await toggleHideComment({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator ?? false,
+    });
   } catch (error) {
     throw throwDbError(error);
   }

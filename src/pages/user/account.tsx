@@ -1,6 +1,6 @@
-import { Container, Stack, Title, Text } from '@mantine/core';
+import { Container, Stack, Title, Text, Button } from '@mantine/core';
 import { getProviders } from 'next-auth/react';
-import React from 'react';
+import React, { useMemo } from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
@@ -11,10 +11,10 @@ import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
 import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();

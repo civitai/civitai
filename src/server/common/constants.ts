@@ -6,7 +6,7 @@ import {
   ArticleSort,
   CollectionSort,
 } from './enums';
-import { MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
+import { License, MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
@@ -149,6 +149,10 @@ export const constants = {
   imageGeneration: {
     drawerZIndex: 301,
   },
+  tagVoting: {
+    voteDuration: 1000 * 60 * 60 * 24,
+    upvoteThreshold: 3,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;
@@ -160,6 +164,38 @@ export const baseModelSets: Record<string, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0'],
+};
+
+type LicenseDetails = {
+  url: string;
+  name: string;
+};
+export const baseLicenses: Record<string, LicenseDetails> = {
+  openrail: {
+    url: 'https://huggingface.co/spaces/CompVis/stable-diffusion-license',
+    name: 'CreativeML Open RAIL-M',
+  },
+  'sdxl 0.9': {
+    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL0.9',
+    name: 'SDXL 0.9 research license',
+  },
+  'openrail++': {
+    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL1.0',
+    name: 'CreativeML Open RAIL++-M',
+  },
+};
+
+export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
+  'SD 1.4': baseLicenses['openrail'],
+  'SD 1.5': baseLicenses['openrail'],
+  'SD 2.0': baseLicenses['openrail'],
+  'SD 2.0 768': baseLicenses['openrail'],
+  'SD 2.1': baseLicenses['openrail'],
+  'SD 2.1 768': baseLicenses['openrail'],
+  'SD 2.1 Unclip': baseLicenses['openrail'],
+  'SDXL 0.9': baseLicenses['sdxl 0.9'],
+  'SDXL 1.0': baseLicenses['openrail++'],
+  Other: undefined,
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

@@ -7,12 +7,13 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider          = "postgresql"
   // NOTE: When using postgresql, mysql or sqlserver, uncomment the @db.Text annotations in model Account below
   // Further reading:
   // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
   // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
-  url      = env("DATABASE_URL")
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 // Necessary for Next auth
@@ -543,14 +544,16 @@ enum MetricTimeframe {
 }
 
 model ModelMetric {
-  model         Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId       Int
-  timeframe     MetricTimeframe
-  rating        Float           @default(0)
-  ratingCount   Int             @default(0)
-  downloadCount Int             @default(0)
-  favoriteCount Int             @default(0)
-  commentCount  Int             @default(0)
+  model          Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId        Int
+  timeframe      MetricTimeframe
+  rating         Float           @default(0)
+  ratingCount    Int             @default(0)
+  downloadCount  Int             @default(0)
+  favoriteCount  Int             @default(0)
+  commentCount   Int             @default(0)
+  collectedCount Int             @default(0)
+  imageCount     Int             @default(0)
 
   @@id([modelId, timeframe])
 }
@@ -564,6 +567,8 @@ model ModelVersionMetric {
   downloadCount  Int             @default(0)
   favoriteCount  Int             @default(0)
   commentCount   Int             @default(0)
+  collectedCount Int             @default(0)
+  imageCount     Int             @default(0)
 
   @@id([modelVersionId, timeframe])
 }
@@ -1955,59 +1960,79 @@ model AnswerRank {
 
 /// @view
 model ModelRank {
-  model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  modelId                  Int   @id
-  downloadCountDay         Int   @default(0)
-  downloadCountWeek        Int   @default(0)
-  downloadCountMonth       Int   @default(0)
-  downloadCountYear        Int   @default(0)
-  downloadCountAllTime     Int   @default(0)
-  ratingCountDay           Int   @default(0)
-  ratingCountWeek          Int   @default(0)
-  ratingCountMonth         Int   @default(0)
-  ratingCountYear          Int   @default(0)
-  ratingCountAllTime       Int   @default(0)
-  ratingDay                Float @default(0)
-  ratingWeek               Float @default(0)
-  ratingMonth              Float @default(0)
-  ratingYear               Float @default(0)
-  ratingAllTime            Float @default(0)
-  favoriteCountDay         Int   @default(0)
-  favoriteCountWeek        Int   @default(0)
-  favoriteCountMonth       Int   @default(0)
-  favoriteCountYear        Int   @default(0)
-  favoriteCountAllTime     Int   @default(0)
-  commentCountDay          Int   @default(0)
-  commentCountWeek         Int   @default(0)
-  commentCountMonth        Int   @default(0)
-  commentCountYear         Int   @default(0)
-  commentCountAllTime      Int   @default(0)
-  downloadCountDayRank     Int   @default(0)
-  downloadCountWeekRank    Int   @default(0)
-  downloadCountMonthRank   Int   @default(0)
-  downloadCountYearRank    Int   @default(0)
-  downloadCountAllTimeRank Int   @default(0)
-  ratingCountDayRank       Int   @default(0)
-  ratingCountWeekRank      Int   @default(0)
-  ratingCountMonthRank     Int   @default(0)
-  ratingCountYearRank      Int   @default(0)
-  ratingCountAllTimeRank   Int   @default(0)
-  ratingDayRank            Int   @default(0)
-  ratingWeekRank           Int   @default(0)
-  ratingMonthRank          Int   @default(0)
-  ratingYearRank           Int   @default(0)
-  ratingAllTimeRank        Int   @default(0)
-  favoriteCountDayRank     Int   @default(0)
-  favoriteCountWeekRank    Int   @default(0)
-  favoriteCountMonthRank   Int   @default(0)
-  favoriteCountYearRank    Int   @default(0)
-  favoriteCountAllTimeRank Int   @default(0)
-  commentCountDayRank      Int   @default(0)
-  commentCountWeekRank     Int   @default(0)
-  commentCountMonthRank    Int   @default(0)
-  commentCountYearRank     Int   @default(0)
-  commentCountAllTimeRank  Int   @default(0)
-  newRank                  Int   @default(0)
+  model                     Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId                   Int   @id
+  downloadCountDay          Int   @default(0)
+  downloadCountWeek         Int   @default(0)
+  downloadCountMonth        Int   @default(0)
+  downloadCountYear         Int   @default(0)
+  downloadCountAllTime      Int   @default(0)
+  ratingCountDay            Int   @default(0)
+  ratingCountWeek           Int   @default(0)
+  ratingCountMonth          Int   @default(0)
+  ratingCountYear           Int   @default(0)
+  ratingCountAllTime        Int   @default(0)
+  ratingDay                 Float @default(0)
+  ratingWeek                Float @default(0)
+  ratingMonth               Float @default(0)
+  ratingYear                Float @default(0)
+  ratingAllTime             Float @default(0)
+  favoriteCountDay          Int   @default(0)
+  favoriteCountWeek         Int   @default(0)
+  favoriteCountMonth        Int   @default(0)
+  favoriteCountYear         Int   @default(0)
+  favoriteCountAllTime      Int   @default(0)
+  commentCountDay           Int   @default(0)
+  commentCountWeek          Int   @default(0)
+  commentCountMonth         Int   @default(0)
+  commentCountYear          Int   @default(0)
+  commentCountAllTime       Int   @default(0)
+  downloadCountDayRank      Int   @default(0)
+  downloadCountWeekRank     Int   @default(0)
+  downloadCountMonthRank    Int   @default(0)
+  downloadCountYearRank     Int   @default(0)
+  downloadCountAllTimeRank  Int   @default(0)
+  ratingCountDayRank        Int   @default(0)
+  ratingCountWeekRank       Int   @default(0)
+  ratingCountMonthRank      Int   @default(0)
+  ratingCountYearRank       Int   @default(0)
+  ratingCountAllTimeRank    Int   @default(0)
+  ratingDayRank             Int   @default(0)
+  ratingWeekRank            Int   @default(0)
+  ratingMonthRank           Int   @default(0)
+  ratingYearRank            Int   @default(0)
+  ratingAllTimeRank         Int   @default(0)
+  favoriteCountDayRank      Int   @default(0)
+  favoriteCountWeekRank     Int   @default(0)
+  favoriteCountMonthRank    Int   @default(0)
+  favoriteCountYearRank     Int   @default(0)
+  favoriteCountAllTimeRank  Int   @default(0)
+  collectedCountDay         Int   @default(0)
+  collectedCountWeek        Int   @default(0)
+  collectedCountMonth       Int   @default(0)
+  collectedCountYear        Int   @default(0)
+  collectedCountAllTime     Int   @default(0)
+  collectedCountDayRank     Int   @default(0)
+  collectedCountWeekRank    Int   @default(0)
+  collectedCountMonthRank   Int   @default(0)
+  collectedCountYearRank    Int   @default(0)
+  collectedCountAllTimeRank Int   @default(0)
+  imageCountDay             Int   @default(0)
+  imageCountWeek            Int   @default(0)
+  imageCountMonth           Int   @default(0)
+  imageCountYear            Int   @default(0)
+  imageCountAllTime         Int   @default(0)
+  imageCountDayRank         Int   @default(0)
+  imageCountWeekRank        Int   @default(0)
+  imageCountMonthRank       Int   @default(0)
+  imageCountYearRank        Int   @default(0)
+  imageCountAllTimeRank     Int   @default(0)
+  commentCountDayRank       Int   @default(0)
+  commentCountWeekRank      Int   @default(0)
+  commentCountMonthRank     Int   @default(0)
+  commentCountYearRank      Int   @default(0)
+  commentCountAllTimeRank   Int   @default(0)
+  newRank                   Int   @default(0)
 }
 
 /// @view
@@ -2066,6 +2091,16 @@ model ModelVersionRank {
   ratingMonthRank          Int          @default(0)
   ratingYearRank           Int          @default(0)
   ratingAllTimeRank        Int          @default(0)
+  imageCountDay            Int          @default(0)
+  imageCountWeek           Int          @default(0)
+  imageCountMonth          Int          @default(0)
+  imageCountYear           Int          @default(0)
+  imageCountAllTime        Int          @default(0)
+  imageCountDayRank        Int          @default(0)
+  imageCountWeekRank       Int          @default(0)
+  imageCountMonthRank      Int          @default(0)
+  imageCountYearRank       Int          @default(0)
+  imageCountAllTimeRank    Int          @default(0)
 }
 
 /// @view
@@ -2570,6 +2605,8 @@ model ImageTag {
   upVotes     Int
   downVotes   Int
   needsReview Boolean
+  concrete    Boolean
+  lastUpvote  DateTime?
 
   @@id([imageId, tagId])
 }

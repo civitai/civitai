@@ -32,10 +32,15 @@ export function CollectionsLanding() {
             radius="md"
           />
           <Stack
-            sx={{ zIndex: 11, transform: 'translateX(-50%)' }}
+            sx={(theme) => ({
+              zIndex: 11,
+              [theme.fn.largerThan('sm')]: {
+                transform: 'translateX(50%)',
+                left: '50%',
+              },
+            })}
             pos="absolute"
             top={0}
-            left="50%"
             maw="400"
           >
             <Alert>

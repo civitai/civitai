@@ -5,6 +5,8 @@ import {
   getHomeBlockById,
   getHomeBlockData,
   getHomeBlocks,
+  getSystemHomeBlocks,
+  setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import {
@@ -15,7 +17,10 @@ import {
   CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
+  GetSystemHomeBlocksInputSchema,
+  getSystemHomeBlocksInputSchema,
   HomeBlockMetaSchema,
+  SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
 import { getAnnouncements } from '~/server/services/announcement.service';
@@ -52,6 +57,7 @@ export const getHomeBlocksHandler = async ({
         metadata: true,
         type: true,
         userId: true,
+        sourceId: true,
       },
       userId: ctx.user?.id,
       ownedOnly,
@@ -72,6 +78,22 @@ export const getHomeBlocksHandler = async ({
       ...homeBlock,
       metadata: homeBlock.metadata as HomeBlockMetaSchema,
     }));
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getSystemHomeBlocksHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetSystemHomeBlocksInputSchema;
+  ctx: Context;
+}): Promise<HomeBlockWithData[]> => {
+  try {
+    const homeBlocks = await getSystemHomeBlocks({ input });
+
+    return homeBlocks;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -142,6 +164,21 @@ export const deleteUserHomeBlockHandler = async ({
     await deleteHomeBlockById({
       input: { ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator },
     });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setHomeBlocksOrderHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: SetHomeBlocksOrderInputSchema;
+}) => {
+  try {
+    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id } });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

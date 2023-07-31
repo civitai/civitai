@@ -8,6 +8,7 @@ import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { PostEditActions } from '~/components/Post/Edit/PostEditActions';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CollectionType } from '@prisma/client';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
@@ -92,7 +93,11 @@ export function ManagePostStatus() {
           </Tooltip>
         )}
         {publishedAt && (
-          <ShareButton title={title} url={`/posts/${id}`}>
+          <ShareButton
+            title={title}
+            url={`/posts/${id}`}
+            collect={{ type: CollectionType.Post, postId: id }}
+          >
             <Button variant="default" style={{ flex: 1 }}>
               Share
             </Button>

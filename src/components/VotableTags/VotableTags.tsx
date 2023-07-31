@@ -61,7 +61,10 @@ export function VotableTags({
               setVote({ entityId: id, entityType: type, name: tag.name, vote });
               existing.vote = vote;
             }
-          } else old.push(tag);
+          } else {
+            old.push(tag);
+            setVote({ entityId: id, entityType: type, name: tag.name, vote });
+          }
         }
       })
     );
@@ -123,6 +126,8 @@ export function VotableTags({
             name={tag.name}
             initialVote={tag.vote}
             needsReview={tag.needsReview}
+            concrete={tag.concrete}
+            lastUpvote={tag.lastUpvote}
             type={tag.type}
             nsfw={tag.nsfw}
             score={tag.score}

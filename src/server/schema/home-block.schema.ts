@@ -50,6 +50,18 @@ export const getHomeBlocksInputSchema = z
   .partial()
   .default({ limit: 8 });
 
+export type GetSystemHomeBlocksInputSchema = z.infer<typeof getSystemHomeBlocksInputSchema>;
+export const getSystemHomeBlocksInputSchema = z
+  .object({
+    limit: z.number().default(8),
+    dismissed: z.array(z.number()).optional(),
+    permanent: z.boolean().optional(),
+    withData: z.boolean().optional(),
+  })
+  .merge(userPreferencesSchema)
+  .partial()
+  .default({ limit: 8 });
+
 export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
 
 export const getHomeBlockByIdInputSchema = getByIdSchema.merge(userPreferencesSchema).partial();
@@ -68,4 +80,16 @@ export const upsertHomeBlockInput = z.object({
   type: z.nativeEnum(HomeBlockType).default(HomeBlockType.Collection),
   sourceId: z.number().optional(),
   index: z.number().optional(),
+});
+
+export type SetHomeBlocksOrderInputSchema = z.infer<typeof setHomeBlocksOrderInput>;
+export const setHomeBlocksOrderInput = z.object({
+  homeBlocks: z.array(
+    z.object({
+      id: z.number(),
+      index: z.number(),
+      // Used to clone system home blocks
+      userId: z.number().optional(),
+    })
+  ),
 });

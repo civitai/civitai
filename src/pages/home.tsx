@@ -1,4 +1,4 @@
-import { Button, Center, Container, Loader } from '@mantine/core';
+import { ActionIcon, Center, Container, Group, Loader } from '@mantine/core';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -6,9 +6,10 @@ import { HomeBlockType } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
+import { IconSettings } from '@tabler/icons-react';
+import React from 'react';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useMemo } from 'react';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -20,33 +21,34 @@ export const getServerSideProps = createServerSideProps({
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const user = useCurrentUser();
-  const hasUserHomeBlocks = useMemo(() => {
-    if (!user) {
-      return false;
-    }
-
-    return homeBlocks.find((homeBlock) => homeBlock.userId === user.id);
-  }, [user, homeBlocks]);
 
   return (
     <>
       <Container size="xl" sx={{ overflow: 'hidden' }}>
-        <FullHomeContentToggle />
+        <Group position="apart">
+          <FullHomeContentToggle />
+          {user && (
+            <ActionIcon
+              size="sm"
+              variant="light"
+              color="dark"
+              onClick={() => openContext('manageHomeBlocks', {})}
+              sx={(theme) => ({
+                [theme.fn.smallerThan('md')]: {
+                  marginLeft: 'auto',
+                },
+              })}
+            >
+              <IconSettings />
+            </ActionIcon>
+          )}
+        </Group>
       </Container>
+
       {isLoading && (
         <Center sx={{ height: 36 }} mt="md">
           <Loader />
         </Center>
-      )}
-      {/*TODO.PersonalizedHomePage: Complete this flow. */}
-      {hasUserHomeBlocks && false && (
-        <Button
-          onClick={() => {
-            openContext('manageHomeBlocks', {});
-          }}
-        >
-          Manage home
-        </Button>
       )}
       {homeBlocks.map((homeBlock) => {
         switch (homeBlock.type) {

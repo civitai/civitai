@@ -185,27 +185,15 @@ export function ModelCard({ data }: Props) {
                             </Text>
                           </Badge>
 
-                          {isUpdated && (
+                          {(isNew || isUpdated) && (
                             <Badge
                               className={classes.chip}
                               variant="filled"
-                              color="teal"
+                              color={isUpdated ? '#1EBD8E' : 'blue'}
                               radius="xl"
                             >
                               <Text color="white" size="xs" transform="capitalize">
-                                Updated
-                              </Text>
-                            </Badge>
-                          )}
-                          {isNew && (
-                            <Badge
-                              className={classes.chip}
-                              variant="filled"
-                              color="red"
-                              radius="xl"
-                            >
-                              <Text color="white" size="xs" transform="capitalize">
-                                New
+                                {isUpdated ? 'Updated' : 'New'}
                               </Text>
                             </Badge>
                           )}
