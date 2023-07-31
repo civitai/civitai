@@ -67,88 +67,56 @@ export function CollectionCard({ data }: Props) {
           [classes.noHover]: isMultiImage,
         })}
       >
-        {coverImages.length > 0 ? (
-          <div
-            className={
-              isMultiImage
-                ? cx({
-                    [classes.imageGroupContainer]: true,
-                    [classes.imageGroupContainer4x4]: coverImagesCount > 2,
-                  })
-                : undefined
-            }
+        <div
+          className={
+            isMultiImage
+              ? cx({
+                  [classes.imageGroupContainer]: true,
+                  [classes.imageGroupContainer4x4]: coverImagesCount > 2,
+                })
+              : undefined
+          }
+        >
+          <ImageGuard
+            nsfw
+            images={coverImages}
+            connect={{ entityId: data.id, entityType: 'collection' }}
+            render={(image) => (
+              <ImageGuard.Content>
+                {({ safe }) => {
+                  return safe ? (
+                    <EdgeImage
+                      src={image.url}
+                      className={classes.image}
+                      name={image.name ?? image.id.toString()}
+                      alt={image.name ?? undefined}
+                      placeholder="empty"
+                      loading="lazy"
+                      width={DEFAULT_EDGE_IMAGE_WIDTH}
+                    />
+                  ) : (
+                    <MediaHash
+                      {...image}
+                      style={
+                        isMultiImage
+                          ? {
+                              position: 'relative',
+                              width: '50%',
+                              height: coverImagesCount > 2 ? '50%' : 'auto',
+                            }
+                          : {}
+                      }
+                    />
+                  );
+                }}
+              </ImageGuard.Content>
+            )}
           >
-            <ImageGuard
-              nsfw
-              images={coverImages}
-              connect={{ entityId: data.id, entityType: 'collection' }}
-              render={(image) => (
-                <ImageGuard.Content>
-                  {({ safe }) => {
-                    if (!image) return <Text color="dimmed">This collection has no images</Text>;
-
-                    return safe ? (
-                      <EdgeImage
-                        src={image.url}
-                        className={classes.image}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        placeholder="empty"
-                        loading="lazy"
-                        width={DEFAULT_EDGE_IMAGE_WIDTH}
-                      />
-                    ) : (
-                      <MediaHash
-                        {...image}
-                        style={
-                          isMultiImage
-                            ? {
-                                position: 'relative',
-                                width: '50%',
-                                height: coverImagesCount > 2 ? '50%' : 'auto',
-                              }
-                            : {}
-                        }
-                      />
-                    );
-                  }}
-                </ImageGuard.Content>
-              )}
-            >
-              <Group
-                spacing={4}
-                position="apart"
-                className={cx(classes.contentOverlay, classes.top)}
-                noWrap
-              >
-                <Group>
-                  <Badge color="dark" size="sm" variant="light" radius="xl">
-                    {data.type ? data.type : 'Mixed'}
-                  </Badge>
-                  <ImageGuard.GroupToggleConnect sx={{ position: 'inherit' }} />
-                </Group>
-                <CollectionContextMenu
-                  collectionId={data.id}
-                  ownerId={data.userId}
-                  position="left-start"
-                >
-                  <ActionIcon
-                    variant="transparent"
-                    p={0}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                  >
-                    <IconDotsVertical />
-                  </ActionIcon>
-                </CollectionContextMenu>
-              </Group>
-            </ImageGuard>
-          </div>
-        ) : (
-          <>
-            <Text color="dimmed">This collection has no images</Text>
+            {coverImages.length === 0 && (
+              <Text color="dimmed" sx={{ width: '100%', height: '100%' }}>
+                This collection has no images
+              </Text>
+            )}
             <Group
               spacing={4}
               position="apart"
@@ -156,6 +124,9 @@ export function CollectionCard({ data }: Props) {
               noWrap
             >
               <Group>
+                <Badge color="dark" size="sm" variant="light" radius="xl">
+                  {data.type ? data.type : 'Mixed'}
+                </Badge>
                 <ImageGuard.GroupToggleConnect sx={{ position: 'inherit' }} />
               </Group>
               <CollectionContextMenu
@@ -175,8 +146,8 @@ export function CollectionCard({ data }: Props) {
                 </ActionIcon>
               </CollectionContextMenu>
             </Group>
-          </>
-        )}
+          </ImageGuard>
+        </div>
 
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
