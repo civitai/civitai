@@ -11,12 +11,27 @@ import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { NsfwLevel } from '@prisma/client';
+import { SimpleUser } from '~/server/selectors/user.selector';
 
+type ImageProps = {
+  id: number;
+  nsfw: NsfwLevel;
+  imageNsfw?: boolean;
+  postId?: number | null;
+  width?: number | null;
+  height?: number | null;
+  needsReview?: string | null;
+  userId?: number;
+  user?: SimpleUser;
+  url: string;
+  name?: string | null;
+};
 export function CollectionCard({ data }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
 
   const getCoverImages = () => {
-    if (data.image) return null;
+    if (data.image) return [data.image];
 
     return data.items
       .map((item) => {
@@ -31,69 +46,123 @@ export function CollectionCard({ data }: Props) {
             return null;
         }
       })
-      .filter(isDefined);
+      .filter(isDefined)
+      .slice(0, 4);
   };
 
-  const coverImages = getCoverImages();
+  const coverImages: ImageProps[] = getCoverImages();
+  const isMultiImage = coverImages.length > 1;
+  console.log(data.name, coverImages);
 
   return (
     <FeedCard
-      className={classes.noImage}
+      className={coverImages.length === 0 ? classes.noImage : undefined}
       href={`/collections/${data.id}`}
       aspectRatio="square"
       sx={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
     >
-      <div className={classes.root}>
-        {data.image ? (
-          <ImageGuard
-            images={[data.image]}
-            render={(image) => (
-              <ImageGuard.Content>
-                {({ safe }) => {
-                  if (!image) return <Text color="dimmed">This collection has no images</Text>;
+      <div
+        className={cx({
+          [classes.root]: true,
+          [classes.noHover]: isMultiImage,
+        })}
+      >
+        {coverImages.length > 0 ? (
+          <div className={isMultiImage ? classes.imageGroupContainer : undefined}>
+            <ImageGuard
+              nsfw
+              images={coverImages}
+              connect={{ entityId: data.id, entityType: 'collection' }}
+              render={(image) => (
+                <ImageGuard.Content>
+                  {({ safe }) => {
+                    if (!image) return <Text color="dimmed">This collection has no images</Text>;
 
-                  return safe ? (
-                    <EdgeImage
-                      src={image.url}
-                      className={classes.image}
-                      name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
-                      placeholder="empty"
-                      loading="lazy"
-                      width={DEFAULT_EDGE_IMAGE_WIDTH}
-                    />
-                  ) : (
-                    <MediaHash {...image} />
-                  );
-                }}
-              </ImageGuard.Content>
-            )}
-          />
-        ) : (
-          <Text color="dimmed">This collection has no images</Text>
-        )}
-        <Group
-          spacing={4}
-          position="apart"
-          className={cx(classes.contentOverlay, classes.top)}
-          noWrap
-        >
-          <Badge color="dark" size="sm" variant="light" radius="xl">
-            {data.type ? data.type : 'Mixed'}
-          </Badge>
-          <CollectionContextMenu collectionId={data.id} ownerId={data.userId} position="left-start">
-            <ActionIcon
-              variant="transparent"
-              p={0}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
+                    return safe ? (
+                      <EdgeImage
+                        src={image.url}
+                        className={classes.image}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        placeholder="empty"
+                        loading="lazy"
+                        width={DEFAULT_EDGE_IMAGE_WIDTH}
+                      />
+                    ) : (
+                      <MediaHash
+                        {...image}
+                        style={
+                          isMultiImage ? { position: 'relative', width: '50%', height: '50%' } : {}
+                        }
+                      />
+                    );
+                  }}
+                </ImageGuard.Content>
+              )}
             >
-              <IconDotsVertical />
-            </ActionIcon>
-          </CollectionContextMenu>
-        </Group>
+              <Group
+                spacing={4}
+                position="apart"
+                className={cx(classes.contentOverlay, classes.top)}
+                noWrap
+              >
+                <Group>
+                  <Badge color="dark" size="sm" variant="light" radius="xl">
+                    {data.type ? data.type : 'Mixed'}
+                  </Badge>
+                  <ImageGuard.GroupToggleConnect sx={{ position: 'inherit' }} />
+                </Group>
+                <CollectionContextMenu
+                  collectionId={data.id}
+                  ownerId={data.userId}
+                  position="left-start"
+                >
+                  <ActionIcon
+                    variant="transparent"
+                    p={0}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  >
+                    <IconDotsVertical />
+                  </ActionIcon>
+                </CollectionContextMenu>
+              </Group>
+            </ImageGuard>
+          </div>
+        ) : (
+          <>
+            <Text color="dimmed">This collection has no images</Text>
+            <Group
+              spacing={4}
+              position="apart"
+              className={cx(classes.contentOverlay, classes.top)}
+              noWrap
+            >
+              <Group>
+                <ImageGuard.GroupToggleConnect sx={{ position: 'inherit' }} />
+              </Group>
+              <CollectionContextMenu
+                collectionId={data.id}
+                ownerId={data.userId}
+                position="left-start"
+              >
+                <ActionIcon
+                  variant="transparent"
+                  p={0}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                >
+                  <IconDotsVertical />
+                </ActionIcon>
+              </CollectionContextMenu>
+            </Group>
+          </>
+        )}
+
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
           spacing="sm"

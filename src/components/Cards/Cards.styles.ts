@@ -73,6 +73,30 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         borderRadius: theme.radius.xl,
         height: '26px',
       },
+
+      noHover: {
+        '&:hover': {
+          [`& .${imageRef}`]: {
+            transform: 'initial',
+          },
+        },
+      },
+
+      imageGroupContainer: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        boxSizing: 'border-box',
+        width: '100%',
+        height: '100%',
+
+        '& > img, & > canvas': {
+          width: '50%',
+          height: '50%',
+          flexGrow: 1,
+          minWidth: '50%',
+          minHeight: '50%',
+        },
+      },
     };
   }
 );
