@@ -136,11 +136,15 @@ function CollectionCardHeader({
 
   return (
     <Group spacing={4} position="apart" className={cx(classes.contentOverlay, classes.top)} noWrap>
-      <Group>
+      <Group spacing="xs">
         <Badge color="dark" size="sm" variant="light" radius="xl">
           {data.type ? data.type : 'Mixed'}
         </Badge>
-        {withinImageGuard && <ImageGuard.GroupToggleConnect sx={{ position: 'inherit' }} />}
+        {withinImageGuard && (
+          <ImageGuard.GroupToggleConnect
+            sx={(theme) => ({ position: 'inherit', borderRadius: theme.radius.xl })}
+          />
+        )}
       </Group>
       <CollectionContextMenu collectionId={data.id} ownerId={data.userId} position="left-start">
         <ActionIcon
