@@ -9,14 +9,8 @@ import {
   Title,
 } from '@mantine/core';
 import { CollectionType } from '@prisma/client';
-import {
-  IconCloudOff,
-  IconDotsVertical,
-  IconHome,
-  IconPencil,
-  IconPlaylistAdd,
-} from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { IconCloudOff, IconDotsVertical, IconPlaylistAdd } from '@tabler/icons-react';
+import { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -210,7 +204,7 @@ export function Collection({
                   <CollectionContextMenu
                     collectionId={collection.id}
                     ownerId={collection.userId}
-                    canManage={permissions.manage}
+                    permissions={permissions}
                   >
                     <ActionIcon variant="outline">
                       <IconDotsVertical size={16} />

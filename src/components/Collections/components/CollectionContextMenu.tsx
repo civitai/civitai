@@ -9,13 +9,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function CollectionContextMenu({
   collectionId,
   ownerId,
-  canManage,
+  permissions,
   children,
   ...menuProps
 }: Props) {
@@ -133,10 +134,22 @@ export function CollectionContextMenu({
             </Menu.Item>
           </>
         )}
-        {canManage && (
+        {permissions?.read && (
+          <Menu.Item
+            icon={<IconHome size={14} stroke={1.5} />}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleCollectionHomeBlock();
+            }}
+          >
+            {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
+          </Menu.Item>
+        )}
+        {permissions?.manage && (
           <Link href={`/collections/${collectionId}/review`} passHref>
             <Menu.Item component="a" icon={<IconPencil size={14} stroke={1.5} />}>
-              Review Items
+              Review items
             </Menu.Item>
           </Link>
         )}
@@ -153,20 +166,6 @@ export function CollectionContextMenu({
             }
           />
         )}
-        {currentUser && (
-          // TODO.PersonalizedHomePages: This is disabled for now until fully
-          // implemented
-          <Menu.Item
-            icon={<IconHome size={14} stroke={1.5} />}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onToggleCollectionHomeBlock();
-            }}
-          >
-            {collectionHomeBlock ? 'Remove from my home page' : 'Add to my home page'}
-          </Menu.Item>
-        )}
       </Menu.Dropdown>
     </Menu>
   );
@@ -176,5 +175,5 @@ type Props = MenuProps & {
   collectionId: number;
   ownerId: number;
   children: React.ReactNode;
-  canManage?: boolean;
+  permissions?: CollectionContributorPermissionFlags;
 };
