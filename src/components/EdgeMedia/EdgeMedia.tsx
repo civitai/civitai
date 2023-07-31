@@ -32,7 +32,7 @@ export function EdgeMedia({
       : 'image';
   const _anim = type === 'video' ? anim ?? currentUser?.autoplayGifs ?? true : undefined;
   const _type = !_anim ? 'image' : type;
-  const transcode = type === 'video';
+  const transcode = type === 'video'; // transcode relies on the initial type
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
   const _src = getEdgeUrl(src, {
