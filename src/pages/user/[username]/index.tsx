@@ -25,12 +25,12 @@ import { MetricTimeframe, ReviewReactions } from '@prisma/client';
 import {
   IconArrowBackUp,
   IconBan,
-  IconBox,
   IconCategory,
   IconDotsVertical,
   IconDownload,
   IconFileText,
   IconFlag,
+  IconFolder,
   IconHeart,
   IconLayoutList,
   IconMicrophone,
@@ -648,7 +648,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                       </Tabs.Tab>
                     )}
                     {features.profileCollections && (
-                      <Tabs.Tab value="/collections" icon={<IconBox size="1rem" />}>
+                      <Tabs.Tab value="/collections" icon={<IconFolder size="1rem" />}>
                         Collections
                       </Tabs.Tab>
                     )}
