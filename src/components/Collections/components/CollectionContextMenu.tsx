@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { openRoutedContext } from '~/providers/RoutedContextProvider';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
@@ -127,7 +128,7 @@ export function CollectionContextMenu({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log('open edit');
+                openRoutedContext('collectionEdit', { collectionId });
               }}
             >
               Edit collection

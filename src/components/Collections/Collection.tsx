@@ -173,7 +173,7 @@ export function Collection({
       >
         <MasonryContainer {...containerProps}>
           <Stack spacing="xs" w="100%">
-            <Group align="center" spacing="xs" position="apart" noWrap>
+            <Group align="center" spacing="xs" position="apart">
               <Stack spacing={0}>
                 <Title order={1} lineClamp={1}>
                   {collection?.name ?? 'Loading...'}
@@ -185,7 +185,7 @@ export function Collection({
                 )}
               </Stack>
               {collection && permissions && (
-                <Group ml="auto">
+                <Group ml="auto" noWrap>
                   <CollectionFollowAction collection={collection} permissions={permissions} />
                   {canAddContent && (
                     <Button
@@ -195,7 +195,7 @@ export function Collection({
                       pr={8}
                       onClick={() => setOpened(true)}
                     >
-                      <Group spacing={4}>
+                      <Group spacing={4} noWrap>
                         <IconPlaylistAdd size={18} />
                         Add from your library
                       </Group>

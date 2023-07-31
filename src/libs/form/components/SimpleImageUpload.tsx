@@ -19,8 +19,8 @@ import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
-  value?: string;
-  onChange?: (value: string | null) => void;
+  value?: string | { url: string };
+  onChange?: (value: CustomFile | null) => void;
   previewWidth?: number;
 };
 
@@ -28,7 +28,9 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
   const theme = useMantineTheme();
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
-  const [image, setImage] = useState<CustomFile | undefined>(value ? { url: value } : undefined);
+  const [image, setImage] = useState<CustomFile | undefined>(
+    typeof value === 'string' ? (value.length > 0 ? { url: value } : undefined) : value
+  );
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const [file] = droppedFiles;
@@ -46,9 +48,13 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
   };
 
   useDidUpdate(() => {
-    if (image) onChange?.(image.url);
+    const [imageFile] = imageFiles;
+    if (imageFile.status === 'success') {
+      const { id, url, status, ...file } = imageFile;
+      onChange?.({ ...image, ...file, url: id });
+    }
     // don't disable the eslint-disable
-  }, [image]); //eslint-disable-line
+  }, [imageFiles]); // eslint-disable-line
 
   const match = imageFiles.find((file) => image?.file === file.file);
   const { progress } = match ?? { progress: 0 };

@@ -16,7 +16,7 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
-import { IconArrowLeft, IconEyeOff, IconLock, IconPlus, IconWorld } from '@tabler/icons-react';
+import { IconArrowLeft, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
@@ -36,28 +36,7 @@ import {
 } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-type PrivacyData = { icon: React.ReactNode; value: string; label: string; description: string };
-const privacyData: Record<CollectionReadConfiguration, PrivacyData> = {
-  [CollectionReadConfiguration.Private]: {
-    icon: <IconLock size={18} />,
-    label: 'Private',
-    value: CollectionReadConfiguration.Private,
-    description: 'Only you and contributors for this collection can see this',
-  },
-  [CollectionReadConfiguration.Public]: {
-    icon: <IconWorld size={18} />,
-    label: 'Public',
-    value: CollectionReadConfiguration.Public,
-    description: 'Anyone can see this collection',
-  },
-  [CollectionReadConfiguration.Unlisted]: {
-    icon: <IconEyeOff size={18} />,
-    label: 'Unlisted',
-    value: CollectionReadConfiguration.Unlisted,
-    description: 'Only people with the link can see this collection',
-  },
-};
+import { PrivacyData, collectionReadPrivacyData } from './collection.utils';
 
 type Props = Partial<AddCollectionItemInput>;
 
@@ -186,21 +165,25 @@ function CollectionListForm({
             <ScrollArea.Autosize maxHeight={200}>
               {ownedCollections.length > 0 ? (
                 <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                  {ownedCollections.map((collection) => (
-                    <Checkbox
-                      key={collection.id}
-                      classNames={classes}
-                      value={collection.id.toString()}
-                      label={
-                        <Group spacing="xs" position="apart" w="100%" noWrap>
-                          <Text lineClamp={1} inherit>
-                            {collection.name}
-                          </Text>
-                          {privacyData[collection.read].icon}
-                        </Group>
-                      }
-                    />
-                  ))}
+                  {ownedCollections.map((collection) => {
+                    const Icon = collectionReadPrivacyData[collection.read].icon;
+
+                    return (
+                      <Checkbox
+                        key={collection.id}
+                        classNames={classes}
+                        value={collection.id.toString()}
+                        label={
+                          <Group spacing="xs" position="apart" w="100%" noWrap>
+                            <Text lineClamp={1} inherit>
+                              {collection.name}
+                            </Text>
+                            <Icon size={18} />
+                          </Group>
+                        }
+                      />
+                    );
+                  })}
                 </InputCheckboxGroup>
               ) : (
                 <Center py="xl">
@@ -223,6 +206,7 @@ function CollectionListForm({
                   const collectionItem = collectionItems.find(
                     (item) => item.collectionId === collection.id
                   );
+                  const Icon = collectionReadPrivacyData[collection.read].icon;
 
                   return (
                     <Checkbox
@@ -235,7 +219,7 @@ function CollectionListForm({
                           <Text lineClamp={1} inherit>
                             {collection.name}
                           </Text>
-                          {privacyData[collection.read].icon}
+                          <Icon size={18} />
                         </Group>
                       }
                     />
@@ -328,7 +312,7 @@ function NewCollectionForm({
           <InputText
             name="name"
             label="Name"
-            placeholder="e.g.: Video Game Charaters"
+            placeholder="e.g.: Video Game Characters"
             withAsterisk
           />
           <InputTextArea
@@ -341,7 +325,7 @@ function NewCollectionForm({
           <InputSelect
             name="read"
             label="Privacy"
-            data={Object.values(privacyData)}
+            data={Object.values(collectionReadPrivacyData)}
             itemComponent={SelectItem}
           />
           <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
@@ -357,11 +341,11 @@ function NewCollectionForm({
 }
 
 const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
-  ({ label, description, icon, ...otherProps }, ref) => {
+  ({ label, description, icon: Icon, ...otherProps }, ref) => {
     return (
       <div ref={ref} {...otherProps}>
         <Group align="center" noWrap>
-          {icon}
+          <Icon size={18} />
           <div>
             <Text size="sm">{label}</Text>
             <Text size="xs" sx={{ opacity: 0.7 }}>

@@ -47,6 +47,8 @@ import {
   UserPreferencesInput,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
+import { imageSelect } from '~/server/selectors/image.selector';
+import { ImageMetaProps } from '../schema/image.schema';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -272,9 +274,9 @@ export const getUserCollectionsWithPermissions = async <
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
 
-export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
+export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   const { id } = input;
-  return dbRead.collection.findUnique({
+  const collection = await dbRead.collection.findUnique({
     where: { id },
     select: {
       id: true,
@@ -284,8 +286,19 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
       write: true,
       type: true,
       userId: true,
+      nsfw: true,
+      image: { select: imageSelect },
     },
   });
+  if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
+
+  return {
+    ...collection,
+    nsfw: collection.nsfw ?? false,
+    image: collection.image
+      ? { ...collection.image, meta: collection.image.meta as ImageMetaProps | null }
+      : null,
+  };
 };
 
 const inputToCollectionType = {
@@ -395,7 +408,7 @@ export const upsertCollection = async ({
               ? { disconnect: true }
               : {
                   connectOrCreate: {
-                    where: { id: image.id },
+                    where: { id: image.id ?? -1 },
                     create: {
                       ...image,
                       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,

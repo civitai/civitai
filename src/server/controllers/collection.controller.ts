@@ -160,11 +160,9 @@ export const getCollectionByIdHandler = async ({
 
     const collection = await getCollectionById({ input });
 
-    return {
-      collection,
-      permissions,
-    };
+    return { collection, permissions };
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
