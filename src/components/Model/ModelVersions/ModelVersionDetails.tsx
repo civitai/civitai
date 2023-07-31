@@ -56,7 +56,7 @@ import { RunButton } from '~/components/RunStrategy/RunButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { RoutedContextLink, openRoutedContext } from '~/providers/RoutedContextProvider';
-import { CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
+import { baseModelLicenses, CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
@@ -379,6 +379,7 @@ export function ModelVersionDetails({
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${version.meta?.customMessage}.` ?? '';
+  const license = baseModelLicenses[version.baseModel];
 
   return (
     <Grid gutter="xl">
@@ -759,18 +760,20 @@ export function ModelVersionDetails({
                   License{model.licenses.length > 0 ? 's' : ''}:
                 </Text>
                 <Stack spacing={0}>
-                  <Text
-                    component="a"
-                    href="https://huggingface.co/spaces/CompVis/stable-diffusion-license"
-                    rel="nofollow"
-                    td="underline"
-                    target="_blank"
-                    size="xs"
-                    color="dimmed"
-                    sx={{ lineHeight: 1.1 }}
-                  >
-                    creativeml-openrail-m
-                  </Text>
+                  {license && (
+                    <Text
+                      component="a"
+                      href={license.url}
+                      rel="nofollow"
+                      td="underline"
+                      target="_blank"
+                      size="xs"
+                      color="dimmed"
+                      sx={{ lineHeight: 1.1 }}
+                    >
+                      {license.name}
+                    </Text>
+                  )}
                   {model.licenses.map(({ url, name }) => (
                     <Text
                       key={name}

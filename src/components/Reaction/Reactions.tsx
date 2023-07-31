@@ -32,7 +32,7 @@ export function PostReactions({
   metrics?: ReactionMetrics;
   imageCount?: number;
 } & GroupProps) {
-  const total = Object.values(metrics).reduce((a, b) => a + b, 0);
+  const total = Object.values(metrics).reduce((acc, val) => acc + (val ?? 0), 0);
   if (total === 0) return null;
 
   return (

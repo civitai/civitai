@@ -29,6 +29,7 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { env } from '~/env/server.mjs';
+import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -53,6 +54,7 @@ export const jobs: Job[] = [
   tempScanFilesMissingHashes,
   processScheduledPublishing,
   refreshImageGenerationCoverage,
+  cleanImageResources,
   ...metricJobs,
   ...searchIndexJobs,
 ];

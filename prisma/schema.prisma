@@ -2603,6 +2603,8 @@ model ImageTag {
   upVotes     Int
   downVotes   Int
   needsReview Boolean
+  concrete    Boolean
+  lastUpvote  DateTime?
 
   @@id([imageId, tagId])
 }

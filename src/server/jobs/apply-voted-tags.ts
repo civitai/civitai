@@ -1,7 +1,8 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
+import { constants } from '~/server/common/constants';
 
-const UPVOTE_TAG_THRESHOLD = 3;
+const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
 export const applyVotedTags = createJob('apply-voted-tags', '*/2 * * * *', async () => {
   await applyUpvotes();

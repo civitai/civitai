@@ -8,6 +8,9 @@ import {
   Group,
   Loader,
   Text,
+  Stack,
+  ScrollArea,
+  Divider,
 } from '@mantine/core';
 import { MyCollections } from '~/components/Collections/MyCollections';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -82,7 +85,17 @@ const MyCollectionsDrawer = () => {
         }
         classNames={{ header: classes.drawerHeader }}
       >
-        <MyCollections onSelect={() => close()} />
+        <MyCollections onSelect={() => close()}>
+          {({ FilterBox, Collections, isLoading }) => {
+            return (
+              <Stack spacing={4}>
+                {FilterBox}
+                <Divider />
+                <ScrollArea px="sm">{Collections}</ScrollArea>
+              </Stack>
+            );
+          }}
+        </MyCollections>
       </Drawer>
     </>
   );

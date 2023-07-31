@@ -15,6 +15,7 @@ import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selec
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
 import { tagsSearchIndex } from '~/server/search-index';
+import { constants } from '~/server/common/constants';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -214,8 +215,9 @@ export const getVotableTags = async ({
       }
     }
   } else if (type === 'image') {
+    const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
     const tags = await dbRead.imageTag.findMany({
-      where: { imageId: id, OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
+      where: { imageId: id },
       select: imageTagCompositeSelect,
       orderBy: { score: 'desc' },
       // take,
@@ -242,11 +244,10 @@ export const getVotableTags = async ({
     }
     results = results.filter(
       (tag) =>
-        tag.type !== 'Moderation' ||
-        tag.score > 0 ||
+        tag.concrete ||
+        (tag.lastUpvote && tag.lastUpvote > voteCutoff) ||
         (tag.vote && tag.vote > 0) ||
-        (tag.needsReview && isModerator) ||
-        (!tag.needsReview && tag.type === 'Moderation' && tag.score <= 0)
+        (tag.needsReview && isModerator)
     );
   }
 

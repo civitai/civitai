@@ -121,26 +121,35 @@ export function CommentDiscussionMenu({
     });
   };
 
-  const upsertCommentMutation = trpc.comment.upsert.useMutation();
+  const toggleHideCommentMutation = trpc.comment.toggleHide.useMutation({
+    async onMutate({ id }) {
+      await queryUtils.comment.getById.cancel();
+
+      const prevComment = queryUtils.comment.getById.getData({ id });
+      if (prevComment)
+        queryUtils.comment.getById.setData({ id }, () => ({
+          ...prevComment,
+          hidden: !prevComment.hidden,
+        }));
+
+      return { prevComment };
+    },
+    async onSuccess() {
+      await queryUtils.comment.getAll.invalidate();
+      await queryUtils.comment.getCommentCountByModel.invalidate({
+        modelId: comment.modelId,
+        hidden: true,
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Could not hide comment',
+        error: new Error(error.message),
+      });
+    },
+  });
   const handleToggleHideComment = () => {
-    upsertCommentMutation.mutate(
-      { ...comment, hidden: !comment.hidden },
-      {
-        async onSuccess() {
-          await queryUtils.comment.getAll.invalidate();
-          await queryUtils.comment.getCommentCountByModel.invalidate({
-            modelId: comment.modelId,
-            hidden: true,
-          });
-        },
-        onError(error) {
-          showErrorNotification({
-            title: 'Could not hide comment',
-            error: new Error(error.message),
-          });
-        },
-      }
-    );
+    toggleHideCommentMutation.mutate({ id: comment.id });
   };
 
   return (
