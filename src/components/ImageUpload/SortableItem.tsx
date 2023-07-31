@@ -24,7 +24,7 @@ export function SortableItem({
 
   return cloneElement(children, {
     ref: setNodeRef,
-    style: { ...style, ...children.props.style },
+    style: { ...style, ...(children.props?.style || {}) },
     ...attributes,
     ...listeners,
   });

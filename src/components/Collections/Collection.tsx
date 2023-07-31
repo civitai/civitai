@@ -11,7 +11,13 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CollectionType } from '@prisma/client';
-import { IconCloudOff, IconDotsVertical, IconPencil, IconPlaylistAdd } from '@tabler/icons-react';
+import {
+  IconCloudOff,
+  IconDotsVertical,
+  IconHome,
+  IconPencil,
+  IconPlaylistAdd,
+} from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -260,29 +266,31 @@ export function Collection({
                           <IconDotsVertical size={16} />
                         </ActionIcon>
                       </Menu.Target>
-                      <Menu.Dropdown>
-                        {/*// TODO.PersonalizedHomePages: This is disabled for now until fully*/}
-                        {/*implemented*/}
-                        {/*<Menu.Item*/}
-                        {/*  icon={<IconHome size={14} stroke={1.5} />}*/}
-                        {/*  onClick={(e) => {*/}
-                        {/*    e.preventDefault();*/}
-                        {/*    e.stopPropagation();*/}
-                        {/*    onToggleCollectionHomeBlock();*/}
-                        {/*  }}*/}
-                        {/*>*/}
-                        {/*  {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}*/}
-                        {/*</Menu.Item>*/}
-                        {permissions.manage && (
-                          <Menu.Item
-                            component={NextLink}
-                            icon={<IconPencil size={14} stroke={1.5} />}
-                            href={`/collections/${collection.id}/review`}
-                          >
-                            Review Items
-                          </Menu.Item>
-                        )}
-                      </Menu.Dropdown>
+                      {(permissions.read || permissions.manage) && (
+                        <Menu.Dropdown>
+                          {permissions.read && (
+                            <Menu.Item
+                              icon={<IconHome size={14} stroke={1.5} />}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onToggleCollectionHomeBlock();
+                              }}
+                            >
+                              {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
+                            </Menu.Item>
+                          )}
+                          {permissions.manage && (
+                            <Menu.Item
+                              component={NextLink}
+                              icon={<IconPencil size={14} stroke={1.5} />}
+                              href={`/collections/${collection.id}/review`}
+                            >
+                              Review Items
+                            </Menu.Item>
+                          )}
+                        </Menu.Dropdown>
+                      )}
                     </Menu>
                   )}
                 </Group>
