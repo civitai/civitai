@@ -91,10 +91,16 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
 
         '& > img, & > canvas': {
           width: '50%',
-          height: '50%',
+          height: 'auto',
           flexGrow: 1,
           minWidth: '50%',
           minHeight: '50%',
+        },
+      },
+
+      imageGroupContainer4x4: {
+        '& > img, & > canvas': {
+          height: '50%',
         },
       },
     };

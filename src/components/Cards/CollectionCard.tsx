@@ -52,7 +52,7 @@ export function CollectionCard({ data }: Props) {
 
   const coverImages: ImageProps[] = getCoverImages();
   const isMultiImage = coverImages.length > 1;
-  console.log(data.name, coverImages);
+  const coverImagesCount = coverImages.length;
 
   return (
     <FeedCard
@@ -68,7 +68,16 @@ export function CollectionCard({ data }: Props) {
         })}
       >
         {coverImages.length > 0 ? (
-          <div className={isMultiImage ? classes.imageGroupContainer : undefined}>
+          <div
+            className={
+              isMultiImage
+                ? cx({
+                    [classes.imageGroupContainer]: true,
+                    [classes.imageGroupContainer4x4]: coverImagesCount > 2,
+                  })
+                : undefined
+            }
+          >
             <ImageGuard
               nsfw
               images={coverImages}
@@ -92,7 +101,13 @@ export function CollectionCard({ data }: Props) {
                       <MediaHash
                         {...image}
                         style={
-                          isMultiImage ? { position: 'relative', width: '50%', height: '50%' } : {}
+                          isMultiImage
+                            ? {
+                                position: 'relative',
+                                width: '50%',
+                                height: coverImagesCount > 2 ? '50%' : 'auto',
+                              }
+                            : {}
                         }
                       />
                     );
