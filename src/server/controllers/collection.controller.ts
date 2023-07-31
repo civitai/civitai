@@ -86,7 +86,6 @@ export const getAllCollectionsInfiniteHandler = async ({
             ...userPreferences,
             collectionId: collection.id,
             limit: 4, // TODO.collections: only bring max four items per collection atm
-            statuses: [CollectionItemStatus.ACCEPTED],
           },
         }),
       }))
