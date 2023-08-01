@@ -34,10 +34,15 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const [file] = droppedFiles;
     const toUpload = { url: URL.createObjectURL(file), file };
-    setImage((current) => ({ ...current, url: toUpload.url, file: toUpload.file }));
+    setImage((current) => ({
+      ...current,
+      previewUrl: toUpload.url,
+      url: '',
+      file: toUpload.file,
+    }));
 
     const { id } = await uploadToCF(toUpload.file);
-    setImage((current) => ({ ...current, url: id, file: undefined }));
+    setImage((current) => ({ ...current, url: id, file: undefined, previewUrl: undefined }));
     URL.revokeObjectURL(toUpload.url);
   };
 
@@ -63,9 +68,8 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
     // don't disable the eslint-disable
   }, [imageFiles]); // eslint-disable-line
 
-  const match = imageFiles.find((file) => image?.file === file.file);
-  const { progress } = match ?? { progress: 0 };
-  const showLoading = (match && progress < 100) || image?.file;
+  const [match] = imageFiles;
+  const showLoading = match && match.progress < 100;
 
   return (
     <Input.Wrapper {...props}>
@@ -104,7 +108,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
               },
             })}
           >
-            <EdgeImage src={image.previewUrl ?? image.url} width={450} />
+            <EdgeImage src={image.previewUrl || image.url} width={450} />
           </Box>
         </div>
       ) : (

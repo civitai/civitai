@@ -15,6 +15,7 @@ import {
 import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/collection.schema';
 import { trpc } from '~/utils/trpc';
 import { createRoutedContext } from '../create-routed-context';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 export default createRoutedContext({
   authGuard: true,
@@ -55,13 +56,15 @@ export default createRoutedContext({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data]);
 
+    const permissions = data?.permissions ?? { manage: false, write: false };
+
     return (
       <Modal opened={context.opened} onClose={context.close} title="Edit collection">
         {isLoading ? (
           <Center py="xl">
             <Loader variant="bars" />
           </Center>
-        ) : data?.collection ? (
+        ) : data?.collection && permissions.manage ? (
           <Form form={form} onSubmit={handleSubmit}>
             <Stack spacing="xs">
               <InputSimpleImageUpload name="image" label="Cover Image" />
@@ -93,9 +96,7 @@ export default createRoutedContext({
             </Stack>
           </Form>
         ) : (
-          <Center py="xl">
-            <Text color="dimmed">Collection not found</Text>
-          </Center>
+          <NotFound />
         )}
       </Modal>
     );

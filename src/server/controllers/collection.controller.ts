@@ -30,6 +30,7 @@ import {
   updateCollectionItemsStatus,
   bulkSaveItems,
   getAllCollections,
+  CollectionItemExpanded,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -80,14 +81,16 @@ export const getAllCollectionsInfiniteHandler = async ({
     const collectionsWithItems = await Promise.all(
       items.map(async (collection) => ({
         ...collection,
-        items: await getCollectionItemsByCollectionId({
-          user: ctx.user,
-          input: {
-            ...userPreferences,
-            collectionId: collection.id,
-            limit: 4, // TODO.collections: only bring max four items per collection atm
-          },
-        }),
+        items: !collection.image
+          ? await getCollectionItemsByCollectionId({
+              user: ctx.user,
+              input: {
+                ...userPreferences,
+                collectionId: collection.id,
+                limit: 4, // TODO.collections: only bring max four items per collection atm
+              },
+            })
+          : ([] as CollectionItemExpanded[]),
       }))
     );
 

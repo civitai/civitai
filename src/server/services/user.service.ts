@@ -68,14 +68,14 @@ export const getUserCreator = async ({
           followerCountAllTime: true,
         },
       },
-      rank: {
-        select: {
-          leaderboardRank: true,
-          leaderboardId: true,
-          leaderboardTitle: true,
-          leaderboardCosmetic: true,
-        },
-      },
+      // rank: {
+      //   select: {
+      //     leaderboardRank: true,
+      //     leaderboardId: true,
+      //     leaderboardTitle: true,
+      //     leaderboardCosmetic: true,
+      //   },
+      // },
       cosmetics: {
         where: { equippedAt: { not: null } },
         select: {

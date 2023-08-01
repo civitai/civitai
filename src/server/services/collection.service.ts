@@ -48,7 +48,9 @@ import {
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
-import { ImageMetaProps } from '../schema/image.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { env } from '~/env/server.mjs';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -62,7 +64,7 @@ export type CollectionContributorPermissionFlags = {
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
-  input: { limit, cursor, privacy, types, userId, sort, ids },
+  input: { limit, cursor, privacy, types, userId, sort, ids, browsingMode },
   user,
   select,
 }: {
@@ -70,6 +72,9 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
   select: TSelect;
   user?: SessionUser;
 }) => {
+  if (privacy && !user?.isModerator) privacy = [CollectionReadConfiguration.Public];
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
+
   const orderBy: Prisma.CollectionFindManyArgs['orderBy'] = [{ createdAt: 'desc' }];
   if (sort === CollectionSort.MostContributors)
     orderBy.unshift({ contributors: { _count: 'desc' } });
@@ -81,6 +86,7 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
       id: ids && ids.length > 0 ? { in: ids } : undefined,
       read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
       type: types && types.length > 0 ? { in: types } : undefined,
+      nsfw: browsingMode === BrowsingMode.SFW || !canViewNsfw ? false : undefined,
       userId,
     },
     select,
@@ -93,8 +99,10 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
 export const getUserCollectionPermissionsById = async ({
   id,
   userId,
+  isModerator,
 }: GetByIdInput & {
   userId?: number;
+  isModerator?: boolean;
 }) => {
   const permissions: CollectionContributorPermissionFlags = {
     read: false,
@@ -161,6 +169,12 @@ export const getUserCollectionPermissionsById = async ({
 
   if (userId === collection.userId) {
     permissions.isOwner = true;
+    permissions.manage = true;
+    permissions.read = true;
+    permissions.write = true;
+  }
+
+  if (isModerator) {
     permissions.manage = true;
     permissions.read = true;
     permissions.write = true;
@@ -285,7 +299,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       read: true,
       write: true,
       type: true,
-      userId: true,
+      user: { select: userWithCosmeticsSelect },
       nsfw: true,
       image: { select: imageSelect },
     },

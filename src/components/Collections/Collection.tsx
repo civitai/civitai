@@ -1,21 +1,26 @@
 import {
   ActionIcon,
-  Button,
+  AspectRatio,
+  Box,
+  Center,
   ContainerProps,
   Group,
   Stack,
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { CollectionType } from '@prisma/client';
-import { IconCloudOff, IconDotsVertical, IconPlaylistAdd } from '@tabler/icons-react';
+import { IconCirclePlus, IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
+import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
+import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
@@ -27,33 +32,35 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = useModelQueryParams();
 
   return (
-    <IsClient>
-      <Group position="apart" spacing={0}>
-        <Group>
-          <SortFilter type="models" />
+    <Stack spacing="xs">
+      <IsClient>
+        <Group position="apart" spacing={0}>
+          <Group>
+            <SortFilter type="models" />
+          </Group>
+          <Group spacing={4}>
+            <PeriodFilter type="models" />
+            <ModelFiltersDropdown />
+          </Group>
         </Group>
-        <Group spacing={4}>
-          <PeriodFilter type="models" />
-          <ModelFiltersDropdown />
-        </Group>
-      </Group>
-      <CategoryTags />
-      <ModelsInfinite
-        filters={{
-          ...queryFilters,
-          collectionId: collection.id,
-        }}
-      />
-    </IsClient>
+        <CategoryTags />
+        <ModelsInfinite
+          filters={{
+            ...queryFilters,
+            collectionId: collection.id,
+          }}
+        />
+      </IsClient>
+    </Stack>
   );
 };
 
@@ -61,47 +68,51 @@ const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByI
   const { ...queryFilters } = useImageQueryParams();
 
   return (
-    <IsClient>
-      <Group position="apart" spacing={0}>
-        <Group>
-          <SortFilter type="images" />
+    <Stack spacing="xs">
+      <IsClient>
+        <Group position="apart" spacing={0}>
+          <Group>
+            <SortFilter type="images" />
+          </Group>
+          <Group spacing={4}>
+            <PeriodFilter type="images" />
+          </Group>
         </Group>
-        <Group spacing={4}>
-          <PeriodFilter type="images" />
-        </Group>
-      </Group>
-      <CategoryTags />
-      <ImagesInfinite
-        filters={{
-          ...queryFilters,
-          collectionId: collection.id,
-        }}
-        withTags
-      />
-    </IsClient>
+        <CategoryTags />
+        <ImagesInfinite
+          filters={{
+            ...queryFilters,
+            collectionId: collection.id,
+          }}
+          withTags
+        />
+      </IsClient>
+    </Stack>
   );
 };
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...queryFilters } = usePostQueryParams();
 
   return (
-    <IsClient>
-      <Group position="apart" spacing={0}>
-        <Group>
-          <SortFilter type="posts" />
+    <Stack spacing="xs">
+      <IsClient>
+        <Group position="apart" spacing={0}>
+          <Group>
+            <SortFilter type="posts" />
+          </Group>
+          <Group spacing={4}>
+            <PeriodFilter type="posts" />
+          </Group>
         </Group>
-        <Group spacing={4}>
-          <PeriodFilter type="posts" />
-        </Group>
-      </Group>
-      <CategoryTags />
-      <PostsInfinite
-        filters={{
-          ...queryFilters,
-          collectionId: collection.id,
-        }}
-      />
-    </IsClient>
+        <CategoryTags />
+        <PostsInfinite
+          filters={{
+            ...queryFilters,
+            collectionId: collection.id,
+          }}
+        />
+      </IsClient>
+    </Stack>
   );
 };
 
@@ -109,23 +120,25 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const { set, ...queryFilters } = useArticleQueryParams();
 
   return (
-    <IsClient>
-      <Group position="apart" spacing={0}>
-        <Group>
-          <SortFilter type="articles" />
+    <Stack spacing="xs">
+      <IsClient>
+        <Group position="apart" spacing={0}>
+          <Group>
+            <SortFilter type="articles" />
+          </Group>
+          <Group spacing={4}>
+            <PeriodFilter type="articles" />
+          </Group>
         </Group>
-        <Group spacing={4}>
-          <PeriodFilter type="articles" />
-        </Group>
-      </Group>
-      <CategoryTags />
-      <ArticlesInfinite
-        filters={{
-          ...queryFilters,
-          collectionId: collection.id,
-        }}
-      />
-    </IsClient>
+        <CategoryTags />
+        <ArticlesInfinite
+          filters={{
+            ...queryFilters,
+            collectionId: collection.id,
+          }}
+        />
+      </IsClient>
+    </Stack>
   );
 };
 
@@ -171,42 +184,84 @@ export function Collection({
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer {...containerProps}>
-          <Stack spacing="xs" w="100%">
-            <Group align="center" spacing="xs" position="apart">
-              <Stack spacing={0}>
-                <Title order={1} lineClamp={1}>
-                  {collection?.name ?? 'Loading...'}
-                </Title>
-                {collection?.description && (
-                  <Text size="xs" color="dimmed">
-                    {collection.description}
-                  </Text>
+        <MasonryContainer {...containerProps} p={0}>
+          <Stack spacing="xl" w="100%">
+            <Group spacing="xl">
+              {collection?.image && (
+                <Box
+                  w={220}
+                  sx={(theme) => ({
+                    overflow: 'hidden',
+                    borderRadius: '8px',
+                    boxShadow: theme.shadows.md,
+                    [theme.fn.smallerThan('sm')]: { width: '100%', marginBottom: theme.spacing.xs },
+                  })}
+                >
+                  <AspectRatio ratio={1}>
+                    <EdgeImage
+                      src={collection.image.url}
+                      name={collection.image.name ?? collection.image.url}
+                      alt={collection.image.name ?? undefined}
+                      width={collection.image.width ?? 1200}
+                      placeholder="empty"
+                      loading="lazy"
+                    />
+                  </AspectRatio>
+                </Box>
+              )}
+              <Stack spacing={8} sx={{ flex: 1 }}>
+                <Stack spacing={0}>
+                  <Title
+                    order={1}
+                    lineClamp={1}
+                    sx={(theme) => ({
+                      [theme.fn.smallerThan('sm')]: {
+                        fontSize: '28px',
+                      },
+                    })}
+                  >
+                    {collection?.name ?? 'Loading...'}
+                  </Title>
+                  {collection?.description && (
+                    <Text size="xs" color="dimmed">
+                      {collection.description}
+                    </Text>
+                  )}
+                </Stack>
+                {collection && (
+                  <Group spacing={4} noWrap>
+                    <UserAvatar user={collection.user} withUsername linkToProfile />
+                    {/* TODO.collections: We need some metrics to actually display these badges */}
+                    {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
+                      <Text size="xs">{abbreviateNumber(data._count.items)}</Text>
+                    </IconBadge>
+                    <IconBadge className={classes.iconBadge} icon={<IconUser size={14} />}>
+                      <Text size="xs">{abbreviateNumber(data._count.contributors)}</Text>
+                    </IconBadge> */}
+                  </Group>
                 )}
               </Stack>
               {collection && permissions && (
-                <Group ml="auto" noWrap>
+                <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
                   <CollectionFollowAction collection={collection} permissions={permissions} />
                   {canAddContent && (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      pl={4}
-                      pr={8}
-                      onClick={() => setOpened(true)}
-                    >
-                      <Group spacing={4} noWrap>
-                        <IconPlaylistAdd size={18} />
-                        Add from your library
-                      </Group>
-                    </Button>
+                    <Tooltip label="Add from your library" position="bottom" withArrow>
+                      <ActionIcon
+                        color="blue"
+                        variant="subtle"
+                        radius="xl"
+                        onClick={() => setOpened(true)}
+                      >
+                        <IconCirclePlus />
+                      </ActionIcon>
+                    </Tooltip>
                   )}
                   <CollectionContextMenu
                     collectionId={collection.id}
-                    ownerId={collection.userId}
+                    ownerId={collection.user.id}
                     permissions={permissions}
                   >
-                    <ActionIcon variant="outline">
+                    <ActionIcon variant="subtle">
                       <IconDotsVertical size={16} />
                     </ActionIcon>
                   </CollectionContextMenu>
@@ -224,6 +279,16 @@ export function Collection({
             )}
             {collection && collectionType === CollectionType.Article && (
               <ArticleCollection collection={collection} />
+            )}
+            {!collectionType && !isLoading && (
+              <Center py="xl">
+                <Stack spacing="xs">
+                  <Text size="lg" weight="700" align="center">
+                    Whoops!
+                  </Text>
+                  <Text align="center">This collection type is not supported</Text>
+                </Stack>
+              </Center>
             )}
           </Stack>
         </MasonryContainer>
