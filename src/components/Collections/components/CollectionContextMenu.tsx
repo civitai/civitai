@@ -135,7 +135,7 @@ export function CollectionContextMenu({
             </Menu.Item>
           </>
         )}
-        {permissions?.read && (
+        {currentUser && permissions?.read && (
           <Menu.Item
             icon={<IconHome size={14} stroke={1.5} />}
             onClick={(e) => {
