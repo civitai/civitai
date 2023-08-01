@@ -56,7 +56,7 @@ export default function UserCollectionsPage() {
               />
             </Group>
             <CollectionsInfinite
-              filters={{ ...queryFilters, sort, userId: creator.id, withItems: true }}
+              filters={{ ...queryFilters, sort, userId: creator.id }}
               enabled={!!creator}
             />
           </Stack>

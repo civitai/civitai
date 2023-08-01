@@ -46,7 +46,7 @@ const reports = [
     reason: ReportReason.NSFW,
     label: 'Mature Content',
     Element: ArticleNsfwForm,
-    availableFor: [ReportEntity.Article, ReportEntity.Post],
+    availableFor: [ReportEntity.Article, ReportEntity.Post, ReportEntity.Collection],
   },
   {
     reason: ReportReason.TOSViolation,
@@ -61,6 +61,7 @@ const reports = [
       ReportEntity.Article,
       ReportEntity.Post,
       ReportEntity.User,
+      ReportEntity.Collection,
     ],
   },
   {
@@ -76,6 +77,7 @@ const reports = [
       ReportEntity.Article,
       ReportEntity.Post,
       ReportEntity.User,
+      ReportEntity.Collection,
     ],
   },
   {

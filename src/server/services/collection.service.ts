@@ -47,6 +47,10 @@ import {
   UserPreferencesInput,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
+import { imageSelect } from '~/server/selectors/image.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { env } from '~/env/server.mjs';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -60,7 +64,7 @@ export type CollectionContributorPermissionFlags = {
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
-  input: { limit, cursor, privacy, types, userId, sort, ids },
+  input: { limit, cursor, privacy, types, userId, sort, ids, browsingMode },
   user,
   select,
 }: {
@@ -68,6 +72,9 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
   select: TSelect;
   user?: SessionUser;
 }) => {
+  if (privacy && !user?.isModerator) privacy = [CollectionReadConfiguration.Public];
+  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
+
   const orderBy: Prisma.CollectionFindManyArgs['orderBy'] = [{ createdAt: 'desc' }];
   if (sort === CollectionSort.MostContributors)
     orderBy.unshift({ contributors: { _count: 'desc' } });
@@ -79,6 +86,7 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
       id: ids && ids.length > 0 ? { in: ids } : undefined,
       read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
       type: types && types.length > 0 ? { in: types } : undefined,
+      nsfw: browsingMode === BrowsingMode.SFW || !canViewNsfw ? false : undefined,
       userId,
     },
     select,
@@ -91,8 +99,10 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
 export const getUserCollectionPermissionsById = async ({
   id,
   userId,
+  isModerator,
 }: GetByIdInput & {
   userId?: number;
+  isModerator?: boolean;
 }) => {
   const permissions: CollectionContributorPermissionFlags = {
     read: false,
@@ -159,6 +169,12 @@ export const getUserCollectionPermissionsById = async ({
 
   if (userId === collection.userId) {
     permissions.isOwner = true;
+    permissions.manage = true;
+    permissions.read = true;
+    permissions.write = true;
+  }
+
+  if (isModerator) {
     permissions.manage = true;
     permissions.read = true;
     permissions.write = true;
@@ -272,9 +288,9 @@ export const getUserCollectionsWithPermissions = async <
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
 
-export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
+export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   const { id } = input;
-  return dbRead.collection.findUnique({
+  const collection = await dbRead.collection.findUnique({
     where: { id },
     select: {
       id: true,
@@ -283,9 +299,20 @@ export const getCollectionById = ({ input }: { input: GetByIdInput }) => {
       read: true,
       write: true,
       type: true,
-      userId: true,
+      user: { select: userWithCosmeticsSelect },
+      nsfw: true,
+      image: { select: imageSelect },
     },
   });
+  if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
+
+  return {
+    ...collection,
+    nsfw: collection.nsfw ?? false,
+    image: collection.image
+      ? { ...collection.image, meta: collection.image.meta as ImageMetaProps | null }
+      : null,
+  };
 };
 
 const inputToCollectionType = {
@@ -376,7 +403,8 @@ export const upsertCollection = async ({
 }: {
   input: UpsertCollectionInput & { userId: number };
 }) => {
-  const { userId, id, name, description, image, read, write, type, ...collectionItem } = input;
+  const { userId, id, name, description, image, read, write, type, nsfw, ...collectionItem } =
+    input;
 
   if (id) {
     const updated = await dbWrite.collection.update({
@@ -385,13 +413,16 @@ export const upsertCollection = async ({
       data: {
         name,
         description,
+        nsfw,
+        read,
+        write,
         image:
           image !== undefined
             ? image === null
               ? { disconnect: true }
               : {
                   connectOrCreate: {
-                    where: { id: image.id },
+                    where: { id: image.id ?? -1 },
                     create: {
                       ...image,
                       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -401,8 +432,6 @@ export const upsertCollection = async ({
                   },
                 }
             : undefined,
-        read,
-        write,
       },
     });
     if (!updated) throw throwNotFoundError(`No collection with id ${id}`);
@@ -430,23 +459,10 @@ export const upsertCollection = async ({
 
   const collection = await dbWrite.collection.create({
     select: { id: true, image: { select: { id: true, url: true } } },
-    // TODO.collections: check this ts error
-    // Ignoring ts error here cause image -> create is
-    // complaining about having userId as undefined when it's required
     data: {
       name,
       description,
-      // TODO.collections: make it possible to save images when creating a collection
-      // image: image
-      //   ? {
-      //       create: {
-      //         ...image,
-      //         meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      //         userId,
-      //         resources: undefined,
-      //       },
-      //     }
-      //   : undefined,
+      nsfw,
       read,
       write,
       userId,
@@ -464,7 +480,6 @@ export const upsertCollection = async ({
       items: { create: { ...collectionItem, addedById: userId } },
     },
   });
-  if (collection.image) await ingestImage({ image: collection.image });
 
   return collection;
 };
