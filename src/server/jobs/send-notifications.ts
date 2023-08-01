@@ -19,9 +19,8 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
         if (query) {
           if (isPromise(query)) query = await query;
 
-          const now = new Date(); // Use time before query is executed to avoid gaps
           await dbWrite.$executeRawUnsafe(query);
-          await setLastSent(now);
+          await setLastSent();
         }
       });
       await Promise.allSettled(promises);

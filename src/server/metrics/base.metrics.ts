@@ -1,5 +1,6 @@
 import { ClickHouseClient } from '@clickhouse/client';
 import { PrismaClient } from '@prisma/client';
+import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { getJobDate } from '~/server/jobs/job';
@@ -36,6 +37,7 @@ export function createMetricProcessor({
       if (!shouldUpdate) return;
 
       // Run update
+      ctx.lastUpdate = dayjs(lastUpdate).subtract(2, 'minute').toDate(); // Expand window to allow clickhouse tracker to catch up
       await update(ctx);
       await setLastUpdate();
 
