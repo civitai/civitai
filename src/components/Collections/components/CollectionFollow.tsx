@@ -5,6 +5,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { Button, Group } from '@mantine/core';
 import { IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
 import { CollectionByIdModel } from '~/types/router';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props) => {
   const utils = trpc.useContext();
@@ -61,24 +62,26 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
   })();
 
   return (
-    <Button
-      size="xs"
-      pl={4}
-      pr={8}
-      {...btnProps}
-      onClick={() => {
-        if (permissions.isContributor) {
-          unfollowCollection({ collectionId: collection.id });
-        } else {
-          followCollection({ collectionId: collection.id });
-        }
-      }}
-    >
-      <Group spacing={4} noWrap>
-        <FollowBtnIcon size={18} />
-        {followBtnLabel}
-      </Group>
-    </Button>
+    <LoginRedirect reason="follow-collection">
+      <Button
+        size="xs"
+        pl={4}
+        pr={8}
+        {...btnProps}
+        onClick={() => {
+          if (permissions.isContributor) {
+            unfollowCollection({ collectionId: collection.id });
+          } else {
+            followCollection({ collectionId: collection.id });
+          }
+        }}
+      >
+        <Group spacing={4} noWrap>
+          <FollowBtnIcon size={18} />
+          {followBtnLabel}
+        </Group>
+      </Button>
+    </LoginRedirect>
   );
 };
 
