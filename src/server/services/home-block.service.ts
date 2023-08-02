@@ -189,8 +189,7 @@ export const getHomeBlockData = async ({
             input: {
               ...(input as UserPreferencesInput),
               collectionId: collection.id,
-              // TODO.home-blocks: Set item limit as part of the input?
-              limit: metadata.collection.limit,
+              limit: input.limit || metadata.collection.limit,
             },
           });
 
