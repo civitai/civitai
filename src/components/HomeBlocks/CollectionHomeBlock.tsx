@@ -30,79 +30,82 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { CollectionHomeBlockSkeleton } from '~/components/HomeBlocks/CollectionHomeBlockSkeleton';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
+import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 
-const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
-  return {
-    title: {
-      fontSize: 32,
+const useStyles = createStyles<string, { count: number; columnCount: number }>(
+  (theme, { count, columnCount }) => {
+    return {
+      title: {
+        fontSize: 32,
 
-      [theme.fn.smallerThan('sm')]: {
-        fontSize: 28,
-      },
-    },
-
-    grid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr) )',
-      columnGap: theme.spacing.md,
-      paddingLeft: theme.spacing.md,
-      paddingRight: theme.spacing.md,
-      gridTemplateRows: `repeat(2, auto)`,
-      gridAutoRows: 0,
-      overflow: 'hidden',
-      marginTop: -theme.spacing.md,
-
-      '& > *': {
-        marginTop: theme.spacing.md,
-      },
-
-      [theme.fn.smallerThan('md')]: {
-        gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
-        gridTemplateRows: `repeat(2, auto)`,
-        scrollSnapType: 'x mandatory',
-        overflowX: 'auto',
-      },
-
-      [theme.fn.smallerThan('sm')]: {
-        gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count}, 280px)`,
-        gridTemplateRows: 'auto',
-        scrollSnapType: 'x mandatory',
-        overflowX: 'auto',
-
-        '& > *': {
-          scrollSnapAlign: 'center',
+        [theme.fn.smallerThan('sm')]: {
+          fontSize: 28,
         },
       },
-    },
 
-    meta: {
-      display: 'none',
-      [theme.fn.smallerThan('md')]: {
-        display: 'block',
+      grid: {
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
+        columnGap: theme.spacing.md,
+        paddingLeft: theme.spacing.md,
+        paddingRight: theme.spacing.md,
+        gridTemplateRows: `repeat(2, auto)`,
+        gridAutoRows: 0,
+        overflow: 'hidden',
+        marginTop: -theme.spacing.md,
+
+        '& > *': {
+          marginTop: theme.spacing.md,
+        },
+
+        [theme.fn.smallerThan('md')]: {
+          gridAutoFlow: 'column',
+          gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
+          gridTemplateRows: `repeat(2, auto)`,
+          scrollSnapType: 'x mandatory',
+          overflowX: 'auto',
+        },
+
+        [theme.fn.smallerThan('sm')]: {
+          gridAutoFlow: 'column',
+          gridTemplateColumns: `repeat(${count}, 280px)`,
+          gridTemplateRows: 'auto',
+          scrollSnapType: 'x mandatory',
+          overflowX: 'auto',
+
+          '& > *': {
+            scrollSnapAlign: 'center',
+          },
+        },
       },
-    },
 
-    gridMeta: {
-      gridColumn: '1 / span 2',
-      display: 'flex',
-      flexDirection: 'column',
-
-      '& > *': {
-        flex: 1,
-      },
-
-      [theme.fn.smallerThan('md')]: {
+      meta: {
         display: 'none',
+        [theme.fn.smallerThan('md')]: {
+          display: 'block',
+        },
       },
-    },
 
-    expandButton: {
-      height: 34,
-    },
-  };
-});
+      gridMeta: {
+        gridColumn: '1 / span 2',
+        display: 'flex',
+        flexDirection: 'column',
+
+        '& > *': {
+          flex: 1,
+        },
+
+        [theme.fn.smallerThan('md')]: {
+          display: 'none',
+        },
+      },
+
+      expandButton: {
+        height: 34,
+      },
+    };
+  }
+);
 
 const icons = {
   model: IconCategory,
@@ -111,9 +114,21 @@ const icons = {
   article: IconFileText,
 };
 
-export const CollectionHomeBlock = ({ homeBlockId }: Props) => {
+export const CollectionHomeBlock = ({ ...props }: Props) => {
+  return (
+    <HomeBlockWrapper py={32} px={0}>
+      <CollectionHomeBlockContent {...props} />
+    </HomeBlockWrapper>
+  );
+};
+
+const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
+  const { columnCount } = useMasonryContainerContext();
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
-  const { classes, cx } = useStyles({ count: homeBlock?.collection?.items.length ?? 0 });
+  const { classes, cx } = useStyles({
+    count: homeBlock?.collection?.items.length ?? 0,
+    columnCount,
+  });
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
 
@@ -229,7 +244,7 @@ export const CollectionHomeBlock = ({ homeBlockId }: Props) => {
     (!currentUser || metadata.descriptionAlwaysVisible);
 
   return (
-    <HomeBlockWrapper py={32} px={0} bleedRight>
+    <>
       <Box mb="md" px="md" className={cx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
@@ -244,7 +259,7 @@ export const CollectionHomeBlock = ({ homeBlockId }: Props) => {
           </Fragment>
         ))}
       </div>
-    </HomeBlockWrapper>
+    </>
   );
 };
 

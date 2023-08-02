@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Center, Container, Group, Loader } from '@mantine/core';
+import { ActionIcon, Box, Center, Group, Loader, Title } from '@mantine/core';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -17,6 +17,7 @@ import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelSort } from '~/server/common/enums';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -39,32 +40,33 @@ export default function Home() {
 
   return (
     <>
-      <Container size="xl" sx={{ overflow: 'hidden' }}>
-        <Group position="apart" noWrap>
-          <FullHomeContentToggle />
-          {user && (
-            <ActionIcon
-              size="sm"
-              variant="light"
-              color="dark"
-              onClick={() => openContext('manageHomeBlocks', {})}
-            >
-              <IconSettings />
-            </ActionIcon>
-          )}
-        </Group>
-      </Container>
-
-      {isLoading && (
-        <Center sx={{ height: 36 }} mt="md">
-          <Loader />
-        </Center>
-      )}
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
+        <MasonryContainer fluid sx={{ overflow: 'hidden' }}>
+          <Group position="apart" noWrap>
+            <FullHomeContentToggle />
+            {user && (
+              <ActionIcon
+                size="sm"
+                variant="light"
+                color="dark"
+                onClick={() => openContext('manageHomeBlocks', {})}
+              >
+                <IconSettings />
+              </ActionIcon>
+            )}
+          </Group>
+        </MasonryContainer>
+
+        {isLoading && (
+          <Center sx={{ height: 36 }} mt="md">
+            <Loader />
+          </Center>
+        )}
+
         {homeBlocks.map((homeBlock) => {
           switch (homeBlock.type) {
             case HomeBlockType.Collection:
@@ -80,11 +82,33 @@ export default function Home() {
           <HomeBlockWrapper py={32}>
             {displayModelsInfiniteFeed && (
               <IsClient>
-                <Box px="md">
+                <Box
+                  sx={(theme) => ({
+                    paddingLeft: theme.spacing.md,
+                    paddingRight: theme.spacing.md,
+
+                    [theme.fn.smallerThan('sm')]: {
+                      paddingLeft: 0,
+                      paddingRight: 0,
+                    },
+                  })}
+                >
+                  <Title
+                    sx={(theme) => ({
+                      fontSize: theme.headings.sizes.h1.fontSize,
+                      [theme.fn.smallerThan('md')]: {
+                        fontSize: theme.headings.sizes.h3.fontSize,
+                      },
+                    })}
+                  >
+                    Models
+                  </Title>
+
                   <ModelsInfinite
                     filters={{
                       period: MetricTimeframe.Month,
                       sort: ModelSort.HighestRated,
+                      excludedImageTagIds: [],
                     }}
                   />
                 </Box>
