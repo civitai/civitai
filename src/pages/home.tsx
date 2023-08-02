@@ -15,7 +15,6 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { ModelSort } from '~/server/common/enums';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 

@@ -44,7 +44,7 @@ export const getHomeBlocks = async <
     throw throwBadRequestError('You must be logged in to view your home blocks.');
   }
 
-  if (!hasCustomHomeBlocks) {
+  if (!hasCustomHomeBlocks && !ownedOnly && !ids) {
     // If the user doesn't have any custom home blocks, we can just return the default Civitai ones.
     return getSystemHomeBlocks({ input: {} });
   }
