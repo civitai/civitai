@@ -22,6 +22,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { getSystemHomeBlocksCached } from '~/server/services/system-cache';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -36,10 +37,16 @@ export const getHomeBlocks = async <
   ids?: number[];
 }) => {
   const hasCustomHomeBlocks = await userHasCustomHomeBlocks(userId);
+
   const { ownedOnly, ids } = input;
 
   if (ownedOnly && !userId) {
     throw throwBadRequestError('You must be logged in to view your home blocks.');
+  }
+
+  if (!hasCustomHomeBlocks) {
+    // If the user doesn't have any custom home blocks, we can just return the default Civitai ones.
+    return getSystemHomeBlocks({ input: {} });
   }
 
   return dbRead.homeBlock.findMany({
@@ -98,6 +105,8 @@ export const getHomeBlockById = async ({
       id: true,
       metadata: true,
       type: true,
+      userId: true,
+      sourceId: true,
     },
     where: {
       id,
@@ -107,21 +116,56 @@ export const getHomeBlockById = async ({
   return getHomeBlockData({ homeBlock, user, input });
 };
 
+type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
+type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
+type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
+  items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
+};
+
+export type HomeBlockWithData = {
+  id: number;
+  metadata: HomeBlockMetaSchema;
+  type: HomeBlockType;
+  userId?: number;
+  index?: number | null;
+  sourceId?: number | null;
+  collection?: GetCollectionWithItems;
+  leaderboards?: GetLeaderboardsWithResults;
+  announcements?: GetAnnouncements;
+};
+
 export const getHomeBlockData = async ({
-  homeBlock,
   user,
   input,
+  homeBlock,
+  bypassCache = false,
 }: {
   homeBlock: {
     id: number;
     metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
     type: HomeBlockType;
+    userId?: number;
+    sourceId?: number | null;
   };
+  input: GetHomeBlocksInputSchema;
   // Session user required because it's passed down to collection get items service
   // which requires it for models/posts/etc
   user?: SessionUser;
-  input: GetHomeBlocksInputSchema;
-}) => {
+  bypassCache?: boolean;
+}): Promise<HomeBlockWithData | null> => {
+  if (!bypassCache) {
+    const systemHomeBlocksWithData = await getSystemHomeBlocksCached();
+    const systemHomeBlock = systemHomeBlocksWithData.find(
+      (systemHomeBlock) =>
+        systemHomeBlock.id === homeBlock.id || systemHomeBlock.id === homeBlock.sourceId
+    );
+
+    if (systemHomeBlock) {
+      // System home block. Likely found in the cache:
+      return systemHomeBlock;
+    }
+  }
+
   const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
 
   switch (homeBlock.type) {

@@ -138,7 +138,11 @@ function ManageHomeBlocks({ onClose }: Props) {
   };
 
   const handleSave = () => {
-    const data = items.map((item, index) => ({ id: item.id, index, userId: item.userId }));
+    const data = items.map((item, index) => ({
+      id: item.id,
+      index,
+      userId: item.userId,
+    }));
     setHomeBlocksOrder({ homeBlocks: data });
   };
 

@@ -53,14 +53,9 @@ export const getHomeBlocksInputSchema = z
 export type GetSystemHomeBlocksInputSchema = z.infer<typeof getSystemHomeBlocksInputSchema>;
 export const getSystemHomeBlocksInputSchema = z
   .object({
-    limit: z.number().default(8),
-    dismissed: z.array(z.number()).optional(),
     permanent: z.boolean().optional(),
-    withData: z.boolean().optional(),
   })
-  .merge(userPreferencesSchema)
-  .partial()
-  .default({ limit: 8 });
+  .partial();
 
 export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
 

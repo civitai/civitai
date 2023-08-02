@@ -5,6 +5,12 @@ import { redis } from '~/server/redis/client';
 import { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
+import {
+  getHomeBlockData,
+  getSystemHomeBlocks,
+  HomeBlockWithData,
+} from '~/server/services/home-block.service';
+import { isDefined } from '~/utils/type-guards';
 
 const log = createLogger('system-cache', 'green');
 
@@ -132,4 +138,30 @@ export async function getTagsNeedingReview() {
 
   log('got tags needing review');
   return tags;
+}
+
+export async function getSystemHomeBlocksCached() {
+  const cachedSystemHomeBlocks = await redis.get(`system:home-blocks`);
+  if (cachedSystemHomeBlocks) {
+    return JSON.parse(cachedSystemHomeBlocks) as HomeBlockWithData[];
+  }
+
+  log('getting system home blocks');
+
+  const systemHomeBlocks = await getSystemHomeBlocks({ input: {} });
+  const systemHomeBlocksWithData: HomeBlockWithData[] = (
+    await Promise.all(
+      systemHomeBlocks.map((homeBlock) => {
+        return getHomeBlockData({ homeBlock, input: { limit: 14 * 4 }, bypassCache: true });
+      })
+    )
+  ).filter(isDefined);
+
+  await redis.set(`system:home-blocks`, JSON.stringify(systemHomeBlocksWithData), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('done getting system home blocks');
+
+  return systemHomeBlocksWithData;
 }
