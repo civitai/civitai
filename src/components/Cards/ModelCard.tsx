@@ -189,8 +189,12 @@ export function ModelCard({ data }: Props) {
                             <Badge
                               className={classes.chip}
                               variant="filled"
-                              color={isUpdated ? '#1EBD8E' : 'blue'}
                               radius="xl"
+                              sx={(theme) => ({
+                                backgroundColor: isUpdated
+                                  ? '#1EBD8E'
+                                  : theme.colors.blue[theme.fn.primaryShade()],
+                              })}
                             >
                               <Text color="white" size="xs" transform="capitalize">
                                 {isUpdated ? 'Updated' : 'New'}
