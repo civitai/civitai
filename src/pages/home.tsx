@@ -25,7 +25,7 @@ export default function Home() {
   return (
     <>
       <Container size="xl" sx={{ overflow: 'hidden' }}>
-        <Group position="apart">
+        <Group position="apart" noWrap>
           <FullHomeContentToggle />
           {user && (
             <ActionIcon
@@ -33,11 +33,6 @@ export default function Home() {
               variant="light"
               color="dark"
               onClick={() => openContext('manageHomeBlocks', {})}
-              sx={(theme) => ({
-                [theme.fn.smallerThan('md')]: {
-                  marginLeft: 'auto',
-                },
-              })}
             >
               <IconSettings />
             </ActionIcon>
