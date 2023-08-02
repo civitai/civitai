@@ -30,7 +30,10 @@ export const preprocessImage = async (file: File) => {
 
   return {
     objectUrl,
-    metadata,
+    metadata: {
+      size: file.size,
+      ...metadata,
+    },
     meta,
   };
 };
