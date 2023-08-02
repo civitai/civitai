@@ -43,6 +43,8 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     createdAt: true,
     mimeType: true,
     scannedAt: true,
+    type: true,
+    metadata: true,
     stats: {
       select: {
         cryCountAllTime: true,

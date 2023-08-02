@@ -1,6 +1,6 @@
 import { ActionIcon, AspectRatio, Box, createStyles } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -33,10 +33,11 @@ export function PostCategoryCard({ data }: { data: PostGetByCategoryPostModel })
                     <MediaHash {...image} />
                   </Box>
                   {safe && (
-                    <EdgeImage
+                    <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
                       alt={image.name ?? undefined}
+                      type={image.type}
                       width={450}
                       placeholder="empty"
                       className={classes.image}

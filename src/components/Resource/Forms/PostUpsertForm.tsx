@@ -119,7 +119,8 @@ function PublishButton({ modelId, modelVersionId }: { modelId: number; modelVers
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
 
   const canSave =
-    tags.filter((x) => !!x.id).length > 0 && images.filter((x) => x.type === 'image').length > 0;
+    tags.filter((x) => !!x.id).length > 0 &&
+    images.filter((x) => x.discriminator === 'image').length > 0;
   const canPublish = !isUploading && !!modelVersion?.files?.length;
 
   const handlePublish = async (publishDate?: Date) => {

@@ -2,7 +2,7 @@ import { createStyles, UnstyledButton, Center } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -100,10 +100,11 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   <MediaHash {...image} />
                 </ImageGuard.Unsafe>
                 <ImageGuard.Safe>
-                  <EdgeImage
+                  <EdgeMedia
                     src={image.url}
                     name={image.name ?? image.id.toString()}
                     alt={image.name ?? undefined}
+                    type={image.type}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
                     width={image.width ?? 1200}
                     anim

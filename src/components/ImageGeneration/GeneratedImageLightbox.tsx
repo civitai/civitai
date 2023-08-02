@@ -4,7 +4,7 @@ import { useHotkeys } from '@mantine/hooks';
 import { ContextModalProps } from '@mantine/modals';
 import { useState } from 'react';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -47,7 +47,7 @@ export default function GeneratedImageLightbox({
         {feed.map((item) => (
           <Carousel.Slide key={item.id} sx={{ height: 'calc(100vh - 84px)' }}>
             <Center h="100%">
-              <EdgeImage src={item.url} width={request.params.width} />
+              <EdgeMedia src={item.url} width={request.params.width} />
             </Center>
           </Carousel.Slide>
         ))}

@@ -13,7 +13,7 @@ import { IconExclamationMark, IconInfoCircle, IconMessage } from '@tabler/icons-
 import { useEffect, useMemo, useState } from 'react';
 import { InView } from 'react-intersection-observer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -174,10 +174,11 @@ export function ImagesAsPostsCard({
                             <>
                               <MediaHash {...image} />
                               {safe && (
-                                <EdgeImage
+                                <EdgeMedia
                                   src={image.url}
                                   name={image.name ?? image.id.toString()}
                                   alt={image.name ?? undefined}
+                                  type={image.type}
                                   width={450}
                                   placeholder="empty"
                                   className={classes.image}
@@ -270,10 +271,11 @@ export function ImagesAsPostsCard({
                                   <>
                                     <MediaHash {...image} />
                                     {safe && (
-                                      <EdgeImage
+                                      <EdgeMedia
                                         src={image.url}
                                         name={image.name ?? image.id.toString()}
                                         alt={image.name ?? undefined}
+                                        type={image.type}
                                         width={450}
                                         placeholder="empty"
                                         className={classes.image}

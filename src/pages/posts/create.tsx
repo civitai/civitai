@@ -25,6 +25,7 @@ import {
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { trpc } from '~/utils/trpc';
 
 export default function PostCreate() {
@@ -182,6 +183,7 @@ export default function PostCreate() {
             loading={isLoading}
             count={images.length}
             max={POST_IMAGE_LIMIT}
+            accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           />
         </Stack>
       )}

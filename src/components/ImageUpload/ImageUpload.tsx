@@ -34,7 +34,7 @@ import {
   Title,
   createStyles,
 } from '@mantine/core';
-import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
+import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { UseListStateHandlers, useDidUpdate, useListState, useLocalStorage } from '@mantine/hooks';
 import {
   IconAlertTriangle,
@@ -51,6 +51,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SimpleTag } from '~/server/selectors/tag.selector';
 

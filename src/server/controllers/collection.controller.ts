@@ -376,7 +376,12 @@ export const addSimpleImagePostHandler = async ({
     });
     const postImages = await Promise.all(
       images.map((image, index) =>
-        addPostImage({ ...image, postId: post.id, userId: user.id, index })
+        addPostImage({
+          ...image,
+          postId: post.id,
+          userId: user.id,
+          index,
+        })
       )
     );
     const imageIds = postImages.map((image) => image.id);

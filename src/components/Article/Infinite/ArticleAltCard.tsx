@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ArticleGetAll } from '~/types/router';
@@ -72,7 +72,7 @@ export function ArticleAltCard({ data }: Props) {
               </Badge>
             )}
           </Group>
-          <EdgeImage className={classes.image} src={cover} width={450} />
+          <EdgeMedia className={classes.image} src={cover} width={450} />
         </div>
         <Stack className={classes.info} spacing={8}>
           {data.user.image && (
