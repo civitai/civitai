@@ -10,14 +10,16 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { Dropzone, FileWithPath, IMAGE_MIME_TYPE } from '@mantine/dropzone';
+import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
+import { MediaType } from '@prisma/client';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: string | { url: string };
@@ -108,7 +110,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
               },
             })}
           >
-            <EdgeImage src={image.previewUrl || image.url} width={450} />
+            <EdgeMedia src={image.previewUrl ?? image.url} type={MediaType.image} width={450} />
           </Box>
         </div>
       ) : (

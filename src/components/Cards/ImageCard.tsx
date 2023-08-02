@@ -3,7 +3,7 @@ import { IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -42,10 +42,11 @@ export function ImageCard({ data, collectionId }: Props) {
                       <ImageGuard.Report context="image" position="top-right" />
                       <ImageGuard.ToggleImage position="top-left" />
                       {safe ? (
-                        <EdgeImage
+                        <EdgeMedia
                           src={image.url}
                           name={image.name ?? image.id.toString()}
                           alt={image.name ?? undefined}
+                          type={image.type}
                           width={
                             originalAspectRatio > 1
                               ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio

@@ -17,8 +17,8 @@ import {
   Skeleton,
   Loader,
 } from '@mantine/core';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   IconDotsVertical,
   IconInfoCircle,
@@ -43,6 +43,7 @@ import {
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import { postImageTransmitter } from '~/store/post-image-transmitter.store';
+import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
@@ -52,7 +53,7 @@ export function EditPostImages({ max }: { max?: number }) {
   const images = useEditPostContext((state) => state.images);
 
   const imageIds = images
-    .map((x) => (x.type === 'image' ? x.data.id : undefined))
+    .map((x) => (x.discriminator === 'image' ? x.data.id : undefined))
     .filter(isDefined);
 
   const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
@@ -64,10 +65,15 @@ export function EditPostImages({ max }: { max?: number }) {
 
   return (
     <Stack>
-      <ImageDropzone onDrop={handleDrop} count={images.length} max={max} />
+      <ImageDropzone
+        onDrop={handleDrop}
+        count={images.length}
+        max={max}
+        accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+      />
       <ImageIngestionProvider ids={imageIds}>
         <Stack>
-          {images.map(({ type, data }, index) => (
+          {images.map(({ discriminator: type, data }, index) => (
             <Fragment key={index}>
               {type === 'image' && <ImageController image={data} />}
               {type === 'upload' && <ImageUpload {...data} />}
@@ -96,6 +102,9 @@ function ImageController({
     needsReview,
     resourceHelper,
     blockedFor,
+    mimeType,
+    type,
+    metadata,
   },
 }: {
   image: PostEditImage;
@@ -116,10 +125,11 @@ function ImageController({
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
-      <EdgeImage
+      <EdgeMedia
         src={previewUrl ?? url}
         alt={name ?? undefined}
         width={width ?? 1200}
+        type={type}
         onLoad={() => setWithBorder(true)}
         className={cx({ [classes.blocked]: isBlocked })}
       />
@@ -244,7 +254,7 @@ function ImageController({
   );
 }
 
-function ImageUpload({ url, name, uuid, status, message, file }: ImageUpload) {
+function ImageUpload({ url, name, uuid, status, message, file, mimeType }: ImageUpload) {
   const { classes, cx } = useStyles();
   const items = useCFUploadStore((state) => state.items);
   const trackedFile = items.find((x) => x.file === file);
@@ -258,7 +268,7 @@ function ImageUpload({ url, name, uuid, status, message, file }: ImageUpload) {
 
   return (
     <Card className={classes.container} withBorder p={0}>
-      <EdgeImage src={url} alt={name ?? undefined} />
+      <EdgeMedia src={url} alt={name ?? undefined} type={MEDIA_TYPE[mimeType]} />
       {trackedFile && (
         <Alert
           radius={0}

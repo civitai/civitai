@@ -14,7 +14,7 @@ import { useEffect } from 'react';
 import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -262,10 +262,11 @@ export function ModelCard({ data }: Props) {
                       {image ? (
                         <>
                           {safe ? (
-                            <EdgeImage
+                            <EdgeMedia
                               src={image.url}
                               name={image.name ?? image.id.toString()}
                               alt={image.name ?? undefined}
+                              type={image.type}
                               width={
                                 originalAspectRatio > 1
                                   ? IMAGE_CARD_WIDTH * originalAspectRatio

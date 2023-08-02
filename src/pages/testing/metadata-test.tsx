@@ -1,8 +1,9 @@
 import { Container, Title, Text, useMantineTheme } from '@mantine/core';
-import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
+import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getMetadata, encodeMetadata } from '~/utils/metadata';
 

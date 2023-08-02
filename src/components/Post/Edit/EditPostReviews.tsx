@@ -19,7 +19,7 @@ export function EditPostReviews() {
   const items = useEditPostContext((state) => state.images);
 
   const images = useMemo(
-    () => items.filter((x) => x.type === 'image').map((x) => x.data) as PostEditImage[],
+    () => items.filter((x) => x.discriminator === 'image').map((x) => x.data) as PostEditImage[],
     [items]
   );
   const imageResources = useMemo(() => {

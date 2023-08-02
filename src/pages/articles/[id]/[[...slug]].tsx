@@ -25,7 +25,7 @@ import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetail
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import { Collection } from '~/components/Collection/Collection';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
@@ -212,7 +212,7 @@ export default function ArticleDetailsPage({
                   '& > img': { height: '100%', objectFit: 'cover', borderRadius: theme.radius.md },
                 })}
               >
-                <EdgeImage src={article.cover} width={1320} />
+                <EdgeMedia src={article.cover} width={1320} />
               </Box>
               <article>
                 <RenderHtml html={article.content} />

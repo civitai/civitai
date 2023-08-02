@@ -1,11 +1,12 @@
 import exifr from 'exifr';
 import { v4 as uuidv4 } from 'uuid';
 import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
-import { loadImage, blurHashImage } from '~/utils/blurhash';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
-import { auditMetaData } from '~/utils/metadata/audit';
 import { isDefined } from '~/utils/type-guards';
+import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
+import { MediaType } from '@prisma/client';
+import { showErrorNotification } from '~/utils/notifications';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
@@ -43,25 +44,32 @@ export const parsePromptMetadata = async (generationDetails: string) => {
 };
 
 export const getImageDataFromFile = async (file: File) => {
-  const url = URL.createObjectURL(file);
-  const meta = await getMetadata(file);
-  const img = await loadImage(url);
-  const hashResult = blurHashImage(img);
-  const auditResult = auditMetaData(meta, true);
-  const mimeType = file.type;
-  const blockedFor = !auditResult?.success ? auditResult?.blockedFor : undefined;
-
+  const processed = await preprocessFile(file);
+  const { blockedFor } = await auditImageMeta(
+    processed.type === MediaType.image ? processed.meta : undefined,
+    false
+  );
+  if (processed.type === 'video') {
+    const { metadata } = processed;
+    try {
+      if (metadata.duration && metadata.duration > 60)
+        throw new Error('video duration can not be longer than 60s');
+      if (metadata.width > 1920 || metadata.height > 1920)
+        throw new Error('please reduce image dimensions');
+    } catch (error: any) {
+      showErrorNotification({ error });
+      return null;
+    }
+  }
   return {
     file,
     uuid: uuidv4(),
-    name: file.name,
-    meta,
-    url,
-    mimeType,
-    ...hashResult,
     status: blockedFor
       ? ('blocked' as TrackedFile['status'])
       : ('uploading' as TrackedFile['status']),
     message: blockedFor?.filter(isDefined).join(', '),
+    ...processed,
+    ...processed.metadata,
+    url: processed.objectUrl,
   };
 };

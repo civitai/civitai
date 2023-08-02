@@ -40,6 +40,7 @@ export function commaDelimitedNumberArray(options?: { message?: string }) {
     );
 }
 
+// TODO - replace all with z.coerce.date()
 export function stringDate() {
   return z.preprocess((value) => {
     if (!value) return;

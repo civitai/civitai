@@ -30,7 +30,7 @@ import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -291,10 +291,11 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                 </AspectRatio>
               </ImageGuard.Unsafe>
               <ImageGuard.Safe>
-                <EdgeImage
+                <EdgeMedia
                   src={image.url}
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
+                  type={image.type}
                   width={450}
                   placeholder="empty"
                 />

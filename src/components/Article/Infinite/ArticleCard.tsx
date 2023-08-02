@@ -2,7 +2,7 @@ import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/cor
 import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import Link from 'next/link';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ArticleGetAll } from '~/types/router';
@@ -62,7 +62,7 @@ export function ArticleCard({ data, height = 450 }: Props) {
             )}
             {/* <Box sx={{ height: height / 2, '& > img': { height: '100%', objectFit: 'cover' } }}>
             </Box> */}
-            <EdgeImage className={classes.image} src={cover} width={450} />
+            <EdgeMedia className={classes.image} src={cover} width={450} />
           </div>
           {/* <Card.Section py="xs" inheritPadding> */}
           <Stack spacing={4} px="sm" py="xs">

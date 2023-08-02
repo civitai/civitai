@@ -16,7 +16,7 @@ import {
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageModel } from '~/server/selectors/image.selector';
 // import { useImageLightbox } from '~/hooks/useImageLightbox';
-import { EdgeImage, EdgeImageProps } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { IconAlertTriangle, IconCheck, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -41,8 +41,9 @@ type ImagePreviewProps = {
     | 'meta'
     | 'generationProcess'
     | 'needsReview'
+    | 'type'
   >;
-  edgeImageProps?: Omit<EdgeImageProps, 'src'>;
+  edgeImageProps?: Omit<EdgeMediaProps, 'src'>;
   withMeta?: boolean;
   onClick?: React.MouseEventHandler<HTMLImageElement>;
   radius?: MantineNumberSize;
@@ -54,6 +55,7 @@ export function ImagePreview({
     id,
     url,
     name,
+    type,
     width,
     height,
     hash,
@@ -172,10 +174,11 @@ export function ImagePreview({
       <MediaHash hash={hash} width={width} height={height} />
     </Center>
   ) : (
-    <EdgeImage
+    <EdgeMedia
       src={url}
       name={name ?? id.toString()}
       alt={name ?? undefined}
+      type={type}
       {...edgeImageProps}
       onClick={onClick}
       style={edgeImageStyle}
