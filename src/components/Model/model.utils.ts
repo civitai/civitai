@@ -37,7 +37,6 @@ export const useModelQueryParams = () => {
   return useMemo(() => {
     const result = modelQueryParamSchema.safeParse(query);
     const data: ModelQueryParams = result.success ? result.data : {};
-    console.log(data);
 
     return {
       ...data,
