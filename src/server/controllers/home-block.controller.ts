@@ -10,10 +10,7 @@ import {
   setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
-import {
-  getCollectionById,
-  getCollectionItemsByCollectionId,
-} from '~/server/services/collection.service';
+import { getCollectionById } from '~/server/services/collection.service';
 import {
   CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
@@ -22,13 +19,10 @@ import {
   HomeBlockMetaSchema,
   SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
-import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
-import { getAnnouncements } from '~/server/services/announcement.service';
 import { HomeBlockType } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';
-import { shuffle } from '~/utils/array-helpers';
 
 export const getHomeBlocksHandler = async ({
   ctx,
