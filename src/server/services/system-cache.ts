@@ -168,3 +168,20 @@ export async function getSystemHomeBlocksCached() {
 
   return systemHomeBlocksWithData;
 }
+
+export async function getHomeExcludedTags() {
+  const cachedTags = await redis.get(`system:home-excluded-tags`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+
+  log('getting home excluded tags');
+  const tags = await dbWrite.tag.findMany({
+    where: { name: { in: ['1girl', 'anime', 'female', 'woman', 'clothing'] } },
+    select: { id: true, name: true },
+  });
+  await redis.set(`system:home-excluded-tags`, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got home excluded tags');
+  return tags;
+}

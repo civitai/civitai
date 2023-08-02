@@ -28,6 +28,9 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
+  const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
+    trpc.tag.getHomeExcluded.useQuery();
+
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();
   const user = useCurrentUser();
@@ -80,7 +83,7 @@ export default function Home() {
 
         <Box ref={ref}>
           <HomeBlockWrapper py={32}>
-            {displayModelsInfiniteFeed && (
+            {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
               <IsClient>
                 <Box
                   sx={(theme) => ({
@@ -108,7 +111,7 @@ export default function Home() {
                     filters={{
                       period: MetricTimeframe.Month,
                       sort: ModelSort.HighestRated,
-                      excludedImageTagIds: [],
+                      excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
                     }}
                   />
                 </Box>
