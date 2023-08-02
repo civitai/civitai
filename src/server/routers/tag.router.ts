@@ -11,6 +11,7 @@ import {
   moderateTagsHandler,
   getManagableTagsHandler,
   deleteTagsHandler,
+  getHomeExcludedTagsHandler,
 } from '~/server/controllers/tag.controller';
 import { cacheIt } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -66,6 +67,7 @@ export const tagRouter = router({
     .use(applyUserPreferences)
     .use(cacheIt({ ttl: 60 }))
     .query(getAllTagsHandler),
+  getHomeExcluded: publicProcedure.query(getHomeExcludedTagsHandler),
   getTrending: publicProcedure
     .input(getTrendingTagsSchema)
     .use(applyUserPreferences)

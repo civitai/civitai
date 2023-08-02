@@ -28,6 +28,7 @@ const modelQueryParamSchema = z
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'draft']),
     collectionId: z.coerce.number(),
+    excludedImageTagIds: z.array(z.coerce.number()),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;

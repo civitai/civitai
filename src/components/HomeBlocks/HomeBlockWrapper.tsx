@@ -1,20 +1,12 @@
-import { Container, ContainerProps, createStyles } from '@mantine/core';
+import { ContainerProps } from '@mantine/core';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import React from 'react';
 
-const useStyles = createStyles((theme) => ({
-  bleedRight: {
-    padding: 0,
-  },
-}));
-
-export const HomeBlockWrapper = ({ children, bleedRight, ...props }: Props) => {
-  const { classes, cx } = useStyles();
-
+export const HomeBlockWrapper = ({ children, ...props }: Props) => {
   return (
-    <Container px={0} fluid {...props}>
-      <Container size="xl" className={cx({ [classes.bleedRight]: bleedRight })}>
-        {children}
-      </Container>
-    </Container>
+    <MasonryContainer fluid {...props}>
+      {children}
+    </MasonryContainer>
   );
 };
 
