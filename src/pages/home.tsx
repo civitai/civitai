@@ -103,6 +103,7 @@ export default function Home() {
                         fontSize: theme.headings.sizes.h3.fontSize,
                       },
                     })}
+                    mb="md"
                   >
                     Models
                   </Title>
