@@ -17,6 +17,7 @@ import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { ModelSort } from '~/server/common/enums';
+import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -76,19 +77,21 @@ export default function Home() {
           }
         })}
 
-        <Box ref={ref} mt="lg">
-          <MasonryContainer fluid>
+        <Box ref={ref}>
+          <HomeBlockWrapper py={32}>
             {displayModelsInfiniteFeed && (
               <IsClient>
-                <ModelsInfinite
-                  filters={{
-                    period: MetricTimeframe.Month,
-                    sort: ModelSort.HighestRated,
-                  }}
-                />
+                <Box px="md">
+                  <ModelsInfinite
+                    filters={{
+                      period: MetricTimeframe.Month,
+                      sort: ModelSort.HighestRated,
+                    }}
+                  />
+                </Box>
               </IsClient>
             )}
-          </MasonryContainer>
+          </HomeBlockWrapper>
         </Box>
       </MasonryProvider>
     </>

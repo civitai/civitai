@@ -43,7 +43,7 @@ const useStyles = createStyles<string, { count: number }>((theme, { count }) => 
 
     grid: {
       display: 'grid',
-      gridTemplateColumns: 'repeat( 4, minmax(280px, 1fr) )',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr) )',
       columnGap: theme.spacing.md,
       paddingLeft: theme.spacing.md,
       paddingRight: theme.spacing.md,
@@ -58,8 +58,10 @@ const useStyles = createStyles<string, { count: number }>((theme, { count }) => 
 
       [theme.fn.smallerThan('md')]: {
         gridAutoFlow: 'column',
-        gridTemplateColumns: 'repeat(2, minmax(280px, 1fr) )',
-        gridTemplateRows: 'auto',
+        gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
+        gridTemplateRows: `repeat(2, auto)`,
+        scrollSnapType: 'x mandatory',
+        overflowX: 'auto',
       },
 
       [theme.fn.smallerThan('sm')]: {
@@ -77,7 +79,7 @@ const useStyles = createStyles<string, { count: number }>((theme, { count }) => 
 
     meta: {
       display: 'none',
-      [theme.fn.smallerThan('sm')]: {
+      [theme.fn.smallerThan('md')]: {
         display: 'block',
       },
     },
@@ -91,7 +93,7 @@ const useStyles = createStyles<string, { count: number }>((theme, { count }) => 
         flex: 1,
       },
 
-      [theme.fn.smallerThan('sm')]: {
+      [theme.fn.smallerThan('md')]: {
         display: 'none',
       },
     },
