@@ -35,6 +35,7 @@ import {
 } from '~/libs/form';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
+import { imageSchema } from '~/server/schema/image.schema';
 import { ArticleGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -44,6 +45,7 @@ import { trpc } from '~/utils/trpc';
 
 const schema = upsertArticleInput.extend({
   categoryId: z.number(),
+  cover: imageSchema.transform((data) => data.url),
 });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
@@ -76,6 +78,7 @@ export function ArticleUpsertForm({ article }: Props) {
     content: article?.content,
     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+    image: article?.cover ? { url: article?.cover ?? '' } : { url: '' },
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
   const clearStorage = useFormStorage({

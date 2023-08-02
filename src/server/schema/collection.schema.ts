@@ -90,6 +90,7 @@ export const upsertCollectionInput = z
     name: z.string().max(30).nonempty(),
     description: z.string().max(300).nullish(),
     image: imageSchema.nullish(),
+    nsfw: z.boolean().optional(),
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
@@ -150,7 +151,6 @@ export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
     privacy: z.array(z.nativeEnum(CollectionReadConfiguration)),
     sort: z.nativeEnum(CollectionSort).default(constants.collectionFilterDefaults.sort),
     ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }),
-    withItems: z.boolean(),
   })
   .merge(userPreferencesSchema)
   .partial();

@@ -2,6 +2,8 @@ import { Stack, Group, Text, Rating, Progress, createStyles, Skeleton } from '@m
 import { createContext, useContext, Fragment } from 'react';
 import { ResourceReviewRatingTotals } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
 
 type ContextState = {
   count: number;
@@ -130,6 +132,39 @@ ResourceReviewSummary.Totals = function Totals() {
   );
 };
 
+ResourceReviewSummary.Simple = function Simple({
+  rating: initialRating,
+  count: initialCount,
+  onClick,
+}: {
+  rating?: number;
+  count?: number;
+  onClick: () => void;
+}) {
+  const { rating, count, loading } = useSummaryContext();
+  const roundedRating = roundRating(rating ?? initialRating ?? 0);
+  const { classes } = useStyles();
+
+  if (loading && initialRating === undefined && initialCount === undefined) {
+    return null;
+  }
+
+  return (
+    <Stack spacing={0}>
+      <IconBadge
+        radius="sm"
+        color="gray"
+        size="lg"
+        icon={<Rating value={roundedRating} fractions={4} readOnly />}
+        sx={{ cursor: 'pointer' }}
+        onClick={onClick}
+      >
+        <Text className={classes.badgeText}>{abbreviateNumber(count ?? 0)}</Text>
+      </IconBadge>
+    </Stack>
+  );
+};
+
 const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
@@ -137,5 +172,12 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
     columnGap: theme.spacing.md,
     rowGap: 4,
+  },
+
+  badgeText: {
+    fontSize: theme.fontSizes.md,
+    [theme.fn.smallerThan('md')]: {
+      fontSize: theme.fontSizes.sm,
+    },
   },
 }));

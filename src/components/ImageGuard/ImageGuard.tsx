@@ -35,7 +35,7 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { nsfwLevelUI } from '~/libs/moderation';
+import { nsfwLevelOrder, nsfwLevelUI } from '~/libs/moderation';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
@@ -47,7 +47,14 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 export type ImageGuardConnect = {
-  entityType: 'model' | 'modelVersion' | 'review' | 'user' | 'post' | 'collectionItem';
+  entityType:
+    | 'model'
+    | 'modelVersion'
+    | 'review'
+    | 'user'
+    | 'post'
+    | 'collectionItem'
+    | 'collection';
   entityId: string | number;
 };
 // #region [store]
@@ -129,12 +136,14 @@ type ImageGuardProps<T extends ImageProps> = {
   render: (image: T, index: number) => React.ReactNode;
   /** Make all images nsfw by default */
   nsfw?: boolean;
+  children?: React.ReactNode;
 };
 
 export function ImageGuard<T extends ImageProps>({
   images: initialImages,
   connect,
   render,
+  children,
 }: ImageGuardProps<T>) {
   const images = initialImages.filter(isDefined).filter((x) => x.id);
 
@@ -145,6 +154,7 @@ export function ImageGuard<T extends ImageProps>({
           {render(image, index)}
         </ImageGuardContentProvider>
       ))}
+      {children}
     </ImageGuardCtx.Provider>
   );
 }
@@ -410,18 +420,23 @@ const NsfwBadge = ({
   sx,
   className,
   onClick,
+  nsfwLevel,
+  canToggleNsfw,
 }: {
   showImage: boolean;
   onClick: () => void;
   position?: 'static' | 'top-left' | 'top-right';
   sx?: Sx;
   className?: string;
+  nsfwLevel?: NsfwLevel;
+  canToggleNsfw?: boolean;
 }) => {
-  const { image, canToggleNsfw } = useImageGuardContentContext();
-  const { color, label, shade } = nsfwLevelUI[image.nsfw] ?? nsfwLevelUI[NsfwLevel.X];
+  const { color, label, shade } = nsfwLevel
+    ? nsfwLevelUI[nsfwLevel] ?? nsfwLevelUI[NsfwLevel.X]
+    : nsfwLevelUI[NsfwLevel.X];
 
   return (
-    <ImageGuardPopover>
+    <ImageGuardPopover nsfw={isNsfwImage({ nsfw: nsfwLevel ?? NsfwLevel.X })}>
       <Badge
         color="red"
         variant="filled"
@@ -491,7 +506,15 @@ ImageGuard.ToggleImage = function ToggleImage(props: {
 
   if (!showToggleImage || !canToggleNsfw) return null;
 
-  return <NsfwBadge showImage={showImage} onClick={() => toggleImage(image.id)} {...props} />;
+  return (
+    <NsfwBadge
+      nsfwLevel={image.nsfw}
+      canToggleNsfw={canToggleNsfw}
+      showImage={showImage}
+      onClick={() => toggleImage(image.id)}
+      {...props}
+    />
+  );
 };
 
 ImageGuard.ToggleConnect = function ToggleConnect(props: {
@@ -516,6 +539,8 @@ ImageGuard.ToggleConnect = function ToggleConnect(props: {
   const showing = showConnect ?? showImage;
   return (
     <NsfwBadge
+      nsfwLevel={image.nsfw}
+      canToggleNsfw={canToggleNsfw}
       showImage={showing}
       onClick={() => (connect ? toggleConnect(connect) : undefined)}
       {...props}
@@ -523,13 +548,46 @@ ImageGuard.ToggleConnect = function ToggleConnect(props: {
   );
 };
 
-function ImageGuardPopover({ children }: { children: React.ReactElement }) {
+ImageGuard.GroupToggleConnect = function GroupToggleConnect(props: {
+  position?: 'static' | 'top-left' | 'top-right';
+  sx?: Sx;
+  className?: string;
+}) {
+  const currentUser = useCurrentUser();
+  const { connect, images } = useImageGuardContext();
+  const showConnect = useStore((state) =>
+    connect ? state.showingConnections[getConnectionKey(connect)] : false
+  );
+  // Determine the highest nsfw level in the group
+  const nsfwLevel = images.reduce((maxNsfw: NsfwLevel, image) => {
+    return nsfwLevelOrder.indexOf(maxNsfw) > nsfwLevelOrder.indexOf(image.nsfw)
+      ? maxNsfw
+      : image.nsfw;
+  }, NsfwLevel.None);
+  const toggleConnect = useStore((state) => state.toggleConnection);
+  const canToggleNsfw = currentUser?.blurNsfw ?? true;
+  const showToggleConnect = !!connect && isNsfwImage({ nsfw: nsfwLevel });
+
+  if (!showToggleConnect || !canToggleNsfw) return null;
+
+  const showing = showConnect;
+
+  return (
+    <NsfwBadge
+      nsfwLevel={nsfwLevel}
+      canToggleNsfw={canToggleNsfw}
+      showImage={showing}
+      onClick={() => (connect ? toggleConnect(connect) : undefined)}
+      {...props}
+    />
+  );
+};
+
+function ImageGuardPopover({ children, nsfw }: { children: React.ReactElement; nsfw?: boolean }) {
   const user = useCurrentUser();
   const isAuthenticated = !!user;
-  const { image } = useImageGuardContentContext();
   const [opened, setOpened] = useState(false);
   const router = useRouter();
-  const nsfw = isNsfwImage(image);
   const accountRequired = nsfw;
 
   if (accountRequired && !isAuthenticated)

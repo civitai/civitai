@@ -61,7 +61,7 @@ export function PostCard({ data }: Props) {
                     e.preventDefault();
                     e.stopPropagation();
 
-                    router.push(`/users/${data.user.username}/posts`);
+                    router.push(`/user/${data.user.username}`);
                   }}
                 >
                   <UserAvatar

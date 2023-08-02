@@ -99,7 +99,7 @@ export const imageSchema = z.object({
   needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
-  postId: z.number().optional(),
+  postId: z.number().nullish(),
   resources: z.array(imageResourceUpsertSchema).optional(),
 });
 

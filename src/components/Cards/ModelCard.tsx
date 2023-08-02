@@ -302,7 +302,7 @@ export function ModelCard({ data }: Props) {
                 e.preventDefault();
                 e.stopPropagation();
 
-                router.push(`/users/${data.user.username}`);
+                router.push(`/user/${data.user.username}`);
               }}
             >
               <UserAvatar user={data.user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
