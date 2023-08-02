@@ -35,13 +35,13 @@ export function CollectionsLanding() {
             sx={(theme) => ({
               zIndex: 11,
               [theme.fn.largerThan('sm')]: {
-                transform: 'translateX(50%)',
+                transform: 'translateX(-50%)',
                 left: '50%',
               },
             })}
             pos="absolute"
             top={0}
-            maw="400"
+            maw={400}
           >
             <Alert>
               <Stack spacing="xs">

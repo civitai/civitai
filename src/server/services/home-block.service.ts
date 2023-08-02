@@ -70,6 +70,7 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
       metadata: true,
       type: true,
       userId: true,
+      index: true,
     },
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
     where: {
@@ -241,7 +242,8 @@ export const upsertHomeBlock = async ({
 }: {
   input: UpsertHomeBlockInput & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, id, metadata, type, sourceId, index } = input;
+  const { userId, isModerator, id, metadata, type, sourceId } = input;
+  let { index } = input;
 
   if (id) {
     const homeBlock = await dbRead.homeBlock.findUnique({
@@ -266,6 +268,33 @@ export const upsertHomeBlock = async ({
     });
 
     return updated;
+  }
+
+  const userHasHomeBlocks = await userHasCustomHomeBlocks(userId);
+
+  if (!userHasHomeBlocks) {
+    index = 0; // new collection will be added on top.
+
+    // Clone system home blocks:
+    const homeBlockData = await getSystemHomeBlocks({ input: { permanent: false } });
+
+    const data = homeBlockData
+      .map((source) => {
+        return {
+          userId,
+          index: (source.index ?? 0) + 1, // Ensures this will all fall below the new user created home block.
+          type: source.type,
+          sourceId: source?.id,
+          metadata: source.metadata || {},
+        };
+      })
+      .filter(isDefined);
+
+    if (data.length > 0) {
+      await dbWrite.homeBlock.createMany({
+        data,
+      });
+    }
   }
 
   return dbWrite.homeBlock.create({
