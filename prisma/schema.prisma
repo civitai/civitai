@@ -896,12 +896,12 @@ model Image {
   userId            Int
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
-  meta              Json?
+  meta              Json? // image generation params
   hash              String?
   height            Int?
   width             Int?
   type              MediaType               @default(image)
-  metadata          Json                    @default("{}")
+  metadata          Json                    @default("{}") // file metadata
   nsfw              NsfwLevel               @default(None)
   tosViolation      Boolean                 @default(false)
   analysis          Json?

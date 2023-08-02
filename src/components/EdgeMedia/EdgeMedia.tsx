@@ -35,6 +35,11 @@ export function EdgeMedia({
   const transcode = type === 'video'; // transcode relies on the initial type
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
+  // TODO.Briant make sure that setting type to image for something that
+
+  // videos are always transcoded
+  // anim false makes a video url return the first frame as an image
+
   const _src = getEdgeUrl(src, {
     width,
     fit,

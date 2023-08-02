@@ -11,7 +11,7 @@ import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { NsfwLevel } from '@prisma/client';
+import { MediaType, NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import React from 'react';
 
@@ -26,6 +26,8 @@ type ImageProps = {
   userId?: number;
   user?: SimpleUser;
   url: string;
+  type: MediaType;
+  metadata: any; // TODO
   name?: string | null;
 };
 
@@ -180,14 +182,16 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
         <ImageGuard.Content>
           {({ safe }) => {
             return safe ? (
-              <EdgeImage
+              <EdgeMedia
                 src={image.url}
+                type={image.type}
                 className={classes.image}
                 name={image.name ?? image.id.toString()}
                 alt={image.name ?? undefined}
                 placeholder="empty"
                 loading="lazy"
                 width={DEFAULT_EDGE_IMAGE_WIDTH}
+                anim={false}
               />
             ) : (
               <MediaHash
@@ -224,13 +228,14 @@ function ImageSrcCover({ data, coverSrcs }: Props & { coverSrcs: string[] }) {
   return (
     <>
       {coverSrcs.map((src) => (
-        <EdgeImage
+        <EdgeMedia
           src={src}
           width={450}
           placeholder="empty"
           className={classes.image}
           loading="lazy"
           key={src}
+          anim={false}
         />
       ))}
       <CollectionCardHeader data={data} withinImageGuard={false} />

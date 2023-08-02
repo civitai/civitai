@@ -20,7 +20,7 @@ import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
@@ -198,8 +198,9 @@ export function Collection({
                   })}
                 >
                   <AspectRatio ratio={1}>
-                    <EdgeImage
+                    <EdgeMedia
                       src={collection.image.url}
+                      type={collection.image.type}
                       name={collection.image.name ?? collection.image.url}
                       alt={collection.image.name ?? undefined}
                       width={collection.image.width ?? 1200}
