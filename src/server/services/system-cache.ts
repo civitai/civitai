@@ -152,6 +152,9 @@ export async function getSystemHomeBlocksCached() {
   const systemHomeBlocksWithData: HomeBlockWithData[] = (
     await Promise.all(
       systemHomeBlocks.map((homeBlock) => {
+        // 14 * 4 because we show about 14 items max on home-page.
+        // Since we're shuffling, we want to make sure we have enough to show
+        // different ones.
         return getHomeBlockData({ homeBlock, input: { limit: 14 * 4 }, bypassCache: true });
       })
     )

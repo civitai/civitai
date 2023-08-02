@@ -28,6 +28,7 @@ import { HomeBlockType } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';
+import { shuffle } from '~/utils/array-helpers';
 
 export const getHomeBlocksHandler = async ({
   ctx,

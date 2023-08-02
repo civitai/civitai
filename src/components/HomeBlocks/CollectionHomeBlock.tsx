@@ -10,7 +10,7 @@ import {
   Popover,
   Anchor,
 } from '@mantine/core';
-import { Fragment } from 'react';
+import { Fragment, useMemo } from 'react';
 import {
   IconArrowRight,
   IconCategory,
@@ -29,7 +29,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CollectionHomeBlockSkeleton } from '~/components/HomeBlocks/CollectionHomeBlockSkeleton';
 import { trpc } from '~/utils/trpc';
-import { CollectionType, HomeBlockType } from '@prisma/client';
+import { shuffle } from '~/utils/array-helpers';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -117,15 +117,18 @@ export const CollectionHomeBlock = ({ homeBlockId }: Props) => {
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
 
+  const { collection } = homeBlock || {};
+  const items = useMemo(() => shuffle(collection?.items ?? []).slice(0, 14), [collection?.items]);
+
   if (isLoading) {
     return <CollectionHomeBlockSkeleton />;
   }
 
-  if (!homeBlock || !homeBlock.collection) {
+  if (!homeBlock || !collection) {
     return null;
   }
 
-  const { metadata, collection } = homeBlock;
+  const { metadata } = homeBlock;
   const itemType = collection.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
@@ -232,7 +235,7 @@ export const CollectionHomeBlock = ({ homeBlockId }: Props) => {
       </Box>
       <div className={classes.grid}>
         {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-        {collection.items.map((item) => (
+        {items.map((item) => (
           <Fragment key={item.id}>
             {item.type === 'model' && <ModelCard data={item.data} />}
             {item.type === 'image' && <ImageCard data={item.data} collectionId={collection?.id} />}
