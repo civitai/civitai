@@ -98,6 +98,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -529,23 +530,16 @@ export default function ModelDetailsV2({
                     </LoginRedirect>
                   )}
                   {!model.locked && (
-                    <IconBadge
-                      radius="sm"
-                      color="gray"
-                      size="lg"
-                      icon={
-                        <Rating value={model.rank?.ratingAllTime ?? 0} fractions={4} readOnly />
-                      }
-                      sx={{ cursor: 'pointer' }}
-                      onClick={() => {
-                        if (!gallerySectionRef.current) return;
-                        scrollToTop(gallerySectionRef.current);
-                      }}
-                    >
-                      <Text className={classes.modelBadgeText}>
-                        {abbreviateNumber(model.rank?.ratingCountAllTime ?? 0)}
-                      </Text>
-                    </IconBadge>
+                    <ResourceReviewSummary modelId={model.id}>
+                      <ResourceReviewSummary.Simple
+                        rating={model.rank?.ratingAllTime}
+                        count={model.rank?.ratingCountAllTime}
+                        onClick={() => {
+                          if (!gallerySectionRef.current) return;
+                          scrollToTop(gallerySectionRef.current);
+                        }}
+                      />
+                    </ResourceReviewSummary>
                   )}
                   {inEarlyAccess && (
                     <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>

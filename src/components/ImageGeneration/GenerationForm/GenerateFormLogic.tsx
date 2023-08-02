@@ -77,7 +77,11 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const handleSubmit = async (data: GenerateFormModel) => {
     const { model, resources = [], vae, aspectRatio, ...params } = data;
     const [width, height] = aspectRatio.split('x').map(Number);
-    const _resources = [model, ...resources];
+    const _resources = [model, ...resources].map((resource) => {
+      if (resource.modelType === ModelType.TextualInversion)
+        return { ...resource, triggerWord: resource.trainedWords[0] };
+      return resource;
+    });
     if (vae) _resources.push(vae);
 
     await mutateAsync({

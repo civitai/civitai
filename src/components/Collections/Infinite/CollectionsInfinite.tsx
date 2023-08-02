@@ -42,7 +42,7 @@ export function CollectionsInfinite({
         </Center>
       ) : !!collections.length ? (
         <div style={{ position: 'relative' }}>
-          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+          <LoadingOverlay visible={isRefetching ?? false} zIndex={20} />
           <UniformGrid
             data={collections}
             render={CollectionCard}

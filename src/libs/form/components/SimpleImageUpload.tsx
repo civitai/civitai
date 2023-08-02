@@ -14,15 +14,16 @@ import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import { MediaType } from '@prisma/client';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
+import { isEqual } from 'lodash-es';
+import { useEffect, useState } from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
-  value?: string;
-  onChange?: (value: string | null) => void;
+  value?: string | { url: string };
+  onChange?: (value: CustomFile | null) => void;
   previewWidth?: number;
 };
 
@@ -30,15 +31,20 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
   const theme = useMantineTheme();
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
-  const [image, setImage] = useState<CustomFile | undefined>(value ? { url: value } : undefined);
+  const [image, setImage] = useState<CustomFile | undefined>();
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     const [file] = droppedFiles;
     const toUpload = { url: URL.createObjectURL(file), file };
-    setImage((current) => ({ ...current, url: toUpload.url, file: toUpload.file }));
+    setImage((current) => ({
+      ...current,
+      previewUrl: toUpload.url,
+      url: '',
+      file: toUpload.file,
+    }));
 
     const { id } = await uploadToCF(toUpload.file);
-    setImage((current) => ({ ...current, url: id, file: undefined }));
+    setImage((current) => ({ ...current, url: id, file: undefined, previewUrl: undefined }));
     URL.revokeObjectURL(toUpload.url);
   };
 
@@ -47,14 +53,25 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
     onChange?.(null);
   };
 
-  useDidUpdate(() => {
-    if (image) onChange?.(image.url);
-    // don't disable the eslint-disable
-  }, [image]); //eslint-disable-line
+  useEffect(() => {
+    const newValue =
+      typeof value === 'string' ? (value.length > 0 ? { url: value } : undefined) : value;
 
-  const match = imageFiles.find((file) => image?.file === file.file);
-  const { progress } = match ?? { progress: 0 };
-  const showLoading = (match && progress < 100) || image?.file;
+    if (!isEqual(image, newValue))
+      setImage(typeof value === 'string' ? (value.length > 0 ? { url: value } : undefined) : value);
+  }, [image, value]);
+
+  useDidUpdate(() => {
+    const [imageFile] = imageFiles;
+    if (imageFile.status === 'success') {
+      const { id, url, status, ...file } = imageFile;
+      onChange?.({ ...image, ...file, url: id });
+    }
+    // don't disable the eslint-disable
+  }, [imageFiles]); // eslint-disable-line
+
+  const [match] = imageFiles;
+  const showLoading = match && match.progress < 100;
 
   return (
     <Input.Wrapper {...props}>

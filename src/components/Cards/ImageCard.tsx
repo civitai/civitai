@@ -80,7 +80,7 @@ export function ImageCard({ data, collectionId }: Props) {
                   e.preventDefault();
                   e.stopPropagation();
 
-                  router.push(`/users/${data.user.username}`);
+                  router.push(`/user/${data.user.username}`);
                 }}
               >
                 <UserAvatar

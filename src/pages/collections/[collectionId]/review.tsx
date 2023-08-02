@@ -337,7 +337,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                 e.preventDefault();
                 e.stopPropagation();
 
-                router.push(`/users/${reviewData.user?.username}`);
+                router.push(`/user/${reviewData.user?.username}`);
               }}
             >
               <UserAvatar

@@ -14,7 +14,7 @@ export const userPageQuerySchema = z
   })
   .transform((props) => {
     // we're doing this to handle edge cases where a user hasn't finished onboarding and don't have a username
-    // when a user doesn't have a username, the url becomes `/users/null?id`
+    // when a user doesn't have a username, the url becomes `/user/null?id`
     const username = !props.id ? postgresSlugify(props.username) : undefined;
     return removeEmpty({ ...props, username });
   });

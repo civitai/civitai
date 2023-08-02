@@ -18,6 +18,7 @@ const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 const PostDetailModal = dynamic(() => import('~/routed-context/modals/PostDetailModal'));
 const HiddenCommentsModal = dynamic(() => import('~/routed-context/modals/HiddenCommentsModal'));
+const CollectionEdit = dynamic(() => import('~/routed-context/modals/CollectionEdit'));
 
 // this is they type I want to hook up at some point
 type ModalRegistry<P> = {
@@ -134,6 +135,14 @@ const registry = {
         { shallow: true },
       ];
     },
+  },
+  collectionEdit: {
+    Component: CollectionEdit,
+    resolve: (args: React.ComponentProps<typeof CollectionEdit>) => [
+      { query: { ...Router.query, ...args, modal: 'collectionEdit' } },
+      undefined, // could be a page url for reviews here (/comments/:commentId)
+      { shallow: true },
+    ],
   },
 };
 
