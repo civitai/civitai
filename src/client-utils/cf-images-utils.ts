@@ -44,7 +44,7 @@ export function getEdgeUrl(
 
   const extension = typeExtensions[type ?? MediaType.image];
 
-  name = name ?? src;
+  name = (name ?? src).replaceAll('%', ''); // % symbol is escape character for url encoding
   if (name.includes('.')) name = name.split('.').slice(0, -1).join('.') + extension;
   else name = name + extension;
 
