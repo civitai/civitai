@@ -260,10 +260,13 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
-      <Card.Section sx={{ height: `${height}px` }}>
+      <Card.Section
+        sx={{ height: `${height}px`, cursor: 'pointer' }}
+        onClick={() => onSelect(image.id, !selected)}
+      >
         <Checkbox
           checked={selected}
-          onChange={(e) => onSelect(image.id, e.target.checked)}
+          readOnly
           size="lg"
           sx={{
             position: 'absolute',
@@ -307,6 +310,9 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                       style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                       size="lg"
                       target="_blank"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
                     >
                       <IconExternalLink
                         color="white"
