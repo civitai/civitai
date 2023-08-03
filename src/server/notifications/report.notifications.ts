@@ -19,7 +19,6 @@ export const reportNotifications = createNotificationProcessor({
               CASE
                 WHEN jsonb_typeof(r.details->'reportType') = 'string' THEN r.details->>'reportType'
                 WHEN EXISTS (SELECT 1 FROM "ResourceReviewReport" WHERE "reportId" = r.id) THEN 'review'
-                WHEN EXISTS (SELECT 1 FROM "ReviewReport" WHERE "reportId" = r.id) THEN 'review'
                 WHEN EXISTS (SELECT 1 FROM "ModelReport" WHERE "reportId" = r.id) THEN 'resource'
                 WHEN EXISTS (SELECT 1 FROM "CommentReport" WHERE "reportId" = r.id) THEN 'comment'
                 WHEN EXISTS (SELECT 1 FROM "CommentV2Report" WHERE "reportId" = r.id) THEN 'comment'
