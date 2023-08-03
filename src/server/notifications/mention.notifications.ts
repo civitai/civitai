@@ -64,7 +64,7 @@ export const mentionNotifications = createNotificationProcessor({
             'mentionedIn', 'comment',
             'modelId', c."modelId",
             'commentId', c.id,
-            'parentId', COALESCE(c."parentId", c."reviewId"),
+            'parentId', c."parentId",
             'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
             'modelName', m.name,
             'username', u.username
