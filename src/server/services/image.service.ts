@@ -770,6 +770,8 @@ export const getImage = async ({
       i."scannedAt",
       i."needsReview",
       i."postId",
+      i.type,
+      i.metadata,
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
