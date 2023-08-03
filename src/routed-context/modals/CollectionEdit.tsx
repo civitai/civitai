@@ -16,6 +16,7 @@ import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/co
 import { trpc } from '~/utils/trpc';
 import { createRoutedContext } from '../create-routed-context';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { CollectionType } from '@prisma/client';
 
 export default createRoutedContext({
   authGuard: true,
@@ -50,8 +51,12 @@ export default createRoutedContext({
 
     useEffect(() => {
       if (data && data.collection) {
-        const result = upsertCollectionInput.safeParse(data.collection);
+        const result = upsertCollectionInput.safeParse({
+          ...data.collection,
+          type: data.collection.type ?? CollectionType.Model,
+        });
         if (result.success) form.reset({ ...result.data });
+        else console.error(result.error);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data]);

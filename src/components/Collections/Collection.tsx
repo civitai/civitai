@@ -10,6 +10,7 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  createStyles,
 } from '@mantine/core';
 import { CollectionType } from '@prisma/client';
 import { IconCirclePlus, IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
@@ -146,6 +147,7 @@ export function Collection({
   collectionId,
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
+  const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
 
   const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
@@ -197,14 +199,14 @@ export function Collection({
                     [theme.fn.smallerThan('sm')]: { width: '100%', marginBottom: theme.spacing.xs },
                   })}
                 >
-                  <AspectRatio ratio={1}>
+                  <AspectRatio ratio={3 / 2}>
                     <EdgeMedia
+                      className={classes.coverImage}
                       src={collection.image.url}
                       type={collection.image.type}
                       name={collection.image.name ?? collection.image.url}
                       alt={collection.image.name ?? undefined}
                       width={collection.image.width ?? 1200}
-                      placeholder="empty"
                       loading="lazy"
                     />
                   </AspectRatio>
@@ -304,3 +306,9 @@ export function Collection({
     </>
   );
 }
+
+const useStyles = createStyles(() => ({
+  coverImage: {
+    objectPosition: 'top center',
+  },
+}));

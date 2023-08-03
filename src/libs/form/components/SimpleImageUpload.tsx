@@ -71,7 +71,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
   }, [imageFiles]); // eslint-disable-line
 
   const [match] = imageFiles;
-  const showLoading = match && match.progress < 100;
+  const showLoading = match && match.progress < 100 && !image?.url;
 
   return (
     <Input.Wrapper {...props}>
@@ -82,7 +82,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
         >
           <LoadingOverlay visible />
         </Paper>
-      ) : image ? (
+      ) : image && (image.previewUrl || image.url) ? (
         <div style={{ position: 'relative', width: '100%', marginTop: 5 }}>
           <Tooltip label="Remove image">
             <ActionIcon
