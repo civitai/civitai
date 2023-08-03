@@ -30,8 +30,16 @@ export function EdgeMedia({
     imgProps.alt?.endsWith('.webm')
       ? 'video'
       : 'image';
-  const _anim = type === 'video' ? anim ?? currentUser?.autoplayGifs ?? true : undefined;
-  const _type = !_anim ? 'image' : type;
+
+  anim = type === 'video' ? anim ?? currentUser?.autoplayGifs ?? true : undefined;
+  type = !anim ? 'image' : type;
+
+  // #region [temporary code while backend updates to support transcoding better]
+  if (imgProps.alt?.endsWith('.gif') || name?.endsWith('.gif')) {
+    type = 'image';
+  }
+  // #endregion
+
   const transcode = type === 'video'; // transcode relies on the initial type
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
@@ -43,17 +51,17 @@ export function EdgeMedia({
   const _src = getEdgeUrl(src, {
     width,
     fit,
-    anim: _anim,
+    anim: anim,
     transcode,
     blur,
     quality,
     gravity,
     optimized: optimized ? true : undefined,
     name,
-    type: _type,
+    type: type,
   });
 
-  switch (_type) {
+  switch (type) {
     case 'image':
       return (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
@@ -63,7 +71,7 @@ export function EdgeMedia({
       return (
         <video
           className={cx(classes.responsive, className)}
-          autoPlay={_anim ?? true}
+          autoPlay={anim ?? true}
           loop
           muted
           playsInline
