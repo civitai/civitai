@@ -147,8 +147,11 @@ export function Files() {
 function FileCard({ data: versionFile, index }: { data: FileFromContextProps; index: number }) {
   const { removeFile, fileTypes, modelId } = useFilesContext();
   const queryUtils = trpc.useContext();
-
   const failedUpload = versionFile.status === 'error' || versionFile.status === 'aborted';
+
+  // File card benefits from knowing if a tracked file exist.
+  const trackedFiles = useS3UploadStore((state) => state.items);
+  const trackedFile = trackedFiles.find((x) => x.meta?.uuid === versionFile.uuid);
 
   const deleteFileMutation = trpc.modelFile.delete.useMutation({
     async onSuccess() {
@@ -178,7 +181,8 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
           >
             {versionFile.name}
           </Text>
-          {!versionFile.isUploading && (
+          {/* Checking for tracked files here is a safeguard for failed uploads that ended up in the air.*/}
+          {(!versionFile.isUploading || !trackedFile) && (
             <Tooltip label="Remove file" position="left">
               <ActionIcon
                 color="red"
@@ -266,9 +270,16 @@ function TrackedFileStatus({
 
   const { uuid, status, progress, timeRemaining, speed } = trackedFile;
 
-  const handleRemoveFile = () => {
-    clear((x) => x.uuid === trackedFile.uuid);
-    removeFile(versionFileUuid);
+  const handleRemoveFile = async () => {
+    try {
+      await clear((x) => x.uuid === trackedFile.uuid);
+      removeFile(versionFileUuid);
+    } catch (e) {
+      showErrorNotification({
+        title: 'There was an error while removing the file',
+        error: e as Error,
+      });
+    }
   };
 
   switch (status) {
