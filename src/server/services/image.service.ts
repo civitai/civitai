@@ -995,7 +995,10 @@ export const getImagesForPosts = async ({
   isOwnerRequest?: boolean;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
-  const imageWhere: Prisma.Sql[] = [Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`];
+  const imageWhere: Prisma.Sql[] = [
+    Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`,
+    Prisma.sql`i."needsReview" IS NULL`,
+  ];
 
   if (!isOwnerRequest) {
     // ensure that only scanned images make it to the main feed
