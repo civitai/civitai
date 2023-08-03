@@ -56,6 +56,7 @@ type StatefulProps = {
 };
 function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
   const { query, pathname, replace } = useRouter();
+
   const globalPeriod = useFiltersContext(
     useCallback((state) => (type !== 'collections' ? state[type].period : undefined), [type])
   );
@@ -67,6 +68,7 @@ function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
       replace({ pathname, query: removeEmpty({ ...query, period: undefined }) }, undefined, {
         shallow: true,
       });
+
     setFilters({ period: period as any });
   };
 
