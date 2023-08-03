@@ -24,41 +24,40 @@ export function EdgeMedia({
   const currentUser = useCurrentUser();
 
   if (width) width = Math.min(width, 4096);
-  type ??=
-    imgProps.alt?.endsWith('.gif') ||
-    imgProps.alt?.endsWith('.mp4') ||
-    imgProps.alt?.endsWith('.webm')
+  let transcode = false;
+  const _name = name ?? imgProps.alt;
+  const _inferredType =
+    _name?.endsWith('.gif') || _name?.endsWith('.mp4') || _name?.endsWith('.webm')
       ? 'video'
       : 'image';
 
-  anim = type === 'video' ? anim ?? currentUser?.autoplayGifs ?? true : undefined;
-  type = !anim ? 'image' : type;
-
-  // #region [temporary code while backend updates to support transcoding better]
-  if (imgProps.alt?.endsWith('.gif') || name?.endsWith('.gif')) {
-    type = 'image';
-  }
-  // #endregion
-
-  const transcode = type === 'video'; // transcode relies on the initial type
-  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
-
-  // TODO.Briant make sure that setting type to image for something that
+  type === type ?? _inferredType;
 
   // videos are always transcoded
+  if (_inferredType === 'video' && type === 'image') {
+    transcode = true;
+    anim = false;
+  } else if (type === 'video') {
+    transcode = true;
+    anim = anim ?? currentUser?.autoplayGifs ?? true;
+  }
+
   // anim false makes a video url return the first frame as an image
+  if (!anim) type = 'image';
+
+  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
   const _src = getEdgeUrl(src, {
     width,
     fit,
-    anim: anim,
+    anim,
     transcode,
     blur,
     quality,
     gravity,
     optimized: optimized ? true : undefined,
     name,
-    type: type,
+    type,
   });
 
   switch (type) {
