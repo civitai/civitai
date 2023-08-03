@@ -12,6 +12,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { constants } from '~/server/common/constants';
 
 const modelQueryParamSchema = z
   .object({
@@ -29,6 +30,10 @@ const modelQueryParamSchema = z
     section: z.enum(['published', 'draft']),
     collectionId: z.coerce.number(),
     excludedImageTagIds: z.array(z.coerce.number()),
+    baseModels: z.preprocess(
+      (val) => (Array.isArray(val) ? val : [val]),
+      z.array(z.enum(constants.baseModels))
+    ),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;

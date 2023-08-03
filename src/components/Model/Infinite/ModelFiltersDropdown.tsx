@@ -16,38 +16,31 @@ import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons-react'
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+import { ModelFilterSchema, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
+import { useCallback, useEffect, useMemo } from 'react';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
 );
+// If any of these is found within the query params, we should clear the filters
+// to be able to apply the relevant filters.
+const queryFiltersOverwrite: (keyof ModelQueryParams & keyof ModelFilterSchema)[] = [
+  'baseModels',
+  'period',
+];
 
 export function ModelFiltersDropdown() {
   const user = useCurrentUser();
   const { classes } = useStyles();
   const flags = useFeatureFlags();
+  const { set: setQueryFilters, ...queryFilters } = useModelQueryParams();
 
   const filters = useFiltersContext((state) => state.models);
   const setFilters = useSetFilters('models');
   const showCheckpointType = !filters.types?.length || filters.types.includes('Checkpoint');
-
-  const clearFilters = () =>
-    setFilters({
-      types: undefined,
-      baseModels: undefined,
-      status: undefined,
-      checkpointType: undefined,
-      earlyAccess: false,
-      supportsGeneration: false,
-    });
-
-  const chipProps: Partial<ChipProps> = {
-    radius: 'sm',
-    size: 'sm',
-    classNames: classes,
-  };
 
   const filterLength =
     (filters.types?.length ?? 0) +
@@ -56,6 +49,53 @@ export function ModelFiltersDropdown() {
     (showCheckpointType && filters.checkpointType ? 1 : 0) +
     (filters.earlyAccess ? 1 : 0) +
     (filters.supportsGeneration ? 1 : 0);
+
+  const shouldClearFilters = useMemo(
+    () =>
+      queryFiltersOverwrite.some(
+        (key) => !!queryFilters[key] && filters[key] !== queryFilters[key]
+      ),
+    [queryFilters, filters]
+  );
+
+  const clearFilters = useCallback(
+    () =>
+      setFilters({
+        types: undefined,
+        baseModels: undefined,
+        status: undefined,
+        checkpointType: undefined,
+        earlyAccess: false,
+        supportsGeneration: false,
+      }),
+    [setFilters]
+  );
+
+  const chipProps: Partial<ChipProps> = {
+    radius: 'sm',
+    size: 'sm',
+    classNames: classes,
+  };
+
+  useEffect(() => {
+    // TODO.filters: If we keep filters in the query string instead of local storage
+    // We might be able to bypass all this logic.
+    if (shouldClearFilters) {
+      const keys = queryFiltersOverwrite.filter((key) => queryFilters[key]);
+      const updatedFilters = keys.reduce((acc, key) => {
+        acc[key] = queryFilters[key];
+        return acc;
+      }, {} as any);
+      const updatedQueryFilters = keys.reduce((acc, key) => {
+        acc[key] = undefined;
+        return acc;
+      }, {} as any);
+
+      setQueryFilters(updatedQueryFilters);
+      clearFilters();
+      setFilters(updatedFilters);
+    }
+  }, [shouldClearFilters, clearFilters, queryFilters, setFilters, setQueryFilters]);
 
   return (
     <IsClient>
