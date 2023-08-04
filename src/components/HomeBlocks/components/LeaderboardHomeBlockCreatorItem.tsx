@@ -40,9 +40,6 @@ export const LeaderHomeBlockCreatorItem = ({
       <Link href={link} passHref>
         <Box sx={{ cursor: 'pointer' }}>
           <Grid align="center">
-            <Grid.Col span={1}>
-              <Text>{position}</Text>
-            </Grid.Col>
             <Grid.Col span={8}>
               <Group spacing="xs" noWrap>
                 <UserAvatar
