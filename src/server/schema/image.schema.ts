@@ -159,6 +159,8 @@ export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
   type: z.nativeEnum(MediaType).optional(),
+  height: z.coerce.number().nullish(),
+  width: z.coerce.number().nullish(),
 });
 
 // #region [new schemas]

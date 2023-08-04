@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Badge,
   Box,
-  Card,
   Center,
   Checkbox,
   Chip,
@@ -40,7 +39,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { CollectionItemStatus } from '@prisma/client';
+import { CollectionItemStatus, CollectionType } from '@prisma/client';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -49,6 +48,7 @@ import { FeedCard } from '~/components/Cards/FeedCard';
 import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import Link from 'next/link';
+import { BackButton } from '~/components/BackButton/BackButton';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -146,7 +146,10 @@ const ReviewCollection = () => {
         </Paper>
 
         <Stack spacing="sm" mb="lg">
-          <Title order={1}>Collection items that need review</Title>
+          <Group spacing="xs">
+            <BackButton url={`/collections/${collectionId}`} />
+            <Title order={1}>Collection items that need review</Title>
+          </Group>
           <Text color="dimmed">
             You are reviewing items on the collection that are either pending review or have been
             rejected. You can change the status of these to be accepted or rejected.
@@ -364,7 +367,7 @@ function ModerationControls({
   filters,
 }: {
   collectionItems: CollectionItemExpanded[];
-  filters: any;
+  filters: { collectionId: number; statuses: CollectionItemStatus[]; forReview: boolean };
 }) {
   const queryUtils = trpc.useContext();
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
@@ -418,11 +421,33 @@ function ModerationControls({
 
   const handleApproveSelected = () => {
     deselectAll();
-    updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: selected,
-      status: CollectionItemStatus.ACCEPTED,
-      collectionId: filters.collectionId,
-    });
+    updateCollectionItemsStatusMutation.mutate(
+      {
+        collectionItemIds: selected,
+        status: CollectionItemStatus.ACCEPTED,
+        collectionId: filters.collectionId,
+      },
+      {
+        onSuccess: async ({ type }) => {
+          switch (type) {
+            case CollectionType.Model:
+              await queryUtils.model.getAll.invalidate();
+              break;
+            case CollectionType.Image:
+              await queryUtils.image.getInfinite.invalidate();
+              break;
+            case CollectionType.Post:
+              await queryUtils.post.getInfinite.invalidate();
+              break;
+            case CollectionType.Article:
+              await queryUtils.article.getInfinite.invalidate();
+              break;
+            default:
+              break;
+          }
+        },
+      }
+    );
   };
 
   const handleRefresh = () => {
