@@ -92,7 +92,6 @@ const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByI
             sort,
             collectionId: collection.id,
           }}
-          withTags
         />
       </IsClient>
     </Stack>
