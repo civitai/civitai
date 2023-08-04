@@ -85,37 +85,25 @@ export default function Home() {
           <HomeBlockWrapper py={32}>
             {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
               <IsClient>
-                <Box
+                <Title
                   sx={(theme) => ({
-                    paddingLeft: theme.spacing.md,
-                    paddingRight: theme.spacing.md,
-
-                    [theme.fn.smallerThan('sm')]: {
-                      paddingLeft: 0,
-                      paddingRight: 0,
+                    fontSize: theme.headings.sizes.h1.fontSize,
+                    [theme.fn.smallerThan('md')]: {
+                      fontSize: theme.headings.sizes.h3.fontSize,
                     },
                   })}
+                  mb="md"
                 >
-                  <Title
-                    sx={(theme) => ({
-                      fontSize: theme.headings.sizes.h1.fontSize,
-                      [theme.fn.smallerThan('md')]: {
-                        fontSize: theme.headings.sizes.h3.fontSize,
-                      },
-                    })}
-                    mb="md"
-                  >
-                    Models
-                  </Title>
+                  Models
+                </Title>
 
-                  <ModelsInfinite
-                    filters={{
-                      period: MetricTimeframe.Month,
-                      sort: ModelSort.HighestRated,
-                      excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
-                    }}
-                  />
-                </Box>
+                <ModelsInfinite
+                  filters={{
+                    period: MetricTimeframe.Month,
+                    sort: ModelSort.HighestRated,
+                    excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                  }}
+                />
               </IsClient>
             )}
           </HomeBlockWrapper>

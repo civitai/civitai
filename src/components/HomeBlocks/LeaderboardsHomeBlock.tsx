@@ -9,6 +9,7 @@ import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 import { LeaderboardsHomeBlockSkeleton } from '~/components/HomeBlocks/LeaderboardHomeBlockSkeleton';
 import { trpc } from '~/utils/trpc';
+import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 
 type Props = { homeBlockId: number };
 
@@ -20,23 +21,29 @@ const useStyles = createStyles((theme) => ({
       theme.colorScheme === 'dark'
         ? theme.colors.dark[8]
         : theme.fn.darken(theme.colors.gray[0], 0.01),
-    paddingLeft: 0,
-    paddingRight: 0,
-  },
-  metadata: {
-    padding: theme.spacing.md,
   },
   carousel: {
-    padding: theme.spacing.md,
-    [theme.fn.smallerThan('md')]: {
-      padding: 0,
+    [theme.fn.smallerThan('sm')]: {
+      marginRight: -theme.spacing.md,
+      marginLeft: -theme.spacing.md,
     },
   },
 }));
 
-export const LeaderboardsHomeBlock = ({ homeBlockId }: Props) => {
+export const LeaderboardsHomeBlock = ({ ...props }: Props) => {
+  const { classes } = useStyles();
+
+  return (
+    <HomeBlockWrapper className={classes.root}>
+      <LeaderboardsHomeBlockContent {...props} />
+    </HomeBlockWrapper>
+  );
+};
+
+export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
   const { classes } = useStyles();
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+  const { columnWidth, columnGap } = useMasonryContainerContext();
 
   if (isLoading) {
     return <LeaderboardsHomeBlockSkeleton />;
@@ -50,22 +57,18 @@ export const LeaderboardsHomeBlock = ({ homeBlockId }: Props) => {
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
 
   return (
-    <HomeBlockWrapper className={classes.root}>
-      <Box className={classes.metadata}>
+    <>
+      <Box>
         <HomeBlockHeaderMeta metadata={metadata} />
       </Box>
       <Carousel
         loop
-        slideSize="25%"
-        slideGap="md"
         height="100%"
         align="start"
-        breakpoints={[
-          { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
-          { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
-        ]}
+        slideSize={columnWidth}
+        slideGap={columnGap}
         className={classes.carousel}
-        includeGapInSize={true}
+        includeGapInSize={false}
         styles={{
           control: {
             '&[data-inactive]': {
@@ -114,6 +117,6 @@ export const LeaderboardsHomeBlock = ({ homeBlockId }: Props) => {
           );
         })}
       </Carousel>
-    </HomeBlockWrapper>
+    </>
   );
 };
