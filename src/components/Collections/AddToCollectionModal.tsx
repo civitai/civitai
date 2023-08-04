@@ -115,7 +115,7 @@ function CollectionListForm({
     addCollectionItemMutation.mutate(
       { ...data, removeFromCollectionIds },
       {
-        async onSuccess() {
+        async onSuccess(_, { type }) {
           showNotification({
             title: 'Item added',
             message: 'Your item has been added to the selected collections.',
