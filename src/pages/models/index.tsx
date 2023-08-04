@@ -19,12 +19,21 @@ import { constants } from '~/server/common/constants';
 import { PeriodMode } from '~/server/schema/base.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { QS } from '~/utils/qs';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, ctx }) => {
     const features = getFeatureFlags({ user: session?.user });
-    if (!features.alternateHome) return { notFound: true };
+    if (!features.alternateHome) {
+      const queryString = QS.stringify(ctx.query);
+      return {
+        redirect: {
+          destination: `/${queryString ? '?' + queryString : ''}`,
+          permanent: false,
+        },
+      };
+    }
   },
 });
 
