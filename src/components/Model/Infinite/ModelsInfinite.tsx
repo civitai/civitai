@@ -31,7 +31,7 @@ export function ModelsInfinite({
   const modelFilters = useModelFilters();
   const RenderItem = renderItem ?? features.modelCardV2 ? ModelCard : AmbientModelCard;
 
-  const filters = { ...modelFilters, ...removeEmpty(filterOverrides) };
+  const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =

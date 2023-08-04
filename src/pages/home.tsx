@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Anchor,
   Box,
   Button,
   Center,
@@ -85,7 +84,7 @@ export default function Home() {
         )}
         <Box
           sx={(theme) => ({
-            '& > *:nth-child(odd)': {
+            '& > *:nth-child(even)': {
               background:
                 theme.colorScheme === 'dark'
                   ? theme.colors.dark[8]
@@ -154,10 +153,17 @@ export default function Home() {
 
                   <ModelsInfinite
                     filters={{
+                      excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                      // Required to override localStorage filters
                       period: MetricTimeframe.Month,
                       sort: ModelSort.HighestRated,
-                      excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
                       browsingMode: BrowsingMode.SFW,
+                      types: undefined,
+                      collectionId: undefined,
+                      earlyAccess: false,
+                      status: undefined,
+                      checkpointType: undefined,
+                      baseModels: undefined,
                     }}
                   />
                 </IsClient>
