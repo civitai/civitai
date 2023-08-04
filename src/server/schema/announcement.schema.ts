@@ -16,11 +16,13 @@ export const announcementMetaSchema = z
         linkText: z.string(),
         variant: z.string().optional(),
         icon: z.string().optional(),
+        color: z.string().optional(),
       })
     ),
     targetAudience: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
     dismissible: z.boolean().default(true),
     colSpan: z.number().default(6),
+    image: z.string().optional(),
     index: z.number().optional(),
   })
   .partial();
