@@ -31,6 +31,7 @@ import { CollectionHomeBlockSkeleton } from '~/components/HomeBlocks/CollectionH
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import ReactMarkdown from 'react-markdown';
 
 const useStyles = createStyles<string, { count: number; columnCount: number }>(
   (theme, { count, columnCount }) => {
@@ -72,6 +73,7 @@ const useStyles = createStyles<string, { count: number; columnCount: number }>(
           overflowX: 'auto',
           marginRight: -theme.spacing.md,
           marginLeft: -theme.spacing.md,
+          paddingLeft: theme.spacing.md,
 
           '& > *': {
             scrollSnapAlign: 'center',
@@ -149,8 +151,8 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
 
   const MetaDataTop = (
     <Stack spacing="sm">
-      <Group spacing="xs" position="apart" noWrap>
-        <Group>
+      <Group spacing="xs" position="apart">
+        <Group noWrap>
           <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection.name}{' '}
           </Title>
@@ -171,7 +173,13 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
                 </Text>
                 {metadata.description && (
                   <Text size="sm" mb="xs">
-                    {metadata.description}
+                    <ReactMarkdown
+                      allowedElements={['a']}
+                      unwrapDisallowed
+                      className="markdown-content"
+                    >
+                      {metadata.description}
+                    </ReactMarkdown>
                   </Text>
                 )}
                 {metadata.link && (
@@ -202,7 +210,11 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
         )}
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
-        <Text>{metadata.description}</Text>
+        <Text>
+          <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+            {metadata.description}
+          </ReactMarkdown>
+        </Text>
       )}
     </Stack>
   );
@@ -219,7 +231,13 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
           {metadata.title ?? collection.name}
         </Title>
       </Group>
-      {metadata.description && <Text maw={520}>{metadata.description}</Text>}
+      {metadata.description && (
+        <Text maw={520}>
+          <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+            {metadata.description}
+          </ReactMarkdown>
+        </Text>
+      )}
       {metadata.link && (
         <div>
           <Link href={metadata.link} passHref>
