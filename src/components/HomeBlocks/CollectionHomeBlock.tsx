@@ -47,8 +47,6 @@ const useStyles = createStyles<string, { count: number; columnCount: number }>(
         display: 'grid',
         gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
         columnGap: theme.spacing.md,
-        paddingLeft: theme.spacing.md,
-        paddingRight: theme.spacing.md,
         gridTemplateRows: `repeat(2, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
@@ -72,6 +70,8 @@ const useStyles = createStyles<string, { count: number; columnCount: number }>(
           gridTemplateRows: 'auto',
           scrollSnapType: 'x mandatory',
           overflowX: 'auto',
+          marginRight: -theme.spacing.md,
+          marginLeft: -theme.spacing.md,
 
           '& > *': {
             scrollSnapAlign: 'center',
@@ -116,7 +116,7 @@ const icons = {
 
 export const CollectionHomeBlock = ({ ...props }: Props) => {
   return (
-    <HomeBlockWrapper py={32} px={0}>
+    <HomeBlockWrapper py={32}>
       <CollectionHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
@@ -245,7 +245,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
 
   return (
     <>
-      <Box mb="md" px="md" className={cx({ [classes.meta]: useGrid })}>
+      <Box mb="md" className={cx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
       <div className={classes.grid}>
