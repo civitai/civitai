@@ -83,77 +83,87 @@ export default function Home() {
             <Loader />
           </Center>
         )}
+        <Box
+          sx={(theme) => ({
+            '& > *:nth-child(odd)': {
+              background:
+                theme.colorScheme === 'dark'
+                  ? theme.colors.dark[8]
+                  : theme.fn.darken(theme.colors.gray[0], 0.01),
+            },
+          })}
+        >
+          {homeBlocks.map((homeBlock) => {
+            switch (homeBlock.type) {
+              case HomeBlockType.Collection:
+                return <CollectionHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+              case HomeBlockType.Announcement:
+                return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+              case HomeBlockType.Leaderboard:
+                return <LeaderboardsHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+            }
+          })}
 
-        {homeBlocks.map((homeBlock) => {
-          switch (homeBlock.type) {
-            case HomeBlockType.Collection:
-              return <CollectionHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
-            case HomeBlockType.Announcement:
-              return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
-            case HomeBlockType.Leaderboard:
-              return <LeaderboardsHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
-          }
-        })}
+          <Box ref={ref}>
+            <HomeBlockWrapper py={32}>
+              {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
+                <IsClient>
+                  <Group mb="md" position="apart">
+                    <Group>
+                      <Title
+                        sx={(theme) => ({
+                          fontSize: 32,
 
-        <Box ref={ref}>
-          <HomeBlockWrapper py={32}>
-            {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
-              <IsClient>
-                <Group mb="md" position="apart">
-                  <Group>
-                    <Title
-                      sx={(theme) => ({
-                        fontSize: 32,
+                          [theme.fn.smallerThan('sm')]: {
+                            fontSize: 28,
+                          },
+                        })}
+                      >
+                        Models
+                      </Title>
+                      <Popover withArrow width={380} position={isMobile ? 'bottom' : 'right-start'}>
+                        <Popover.Target>
+                          <Box
+                            display="inline-block"
+                            sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                            color="white"
+                          >
+                            <IconInfoCircle size={20} />
+                          </Box>
+                        </Popover.Target>
+                        <Popover.Dropdown maw="100%">
+                          <Text size="sm" mb="xs">
+                            Pre-filtered list of models upload by the community that are the highest
+                            rated over the last week
+                          </Text>
+                        </Popover.Dropdown>
+                      </Popover>
+                    </Group>
 
-                        [theme.fn.smallerThan('sm')]: {
-                          fontSize: 28,
-                        },
-                      })}
-                    >
-                      Models
-                    </Title>
-                    <Popover withArrow width={380} position={isMobile ? 'bottom' : 'right-start'}>
-                      <Popover.Target>
-                        <Box
-                          display="inline-block"
-                          sx={{ lineHeight: 0.3, cursor: 'pointer' }}
-                          color="white"
-                        >
-                          <IconInfoCircle size={20} />
-                        </Box>
-                      </Popover.Target>
-                      <Popover.Dropdown maw="100%">
-                        <Text size="sm" mb="xs">
-                          Pre-filtered list of models upload by the community that are the highest
-                          rated over the last week
-                        </Text>
-                      </Popover.Dropdown>
-                    </Popover>
+                    <Link href="/models" passHref>
+                      <Button
+                        h={34}
+                        component="a"
+                        variant="subtle"
+                        rightIcon={<IconArrowRight size={16} />}
+                      >
+                        View all
+                      </Button>
+                    </Link>
                   </Group>
 
-                  <Link href="/models" passHref>
-                    <Button
-                      h={34}
-                      component="a"
-                      variant="subtle"
-                      rightIcon={<IconArrowRight size={16} />}
-                    >
-                      View all
-                    </Button>
-                  </Link>
-                </Group>
-
-                <ModelsInfinite
-                  filters={{
-                    period: MetricTimeframe.Month,
-                    sort: ModelSort.HighestRated,
-                    excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
-                    browsingMode: BrowsingMode.SFW,
-                  }}
-                />
-              </IsClient>
-            )}
-          </HomeBlockWrapper>
+                  <ModelsInfinite
+                    filters={{
+                      period: MetricTimeframe.Month,
+                      sort: ModelSort.HighestRated,
+                      excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                      browsingMode: BrowsingMode.SFW,
+                    }}
+                  />
+                </IsClient>
+              )}
+            </HomeBlockWrapper>
+          </Box>
         </Box>
       </MasonryProvider>
     </>

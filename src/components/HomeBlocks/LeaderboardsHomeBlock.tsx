@@ -17,10 +17,6 @@ const useStyles = createStyles((theme) => ({
   root: {
     paddingTop: '32px',
     paddingBottom: '32px',
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.colors.dark[8]
-        : theme.fn.darken(theme.colors.gray[0], 0.01),
   },
   carousel: {
     [theme.fn.smallerThan('sm')]: {
