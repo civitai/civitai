@@ -22,6 +22,7 @@ const nameOverrides: Record<string, string> = {
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
   scheduler: 'Sampler',
+  TextualInversion: 'Embedding',
 };
 export function getDisplayName(value: string) {
   return nameOverrides[value] ?? splitUppercase(value);
