@@ -199,7 +199,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
 export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-  const { url, id } = ingestImageSchema.parse(image);
+  const { url, id, type } = ingestImageSchema.parse(image);
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
@@ -214,6 +214,7 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
     body: JSON.stringify({
       imageId: id,
       imageKey: url,
+      type,
       // wait: true,
       scans: [ImageScanType.Label, ImageScanType.Moderation],
       callbackUrl,

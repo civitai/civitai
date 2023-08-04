@@ -158,6 +158,7 @@ export type IngestImageInput = z.infer<typeof ingestImageSchema>;
 export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
+  type: z.nativeEnum(MediaType).optional(),
 });
 
 // #region [new schemas]

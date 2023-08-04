@@ -21,6 +21,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     select: {
       id: true,
       url: true,
+      type: true,
     },
   });
 

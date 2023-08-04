@@ -408,7 +408,7 @@ export const upsertCollection = async ({
 
   if (id) {
     const updated = await dbWrite.collection.update({
-      select: { id: true, image: { select: { id: true, url: true, ingestion: true } } },
+      select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
       where: { id },
       data: {
         name,
@@ -451,8 +451,9 @@ export const upsertCollection = async ({
     }
 
     // Start image ingestion only if it's ingestion status is pending
-    if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending)
+    if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending) {
       await ingestImage({ image: updated.image });
+    }
 
     return updated;
   }
