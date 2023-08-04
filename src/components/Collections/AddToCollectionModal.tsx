@@ -109,13 +109,28 @@ function CollectionListForm({
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
     addCollectionItemMutation.mutate(data, {
-      async onSuccess() {
-        await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
-        onSubmit();
+      async onSuccess(_, { type }) {
         showNotification({
           title: 'Item added',
           message: 'Your item has been added to the selected collections.',
         });
+        onSubmit();
+
+        // Invalidate the right query based on the collection type
+        const endpointTarget =
+          type === CollectionType.Article
+            ? queryUtils.article.getInfinite
+            : type === CollectionType.Model
+            ? queryUtils.model.getAll
+            : type === CollectionType.Post
+            ? queryUtils.post.getInfinite
+            : type === CollectionType.Image
+            ? queryUtils.image.getInfinite
+            : null;
+        await Promise.all([
+          queryUtils.collection.getUserCollectionItemsByItem.invalidate(),
+          endpointTarget?.invalidate(),
+        ]);
       },
       onError(error) {
         showErrorNotification({
