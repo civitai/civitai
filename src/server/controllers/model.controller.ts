@@ -992,6 +992,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               id: true,
               earlyAccessTimeFrame: true,
               createdAt: true,
+              baseModel: true,
               modelVersionGenerationCoverage: { select: { workers: true } },
             },
           },

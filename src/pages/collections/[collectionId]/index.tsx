@@ -7,7 +7,7 @@ import { CollectionsLayout } from '~/components/Collections/CollectionsLayout';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, session = null, features }) => {
+  resolver: async ({ ssg, session = null, features, ctx }) => {
     if (ssg) {
       if (session) {
         await ssg.collection.getAllUser.prefetch({
@@ -18,12 +18,16 @@ export const getServerSideProps = createServerSideProps({
     }
 
     if (!features?.collections) return { notFound: true };
+
+    return {
+      props: {
+        collectionId: Number(ctx.query.collectionId),
+      },
+    };
   },
 });
 
-export default function Collections() {
-  const { collectionId } = useCollectionQueryParams();
-
+export default function Collections({ collectionId }: { collectionId: number }) {
   return (
     <CollectionsLayout>
       {collectionId && <Collection collectionId={collectionId} fluid />}

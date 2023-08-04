@@ -12,7 +12,7 @@ import {
   Tooltip,
   createStyles,
 } from '@mantine/core';
-import { CollectionType } from '@prisma/client';
+import { CollectionType, MetricTimeframe } from '@prisma/client';
 import { IconCirclePlus, IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
@@ -37,26 +37,29 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
+import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
-  const { set, ...queryFilters } = useModelQueryParams();
+  const { set, ...query } = useModelQueryParams();
+  const period = query.period ?? MetricTimeframe.AllTime;
+  const sort = query.sort ?? ModelSort.Newest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
         <Group position="apart" spacing={0}>
-          <Group>
-            <SortFilter type="models" />
-          </Group>
-          <Group spacing={4}>
-            <PeriodFilter type="models" />
+          <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as ModelSort })} />
+          <Group spacing="xs">
+            <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
             <ModelFiltersDropdown />
           </Group>
         </Group>
         <CategoryTags />
         <ModelsInfinite
           filters={{
-            ...queryFilters,
+            ...query,
+            period,
+            sort,
             collectionId: collection.id,
           }}
         />
@@ -66,23 +69,27 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
 };
 
 const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
-  const { ...queryFilters } = useImageQueryParams();
+  const { replace, query } = useImageQueryParams();
+  const period = query.period ?? MetricTimeframe.AllTime;
+  const sort = query.sort ?? ImageSort.Newest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
         <Group position="apart" spacing={0}>
-          <Group>
-            <SortFilter type="images" />
-          </Group>
-          <Group spacing={4}>
-            <PeriodFilter type="images" />
-          </Group>
+          <SortFilter
+            type="images"
+            value={sort}
+            onChange={(x) => replace({ sort: x as ImageSort })}
+          />
+          <PeriodFilter type="images" value={period} onChange={(x) => replace({ period: x })} />
         </Group>
         <CategoryTags />
         <ImagesInfinite
           filters={{
-            ...queryFilters,
+            ...query,
+            period,
+            sort,
             collectionId: collection.id,
           }}
           withTags
@@ -92,23 +99,23 @@ const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByI
   );
 };
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
-  const { set, ...queryFilters } = usePostQueryParams();
+  const { set, ...query } = usePostQueryParams();
+  const period = query.period ?? MetricTimeframe.AllTime;
+  const sort = query.sort ?? PostSort.Newest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
         <Group position="apart" spacing={0}>
-          <Group>
-            <SortFilter type="posts" />
-          </Group>
-          <Group spacing={4}>
-            <PeriodFilter type="posts" />
-          </Group>
+          <SortFilter type="posts" value={sort} onChange={(sort) => set({ sort: sort as any })} />
+          <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
         </Group>
         <CategoryTags />
         <PostsInfinite
           filters={{
-            ...queryFilters,
+            ...query,
+            period,
+            sort,
             collectionId: collection.id,
           }}
         />
@@ -118,23 +125,27 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 };
 
 const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
-  const { set, ...queryFilters } = useArticleQueryParams();
+  const { set, ...query } = useArticleQueryParams();
+  const period = query.period ?? MetricTimeframe.AllTime;
+  const sort = query.sort ?? ArticleSort.Newest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
         <Group position="apart" spacing={0}>
-          <Group>
-            <SortFilter type="articles" />
-          </Group>
-          <Group spacing={4}>
-            <PeriodFilter type="articles" />
-          </Group>
+          <SortFilter
+            type="articles"
+            value={sort}
+            onChange={(x) => set({ sort: x as ArticleSort })}
+          />
+          <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
         </Group>
         <CategoryTags />
         <ArticlesInfinite
           filters={{
-            ...queryFilters,
+            ...query,
+            period,
+            sort,
             collectionId: collection.id,
           }}
         />
