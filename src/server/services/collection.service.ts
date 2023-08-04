@@ -325,9 +325,9 @@ const inputToCollectionType = {
 } as const;
 
 export const saveItemInCollections = async ({
-  input: { collectionIds, type, userId, ...input },
+  input: { collectionIds, type, userId, isModerator, removeFromCollectionIds, ...input },
 }: {
-  input: AddCollectionItemInput & { userId: number };
+  input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
 
@@ -356,7 +356,12 @@ export const saveItemInCollections = async ({
   const data: Prisma.CollectionItemCreateManyInput[] = (
     await Promise.all(
       collectionIds.map(async (collectionId) => {
-        const permission = await getUserCollectionPermissionsById({ userId, id: collectionId });
+        const permission = await getUserCollectionPermissionsById({
+          userId,
+          isModerator,
+          id: collectionId,
+        });
+
         if (!permission.isContributor && !permission.isOwner) {
           // Person adding content to stuff they don't follow.
           return null;
@@ -380,22 +385,50 @@ export const saveItemInCollections = async ({
 
   const transactions = [dbWrite.collectionItem.createMany({ data })];
 
-  // Determine which items need to be removed
-  const itemsToRemove = await dbRead.collectionItem.findMany({
-    where: {
-      ...input,
-      addedById: userId,
-      collectionId: { notIn: collectionIds },
-    },
-    select: { id: true },
-  });
+  if (removeFromCollectionIds?.length) {
+    const removeAllowedCollectionItemIds = (
+      await Promise.all(
+        removeFromCollectionIds.map(async (collectionId) => {
+          const permission = await getUserCollectionPermissionsById({
+            userId,
+            isModerator,
+            id: collectionId,
+          });
+
+          const item = await dbRead.collectionItem.findFirst({
+            where: {
+              collectionId,
+              ...input,
+            },
+            select: {
+              addedById: true,
+              id: true,
+            },
+          });
+
+          if (!item) {
+            return null;
+          }
+
+          if (item.addedById !== userId && !permission.isOwner && !permission.manage) {
+            // This person shouldn't cannot be removing that item
+            return null;
+          }
+
+          return item.id;
+        })
+      )
+    ).filter(isDefined);
+
+    if (removeAllowedCollectionItemIds.length > 0)
+      transactions.push(
+        dbWrite.collectionItem.deleteMany({
+          where: { id: { in: removeAllowedCollectionItemIds } },
+        })
+      );
+  }
+
   // if we have items to remove, add a deleteMany mutation to the transaction
-  if (itemsToRemove.length)
-    transactions.push(
-      dbWrite.collectionItem.deleteMany({
-        where: { id: { in: itemsToRemove.map((i) => i.id) } },
-      })
-    );
 
   await Promise.all(
     collectionIds.map((collectionId) => homeBlockCacheBust(HomeBlockType.Collection, collectionId))
@@ -710,9 +743,9 @@ export const getCollectionItemsByCollectionId = async ({
 export const getUserCollectionItemsByItem = async ({
   input,
 }: {
-  input: GetUserCollectionItemsByItemSchema & { userId: number };
+  input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, modelId, imageId, articleId, postId } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId } = input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -749,9 +782,11 @@ export const getUserCollectionItemsByItem = async ({
   return Promise.all(
     collectionItems.map(async (collectionItem) => {
       const permission = await getUserCollectionPermissionsById({
-        userId,
         id: collectionItem.collectionId,
+        userId,
+        isModerator,
       });
+
       return {
         ...collectionItem,
         canRemoveItem: collectionItem.addedById === userId || permission.manage,

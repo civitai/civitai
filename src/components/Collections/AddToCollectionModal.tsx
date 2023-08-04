@@ -108,22 +108,29 @@ function CollectionListForm({
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
-    addCollectionItemMutation.mutate(data, {
-      async onSuccess() {
-        await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
-        onSubmit();
-        showNotification({
-          title: 'Item added',
-          message: 'Your item has been added to the selected collections.',
-        });
-      },
-      onError(error) {
-        showErrorNotification({
-          title: 'Unable to add item',
-          error: new Error(error.message),
-        });
-      },
-    });
+    const removeFromCollectionIds = collectionItems
+      .map((item) => item.collectionId)
+      .filter((collectionId) => !data.collectionIds.includes(collectionId));
+
+    addCollectionItemMutation.mutate(
+      { ...data, removeFromCollectionIds },
+      {
+        async onSuccess() {
+          await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
+          onSubmit();
+          showSuccessNotification({
+            title: 'Item updated',
+            message: 'Collections including this item have been updated',
+          });
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Unable to update item',
+            error: new Error(error.message),
+          });
+        },
+      }
+    );
   };
 
   useEffect(() => {
@@ -167,6 +174,7 @@ function CollectionListForm({
                 <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
                   {ownedCollections.map((collection) => {
                     const Icon = collectionReadPrivacyData[collection.read].icon;
+                    // const isChecked =
 
                     return (
                       <Checkbox
