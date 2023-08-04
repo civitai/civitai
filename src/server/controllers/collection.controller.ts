@@ -344,6 +344,7 @@ export const updateCollectionItemsStatusHandler = async ({
       },
     });
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };

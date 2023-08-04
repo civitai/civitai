@@ -880,24 +880,28 @@ export const updateCollectionItemsStatus = async ({
   input: UpdateCollectionItemsStatusInput & { userId: number };
 }) => {
   const { userId, collectionId, collectionItemIds, status } = input;
+
+  // Check if collection actually exists before anything
+  const collection = await dbWrite.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, type: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
   const { manage, isOwner } = await getUserCollectionPermissionsById({
     id: collectionId,
     userId,
   });
+  if (!manage && !isOwner)
+    throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
-  if (!manage && !isOwner) {
-    throw throwAuthorizationError('You do not have permission manage contributor item status.');
-  }
-  try {
-    return await dbWrite.collectionItem.updateMany({
-      where: {
-        id: { in: collectionItemIds },
-      },
-      data: { status },
-    });
-  } catch {
-    // Ignore errors
-  }
+  await dbWrite.collectionItem.updateMany({
+    where: { id: { in: collectionItemIds }, collectionId },
+    data: { status },
+  });
+
+  // Send back the collection to update/invalidate state accordingly
+  return collection;
 };
 
 export const bulkSaveItems = async ({
