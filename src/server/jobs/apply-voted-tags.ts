@@ -22,7 +22,10 @@ async function applyUpvotes() {
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       LEFT JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > ${lastApplied} AND applied."tagId" IS NULL
+      WHERE
+          vote.vote > 0
+        AND vote."createdAt" > ${lastApplied}
+        AND applied."tagId" IS NULL
     ), over_threshold AS (
       SELECT
         a."imageId",
@@ -97,7 +100,12 @@ async function applyDownvotes() {
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > (${lastApplied} - INTERVAL '1 minute') AND applied."disabled" = FALSE AND applied."needsReview" = FALSE AND applied."automated" = TRUE
+      WHERE
+          vote.vote < 0
+        AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
+        AND applied."disabled" = FALSE
+        AND applied."needsReview" = FALSE
+        AND applied."automated" = TRUE
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -125,7 +133,10 @@ async function applyDownvotes() {
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > (${lastApplied} - INTERVAL '1 minute') AND applied."disabled" = FALSE
+      WHERE
+          vote.vote < 0
+        AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
+        AND applied."disabled" = FALSE
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -156,7 +167,11 @@ async function applyDownvotes() {
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
-      WHERE vote."createdAt" > (${lastApplied} - INTERVAL '1 minute') AND applied."disabled" = FALSE AND applied."needsReview" = FALSE
+      WHERE
+          vote.vote < 0
+        AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
+        AND applied."disabled" = FALSE
+        AND applied."needsReview" = FALSE
     ), under_threshold AS (
       SELECT
         a."imageId",
