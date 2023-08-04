@@ -30,7 +30,7 @@ import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -260,10 +260,13 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
 
   return (
     <Card shadow="sm" p="xs" sx={{ opacity: !needsReview ? 0.2 : undefined }} withBorder>
-      <Card.Section sx={{ height: `${height}px` }}>
+      <Card.Section
+        sx={{ height: `${height}px`, cursor: 'pointer' }}
+        onClick={() => onSelect(image.id, !selected)}
+      >
         <Checkbox
           checked={selected}
-          onChange={(e) => onSelect(image.id, e.target.checked)}
+          readOnly
           size="lg"
           sx={{
             position: 'absolute',
@@ -291,10 +294,11 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                 </AspectRatio>
               </ImageGuard.Unsafe>
               <ImageGuard.Safe>
-                <EdgeImage
+                <EdgeMedia
                   src={image.url}
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
+                  type={image.type}
                   width={450}
                   placeholder="empty"
                 />
@@ -306,6 +310,9 @@ function ImageGridItem({ data: image, width: itemWidth, selected, onSelect }: Im
                       style={{ position: 'absolute', bottom: '5px', left: '5px' }}
                       size="lg"
                       target="_blank"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
                     >
                       <IconExternalLink
                         color="white"

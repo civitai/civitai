@@ -66,6 +66,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 
     const { id, uploadURL: url } = data;
     const imageData = await getImageDataFromFile(file);
+    if (!imageData) throw new Error();
 
     const xhr = new XMLHttpRequest();
     setFiles((x) => [

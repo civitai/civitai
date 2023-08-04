@@ -22,6 +22,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { getSystemHomeBlocksCached } from '~/server/services/system-cache';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -36,10 +37,16 @@ export const getHomeBlocks = async <
   ids?: number[];
 }) => {
   const hasCustomHomeBlocks = await userHasCustomHomeBlocks(userId);
+
   const { ownedOnly, ids } = input;
 
   if (ownedOnly && !userId) {
     throw throwBadRequestError('You must be logged in to view your home blocks.');
+  }
+
+  if (!hasCustomHomeBlocks && !ownedOnly && !ids) {
+    // If the user doesn't have any custom home blocks, we can just return the default Civitai ones.
+    return getSystemHomeBlocks({ input: {} });
   }
 
   return dbRead.homeBlock.findMany({
@@ -70,6 +77,7 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
       metadata: true,
       type: true,
       userId: true,
+      index: true,
     },
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
     where: {
@@ -97,6 +105,8 @@ export const getHomeBlockById = async ({
       id: true,
       metadata: true,
       type: true,
+      userId: true,
+      sourceId: true,
     },
     where: {
       id,
@@ -106,21 +116,56 @@ export const getHomeBlockById = async ({
   return getHomeBlockData({ homeBlock, user, input });
 };
 
+type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
+type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
+type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
+  items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
+};
+
+export type HomeBlockWithData = {
+  id: number;
+  metadata: HomeBlockMetaSchema;
+  type: HomeBlockType;
+  userId?: number;
+  index?: number | null;
+  sourceId?: number | null;
+  collection?: GetCollectionWithItems;
+  leaderboards?: GetLeaderboardsWithResults;
+  announcements?: GetAnnouncements;
+};
+
 export const getHomeBlockData = async ({
-  homeBlock,
   user,
   input,
+  homeBlock,
+  bypassCache = false,
 }: {
   homeBlock: {
     id: number;
     metadata?: HomeBlockMetaSchema | Prisma.JsonValue;
     type: HomeBlockType;
+    userId?: number;
+    sourceId?: number | null;
   };
+  input: GetHomeBlocksInputSchema;
   // Session user required because it's passed down to collection get items service
   // which requires it for models/posts/etc
   user?: SessionUser;
-  input: GetHomeBlocksInputSchema;
-}) => {
+  bypassCache?: boolean;
+}): Promise<HomeBlockWithData | null> => {
+  if (!bypassCache) {
+    const systemHomeBlocksWithData = await getSystemHomeBlocksCached();
+    const systemHomeBlock = systemHomeBlocksWithData.find(
+      (systemHomeBlock) =>
+        systemHomeBlock.id === homeBlock.id || systemHomeBlock.id === homeBlock.sourceId
+    );
+
+    if (systemHomeBlock) {
+      // System home block. Likely found in the cache:
+      return systemHomeBlock;
+    }
+  }
+
   const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
 
   switch (homeBlock.type) {
@@ -144,8 +189,7 @@ export const getHomeBlockData = async ({
             input: {
               ...(input as UserPreferencesInput),
               collectionId: collection.id,
-              // TODO.home-blocks: Set item limit as part of the input?
-              limit: metadata.collection.limit,
+              limit: input.limit || metadata.collection.limit,
             },
           });
 
@@ -241,7 +285,8 @@ export const upsertHomeBlock = async ({
 }: {
   input: UpsertHomeBlockInput & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, id, metadata, type, sourceId, index } = input;
+  const { userId, isModerator, id, metadata, type, sourceId } = input;
+  let { index } = input;
 
   if (id) {
     const homeBlock = await dbRead.homeBlock.findUnique({
@@ -266,6 +311,33 @@ export const upsertHomeBlock = async ({
     });
 
     return updated;
+  }
+
+  const userHasHomeBlocks = await userHasCustomHomeBlocks(userId);
+
+  if (!userHasHomeBlocks) {
+    index = 0; // new collection will be added on top.
+
+    // Clone system home blocks:
+    const homeBlockData = await getSystemHomeBlocks({ input: { permanent: false } });
+
+    const data = homeBlockData
+      .map((source) => {
+        return {
+          userId,
+          index: (source.index ?? 0) + 1, // Ensures this will all fall below the new user created home block.
+          type: source.type,
+          sourceId: source?.id,
+          metadata: source.metadata || {},
+        };
+      })
+      .filter(isDefined);
+
+    if (data.length > 0) {
+      await dbWrite.homeBlock.createMany({
+        data,
+      });
+    }
   }
 
   return dbWrite.homeBlock.create({

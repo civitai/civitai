@@ -43,10 +43,16 @@ import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = upsertArticleInput.extend({
-  categoryId: z.number(),
+  categoryId: z.number().min(0, 'Please select a valid category'),
+  cover: z
+    .preprocess(
+      (val) => (typeof val === 'string' ? { url: val } : val),
+      z.object({ url: z.string().nonempty() })
+    )
+    .refine((data) => !!data.url, { message: 'Please upload a cover image' }),
 });
 const querySchema = z.object({
-  category: z.preprocess(parseNumericString, z.number().optional()),
+  category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
 });
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -69,13 +75,14 @@ export function ArticleUpsertForm({ article }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
 
-  const defaultCategory = result.success ? result.data.category : undefined;
-  const defaultValues = {
+  const defaultCategory = result.success ? result.data.category : -1;
+  const defaultValues: z.infer<typeof schema> = {
     ...article,
     title: article?.title ?? '',
-    content: article?.content,
+    content: article?.content ?? '',
     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+    cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
   const clearStorage = useFormStorage({
@@ -105,12 +112,17 @@ export function ArticleUpsertForm({ article }: Props) {
 
   const upsertArticleMutation = trpc.article.upsert.useMutation();
 
-  const handleSubmit = ({ categoryId, tags: selectedTags, ...rest }: z.infer<typeof schema>) => {
+  const handleSubmit = ({
+    categoryId,
+    tags: selectedTags,
+    cover,
+    ...rest
+  }: z.infer<typeof schema>) => {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
     upsertArticleMutation.mutate(
-      { ...rest, tags, publishedAt: publishing ? new Date() : null },
+      { ...rest, tags, publishedAt: publishing ? new Date() : null, cover: cover.url },
       {
         async onSuccess(result) {
           await router.push(`/articles/${result.id}`);

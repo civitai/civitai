@@ -5,6 +5,12 @@ import { redis } from '~/server/redis/client';
 import { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
+import {
+  getHomeBlockData,
+  getSystemHomeBlocks,
+  HomeBlockWithData,
+} from '~/server/services/home-block.service';
+import { isDefined } from '~/utils/type-guards';
 
 const log = createLogger('system-cache', 'green');
 
@@ -131,5 +137,51 @@ export async function getTagsNeedingReview() {
   });
 
   log('got tags needing review');
+  return tags;
+}
+
+export async function getSystemHomeBlocksCached() {
+  const cachedSystemHomeBlocks = await redis.get(`system:home-blocks`);
+  if (cachedSystemHomeBlocks) {
+    return JSON.parse(cachedSystemHomeBlocks) as HomeBlockWithData[];
+  }
+
+  log('getting system home blocks');
+
+  const systemHomeBlocks = await getSystemHomeBlocks({ input: {} });
+  const systemHomeBlocksWithData: HomeBlockWithData[] = (
+    await Promise.all(
+      systemHomeBlocks.map((homeBlock) => {
+        // 14 * 4 because we show about 14 items max on home-page.
+        // Since we're shuffling, we want to make sure we have enough to show
+        // different ones.
+        return getHomeBlockData({ homeBlock, input: { limit: 14 * 4 }, bypassCache: true });
+      })
+    )
+  ).filter(isDefined);
+
+  await redis.set(`system:home-blocks`, JSON.stringify(systemHomeBlocksWithData), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('done getting system home blocks');
+
+  return systemHomeBlocksWithData;
+}
+
+export async function getHomeExcludedTags() {
+  const cachedTags = await redis.get(`system:home-excluded-tags`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+
+  log('getting home excluded tags');
+  const tags = await dbWrite.tag.findMany({
+    where: { name: { in: ['1girl', 'anime', 'female', 'woman', 'clothing'] } },
+    select: { id: true, name: true },
+  });
+  await redis.set(`system:home-excluded-tags`, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got home excluded tags');
   return tags;
 }

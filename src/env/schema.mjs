@@ -24,7 +24,6 @@ export const serverSchema = z.object({
   CLICKHOUSE_HOST: z.string().optional(),
   CLICKHOUSE_USERNAME: z.string().optional(),
   CLICKHOUSE_PASSWORD: z.string().optional(),
-  CLICKHOUSE_TRACKER_URL: z.string().url().optional(),
   DISCORD_CLIENT_ID: z.string(),
   DISCORD_CLIENT_SECRET: z.string(),
   DISCORD_BOT_TOKEN: z.string().optional(),

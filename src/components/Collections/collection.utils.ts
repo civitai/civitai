@@ -1,3 +1,5 @@
+import { CollectionReadConfiguration } from '@prisma/client';
+import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
@@ -106,4 +108,31 @@ export const useQueryCollections = (
   const collections = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return { data, collections, ...rest };
+};
+
+export type PrivacyData = {
+  icon: Icon;
+  value: string;
+  label: string;
+  description: string;
+};
+export const collectionReadPrivacyData: Record<CollectionReadConfiguration, PrivacyData> = {
+  [CollectionReadConfiguration.Private]: {
+    icon: IconLock,
+    label: 'Private',
+    value: CollectionReadConfiguration.Private,
+    description: 'Only you and contributors for this collection can see this',
+  },
+  [CollectionReadConfiguration.Public]: {
+    icon: IconWorld,
+    label: 'Public',
+    value: CollectionReadConfiguration.Public,
+    description: 'Anyone can see this collection',
+  },
+  [CollectionReadConfiguration.Unlisted]: {
+    icon: IconEyeOff,
+    label: 'Unlisted',
+    value: CollectionReadConfiguration.Unlisted,
+    description: 'Only people with the link can see this collection',
+  },
 };

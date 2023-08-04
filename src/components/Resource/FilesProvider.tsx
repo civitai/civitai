@@ -182,7 +182,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       const errors = validation.error.format() as unknown as Array<{
         [k: string]: ZodErrorSchema;
       }>;
-      console.log(errors);
       setErrors(errors);
       return false;
     }
@@ -307,6 +306,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
   const handleUpload = async ({ type, size, fp, versionId, file, uuid }: FileFromContextProps) => {
     if (!file || !type) return;
+
     setFiles((state) => {
       const index = state.findIndex((x) => x.uuid === uuid);
       if (index === -1) throw new Error('out of bounds');
@@ -314,37 +314,51 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       return [...state];
     });
 
-    return await upload(
-      {
-        file,
-        type: type === 'Model' ? UploadType.Model : UploadType.Default,
-        meta: { versionId, type, size, fp, uuid },
-      },
-      async ({ meta, size, ...result }) => {
-        const { versionId, type, uuid, ...metadata } = meta as {
-          versionId: number;
-          type: ModelFileType;
-          uuid: string;
-        };
-        if (versionId) {
-          try {
-            const saved = await createFileMutation.mutateAsync({
-              ...result,
-              sizeKB: bytesToKB(size),
-              modelVersionId: versionId,
-              type,
-              metadata,
-            });
-            setItems((items) => items.filter((x) => x.uuid !== result.uuid));
-            setFiles((state) => {
-              const index = state.findIndex((x) => x.uuid === uuid);
-              state[index] = { ...state[index], id: saved.id, isUploading: false };
-              return [...state];
-            });
-          } catch (e: unknown) {}
+    try {
+      return await upload(
+        {
+          file,
+          type: type === 'Model' ? UploadType.Model : UploadType.Default,
+          meta: { versionId, type, size, fp, uuid },
+        },
+        async ({ meta, size, ...result }) => {
+          const { versionId, type, uuid, ...metadata } = meta as {
+            versionId: number;
+            type: ModelFileType;
+            uuid: string;
+          };
+          if (versionId) {
+            try {
+              const saved = await createFileMutation.mutateAsync({
+                ...result,
+                sizeKB: bytesToKB(size),
+                modelVersionId: versionId,
+                type,
+                metadata,
+              });
+              setItems((items) => items.filter((x) => x.uuid !== result.uuid));
+              setFiles((state) => {
+                const index = state.findIndex((x) => x.uuid === uuid);
+                state[index] = { ...state[index], id: saved.id, isUploading: false };
+                return [...state];
+              });
+            } catch (e: unknown) {}
+          }
         }
-      }
-    );
+      );
+    } catch (e) {
+      showErrorNotification({
+        title: 'Failed to upload file',
+        error: e as Error,
+      });
+
+      setFiles((state) => {
+        const index = state.findIndex((x) => x.uuid === uuid);
+        if (index === -1) throw new Error('out of bounds');
+        state[index] = { ...state[index], isPending: true, isUploading: false };
+        return [...state];
+      });
+    }
   };
 
   const startUpload = async () => {

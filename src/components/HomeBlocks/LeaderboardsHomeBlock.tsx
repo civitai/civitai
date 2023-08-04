@@ -20,10 +20,16 @@ const useStyles = createStyles((theme) => ({
       theme.colorScheme === 'dark'
         ? theme.colors.dark[8]
         : theme.fn.darken(theme.colors.gray[0], 0.01),
+    paddingLeft: 0,
+    paddingRight: 0,
   },
   metadata: {
+    padding: theme.spacing.md,
+  },
+  carousel: {
+    padding: theme.spacing.md,
     [theme.fn.smallerThan('md')]: {
-      padding: theme.spacing.md,
+      padding: 0,
     },
   },
 }));
@@ -44,7 +50,7 @@ export const LeaderboardsHomeBlock = ({ homeBlockId }: Props) => {
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
 
   return (
-    <HomeBlockWrapper className={classes.root} bleedRight>
+    <HomeBlockWrapper className={classes.root}>
       <Box className={classes.metadata}>
         <HomeBlockHeaderMeta metadata={metadata} />
       </Box>
@@ -58,6 +64,7 @@ export const LeaderboardsHomeBlock = ({ homeBlockId }: Props) => {
           { maxWidth: 'md', slideSize: '50%', slideGap: 'md' },
           { maxWidth: 'sm', slideSize: '80%', slideGap: 'sm' },
         ]}
+        className={classes.carousel}
         includeGapInSize={true}
         styles={{
           control: {

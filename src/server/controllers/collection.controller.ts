@@ -39,6 +39,7 @@ import { addPostImage, createPost } from '~/server/services/post.service';
 import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -58,10 +59,12 @@ export const getAllCollectionsInfiniteHandler = async ({
         name: true,
         read: true,
         type: true,
+        userId: true,
         image: { select: imageSelect },
         _count: {
           select: {
             items: { where: { status: CollectionItemStatus.ACCEPTED } },
+            contributors: true,
           },
         },
       },
@@ -74,30 +77,31 @@ export const getAllCollectionsInfiniteHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    if (input.withItems) {
-      const { withItems, cursor, sort, limit, privacy, types, userId, ids, ...userPreferences } =
-        input;
-      const collectionsWithItems = await Promise.all(
-        items.map(async (collection) => ({
-          ...collection,
-          items: await getCollectionItemsByCollectionId({
-            user: ctx.user,
-            input: {
-              ...userPreferences,
-              collectionId: collection.id,
-              limit: 4, // TODO.collections: only bring max four items per collection atm
-              statuses: [CollectionItemStatus.ACCEPTED],
-            },
-          }),
-        }))
-      );
-
-      return { nextCursor, items: collectionsWithItems };
-    }
+    const { cursor, sort, privacy, types, userId, ids, ...userPreferences } = input;
+    const collectionsWithItems = await Promise.all(
+      items.map(async (collection) => ({
+        ...collection,
+        items: !collection.image
+          ? await getCollectionItemsByCollectionId({
+              user: ctx.user,
+              input: {
+                ...userPreferences,
+                collectionId: collection.id,
+                limit: 4, // TODO.collections: only bring max four items per collection atm
+              },
+            })
+          : ([] as CollectionItemExpanded[]),
+      }))
+    );
 
     return {
       nextCursor,
-      items: items.map((item) => ({ ...item, items: [] as CollectionItemExpanded[] })),
+      items: collectionsWithItems.map((item) => ({
+        ...item,
+        image: item.image
+          ? { ...item.image, meta: item.image.meta as ImageMetaProps | null }
+          : undefined,
+      })),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -158,11 +162,9 @@ export const getCollectionByIdHandler = async ({
 
     const collection = await getCollectionById({ input });
 
-    return {
-      collection,
-      permissions,
-    };
+    return { collection, permissions };
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
@@ -374,7 +376,12 @@ export const addSimpleImagePostHandler = async ({
     });
     const postImages = await Promise.all(
       images.map((image, index) =>
-        addPostImage({ ...image, postId: post.id, userId: user.id, index })
+        addPostImage({
+          ...image,
+          postId: post.id,
+          userId: user.id,
+          index,
+        })
       )
     );
     const imageIds = postImages.map((image) => image.id);

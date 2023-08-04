@@ -6,41 +6,23 @@ import {
   getHomeBlockData,
   getHomeBlocks,
   getSystemHomeBlocks,
+  HomeBlockWithData,
   setHomeBlocksOrder,
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
-import {
-  getCollectionById,
-  getCollectionItemsByCollectionId,
-} from '~/server/services/collection.service';
+import { getCollectionById } from '~/server/services/collection.service';
 import {
   CreateCollectionHomeBlockInputSchema,
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
   GetSystemHomeBlocksInputSchema,
-  getSystemHomeBlocksInputSchema,
   HomeBlockMetaSchema,
   SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
-import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
-import { getAnnouncements } from '~/server/services/announcement.service';
 import { HomeBlockType } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';
-
-type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
-type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
-type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
-  items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
-};
-type HomeBlockWithData = Omit<AsyncReturnType<typeof getHomeBlocks>[number], 'metadata' | 'id'> & {
-  id: number;
-  metadata: HomeBlockMetaSchema;
-  collection?: GetCollectionWithItems;
-  leaderboards?: GetLeaderboardsWithResults;
-  announcements?: GetAnnouncements;
-};
 
 export const getHomeBlocksHandler = async ({
   ctx,
@@ -92,7 +74,6 @@ export const getSystemHomeBlocksHandler = async ({
 }): Promise<HomeBlockWithData[]> => {
   try {
     const homeBlocks = await getSystemHomeBlocks({ input });
-
     return homeBlocks;
   } catch (error) {
     throw throwDbError(error);

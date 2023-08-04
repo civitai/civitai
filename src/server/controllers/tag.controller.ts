@@ -27,6 +27,7 @@ import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getHomeExcludedTags } from '~/server/services/system-cache';
 
 export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTagByNameInput }) => {
   try {
@@ -196,6 +197,15 @@ export const moderateTagsHandler = async ({
 export const deleteTagsHandler = async ({ input }: { input: DeleteTagsSchema }) => {
   try {
     await deleteTags(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getHomeExcludedTagsHandler = async () => {
+  try {
+    const tags = await getHomeExcludedTags();
+    return tags;
   } catch (error) {
     throw throwDbError(error);
   }

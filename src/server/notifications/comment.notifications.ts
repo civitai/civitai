@@ -34,7 +34,6 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "Model" m ON m.id = c."modelId"
         WHERE m."userId" > 0
           AND c."parentId" IS NULL
-          AND c."reviewId" IS NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
       )
@@ -117,7 +116,7 @@ export const commentNotifications = createNotificationProcessor({
           JSONB_BUILD_OBJECT(
             'modelId', c."modelId",
             'commentId', c.id,
-            'parentId', COALESCE(c."parentId", c."reviewId"),
+            'parentId', c."parentId",
             'parentType', CASE WHEN c."parentId" IS NOT NULL THEN 'comment' ELSE 'review' END,
             'modelName', m.name,
             'username', u.username
@@ -126,7 +125,7 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Model" m ON m.id = c."modelId"
         WHERE m."userId" > 0
-          AND (c."parentId" IS NOT NULL OR c."reviewId" IS NOT NULL)
+          AND c."parentId" IS NOT NULL
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
       )

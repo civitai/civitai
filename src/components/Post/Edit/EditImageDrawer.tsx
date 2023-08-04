@@ -79,7 +79,7 @@ export function EditImageDrawer() {
 export function EditImage({ imageId, onClose }: { imageId: number; onClose: () => void }) {
   const images = useEditPostContext((state) => state.images);
   const setImage = useEditPostContext((state) => state.setImage);
-  const image = images.find((x) => x.type === 'image' && x.data.id === imageId)?.data as
+  const image = images.find((x) => x.discriminator === 'image' && x.data.id === imageId)?.data as
     | PostEditImage
     | undefined;
 

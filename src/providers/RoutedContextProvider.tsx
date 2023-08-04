@@ -9,7 +9,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import useIsClient from '~/hooks/useIsClient';
 import { Freeze } from '~/components/Freeze/Freeze';
 
-const ModelVersionLightbox = dynamic(() => import('~/routed-context/modals/ModelVersionLightbox'));
 const CommentThread = dynamic(() => import('~/routed-context/modals/CommentThread'));
 const ImageDetailModal = dynamic(() => import('~/routed-context/modals/ImageDetailModal'));
 const CommentEdit = dynamic(() => import('~/routed-context/modals/CommentEdit'));
@@ -19,6 +18,7 @@ const FilesEdit = dynamic(() => import('~/routed-context/modals/FilesEdit'));
 const ResourceReviewModal = dynamic(() => import('~/routed-context/modals/ResourceReviewModal'));
 const PostDetailModal = dynamic(() => import('~/routed-context/modals/PostDetailModal'));
 const HiddenCommentsModal = dynamic(() => import('~/routed-context/modals/HiddenCommentsModal'));
+const CollectionEdit = dynamic(() => import('~/routed-context/modals/CollectionEdit'));
 
 // this is they type I want to hook up at some point
 type ModalRegistry<P> = {
@@ -63,14 +63,6 @@ const registry = {
     Component: CommentEdit,
     resolve: (args: React.ComponentProps<typeof CommentEdit>) => [
       { query: { ...Router.query, ...args, modal: 'commentEdit' } },
-      undefined, // could be a page url for reviews here (/comments/:commentId)
-      { shallow: true },
-    ],
-  },
-  modelVersionLightbox: {
-    Component: ModelVersionLightbox,
-    resolve: (args: React.ComponentProps<typeof ModelVersionLightbox>) => [
-      { query: { ...Router.query, ...args, modal: 'modelVersionLightbox' } },
       undefined, // could be a page url for reviews here (/comments/:commentId)
       { shallow: true },
     ],
@@ -143,6 +135,14 @@ const registry = {
         { shallow: true },
       ];
     },
+  },
+  collectionEdit: {
+    Component: CollectionEdit,
+    resolve: (args: React.ComponentProps<typeof CollectionEdit>) => [
+      { query: { ...Router.query, ...args, modal: 'collectionEdit' } },
+      undefined, // could be a page url for reviews here (/comments/:commentId)
+      { shallow: true },
+    ],
   },
 };
 

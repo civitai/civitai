@@ -20,7 +20,7 @@ import { IconInfoCircle, IconRosette } from '@tabler/icons-react';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputProfileImageUpload, InputSelect, InputText, useForm } from '~/libs/form';
@@ -229,7 +229,7 @@ export function ProfileCard() {
                 </Group>
                 <Group spacing="xs" align="stretch" noWrap>
                   {selectedBadge?.data.url ? (
-                    <EdgeImage src={selectedBadge.data.url} width={96} />
+                    <EdgeMedia src={selectedBadge.data.url} width={96} />
                   ) : (
                     <Paper
                       withBorder
@@ -278,7 +278,7 @@ export function ProfileCard() {
                                 }
                                 sx={{ height: 64, width: 64 }}
                               >
-                                <EdgeImage src={cosmetic.data.url as string} width={64} />
+                                <EdgeMedia src={cosmetic.data.url as string} width={64} />
                               </Button>
                             </HoverCard.Target>
                             <HoverCard.Dropdown>

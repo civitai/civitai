@@ -3,6 +3,7 @@ import {
   CosmeticType,
   ImageGenerationProcess,
   ImageIngestionStatus,
+  MediaType,
   NsfwLevel,
   Prisma,
   ReportReason,
@@ -198,7 +199,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
 export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-  const { url, id } = ingestImageSchema.parse(image);
+  const { url, id, type } = ingestImageSchema.parse(image);
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
@@ -213,6 +214,7 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
     body: JSON.stringify({
       imageId: id,
       imageKey: url,
+      type,
       // wait: true,
       scans: [ImageScanType.Label, ImageScanType.Moderation],
       callbackUrl,
@@ -308,6 +310,8 @@ type GetAllImagesRaw = {
   commentCount: number;
   reactions?: ReviewReactions[];
   cursorId?: bigint;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -565,6 +569,8 @@ export const getAllImages = async ({
       i."generationProcess",
       i."createdAt",
       i."mimeType",
+      i.type,
+      i.metadata,
       i."scannedAt",
       i."needsReview",
       i."userId",
@@ -765,6 +771,8 @@ export const getImage = async ({
       i."scannedAt",
       i."needsReview",
       i."postId",
+      i.type,
+      i.metadata,
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -881,6 +889,8 @@ type ImagesForModelVersions = {
   hash: string;
   modelVersionId: number;
   meta?: Prisma.JsonValue;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
 };
 export const getImagesForModelVersion = async ({
   modelVersionIds,
@@ -960,6 +970,8 @@ export const getImagesForModelVersion = async ({
       i.width,
       i.height,
       i.hash,
+      i.type,
+      i.metadata,
       t."modelVersionId"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
@@ -986,7 +998,10 @@ export const getImagesForPosts = async ({
   isOwnerRequest?: boolean;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
-  const imageWhere: Prisma.Sql[] = [Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`];
+  const imageWhere: Prisma.Sql[] = [
+    Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`,
+    Prisma.sql`i."needsReview" IS NULL`,
+  ];
 
   if (!isOwnerRequest) {
     // ensure that only scanned images make it to the main feed
@@ -1023,6 +1038,8 @@ export const getImagesForPosts = async ({
       dislikeCount: number;
       heartCount: number;
       commentCount: number;
+      type: MediaType;
+      metadata: Prisma.JsonValue;
       reactions?: ReviewReactions[];
     }[]
   >`
@@ -1044,6 +1061,8 @@ export const getImagesForPosts = async ({
       i.width,
       i.height,
       i.hash,
+      i.type,
+      i.metadata,
       t."postId",
       t.count "imageCount",
       COALESCE(im."cryCount", 0) "cryCount",
@@ -1153,7 +1172,8 @@ type GetImageByCategoryRaw = {
   meta: Prisma.JsonValue;
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
-  mimeType: string;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
   scannedAt: Date;
   needsReview: string | null;
   postId: number;
@@ -1281,7 +1301,8 @@ export const getImagesByCategory = async ({
         i.meta,
         i."hideMeta",
         i."generationProcess",
-        i."mimeType",
+        i.type,
+        i.metadata,
         i."scannedAt",
         i."needsReview",
         i."postId",

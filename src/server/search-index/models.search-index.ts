@@ -72,15 +72,19 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'attribute',
     'metrics.weightedRating:desc',
     'words',
-    'typo',
     'proximity',
     'sort',
     'exactness',
+    'typo',
   ]);
 
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
 
-  const updateFilterableAttributesTask = await index.updateFilterableAttributes(['nsfw', 'type']);
+  const updateFilterableAttributesTask = await index.updateFilterableAttributes([
+    'nsfw',
+    'type',
+    'hashes',
+  ]);
 
   console.log(
     'onIndexSetup :: updateFilterableAttributesTask created',

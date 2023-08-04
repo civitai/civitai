@@ -1,6 +1,7 @@
 import { BrowsingMode, ImageSort } from './../common/enums';
 import {
   ImageGenerationProcess,
+  MediaType,
   MetricTimeframe,
   NsfwLevel,
   ReviewReactions,
@@ -99,8 +100,10 @@ export const imageSchema = z.object({
   needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
-  postId: z.number().optional(),
+  postId: z.number().nullish(),
   resources: z.array(imageResourceUpsertSchema).optional(),
+  type: z.nativeEnum(MediaType).default(MediaType.image),
+  metadata: z.object({}).passthrough().optional(),
 });
 
 export type ImageUploadProps = z.infer<typeof imageSchema>;
@@ -155,6 +158,7 @@ export type IngestImageInput = z.infer<typeof ingestImageSchema>;
 export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
+  type: z.nativeEnum(MediaType).optional(),
 });
 
 // #region [new schemas]

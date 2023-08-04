@@ -32,7 +32,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { EdgeImage } from '~/components/EdgeImage/EdgeImage';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
@@ -268,10 +268,11 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                         </Group>
                       </Group>
                       {safe ? (
-                        <EdgeImage
+                        <EdgeMedia
                           src={image.url ?? ''}
                           name={image.name ?? image.id.toString()}
                           alt={image.name ?? undefined}
+                          type={image.type}
                           width={
                             originalAspectRatio > 1
                               ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
@@ -307,7 +308,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                 )}
               </Group>
             </Group>
-            <EdgeImage
+            <EdgeMedia
               placeholder="empty"
               className={sharedClasses.image}
               loading="lazy"
@@ -336,7 +337,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                 e.preventDefault();
                 e.stopPropagation();
 
-                router.push(`/users/${reviewData.user?.username}`);
+                router.push(`/user/${reviewData.user?.username}`);
               }}
             >
               <UserAvatar

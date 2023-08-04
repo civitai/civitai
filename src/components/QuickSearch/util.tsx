@@ -49,6 +49,14 @@ const filters: MatchedFilter[] = [
     description: 'Display SFW or NSFW only',
   },
   {
+    indexName: 'models',
+    attribute: 'hashes',
+    attributeRegexp: /sha256:(\w+)/,
+    matches: [],
+    label: 'sha256:<hash>',
+    description: 'Filter by sha256 model hash',
+  },
+  {
     filterId: 'models',
     indexName: 'models',
     attribute: '',

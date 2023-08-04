@@ -24,6 +24,7 @@ import {
   ImageGenerationProcess,
   NsfwLevel,
   ImageIngestionStatus,
+  MediaType,
 } from '@prisma/client';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
@@ -452,7 +453,7 @@ export const addPostImage = async ({
   });
 
   await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
-  await ingestImage({ image: { id: partialResult.id, url: props.url } });
+  await ingestImage({ image: { id: partialResult.id, url: props.url, type: props.type } });
 
   const image = await dbWrite.image.findUnique({
     where: { id: partialResult.id },
@@ -537,7 +538,8 @@ type PostImageRaw = {
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
-  mimeType: string;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
   scannedAt: Date;
   needsReview: string | null;
   postId: number;
@@ -674,10 +676,11 @@ export const getPostsByCategory = async ({
           i.height,
           i.hash,
           i.meta,
+          i.type,
+          i.metadata,
           i."hideMeta",
           i."generationProcess",
           i."createdAt",
-          i."mimeType",
           i."scannedAt",
           i."needsReview",
           i."postId",
