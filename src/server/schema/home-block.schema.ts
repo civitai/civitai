@@ -1,6 +1,6 @@
 import { HomeBlockType } from '@prisma/client';
 import { z } from 'zod';
-import { getByIdSchema, userPreferencesSchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
@@ -46,7 +46,6 @@ export const getHomeBlocksInputSchema = z
     withCoreData: z.boolean().optional(),
     ownedOnly: z.boolean().optional(),
   })
-  .merge(userPreferencesSchema)
   .partial()
   .default({ limit: 8 });
 
@@ -59,7 +58,7 @@ export const getSystemHomeBlocksInputSchema = z
 
 export type GetHomeBlockByIdInputSchema = z.infer<typeof getHomeBlockByIdInputSchema>;
 
-export const getHomeBlockByIdInputSchema = getByIdSchema.merge(userPreferencesSchema).partial();
+export const getHomeBlockByIdInputSchema = getByIdSchema.partial();
 
 export type CreateCollectionHomeBlockInputSchema = z.infer<
   typeof createCollectionHomeBlockInputSchema

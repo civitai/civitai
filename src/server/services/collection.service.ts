@@ -16,6 +16,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  HomeBlockType,
   ImageIngestionStatus,
   MetricTimeframe,
   Prisma,
@@ -51,6 +52,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -394,6 +396,10 @@ export const saveItemInCollections = async ({
         where: { id: { in: itemsToRemove.map((i) => i.id) } },
       })
     );
+
+  await Promise.all(
+    collectionIds.map((collectionId) => homeBlockCacheBust(HomeBlockType.Collection, collectionId))
+  );
 
   return dbWrite.$transaction(transactions);
 };
@@ -955,6 +961,8 @@ export const bulkSaveItems = async ({
       status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     }));
   }
+
+  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
   return dbWrite.collectionItem.createMany({ data });
 };
