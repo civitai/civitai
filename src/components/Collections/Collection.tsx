@@ -233,7 +233,9 @@ export function Collection({
                 </Stack>
                 {collection && (
                   <Group spacing={4} noWrap>
-                    <UserAvatar user={collection.user} withUsername linkToProfile />
+                    {collection.user.id !== -1 && (
+                      <UserAvatar user={collection.user} withUsername linkToProfile />
+                    )}
                     {/* TODO.collections: We need some metrics to actually display these badges */}
                     {/* <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
                       <Text size="xs">{abbreviateNumber(data._count.items)}</Text>
