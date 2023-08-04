@@ -155,7 +155,7 @@ export default function Home() {
                     filters={{
                       excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
                       // Required to override localStorage filters
-                      period: MetricTimeframe.Month,
+                      period: MetricTimeframe.Week,
                       sort: ModelSort.HighestRated,
                       browsingMode: BrowsingMode.SFW,
                       types: undefined,
