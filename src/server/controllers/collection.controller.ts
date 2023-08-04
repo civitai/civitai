@@ -179,7 +179,9 @@ export const saveItemHandler = ({
   const { user } = ctx;
 
   try {
-    return saveItemInCollections({ input: { ...input, userId: user.id } });
+    return saveItemInCollections({
+      input: { ...input, userId: user.id, isModerator: user.isModerator },
+    });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -236,7 +238,7 @@ export const getUserCollectionItemsByItemHandler = async ({
 
   try {
     const collectionItems = await getUserCollectionItemsByItem({
-      input: { ...input, userId: user.id },
+      input: { ...input, userId: user.id, isModerator: user.isModerator },
     });
     return collectionItems;
   } catch (error) {

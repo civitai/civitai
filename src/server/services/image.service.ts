@@ -450,14 +450,14 @@ export const getAllImages = async ({
   // Filter to a specific collection and relevant status:
   if (collectionId) {
     const displayReviewItems = userId
-      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${userId})`
+      ? ` OR (ci."status" = 'REVIEW' AND ci."addedById" = ${userId})`
       : '';
 
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "CollectionItem" ci
       WHERE ci."collectionId" = ${collectionId}
         AND ci."imageId" = i.id
-        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+        AND (ci."status" = 'ACCEPTED'${Prisma.raw(displayReviewItems)})
     )`);
   }
 
@@ -1150,10 +1150,17 @@ export function applyModRulesSql(
   if (userId) {
     const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
     needsReviewOr.push(belongsToUser);
-    publishedOr.push(belongsToUser);
+
+    if (publishedOnly) {
+      publishedOr.push(belongsToUser);
+    }
   }
+
   AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-  if (publishedOr.length > 0) AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+
+  if (publishedOr.length > 0) {
+    AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+  }
 }
 
 export async function applyAnonymousUserRules(excludedImageTags: number[]) {
