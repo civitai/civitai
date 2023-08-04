@@ -15,7 +15,7 @@ import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 
@@ -102,6 +102,7 @@ export default function Home() {
                     period: MetricTimeframe.Month,
                     sort: ModelSort.HighestRated,
                     excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                    browsingMode: BrowsingMode.SFW,
                   }}
                 />
               </IsClient>
