@@ -1,4 +1,15 @@
-import { ActionIcon, Box, Center, Group, Loader, Title } from '@mantine/core';
+import {
+  ActionIcon,
+  Anchor,
+  Box,
+  Button,
+  Center,
+  Group,
+  Loader,
+  Popover,
+  Text,
+  Title,
+} from '@mantine/core';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -6,7 +17,7 @@ import { HomeBlockType, MetricTimeframe } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
-import { IconSettings } from '@tabler/icons-react';
+import { IconArrowRight, IconInfoCircle, IconSettings } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -18,6 +29,8 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import Link from 'next/link';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -27,6 +40,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function Home() {
+  const isMobile = useIsMobile();
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery();
@@ -69,45 +83,87 @@ export default function Home() {
             <Loader />
           </Center>
         )}
+        <Box
+          sx={(theme) => ({
+            '& > *:nth-child(odd)': {
+              background:
+                theme.colorScheme === 'dark'
+                  ? theme.colors.dark[8]
+                  : theme.fn.darken(theme.colors.gray[0], 0.01),
+            },
+          })}
+        >
+          {homeBlocks.map((homeBlock) => {
+            switch (homeBlock.type) {
+              case HomeBlockType.Collection:
+                return <CollectionHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+              case HomeBlockType.Announcement:
+                return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+              case HomeBlockType.Leaderboard:
+                return <LeaderboardsHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+            }
+          })}
 
-        {homeBlocks.map((homeBlock) => {
-          switch (homeBlock.type) {
-            case HomeBlockType.Collection:
-              return <CollectionHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
-            case HomeBlockType.Announcement:
-              return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
-            case HomeBlockType.Leaderboard:
-              return <LeaderboardsHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
-          }
-        })}
+          <Box ref={ref}>
+            <HomeBlockWrapper py={32}>
+              {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
+                <IsClient>
+                  <Group mb="md" position="apart">
+                    <Group>
+                      <Title
+                        sx={(theme) => ({
+                          fontSize: 32,
 
-        <Box ref={ref}>
-          <HomeBlockWrapper py={32}>
-            {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
-              <IsClient>
-                <Title
-                  sx={(theme) => ({
-                    fontSize: theme.headings.sizes.h1.fontSize,
-                    [theme.fn.smallerThan('md')]: {
-                      fontSize: theme.headings.sizes.h3.fontSize,
-                    },
-                  })}
-                  mb="md"
-                >
-                  Models
-                </Title>
+                          [theme.fn.smallerThan('sm')]: {
+                            fontSize: 28,
+                          },
+                        })}
+                      >
+                        Models
+                      </Title>
+                      <Popover withArrow width={380} position={isMobile ? 'bottom' : 'right-start'}>
+                        <Popover.Target>
+                          <Box
+                            display="inline-block"
+                            sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                            color="white"
+                          >
+                            <IconInfoCircle size={20} />
+                          </Box>
+                        </Popover.Target>
+                        <Popover.Dropdown maw="100%">
+                          <Text size="sm" mb="xs">
+                            Pre-filtered list of models upload by the community that are the highest
+                            rated over the last week
+                          </Text>
+                        </Popover.Dropdown>
+                      </Popover>
+                    </Group>
 
-                <ModelsInfinite
-                  filters={{
-                    period: MetricTimeframe.Month,
-                    sort: ModelSort.HighestRated,
-                    excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
-                    browsingMode: BrowsingMode.SFW,
-                  }}
-                />
-              </IsClient>
-            )}
-          </HomeBlockWrapper>
+                    <Link href="/models" passHref>
+                      <Button
+                        h={34}
+                        component="a"
+                        variant="subtle"
+                        rightIcon={<IconArrowRight size={16} />}
+                      >
+                        View all
+                      </Button>
+                    </Link>
+                  </Group>
+
+                  <ModelsInfinite
+                    filters={{
+                      period: MetricTimeframe.Month,
+                      sort: ModelSort.HighestRated,
+                      excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                      browsingMode: BrowsingMode.SFW,
+                    }}
+                  />
+                </IsClient>
+              )}
+            </HomeBlockWrapper>
+          </Box>
         </Box>
       </MasonryProvider>
     </>
