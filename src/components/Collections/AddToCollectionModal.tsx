@@ -189,7 +189,6 @@ function CollectionListForm({
                 <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
                   {ownedCollections.map((collection) => {
                     const Icon = collectionReadPrivacyData[collection.read].icon;
-                    // const isChecked =
 
                     return (
                       <Checkbox
