@@ -5,28 +5,28 @@ import Link from 'next/link';
 import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 
 const HomeBlockHeaderMeta = ({ metadata }: Props) => {
   const isMobile = useIsMobile();
+  const { classes: homeBlockClasses } = useHomeBlockStyles();
 
   return (
     <>
       {metadata?.title && (
-        <Group position="apart" align="center" pb="md" pr={isMobile ? 'md' : undefined} noWrap>
-          <Title
-            sx={(theme) => ({
-              fontSize: theme.headings.sizes.h1.fontSize,
-              [theme.fn.smallerThan('md')]: {
-                fontSize: theme.headings.sizes.h3.fontSize,
-              },
-            })}
-          >
-            {metadata?.title}
-          </Title>
+        <Group
+          position="apart"
+          align="center"
+          pb="md"
+          pr={isMobile ? 'md' : undefined}
+          className={homeBlockClasses.header}
+          noWrap
+        >
+          <Title className={homeBlockClasses.title}>{metadata?.title}</Title>
           {metadata.link && (
             <Link href={metadata.link} passHref>
               <Button
-                style={{ height: 34 }}
+                className={homeBlockClasses.expandButton}
                 component="a"
                 variant="subtle"
                 rightIcon={<IconArrowRight size={16} />}

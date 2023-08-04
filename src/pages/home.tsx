@@ -114,7 +114,7 @@ export default function Home() {
                           fontSize: 32,
 
                           [theme.fn.smallerThan('sm')]: {
-                            fontSize: 28,
+                            fontSize: 24,
                           },
                         })}
                       >

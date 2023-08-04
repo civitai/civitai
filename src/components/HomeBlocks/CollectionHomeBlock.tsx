@@ -32,18 +32,11 @@ import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import ReactMarkdown from 'react-markdown';
+import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 
 const useStyles = createStyles<string, { count: number; columnCount: number }>(
-  (theme, { count, columnCount }) => {
+  (theme, { count, columnCount }, getRef) => {
     return {
-      title: {
-        fontSize: 32,
-
-        [theme.fn.smallerThan('sm')]: {
-          fontSize: 28,
-        },
-      },
-
       grid: {
         display: 'grid',
         gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
@@ -101,10 +94,6 @@ const useStyles = createStyles<string, { count: number; columnCount: number }>(
           display: 'none',
         },
       },
-
-      expandButton: {
-        height: 34,
-      },
     };
   }
 );
@@ -131,6 +120,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
     count: homeBlock?.collection?.items.length ?? 0,
     columnCount,
   });
+  const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
 
@@ -151,9 +141,9 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
 
   const MetaDataTop = (
     <Stack spacing="sm">
-      <Group spacing="xs" position="apart">
+      <Group spacing="xs" position="apart" className={homeBlockClasses.header}>
         <Group noWrap>
-          <Title className={classes.title} order={1} lineClamp={1}>
+          <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
             {metadata.title ?? collection.name}{' '}
           </Title>
           {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
@@ -199,7 +189,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
         {metadata.link && (
           <Link href={metadata.link} passHref>
             <Button
-              className={classes.expandButton}
+              className={homeBlockClasses.expandButton}
               component="a"
               variant="subtle"
               rightIcon={<IconArrowRight size={16} />}
@@ -227,7 +217,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
             <Icon />
           </ThemeIcon>
         )}
-        <Title className={classes.title} order={1} lineClamp={1}>
+        <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
           {metadata.title ?? collection.name}
         </Title>
       </Group>
