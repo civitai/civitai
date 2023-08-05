@@ -128,7 +128,22 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
         </Group>
 
         <Text>
-          <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+          <ReactMarkdown
+            allowedElements={['a']}
+            components={{
+              a: ({ node, ...props }) => {
+                return (
+                  <Link href={props.href as string}>
+                    <a target={props.href?.includes('http') ? '_blank' : '_self'}>
+                      {props.children[0]}
+                    </a>
+                  </Link>
+                );
+              },
+            }}
+            unwrapDisallowed
+            className="markdown-content"
+          >
             {announcement.content}
           </ReactMarkdown>
         </Text>

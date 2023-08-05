@@ -136,6 +136,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
   }
 
   const { metadata } = homeBlock;
+  if (!metadata.link) metadata.link = `/collections/${collection.id}`;
   const itemType = collection.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
