@@ -29,7 +29,6 @@ import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
-import { useIsMobile } from '~/hooks/useIsMobile';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -39,7 +38,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function Home() {
-  const isMobile = useIsMobile();
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery();
@@ -120,7 +118,7 @@ export default function Home() {
                       >
                         Models
                       </Title>
-                      <Popover withArrow width={380} position={isMobile ? 'bottom' : 'right-start'}>
+                      <Popover withArrow width={380}>
                         <Popover.Target>
                           <Box
                             display="inline-block"
