@@ -122,7 +122,6 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
   });
   const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
-  const isMobile = useIsMobile();
 
   const { collection } = homeBlock || {};
   const items = useMemo(() => shuffle(collection?.items ?? []).slice(0, 14), [collection?.items]);
@@ -147,7 +146,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
             {metadata.title ?? collection.name}{' '}
           </Title>
           {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
-            <Popover withArrow width={380} position={isMobile ? 'bottom' : 'right-start'}>
+            <Popover withArrow width={380}>
               <Popover.Target>
                 <Box
                   display="inline-block"

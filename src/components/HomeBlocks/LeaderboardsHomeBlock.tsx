@@ -87,7 +87,7 @@ export const LeaderboardsHomeBlock = ({ ...props }: Props) => {
 
 export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
-  const { columnWidth, columnGap, columnCount, combinedWidth } = useMasonryContainerContext();
+  const { columnWidth, columnGap, columnCount } = useMasonryContainerContext();
   const itemCount = homeBlock?.leaderboards?.length ?? 0;
   const { classes, cx } = useStyles({
     itemCount,
@@ -142,11 +142,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
         <HomeBlockHeaderMeta metadata={metadata} />
       </div>
 
-      <ScrollArea
-        w={combinedWidth}
-        viewportRef={viewportRef}
-        onScrollPositionChange={onScrollPositionChange}
-      >
+      <ScrollArea viewportRef={viewportRef} onScrollPositionChange={onScrollPositionChange}>
         <div className={classes.grid}>
           {leaderboards.map((leaderboard) => {
             const displayedResults = leaderboard.results.slice(0, 4);
