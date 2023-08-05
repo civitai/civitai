@@ -1,4 +1,14 @@
-import { ActionIcon, Button, Card, Divider, Group, Stack, Text, createStyles } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Card,
+  Divider,
+  Group,
+  Stack,
+  Text,
+  createStyles,
+  ScrollArea,
+} from '@mantine/core';
 import { IconArrowRight, IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { Fragment, useEffect, useRef, useState } from 'react';
@@ -53,14 +63,8 @@ const useStyles = createStyles<
     gridTemplateColumns: `repeat(${itemCount}, ${columnWidth}px)`,
     gridTemplateRows: 'auto',
     gridAutoRows: 0,
-    scrollSnapType: 'x mandatory',
-    overflowX: 'auto',
+    overflowX: 'visible',
     paddingBottom: theme.spacing.md,
-
-    '& > *': {
-      scrollSnapAlign: 'center',
-      scrollSnapStop: 'always',
-    },
 
     [theme.fn.smallerThan('sm')]: {
       gridTemplateColumns: `repeat(${itemCount}, 280px)`,
@@ -83,22 +87,14 @@ export const LeaderboardsHomeBlock = ({ ...props }: Props) => {
 
 export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
-  const { columnWidth, columnGap, columnCount } = useMasonryContainerContext();
+  const { columnWidth, columnGap, columnCount, combinedWidth } = useMasonryContainerContext();
   const { classes, cx } = useStyles({
     itemCount: homeBlock?.leaderboards?.length ?? 0,
     columnGap,
     columnWidth,
   });
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [itemScrollPosition, setItemScrollPosition] = useState(0);
-
-  useEffect(() => {
-    setItemScrollPosition(0);
-    viewportRef.current?.scrollTo({
-      left: 0,
-      behavior: 'smooth',
-    });
-  }, [columnGap]);
+  const [scrollPosition, onScrollPositionChange] = useState({ x: 0, y: 0 });
 
   if (isLoading) {
     return <LeaderboardsHomeBlockSkeleton />;
@@ -111,26 +107,31 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
   const { leaderboards } = homeBlock;
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
 
-  const atStart = itemScrollPosition === 0;
-  const atEnd = itemScrollPosition >= columnCount - 1;
+  const atStart = scrollPosition.x === 0;
+  const atEnd = scrollPosition.x >= (columnCount - 1) * (columnWidth + columnGap);
   const scrollLeft = () => {
     const scrollValue = columnWidth + columnGap;
-    const updatedScrollPosition = Math.max(0, itemScrollPosition - 1);
+    const validPositions = Array.from(
+      { length: columnCount },
+      (_, idx) => scrollValue * idx
+    ).reverse();
+    const nextPosition = validPositions.find((pos) => pos < scrollPosition.x) ?? 0;
     viewportRef.current?.scrollTo({
-      left: scrollValue * updatedScrollPosition,
+      left: nextPosition,
       behavior: 'smooth',
     });
-    setItemScrollPosition(updatedScrollPosition);
   };
   const scrollRight = () => {
     const scrollValue = columnWidth + columnGap;
-    const updatedScrollPosition = Math.min(columnCount - 1, itemScrollPosition + 1);
+    const validPositions = Array.from({ length: columnCount }, (_, idx) => scrollValue * idx);
+    const nextPosition =
+      validPositions.find((pos) => pos > scrollPosition.x) ??
+      (columnCount - 1) * (columnWidth + columnGap);
 
     viewportRef.current?.scrollTo({
-      left: scrollValue * updatedScrollPosition,
+      left: nextPosition,
       behavior: 'smooth',
     });
-    setItemScrollPosition(updatedScrollPosition);
   };
 
   return (
@@ -139,44 +140,49 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
         <HomeBlockHeaderMeta metadata={metadata} />
       </div>
 
-      <div className={classes.grid} ref={viewportRef}>
-        {leaderboards.map((leaderboard) => {
-          const displayedResults = leaderboard.results.slice(0, 4);
+      <ScrollArea
+        w={combinedWidth}
+        viewportRef={viewportRef}
+        onScrollPositionChange={onScrollPositionChange}
+      >
+        <div className={classes.grid}>
+          {leaderboards.map((leaderboard) => {
+            const displayedResults = leaderboard.results.slice(0, 4);
 
-          return (
-            <Card key={leaderboard.id} radius="md" w="100%" h="100%">
-              <Group position="apart" align="center">
-                <Text size="lg">{leaderboard.title}</Text>
-                <Link href={`/leaderboard/${leaderboard.id}`} passHref>
-                  <Button
-                    rightIcon={<IconArrowRight size={16} />}
-                    variant="subtle"
-                    size="xs"
-                    compact
-                  >
-                    More
-                  </Button>
-                </Link>
-              </Group>
-              <Stack mt="md">
-                {displayedResults.length === 0 && (
-                  <Text color="dimmed">No results have been published for this leaderboard</Text>
-                )}
-                {displayedResults.map((result, idx) => {
-                  const isLastItem = idx === leaderboard.results.length - 1;
+            return (
+              <Card key={leaderboard.id} radius="md" w="100%" h="100%">
+                <Group position="apart" align="center">
+                  <Text size="lg">{leaderboard.title}</Text>
+                  <Link href={`/leaderboard/${leaderboard.id}`} passHref>
+                    <Button
+                      rightIcon={<IconArrowRight size={16} />}
+                      variant="subtle"
+                      size="xs"
+                      compact
+                    >
+                      More
+                    </Button>
+                  </Link>
+                </Group>
+                <Stack mt="md">
+                  {displayedResults.length === 0 && (
+                    <Text color="dimmed">No results have been published for this leaderboard</Text>
+                  )}
+                  {displayedResults.map((result, idx) => {
+                    const isLastItem = idx === leaderboard.results.length - 1;
 
-                  return (
-                    <Fragment key={idx}>
-                      <LeaderHomeBlockCreatorItem leaderboard={leaderboard} data={result} />
-                      {!isLastItem && <Divider />}
-                    </Fragment>
-                  );
-                })}
-              </Stack>
-            </Card>
-          );
-        })}
-
+                    return (
+                      <Fragment key={idx}>
+                        <LeaderHomeBlockCreatorItem leaderboard={leaderboard} data={result} />
+                        {!isLastItem && <Divider />}
+                      </Fragment>
+                    );
+                  })}
+                </Stack>
+              </Card>
+            );
+          })}
+        </div>
         <ActionIcon
           className={cx(classes.nextButton, { [classes.hidden]: atStart })}
           radius="xl"
@@ -199,7 +205,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
         >
           <IconChevronRight />
         </ActionIcon>
-      </div>
+      </ScrollArea>
     </Stack>
   );
 };
