@@ -88,8 +88,9 @@ export const LeaderboardsHomeBlock = ({ ...props }: Props) => {
 export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
   const { columnWidth, columnGap, columnCount, combinedWidth } = useMasonryContainerContext();
+  const itemCount = homeBlock?.leaderboards?.length ?? 0;
   const { classes, cx } = useStyles({
-    itemCount: homeBlock?.leaderboards?.length ?? 0,
+    itemCount,
     columnGap,
     columnWidth,
   });
@@ -108,7 +109,8 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;
 
   const atStart = scrollPosition.x === 0;
-  const atEnd = scrollPosition.x >= (columnCount - 1) * (columnWidth + columnGap);
+  const atEnd =
+    itemCount <= columnCount || scrollPosition.x >= (columnCount - 1) * (columnWidth + columnGap);
   const scrollLeft = () => {
     const scrollValue = columnWidth + columnGap;
     const validPositions = Array.from(
