@@ -35,7 +35,7 @@ import ReactMarkdown from 'react-markdown';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 
 const useStyles = createStyles<string, { count: number; columnCount: number }>(
-  (theme, { count, columnCount }, getRef) => {
+  (theme, { count, columnCount }) => {
     return {
       grid: {
         display: 'grid',
