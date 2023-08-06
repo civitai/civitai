@@ -73,6 +73,11 @@ export default defineNextConfig(withAxiom({
         permanent: true,
       },
       {
+        source: '/tiktok',
+        destination: 'https://www.tiktok.com/@hellocivitai',
+        permanent: true,
+      },
+      {
         source: '/ideas',
         destination: 'https://github.com/civitai/civitai/discussions/categories/ideas',
         permanent: true,

@@ -18,6 +18,7 @@ import {
   IconBrandGithub,
   IconBrandInstagram,
   IconBrandReddit,
+  IconBrandTiktok,
   IconBrandTwitter,
 } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -142,6 +143,9 @@ export function AppFooter() {
           </ActionIcon>
           <ActionIcon component="a" href="/instagram" target="_blank" {...actionIconProps}>
             <IconBrandInstagram size={20} />
+          </ActionIcon>
+          <ActionIcon component="a" href="/tiktok" target="_blank" {...actionIconProps}>
+            <IconBrandTiktok strokeWidth={2} size={20} />
           </ActionIcon>
           <ActionIcon component="a" href="/reddit" target="_blank" {...actionIconProps}>
             <IconBrandReddit size={20} />
