@@ -54,7 +54,7 @@ export default defineNextConfig(withAxiom({
       },
       {
         source: '/discord',
-        destination: 'https://discord.gg/UwX5wKwm6c',
+        destination: 'https://discord.gg/civitai',
         permanent: true,
       },
       {
@@ -65,6 +65,11 @@ export default defineNextConfig(withAxiom({
       {
         source: '/reddit',
         destination: 'https://reddit.com/r/civitai',
+        permanent: true,
+      },
+      {
+        source: '/instagram',
+        destination: 'https://www.instagram.com/hellocivitai/',
         permanent: true,
       },
       {
