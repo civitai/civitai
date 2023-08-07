@@ -43,32 +43,45 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const updateSearchableAttributesTask = await index.updateSearchableAttributes([
+  const settings = await index.getSettings();
+
+  const searchableAttributes = [
     'name',
     'user.username',
     'category.id',
     'hashes',
     'tags',
     'triggerWords',
-  ]);
+  ];
 
-  console.log(
-    'onIndexSetup :: updateSearchableAttributesTask created',
-    updateSearchableAttributesTask
-  );
+  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+    const updateSearchableAttributesTask = await index.updateSearchableAttributes(
+      searchableAttributes
+    );
+    console.log(
+      'onIndexSetup :: updateSearchableAttributesTask created',
+      updateSearchableAttributesTask
+    );
+  }
 
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes([
+  const sortableAttributes = [
     'createdAt',
     'metrics.commentCount',
     'metrics.favoriteCount',
     'metrics.downloadCount',
     'metrics.rating',
     'metrics.ratingCount',
-  ]);
+  ];
 
-  console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+  if (JSON.stringify(sortableAttributes) !== JSON.stringify(settings.sortableAttributes)) {
+    const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
+    console.log(
+      'onIndexSetup :: sortableFieldsAttributesTask created',
+      sortableFieldsAttributesTask
+    );
+  }
 
-  const updateRankingRulesTask = await index.updateRankingRules([
+  const rankingRules = [
     'attribute',
     'metrics.weightedRating:desc',
     'words',
@@ -76,20 +89,24 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'sort',
     'exactness',
     'typo',
-  ]);
+  ];
 
-  console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+    console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  }
 
-  const updateFilterableAttributesTask = await index.updateFilterableAttributes([
-    'nsfw',
-    'type',
-    'hashes',
-  ]);
+  const filterableAttributes = ['nsfw', 'type', 'hashes'];
 
-  console.log(
-    'onIndexSetup :: updateFilterableAttributesTask created',
-    updateFilterableAttributesTask
-  );
+  if (JSON.stringify(filterableAttributes) !== JSON.stringify(settings.filterableAttributes)) {
+    const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+      filterableAttributes
+    );
+    console.log(
+      'onIndexSetup :: updateFilterableAttributesTask created',
+      updateFilterableAttributesTask
+    );
+  }
 };
 
 const onFetchItemsToIndex = async ({
