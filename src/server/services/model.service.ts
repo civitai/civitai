@@ -359,6 +359,9 @@ export const getModelsWithImagesAndModelVersions = async ({
           createdAt: true,
           modelVersionGenerationCoverage: { select: { workers: true } },
         },
+        where: {
+          status: ModelStatus.Published,
+        },
       },
       user: { select: simpleUserSelect },
       hashes: {
