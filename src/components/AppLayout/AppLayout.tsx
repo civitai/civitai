@@ -2,8 +2,6 @@ import {
   AppShell,
   Button,
   Center,
-  Group,
-  Navbar,
   Stack,
   Text,
   ThemeIcon,
@@ -13,12 +11,21 @@ import {
 import { IconBan } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import React from 'react';
+import { InstantSearch } from 'react-instantsearch-hooks-web';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader } from '~/components/AppLayout/AppHeader';
 import { FloatingGenerationButton } from '~/components/ImageGeneration/FloatingGenerationButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { env } from '~/env/client.mjs';
+
+const searchClient = instantMeiliSearch(
+  env.NEXT_PUBLIC_SEARCH_HOST as string,
+  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  { primaryKey: 'id' }
+);
 
 export function AppLayout({ children, navbar }: Props) {
   const theme = useMantineTheme();
@@ -27,7 +34,7 @@ export function AppLayout({ children, navbar }: Props) {
   const flags = useFeatureFlags();
 
   return (
-    <>
+    <InstantSearch searchClient={searchClient} indexName="models" routing>
       <AppShell
         padding="md"
         header={!isBanned ? <AppHeader /> : undefined}
@@ -69,7 +76,7 @@ export function AppLayout({ children, navbar }: Props) {
           </Center>
         )}
       </AppShell>
-    </>
+    </InstantSearch>
   );
 }
 

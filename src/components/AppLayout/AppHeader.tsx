@@ -64,6 +64,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { openSpotlight } from '@mantine/spotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 
 const HEADER_HEIGHT = 70;
 
@@ -447,7 +448,8 @@ export function AppHeader() {
           className={features.enhancedSearch ? classes.searchArea : undefined}
         >
           {!features.enhancedSearch ? (
-            <ListSearch onSearch={() => closeBurger()} />
+            // <ListSearch onSearch={() => closeBurger()} />
+            <AutocompleteSearch />
           ) : (
             <QuickSearch className={classes.search} />
           )}
