@@ -421,7 +421,11 @@ export default function ModelDetailsV2({
   const modelDoesntExist = !model;
   const modelDeleted = !!model && !!model.deletedAt && model.status === ModelStatus.Deleted;
   const modelNotVisible =
-    model && !isOwner && !isModerator && model.status !== ModelStatus.Published;
+    model &&
+    !isOwner &&
+    !isModerator &&
+    // Check if published or has any model versions
+    (model.status !== ModelStatus.Published || !model.modelVersions.length);
   if (modelDeleted && !isOwner && !isModerator)
     return (
       <Center p="xl">
