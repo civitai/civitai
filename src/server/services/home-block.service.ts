@@ -241,8 +241,8 @@ export const getHomeBlockData = async ({
         ...homeBlock,
         metadata,
         announcements: announcements.sort((a, b) => {
-          const aIndex = a.metadata.index ?? 999;
-          const bIndex = b.metadata.index ?? 999;
+          const aIndex = a.metadata?.index ?? 999;
+          const bIndex = b.metadata?.index ?? 999;
 
           return aIndex - bIndex;
         }),
