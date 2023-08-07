@@ -65,6 +65,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const sortableAttributes = [
+    // sort
     'createdAt',
     'metrics.commentCount',
     'metrics.favoriteCount',
@@ -73,7 +74,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'metrics.ratingCount',
   ];
 
-  if (JSON.stringify(sortableAttributes) !== JSON.stringify(settings.sortableAttributes)) {
+  // Meilisearch stores sorted.
+  if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
     const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
     console.log(
       'onIndexSetup :: sortableFieldsAttributesTask created',
@@ -96,9 +98,12 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['nsfw', 'type', 'hashes'];
+  const filterableAttributes = ['hashes', 'nsfw', 'type'];
 
-  if (JSON.stringify(filterableAttributes) !== JSON.stringify(settings.filterableAttributes)) {
+  if (
+    // Meilisearch stores sorted.
+    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
       filterableAttributes
     );
