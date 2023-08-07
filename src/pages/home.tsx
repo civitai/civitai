@@ -80,6 +80,7 @@ export default function Home() {
             <Loader />
           </Center>
         )}
+
         <Box
           sx={(theme) => ({
             '& > *:nth-child(even)': {

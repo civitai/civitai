@@ -15,7 +15,6 @@ import ReactMarkdown from 'react-markdown';
 import { GetAnnouncement } from '~/server/services/announcement.service';
 import Link from 'next/link';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
@@ -83,7 +82,6 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
   const { classes, cx } = useStyles({ color: announcement.color });
   const announcementMetadata = announcement.metadata;
   const { actions, image } = announcementMetadata || {};
-  const isMobile = useIsMobile();
 
   const dismissible = announcementMetadata?.dismissible ?? true;
 
@@ -153,7 +151,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
             actions.map((action, index) => {
               if (action.type === 'button') {
                 return (
-                  <Grid.Col key={index} span={isMobile ? 'auto' : 'content'}>
+                  <Grid.Col key={index} span="auto">
                     <Link href={action.link} passHref>
                       <Button
                         component="a"
