@@ -98,7 +98,15 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['hashes', 'nsfw', 'type'];
+  const filterableAttributes = [
+    'hashes',
+    'nsfw',
+    'type',
+    'checkpointType',
+    'tags',
+    'modelVersion.baseModel',
+    'status',
+  ];
 
   if (
     // Meilisearch stores sorted.
@@ -152,6 +160,7 @@ const onFetchItemsToIndex = async ({
       locked: true,
       earlyAccessDeadline: true,
       mode: true,
+      checkpointType: true,
       // Joins:
       user: {
         select: userWithCosmeticsSelect,
@@ -165,6 +174,7 @@ const onFetchItemsToIndex = async ({
           createdAt: true,
           modelVersionGenerationCoverage: { select: { workers: true } },
           trainedWords: true,
+          baseModel: true,
         },
         where: {
           status: ModelStatus.Published,
