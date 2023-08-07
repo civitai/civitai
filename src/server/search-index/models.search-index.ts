@@ -144,6 +144,9 @@ const onFetchItemsToIndex = async ({
           modelVersionGenerationCoverage: { select: { workers: true } },
           trainedWords: true,
         },
+        where: {
+          status: ModelStatus.Published,
+        },
       },
       tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
       hashes: {
