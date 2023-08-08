@@ -115,6 +115,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
       filterableAttributes
     );
+
     console.log(
       'onIndexSetup :: updateFilterableAttributesTask created',
       updateFilterableAttributesTask
