@@ -12,7 +12,7 @@ import {
   MultiSelect,
   Select,
 } from '@mantine/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   InstantSearch,
   useRefinementList,
@@ -51,7 +51,7 @@ export default function Search() {
             position: 'fixed',
             left: 0,
             top: 'var(--mantine-header-height,50px)',
-            width: '350px',
+            width: '377px',
             overflowY: 'auto',
             padding: theme.spacing.md,
           })}
@@ -80,7 +80,7 @@ export default function Search() {
           <SearchableMultiSelectRefinementList title="Tags" attribute="tags" limit={10} />
         </Stack>
 
-        <Stack pl={350} w="100%">
+        <Stack pl={377} w="100%">
           <Title>Models Search experience</Title>
           <HitList />
         </Stack>
@@ -192,10 +192,10 @@ function HitList() {
 
   // #region [infinite data fetching]
   useEffect(() => {
-    if (inView && status === 'idle') {
+    if (inView && status === 'idle' && !isLastPage) {
       showMore?.();
     }
-  }, [status, inView, showMore]);
+  }, [status, inView, showMore, isLastPage]);
 
   return (
     <Stack>
