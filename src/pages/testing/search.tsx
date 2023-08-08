@@ -10,6 +10,7 @@ import {
   Loader,
   Center,
   MultiSelect,
+  Select,
 } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -37,7 +38,12 @@ const searchClient = instantMeiliSearch(
 
 export default function Search() {
   return (
-    <InstantSearch searchClient={searchClient} indexName="models" routing={true}>
+    <InstantSearch
+      searchClient={searchClient}
+      // Sets default sorting:
+      indexName="models:metrics.weightedRating:desc"
+      routing={true}
+    >
       <Container fluid>
         <Stack
           sx={(theme) => ({
@@ -50,12 +56,14 @@ export default function Search() {
             padding: theme.spacing.md,
           })}
         >
-          <Sorter
+          <SortBy
+            title="Sort models by"
             items={[
-              { label: 'Most downloaded', value: 'metrics.downloadCount' },
-              { label: 'Highest Rated', value: 'metrics.rating' },
-              { label: 'Favorited Count', value: 'metrics.favoriteCount' },
-              { label: 'Newest', value: 'createdAt' },
+              { label: 'Highest Rated', value: 'models:metrics.weightedRating:desc' },
+              { label: 'Most downloaded', value: 'models:metrics.downloadCount:desc' },
+              { label: 'Most Liked', value: 'models:metrics.favoriteCount:desc' },
+              { label: 'Most discussed', value: 'models:metrics.commentCount:desc' },
+              { label: 'Newest', value: 'models:createdAt:desc' },
             ]}
           />
           <ChipRefinementList
@@ -224,10 +232,28 @@ function HitList() {
   );
 }
 
-function Sorter(props: SortByProps) {
-  const x = useSortBy(props);
+function SortBy({ title, ...props }: SortByProps & { title: string }) {
+  const { options, refine, currentRefinement, ...args } = useSortBy(props);
 
-  console.log(x, 'sorter');
+  console.log(currentRefinement, args);
 
-  return null;
+  return (
+    <Accordion defaultValue={title} variant="filled">
+      <Accordion.Item value={title}>
+        <Accordion.Control>
+          <Text size="md" weight={500}>
+            {title}
+          </Text>
+        </Accordion.Control>
+        <Accordion.Panel>
+          <Select
+            name="sort"
+            data={options}
+            value={currentRefinement}
+            onChange={(value) => refine(value)}
+          />
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
 }
