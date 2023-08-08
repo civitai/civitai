@@ -38,6 +38,9 @@ import { constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { PostCategories } from '~/components/Post/Infinite/PostCategories';
+import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -84,7 +87,7 @@ const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByI
           />
           <PeriodFilter type="images" value={period} onChange={(x) => replace({ period: x })} />
         </Group>
-        <CategoryTags />
+        <ImageCategories />
         <ImagesInfinite
           filters={{
             ...query,
@@ -109,7 +112,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
           <SortFilter type="posts" value={sort} onChange={(sort) => set({ sort: sort as any })} />
           <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
         </Group>
-        <CategoryTags />
+        <PostCategories />
         <PostsInfinite
           filters={{
             ...query,
@@ -139,7 +142,7 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
           />
           <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
         </Group>
-        <CategoryTags />
+        <ArticleCategories />
         <ArticlesInfinite
           filters={{
             ...query,
