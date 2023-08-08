@@ -3,13 +3,14 @@ import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useRef } from 'react';
 
 export const ClearableAutoComplete = forwardRef<HTMLInputElement, Props>(
-  ({ clearable = false, onClear, ...props }, ref) => {
+  ({ clearable = false, onClear, rightSection, ...props }, ref) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const mergedRef = useMergedRef(inputRef, ref);
 
-    const closeButton = props.value && (
+    const closeButton = onClear && (
       <CloseButton
         variant="transparent"
+        title="clear search"
         onClick={() => {
           const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
             window.HTMLInputElement.prototype,
@@ -19,19 +20,23 @@ export const ClearableAutoComplete = forwardRef<HTMLInputElement, Props>(
 
           const innerEvent = new Event('input', { bubbles: true });
           inputRef.current?.dispatchEvent(innerEvent);
-          onClear?.();
+          onClear();
         }}
       />
     );
 
     return (
-      <Autocomplete ref={mergedRef} {...props} rightSection={clearable ? closeButton : null} />
+      <Autocomplete
+        ref={mergedRef}
+        {...props}
+        rightSection={clearable ? closeButton : rightSection}
+      />
     );
   }
 );
 ClearableAutoComplete.displayName = 'ClearableAutoComplete';
 
-type Props = Omit<AutocompleteProps, 'rightSection'> & {
+type Props = AutocompleteProps & {
   clearable?: boolean;
   onClear?: () => void;
 };

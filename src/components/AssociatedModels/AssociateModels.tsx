@@ -179,7 +179,7 @@ export function AssociateModels({
           itemComponent={SearchItem}
           nothingFound={isFetching ? 'Searching...' : 'Nothing found'}
           limit={20}
-          clearable
+          clearable={!!query}
         />
       )}
 

@@ -1,82 +1,106 @@
-import { autocomplete, AutocompleteOptions } from '@algolia/autocomplete-js';
-import {
-  getMeilisearchResults,
-  meilisearchAutocompleteClient,
-} from '@meilisearch/autocomplete-client';
-import { useEffect, useRef, useState } from 'react';
-import { usePagination, useSearchBox } from 'react-instantsearch-hooks-web';
-import { env } from '~/env/client.mjs';
+import { AutocompleteItem, Code, HoverCard, Text, createStyles } from '@mantine/core';
+import { getHotkeyHandler, useHotkeys } from '@mantine/hooks';
+import { IconSearch } from '@tabler/icons-react';
+import type { Hit } from 'instantsearch.js';
+import { debounce } from 'lodash-es';
+import { useRouter } from 'next/router';
+import { forwardRef, useMemo, useRef } from 'react';
+import { Highlight, SearchBoxProps, useHits, useSearchBox } from 'react-instantsearch-hooks-web';
+import { ModelGetAll } from '~/types/router';
 import { ClearableAutoComplete } from '../ClearableAutoComplete/ClearableAutoComplete';
 
-const searchClient = meilisearchAutocompleteClient({
-  url: env.NEXT_PUBLIC_SEARCH_HOST as string,
-  apiKey: env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  options: { primaryKey: 'id' },
-});
-
-type Props = Partial<AutocompleteOptions<any>> & {
+type Props = SearchBoxProps & {
   className?: string;
 };
+type ModelGetAllItem = ModelGetAll['items'][number];
 
-export function AutocompleteSearch({ className, ...autocompleteProps }: Props) {
-  const autocompleteContainer = useRef<HTMLInputElement>(null);
+export function AutocompleteSearch({ className, ...searchBoxProps }: Props) {
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const { query, refine: setQuery } = useSearchBox();
-  const { refine: setPage } = usePagination();
+  const { query, refine: setQuery } = useSearchBox(searchBoxProps);
+  const { hits } = useHits<ModelGetAllItem>();
+  const debouncedSetQuery = useMemo(() => debounce(setQuery, 300), [setQuery]);
 
-  const [instantSearchUiState, setInstantSearchUiState] = useState<{ query: string }>({ query });
+  const focusInput = () => inputRef.current?.focus();
+  const blurInput = () => inputRef.current?.blur();
 
-  useEffect(() => {
-    setQuery(instantSearchUiState.query);
-    setPage(0);
-  }, [instantSearchUiState, setPage, setQuery]);
+  useHotkeys([
+    ['/', focusInput],
+    ['mod+k', focusInput],
+  ]);
 
-  useEffect(() => {
-    if (!autocompleteContainer.current) {
-      return;
-    }
-
-    const autocompleteInstance = autocomplete({
-      ...autocompleteProps,
-      container: autocompleteContainer.current,
-      initialState: { query },
-      onReset() {
-        setInstantSearchUiState({ query: '' });
-      },
-      onSubmit({ state }) {
-        setInstantSearchUiState({ query: state.query });
-      },
-      onStateChange({ prevState, state }) {
-        if (prevState.query !== state.query) {
-          setInstantSearchUiState({
-            query: state.query,
-          });
-        }
-      },
-      getSources({ query }) {
-        return [
-          {
-            sourceId: 'steam-video-games',
-            getItems() {
-              return getMeilisearchResults({
-                searchClient,
-                queries: [{ indexName: 'models', query }],
-              });
-            },
-            templates: {
-              item({ item, components, html }) {
-                return html`<div>
-                  <div>${item.name}</div>
-                </div>`;
-              },
-            },
-          },
-        ];
-      },
-    });
-
-    return () => autocompleteInstance.destroy();
-  }, [autocompleteProps, query]);
-
-  return <div ref={autocompleteContainer} className={className} />;
+  return (
+    <ClearableAutoComplete
+      ref={inputRef}
+      placeholder="Search models, users, images, tags, etc."
+      type="search"
+      nothingFound="No results found"
+      icon={<IconSearch />}
+      limit={10}
+      defaultValue={query}
+      data={hits.map((hit) => ({ value: hit.name, hit }))}
+      onChange={debouncedSetQuery}
+      onKeyDown={getHotkeyHandler([['Escape', blurInput]])}
+      onClear={() => setQuery('')}
+      onItemSubmit={(item) => router.push(`/search?q=${encodeURIComponent(item.value)}`)}
+      itemComponent={SearchItem}
+      rightSection={
+        <HoverCard withArrow width={300} zIndex={10000} shadow="sm" openDelay={500}>
+          <HoverCard.Target>
+            <Text
+              sx={(theme) => ({
+                border: `1px solid ${
+                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                }`,
+                borderRadius: theme.radius.sm,
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                color: theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                textAlign: 'center',
+                width: 24,
+                userSelect: 'none',
+              })}
+              weight="bold"
+            >
+              /
+            </Text>
+          </HoverCard.Target>
+          <HoverCard.Dropdown>
+            <Text size="sm" color="yellow" weight={500}>
+              Pro-tip: Quick search faster!
+            </Text>
+            <Text size="xs" lh={1.2}>
+              Open the quick search without leaving your keyboard by tapping the <Code>/</Code> key
+              from anywhere and just start typing.
+            </Text>
+          </HoverCard.Dropdown>
+        </HoverCard>
+      }
+      // prevents default filtering behavior
+      filter={() => true}
+      clearable={query.length > 0}
+    />
+  );
 }
+
+type SearchItemProps = AutocompleteItem & { hit: Hit<ModelGetAllItem> };
+
+const useSearchItemStyles = createStyles((theme) => ({
+  highlighted: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.yellow[5] : theme.colors.yellow[2],
+  },
+}));
+
+const SearchItem = forwardRef<HTMLDivElement, SearchItemProps>(({ value, hit, ...props }, ref) => {
+  const { classes } = useSearchItemStyles();
+
+  return (
+    <div ref={ref} {...props}>
+      <Text>
+        <Highlight attribute="name" hit={hit} classNames={classes} />
+      </Text>
+    </div>
+  );
+});
+SearchItem.displayName = 'SearchItem';
