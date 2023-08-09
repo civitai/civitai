@@ -963,42 +963,86 @@ export const bulkSaveItems = async ({
     articleIds.length > 0 &&
     (collection.type === CollectionType.Article || collection.type === null)
   ) {
-    data = articleIds.map((articleId) => ({
-      articleId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingArticleIds = (
+      await dbRead.collectionItem.findMany({
+        select: { articleId: true },
+        where: { articleId: { in: articleIds }, collectionId },
+      })
+    ).map((item) => item.articleId);
+
+    data = articleIds
+      .filter((id) => !existingArticleIds.includes(id))
+      .map((articleId) => ({
+        articleId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
   if (
     modelIds.length > 0 &&
     (collection.type === CollectionType.Model || collection.type === null)
   ) {
-    data = modelIds.map((modelId) => ({
-      modelId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingModelIds = (
+      await dbRead.collectionItem.findMany({
+        select: { modelId: true },
+        where: { modelId: { in: modelIds }, collectionId },
+      })
+    ).map((item) => item.modelId);
+
+    data = modelIds
+      .filter((id) => !existingModelIds.includes(id))
+      .map((modelId) => ({
+        modelId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
   if (
     imageIds.length > 0 &&
     (collection.type === CollectionType.Image || collection.type === null)
   ) {
-    data = imageIds.map((imageId) => ({
-      imageId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingImageIds = (
+      await dbRead.collectionItem.findMany({
+        select: { imageId: true },
+        where: { imageId: { in: imageIds }, collectionId },
+      })
+    ).map((item) => item.imageId);
+
+    data = imageIds
+      .filter((id) => !existingImageIds.includes(id))
+      .map((imageId) => ({
+        imageId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
   if (postIds.length > 0 && (collection.type === CollectionType.Post || collection.type === null)) {
-    data = postIds.map((postId) => ({
-      postId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingPostIds = (
+      await dbRead.collectionItem.findMany({
+        select: { postId: true },
+        where: { postId: { in: postIds }, collectionId },
+      })
+    ).map((item) => item.postId);
+
+    data = postIds
+      .filter((id) => !existingPostIds.includes(id))
+      .map((postId) => ({
+        postId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
 
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
