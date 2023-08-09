@@ -235,7 +235,9 @@ function HitList() {
 function SortBy({ title, ...props }: SortByProps & { title: string }) {
   const { options, refine, currentRefinement, ...args } = useSortBy(props);
 
-  console.log(currentRefinement, args);
+  if (options.length === 0) {
+    return null;
+  }
 
   return (
     <Accordion defaultValue={title} variant="filled">
@@ -250,7 +252,7 @@ function SortBy({ title, ...props }: SortByProps & { title: string }) {
             name="sort"
             data={options}
             value={currentRefinement}
-            onChange={(value) => refine(value)}
+            onChange={(value) => refine(value || options[0].value)}
           />
         </Accordion.Panel>
       </Accordion.Item>
