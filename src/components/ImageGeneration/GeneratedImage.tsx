@@ -14,7 +14,7 @@ export function GeneratedImage({
 }) {
   const [status, setStatus] = useState<GeneratedImageStatus>('loading');
   const ref = useRef<HTMLImageElement>(null);
-  const initializedRef = useRef(request.status !== GenerationRequestStatus.Succeeded);
+  const initializedRef = useRef(request.status === GenerationRequestStatus.Succeeded);
 
   const handleImageClick = () => {
     if (!image) return;
