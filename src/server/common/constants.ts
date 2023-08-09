@@ -64,6 +64,7 @@ export const constants = {
     'Config',
     'Archive',
   ],
+  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32'],
@@ -160,6 +161,8 @@ export const constants = {
 export const POST_IMAGE_LIMIT = 20;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
+
+export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 export const baseModelSets: Record<string, BaseModel[]> = {

@@ -437,6 +437,7 @@ model ModelVersion {
   fromImportId         Int?
   inaccurate           Boolean       @default(false)
   baseModel            String
+  baseModelType        String?
   meta                 Json          @default("{}")
   earlyAccessTimeFrame Int           @default(0)
 
