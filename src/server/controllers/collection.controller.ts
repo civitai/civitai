@@ -312,8 +312,10 @@ export const collectionItemsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
-  const limit = input.limit + 1;
-  const collectionItems = await getCollectionItemsByCollectionId({
+  // Safeguard against missing items that might be in collection but return null.
+  // due to preferences and/or other statuses.
+  const limit = 2 * input.limit;
+  let collectionItems = await getCollectionItemsByCollectionId({
     input: { ...input, limit },
     user: ctx.user,
   });
@@ -321,8 +323,9 @@ export const collectionItemsInfiniteHandler = async ({
   let nextCursor: number | undefined;
 
   if (collectionItems.length > input.limit) {
-    const nextItem = collectionItems.pop();
+    const nextItem = collectionItems[input.limit + 1];
     nextCursor = nextItem?.id;
+    collectionItems = collectionItems.slice(0, input.limit);
   }
 
   return {

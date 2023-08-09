@@ -87,7 +87,6 @@ const useStore = create<StoreState>()(
 );
 
 const ReviewCollection = () => {
-  const { ref, inView } = useInView();
   const router = useRouter();
   const { collectionId: collectionIdString } = router.query;
   const collectionId = Number(collectionIdString);
@@ -119,10 +118,6 @@ const ReviewCollection = () => {
     setStatuses(value as CollectionItemStatus[]);
     deselectAll();
   };
-
-  useEffect(() => {
-    if (inView && !isLoading && !isRefetching) fetchNextPage();
-  }, [fetchNextPage, inView]);
 
   return (
     <Container size="xl" py="xl">
@@ -182,11 +177,6 @@ const ReviewCollection = () => {
           />
         ) : (
           <NoContent mt="lg" message="There are no images that need review" />
-        )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
         )}
       </Stack>
     </Container>
