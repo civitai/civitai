@@ -367,11 +367,19 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               }}
             >
               <UserAvatar
+                withUsername
                 user={reviewData.user}
                 avatarProps={{ radius: 'md', size: 32 }}
                 subText={
-                  reviewData.createdAt ? (
-                    <Text size="sm">Added to collection: {formatDate(reviewData.createdAt)}</Text>
+                  reviewData.itemAddedAt ? (
+                    <>
+                      <Text size="sm">
+                        Added to collection: {formatDate(reviewData.itemAddedAt)}
+                      </Text>
+                      {reviewData.dataCreatedAt && (
+                        <Text size="sm">Created: {formatDate(reviewData.dataCreatedAt)}</Text>
+                      )}
+                    </>
                   ) : undefined
                 }
               />
