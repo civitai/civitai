@@ -1,0 +1,133 @@
+import {
+  RefinementListProps,
+  SortByProps,
+  useRefinementList,
+  useSortBy,
+} from 'react-instantsearch-hooks-web';
+import { Accordion, Chip, Group, MultiSelect, Select, Text } from '@mantine/core';
+import { useEffect, useState } from 'react';
+import { useDebouncedValue } from '@mantine/hooks';
+
+export function SortBy({ title, ...props }: SortByProps & { title: string }) {
+  const { options, refine, currentRefinement, ...args } = useSortBy(props);
+
+  if (options.length === 0) {
+    return null;
+  }
+
+  return (
+    <Accordion defaultValue={title} variant="filled">
+      <Accordion.Item value={title}>
+        <Accordion.Control>
+          <Text size="md" weight={500}>
+            {title}
+          </Text>
+        </Accordion.Control>
+        <Accordion.Panel>
+          <Select
+            name="sort"
+            data={options}
+            value={currentRefinement}
+            onChange={(value) => refine(value || options[0].value)}
+          />
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
+}
+
+export function SearchableMultiSelectRefinementList({
+  title,
+  ...props
+}: RefinementListProps & { title: string }) {
+  const { items, refine, searchForItems, isFromSearch } = useRefinementList({ ...props });
+  const [searchValue, setSearchValue] = useState('');
+  const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
+  // We need to keep the state of the select here because the items may dissapear while searching.
+  const [refinedItems, setRefinedItems] = useState<typeof items>([]);
+
+  const onUpdateSelection = (updatedSelectedItems: string[]) => {
+    const addedItems = updatedSelectedItems.length > refinedItems.length;
+    if (addedItems) {
+      // Get the last item:
+      const lastAddedValue = updatedSelectedItems[updatedSelectedItems.length - 1];
+      const item = items.find((item) => item.value === lastAddedValue);
+
+      if (!item) {
+        return;
+      }
+
+      refine(item.value);
+      setRefinedItems([...refinedItems, item]);
+    } else {
+      // Remove the item that was removed:
+      const removedItem = refinedItems.filter(
+        (item) => !updatedSelectedItems.includes(item.value)
+      )[0];
+
+      if (!removedItem) {
+        return;
+      }
+
+      refine(removedItem.value);
+      setRefinedItems(refinedItems.filter((item) => item.value !== removedItem.value));
+    }
+  };
+
+  useEffect(() => {
+    searchForItems(debouncedSearchValue);
+  }, [debouncedSearchValue]);
+
+  return (
+    <Accordion defaultValue={props.attribute} variant="filled">
+      <Accordion.Item value={props.attribute}>
+        <Accordion.Control>
+          <Text size="md" weight={500}>
+            {title}
+          </Text>
+        </Accordion.Control>
+        <Accordion.Panel>
+          <MultiSelect
+            data={isFromSearch ? [...refinedItems, ...items] : items}
+            value={refinedItems.map((item) => item.value)}
+            onChange={onUpdateSelection}
+            searchable
+            searchValue={searchValue}
+            onSearchChange={setSearchValue}
+            nothingFound="Nothing found"
+          />
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
+}
+
+export function ChipRefinementList({ title, ...props }: RefinementListProps & { title: string }) {
+  const { items, refine } = useRefinementList({ ...props });
+
+  return (
+    <Accordion defaultValue={props.attribute} variant="filled">
+      <Accordion.Item value={props.attribute}>
+        <Accordion.Control>
+          <Text size="md" weight={500}>
+            {title}
+          </Text>
+        </Accordion.Control>
+        <Accordion.Panel>
+          <Group spacing="xs">
+            {items.map((item) => (
+              <Chip
+                size="sm"
+                key={item.value}
+                checked={item.isRefined}
+                onClick={() => refine(item.value)}
+              >
+                {item.label}
+              </Chip>
+            ))}
+          </Group>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
+}
