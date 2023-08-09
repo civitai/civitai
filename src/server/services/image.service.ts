@@ -537,14 +537,7 @@ export const getAllImages = async ({
         ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
         : ''
     )}
-    ${Prisma.raw(
-      includeBaseModel
-        ? `
-           LEFT JOIN "ImageResource" ir ON ir."imageId" = i.id
-           LEFT JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-           `
-        : ''
-    )}
+    
     ${Prisma.raw(
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
@@ -594,7 +587,17 @@ export const getAllImages = async ({
       u.username,
       u.image "userImage",
       u."deletedAt",
-      ${Prisma.raw(includeBaseModel ? 'mv."baseModel" "baseModel",' : '')}
+      ${Prisma.raw(
+        includeBaseModel
+          ? `(
+        SELECT mv."baseModel" FROM "ModelVersion" mv
+        RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+        JOIN "Model" m ON mv."modelId" = m.id
+        WHERE m."type" = 'Checkpoint'
+        LIMIT 1
+      ) "baseModel",`
+          : ''
+      )}
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
