@@ -105,7 +105,7 @@ const ReviewCollection = () => {
     }),
     [collectionId, statuses]
   );
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+  const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
@@ -121,7 +121,7 @@ const ReviewCollection = () => {
   };
 
   useEffect(() => {
-    if (inView) fetchNextPage();
+    if (inView && !isLoading && !isRefetching) fetchNextPage();
   }, [fetchNextPage, inView]);
 
   return (
