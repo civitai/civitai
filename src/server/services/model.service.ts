@@ -356,6 +356,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           id: true,
           earlyAccessTimeFrame: true,
           baseModel: true,
+          baseModelType: true,
           createdAt: true,
           modelVersionGenerationCoverage: { select: { workers: true } },
         },

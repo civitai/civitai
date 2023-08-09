@@ -175,6 +175,7 @@ const onFetchItemsToIndex = async ({
           modelVersionGenerationCoverage: { select: { workers: true } },
           trainedWords: true,
           baseModel: true,
+          baseModelType: true,
         },
         where: {
           status: ModelStatus.Published,

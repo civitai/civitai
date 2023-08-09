@@ -196,7 +196,14 @@ export function ModelVersionDetails({
     { label: 'Uploaded', value: formatDate(version.createdAt) },
     {
       label: 'Base Model',
-      value: <Text>{version.baseModel}</Text>,
+      value: (
+        <Text>
+          {version.baseModel}{' '}
+          {version.baseModelType && version.baseModelType === 'Standard'
+            ? ''
+            : version.baseModelType}
+        </Text>
+      ),
     },
     {
       label: 'Training',

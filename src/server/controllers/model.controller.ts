@@ -63,7 +63,7 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
-import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
+import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -172,6 +172,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
           baseModel: version.baseModel as BaseModel,
+          baseModelType: version.baseModelType as BaseModelType,
           meta: version.meta as ModelVersionMeta,
         };
       }),
@@ -993,6 +994,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               earlyAccessTimeFrame: true,
               createdAt: true,
               baseModel: true,
+              baseModelType: true,
               modelVersionGenerationCoverage: { select: { workers: true } },
             },
           },
