@@ -220,6 +220,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             zIndex: 11,
           }}
         >
+          {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
           {reviewData.url && (
             <Link href={reviewData.url} passHref>
               <ActionIcon

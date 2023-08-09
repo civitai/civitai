@@ -197,6 +197,7 @@ export const getInfiniteImagesSchema = z
     excludeCrossPosts: z.boolean().optional(),
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
     ids: z.array(z.number()).optional(),
+    includeBaseModel: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

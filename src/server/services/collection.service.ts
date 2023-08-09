@@ -578,10 +578,18 @@ export const getCollectionItemsByCollectionId = async ({
   ) {
     throw throwAuthorizationError('You do not have permission to view review items');
   }
+  const collection = await dbRead.collection.findUniqueOrThrow({ where: { id: collectionId } });
 
   const where: Prisma.CollectionItemWhereInput = {
     collectionId,
     status: { in: statuses },
+    // Ensure we only show images that have been scanned
+    image:
+      collection.type === CollectionType.Image
+        ? {
+            ingestion: ImageIngestionStatus.Scanned,
+          }
+        : undefined,
   };
 
   const collectionItems = await dbRead.collectionItem.findMany({
@@ -654,6 +662,7 @@ export const getCollectionItemsByCollectionId = async ({
           isModerator: user?.isModerator,
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
+          includeBaseModel: true,
         })
       : { items: [] };
 

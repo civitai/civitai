@@ -59,6 +59,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         image: collectionItem.data,
         user: collectionItem.data.user,
         url: `/images/${collectionItem.data.id}`,
+        baseModel: collectionItem.data.baseModel,
       };
     }
     case 'model': {
