@@ -284,15 +284,19 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                       ) : (
                         <MediaHash {...image} />
                       )}
-                      {image.meta && (
+                      {reviewData.meta && (
                         <ImageMetaPopover
-                          meta={image.meta as ImageMetaProps}
-                          generationProcess={image.generationProcess ?? 'txt2img'}
-                          sx={{ zIndex: 999 }}
+                          meta={reviewData.meta as ImageMetaProps}
+                          generationProcess={reviewData.meta.generationProcess ?? 'txt2img'}
                         >
                           <ActionIcon
                             variant="transparent"
-                            style={{ position: 'absolute', bottom: '5px', right: '5px' }}
+                            style={{
+                              position: 'absolute',
+                              bottom: '5px',
+                              right: '5px',
+                              zIndex: 999,
+                            }}
                             size="lg"
                           >
                             <IconInfoCircle

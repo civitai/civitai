@@ -57,6 +57,10 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
       return {
         type: collectionItem.type,
         image: collectionItem.data,
+        meta: {
+          ...collectionItem.data.meta,
+          generationProcess: collectionItem.data.generationProcess,
+        },
         user: collectionItem.data.user,
         url: `/images/${collectionItem.data.id}`,
         baseModel: collectionItem.data.baseModel,
