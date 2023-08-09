@@ -52,6 +52,8 @@ import Link from 'next/link';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { formatDate } from '~/utils/date-helpers';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -136,8 +138,8 @@ const ReviewCollection = () => {
             marginRight: 6,
             position: 'sticky',
             top: 'calc(var(--mantine-header-height,0) + 16px)',
-            marginBottom: -80,
-            zIndex: 10,
+            marginBottom: -60,
+            zIndex: 1000,
           }}
         >
           <ModerationControls collectionItems={collectionItems} filters={filters} />
@@ -367,7 +369,11 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               <UserAvatar
                 user={reviewData.user}
                 avatarProps={{ radius: 'md', size: 32 }}
-                withUsername
+                subText={
+                  reviewData.createdAt ? (
+                    <Text size="sm">Added to collection: {formatDate(reviewData.createdAt)}</Text>
+                  ) : undefined
+                }
               />
             </UnstyledButton>
           )}

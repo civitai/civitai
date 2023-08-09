@@ -66,6 +66,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         user: collectionItem.data.user,
         url: `/images/${collectionItem.data.id}`,
         baseModel: collectionItem.data.baseModel,
+        createdAt: collectionItem.createdAt,
       };
     }
     case 'model': {
@@ -74,6 +75,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         image: collectionItem.data.image,
         user: collectionItem.data.user,
         url: `/models/${collectionItem.data.id}`,
+        createdAt: collectionItem.createdAt,
       };
     }
     case 'post': {
@@ -82,6 +84,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         image: collectionItem.data.image,
         user: collectionItem.data.user,
         url: `/posts/${collectionItem.data.id}`,
+        createdAt: collectionItem.createdAt,
       };
     }
     case 'article': {
@@ -91,6 +94,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         user: collectionItem.data.user,
         title: collectionItem.data.title,
         url: `/articles/${collectionItem.data.id}`,
+        createdAt: collectionItem.createdAt,
       };
     }
     default:

@@ -544,12 +544,11 @@ interface ArticleCollectionItem {
   data: ArticleGetAll['items'][0];
 }
 
-export type CollectionItemExpanded = { id: number; status?: CollectionItemStatus } & (
-  | ModelCollectionItem
-  | PostCollectionItem
-  | ImageCollectionItem
-  | ArticleCollectionItem
-);
+export type CollectionItemExpanded = {
+  id: number;
+  status?: CollectionItemStatus;
+  createdAt: Date | null;
+} & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 export const getCollectionItemsByCollectionId = async ({
   input,
@@ -603,6 +602,7 @@ export const getCollectionItemsByCollectionId = async ({
       imageId: true,
       articleId: true,
       status: input.forReview,
+      createdAt: true,
     },
     where,
     orderBy: { createdAt: 'desc' },
