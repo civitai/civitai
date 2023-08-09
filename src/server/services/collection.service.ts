@@ -1,3 +1,4 @@
+import { uniq } from 'lodash-es';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   BulkSaveCollectionItemsInput,
@@ -330,6 +331,9 @@ export const saveItemInCollections = async ({
   input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
+  // Safeguard against duppes.
+  collectionIds = uniq(collectionIds);
+  removeFromCollectionIds = uniq(removeFromCollectionIds);
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
     const type = inputToCollectionType[itemKey as keyof typeof inputToCollectionType];
