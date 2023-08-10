@@ -84,7 +84,6 @@ export function SearchableMultiSelectRefinementList({
     const itemsAreRefined = items.filter((item) => item.isRefined);
     if (refinedItems.length === 0 && itemsAreRefined.length > 0) {
       // On initial render refine items
-      console.log('Setting refined items');
       setRefinedItems(itemsAreRefined);
     }
   }, [items, refinedItems]);
