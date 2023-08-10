@@ -57,8 +57,17 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
       return {
         type: collectionItem.type,
         image: collectionItem.data,
+        meta: collectionItem.data.meta
+          ? {
+              ...collectionItem.data.meta,
+              generationProcess: collectionItem.data.generationProcess,
+            }
+          : null,
         user: collectionItem.data.user,
         url: `/images/${collectionItem.data.id}`,
+        baseModel: collectionItem.data.baseModel,
+        itemAddedAt: collectionItem.createdAt,
+        dataCreatedAt: collectionItem.data.createdAt,
       };
     }
     case 'model': {
@@ -67,6 +76,8 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         image: collectionItem.data.image,
         user: collectionItem.data.user,
         url: `/models/${collectionItem.data.id}`,
+        itemAddedAt: collectionItem.createdAt,
+        dataCreatedAt: collectionItem.data.createdAt,
       };
     }
     case 'post': {
@@ -75,6 +86,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         image: collectionItem.data.image,
         user: collectionItem.data.user,
         url: `/posts/${collectionItem.data.id}`,
+        itemAddedAt: collectionItem.createdAt,
       };
     }
     case 'article': {
@@ -84,6 +96,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         user: collectionItem.data.user,
         title: collectionItem.data.title,
         url: `/articles/${collectionItem.data.id}`,
+        itemAddedAt: collectionItem.createdAt,
       };
     }
     default:

@@ -19,6 +19,7 @@ import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
   IconExternalLink,
+  IconInfoCircle,
   IconReload,
   IconSquareCheck,
   IconSquareOff,
@@ -49,6 +50,10 @@ import { getCollectionItemReviewData } from '~/components/Collections/collection
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import Link from 'next/link';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { formatDate } from '~/utils/date-helpers';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -87,7 +92,6 @@ const useStore = create<StoreState>()(
 );
 
 const ReviewCollection = () => {
-  const { ref, inView } = useInView();
   const router = useRouter();
   const { collectionId: collectionIdString } = router.query;
   const collectionId = Number(collectionIdString);
@@ -105,7 +109,7 @@ const ReviewCollection = () => {
     }),
     [collectionId, statuses]
   );
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+  const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
@@ -119,10 +123,6 @@ const ReviewCollection = () => {
     setStatuses(value as CollectionItemStatus[]);
     deselectAll();
   };
-
-  useEffect(() => {
-    if (inView) fetchNextPage();
-  }, [fetchNextPage, inView]);
 
   return (
     <Container size="xl" py="xl">
@@ -138,8 +138,8 @@ const ReviewCollection = () => {
             marginRight: 6,
             position: 'sticky',
             top: 'calc(var(--mantine-header-height,0) + 16px)',
-            marginBottom: -80,
-            zIndex: 10,
+            marginBottom: -60,
+            zIndex: 1000,
           }}
         >
           <ModerationControls collectionItems={collectionItems} filters={filters} />
@@ -183,11 +183,6 @@ const ReviewCollection = () => {
         ) : (
           <NoContent mt="lg" message="There are no images that need review" />
         )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
-        )}
       </Stack>
     </Container>
   );
@@ -212,7 +207,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   return (
     <FeedCard>
       <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
-        <Group
+        <Stack
           sx={{
             position: 'absolute',
             top: 5,
@@ -220,29 +215,32 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             zIndex: 11,
           }}
         >
-          {reviewData.url && (
-            <Link href={reviewData.url} passHref>
-              <ActionIcon
-                component="a"
-                variant="transparent"
-                size="lg"
-                target="_blank"
-                onClick={(e) => {
-                  e.stopPropagation();
-                }}
-              >
-                <IconExternalLink
-                  color="white"
-                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                  opacity={0.8}
-                  strokeWidth={2.5}
-                  size={26}
-                />
-              </ActionIcon>
-            </Link>
-          )}
-          <Checkbox checked={selected} readOnly size="lg" />
-        </Group>
+          <Group>
+            {reviewData.url && (
+              <Link href={reviewData.url} passHref>
+                <ActionIcon
+                  component="a"
+                  variant="transparent"
+                  size="lg"
+                  target="_blank"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                  }}
+                >
+                  <IconExternalLink
+                    color="white"
+                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    opacity={0.8}
+                    strokeWidth={2.5}
+                    size={26}
+                  />
+                </ActionIcon>
+              </Link>
+            )}
+            <Checkbox checked={selected} readOnly size="lg" />
+          </Group>
+          {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
+        </Stack>
         {reviewData.image && (
           <ImageGuard
             images={[reviewData.image]}
@@ -287,6 +285,31 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                         />
                       ) : (
                         <MediaHash {...image} />
+                      )}
+                      {reviewData.meta && (
+                        <ImageMetaPopover
+                          meta={reviewData.meta as ImageMetaProps}
+                          generationProcess={reviewData.meta.generationProcess ?? 'txt2img'}
+                        >
+                          <ActionIcon
+                            variant="transparent"
+                            style={{
+                              position: 'absolute',
+                              bottom: '5px',
+                              right: '5px',
+                              zIndex: 999,
+                            }}
+                            size="lg"
+                          >
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
+                            />
+                          </ActionIcon>
+                        </ImageMetaPopover>
                       )}
                     </>
                   );
@@ -344,9 +367,21 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               }}
             >
               <UserAvatar
+                withUsername
                 user={reviewData.user}
                 avatarProps={{ radius: 'md', size: 32 }}
-                withUsername
+                subText={
+                  reviewData.itemAddedAt ? (
+                    <>
+                      <Text size="sm">
+                        Added to collection: {formatDate(reviewData.itemAddedAt)}
+                      </Text>
+                      {reviewData.dataCreatedAt && (
+                        <Text size="sm">Created: {formatDate(reviewData.dataCreatedAt)}</Text>
+                      )}
+                    </>
+                  ) : undefined
+                }
               />
             </UnstyledButton>
           )}

@@ -98,9 +98,9 @@ export function QueueItem({ request }: Props) {
     else boost(request);
   };
 
-  useEffect(() => {
-    if (request.queuePosition) console.log(request.queuePosition);
-  }, [request]);
+  // useEffect(() => {
+  //   if (request.queuePosition) console.log(request.queuePosition);
+  // }, [request]);
 
   return (
     <Card withBorder px="xs">
