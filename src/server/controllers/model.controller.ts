@@ -138,7 +138,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canDownload =
           model.mode !== ModelModifier.Archived &&
           (!earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator);
-        const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+        const canGenerate = !!version.generationCoverage?.covered;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -995,7 +995,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               createdAt: true,
               baseModel: true,
               baseModelType: true,
-              modelVersionGenerationCoverage: { select: { workers: true } },
+              generationCoverage: { select: { covered: true } },
             },
           },
           user: { select: simpleUserSelect },
@@ -1033,7 +1033,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             (user?.isModerator || model.user.id === user?.id) &&
             (modelInput.user || modelInput.username);
           if (!image && !showImageless) return null;
-          const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+          const canGenerate = !!version.generationCoverage?.covered;
 
           return {
             ...model,

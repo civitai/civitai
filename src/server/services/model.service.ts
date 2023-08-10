@@ -231,10 +231,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   if (supportsGeneration) {
-    AND.push({
-      modelVersions: { some: { modelVersionGenerationCoverage: { workers: { gt: 0 } } } },
-    });
+    AND.push({ generationCoverage: { some: { covered: true } } });
   }
+
   if (collectionId) {
     const permissions = await getUserCollectionPermissionsById({
       userId: sessionUser?.id,
@@ -358,7 +357,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           baseModel: true,
           baseModelType: true,
           createdAt: true,
-          modelVersionGenerationCoverage: { select: { workers: true } },
+          generationCoverage: { select: { covered: true } },
         },
         where: {
           status: ModelStatus.Published,
@@ -403,7 +402,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!image && !showImageless) return null;
 
-        const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+        const canGenerate = !!version.generationCoverage?.covered;
 
         return {
           ...model,
@@ -891,7 +890,7 @@ export const getModelsByCategory = async ({
               id: true,
               earlyAccessTimeFrame: true,
               createdAt: true,
-              modelVersionGenerationCoverage: { select: { workers: true } },
+              generationCoverage: { select: { covered: true } },
             },
           },
           user: { select: simpleUserSelect },
@@ -935,7 +934,7 @@ export const getModelsByCategory = async ({
           const [image] = images.filter((i) => i.modelVersionId === version.id);
           if (!image) return null;
 
-          const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+          const canGenerate = !!version.generationCoverage?.covered;
 
           return {
             ...model,
