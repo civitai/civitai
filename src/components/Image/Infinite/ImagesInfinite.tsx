@@ -1,5 +1,7 @@
 import { Stack, Text, LoadingOverlay, Center, Loader, ThemeIcon } from '@mantine/core';
-import { createContext, useContext, useEffect } from 'react';
+import { useDebouncedValue } from '@mantine/hooks';
+import { debounce } from 'lodash-es';
+import { createContext, useContext, useEffect, useMemo } from 'react';
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -51,18 +53,18 @@ export default function ImagesInfinite({
   const imageFilters = useImageFilters('images');
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
 
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryImages(filters, {
-      keepPreviousData: true,
-    });
+    useQueryImages(debouncedFilters, { keepPreviousData: true });
+  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
 
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && !isFetching) {
-      fetchNextPage?.();
+      debouncedFetchNextPage();
     }
-  }, [fetchNextPage, inView, isFetching]);
+  }, [debouncedFetchNextPage, inView, isFetching]);
   // #endregion
 
   return (
