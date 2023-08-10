@@ -172,7 +172,7 @@ const onFetchItemsToIndex = async ({
           id: true,
           earlyAccessTimeFrame: true,
           createdAt: true,
-          modelVersionGenerationCoverage: { select: { workers: true } },
+          generationCoverage: { select: { covered: true } },
           trainedWords: true,
           baseModel: true,
           baseModelType: true,

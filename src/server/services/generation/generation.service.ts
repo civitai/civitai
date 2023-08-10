@@ -108,9 +108,7 @@ export const getGenerationResources = async ({
   let orderBy = 'mv.index';
   if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
 
-  const results = await dbRead.$queryRaw<
-    Array<Generation.Resource & { index: number; serviceProviders?: string[] }>
-  >`
+  const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
     SELECT
       mv.id,
       mv.index,
@@ -120,12 +118,11 @@ export const getGenerationResources = async ({
       m.name "modelName",
       m.type "modelType",
       mv."baseModel",
-      ${Prisma.raw(supported ? `mgc."serviceProviders"` : `null`)} "serviceProviders"
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     ${Prisma.raw(
       supported
-        ? `JOIN "ModelVersionGenerationCoverage" mgc ON mgc."modelVersionId" = mv.id AND mgc.workers > 0`
+        ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
         : ''
     )}
     ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
@@ -134,21 +131,47 @@ export const getGenerationResources = async ({
     LIMIT ${take}
   `;
 
+  // const results = await dbRead.$queryRaw<
+  //   Array<Generation.Resource & { index: number; serviceProviders?: string[] }>
+  // >`
+  //   SELECT
+  //     mv.id,
+  //     mv.index,
+  //     mv.name,
+  //     mv."trainedWords",
+  //     m.id "modelId",
+  //     m.name "modelName",
+  //     m.type "modelType",
+  //     mv."baseModel",
+  //     ${Prisma.raw(supported ? `mgc."serviceProviders"` : `null`)} "serviceProviders"
+  //   FROM "ModelVersion" mv
+  //   JOIN "Model" m ON m.id = mv."modelId"
+  //   ${Prisma.raw(
+  //     supported
+  //       ? `JOIN "ModelVersionGenerationCoverage" mgc ON mgc."modelVersionId" = mv.id AND mgc.workers > 0`
+  //       : ''
+  //   )}
+  //   ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
+  //   WHERE ${Prisma.join(sqlAnd, ' AND ')}
+  //   ORDER BY ${Prisma.raw(orderBy)}
+  //   LIMIT ${take}
+  // `;
+
   // It would be preferrable to do a join when fetching the modelVersions
   // Not sure if this is possible wth prisma queries are there is no defined relationship
-  const allServiceProviders = await dbRead.generationServiceProvider.findMany({
-    select: {
-      name: true,
-      schedulers: true,
-    },
-  });
+  // const allServiceProviders = await dbRead.generationServiceProvider.findMany({
+  //   select: {
+  //     name: true,
+  //     schedulers: true,
+  //   },
+  // });
 
   return results.map((resource) => ({
     ...resource,
     strength: resource.modelType === ModelType.LORA ? 1 : undefined,
-    serviceProviders: allServiceProviders.filter(
-      (sp) => (resource?.serviceProviders ?? []).indexOf(sp.name) !== -1
-    ),
+    // serviceProviders: allServiceProviders.filter(
+    //   (sp) => (resource?.serviceProviders ?? []).indexOf(sp.name) !== -1
+    // ),
   }));
 };
 
@@ -453,18 +476,11 @@ export async function bulkDeleteGeneratedImages({
 }
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
-  try {
-    const resource = await dbRead.modelVersionGenerationCoverage.findFirst({
-      where: { modelVersionId: id, workers: { gt: 0 } },
-      select: { modelVersionId: true, serviceProviders: true },
-    });
-    if (!resource) return throwNotFoundError(`No resource with id ${id}`);
-
-    return resource;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
+  const result = await dbRead.generationCoverage.findFirst({
+    where: { modelVersionId: id },
+    select: { covered: true },
+  });
+  return result?.covered ?? false;
 }
 
 export const getGenerationData = async (
@@ -535,10 +551,11 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       m.name "modelName",
       m.type "modelType",
       ir."hash",
-      EXISTS (SELECT 1 FROM "ModelVersionGenerationCoverage" mgc WHERE mgc."modelVersionId" = mv.id AND mgc.workers > 0) "covered"
+      gc.covered
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
     JOIN "Model" m on m.id = mv."modelId"
+    JOIN "GenerationCoverage" gc on gc."modelVersionId" = mv.id
     WHERE ir."imageId" = ${id}
   `;
 
