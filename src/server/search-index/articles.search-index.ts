@@ -9,7 +9,7 @@ import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe, Prisma, PrismaClient } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 
 const READ_BATCH_SIZE = 1000;
@@ -67,6 +67,90 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
+export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
+
+const onFetchItemsToIndex = async ({
+  db,
+  whereOr,
+  indexName,
+  ...queryProps
+}: {
+  db: PrismaClient;
+  indexName: string;
+  whereOr?: Prisma.Enumerable<Prisma.ArticleWhereInput>;
+  skip?: number;
+  take?: number;
+}) => {
+  const offset = queryProps.skip || 0;
+  console.log(
+    `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
+    offset,
+    offset + READ_BATCH_SIZE - 1,
+    ' filters:',
+    whereOr
+  );
+
+  const articles = await db.article.findMany({
+    skip: offset,
+    take: READ_BATCH_SIZE,
+    select: {
+      ...articleDetailSelect,
+      metrics: {
+        select: {
+          commentCount: true,
+          cryCount: true,
+          dislikeCount: true,
+          favoriteCount: true,
+          heartCount: true,
+          hideCount: true,
+          laughCount: true,
+          viewCount: true,
+          likeCount: true,
+        },
+        where: {
+          timeframe: MetricTimeframe.AllTime,
+        },
+      },
+    },
+    where: {
+      publishedAt: {
+        not: null,
+      },
+      tosViolation: false,
+      // if lastUpdatedAt is not provided,
+      // this should generate the entirety of the index.
+      OR: whereOr,
+    },
+  });
+
+  console.log(
+    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
+    offset,
+    offset + READ_BATCH_SIZE - 1,
+    'filters:',
+    whereOr
+  );
+
+  // Avoids hitting the DB without data.
+  if (articles.length === 0) {
+    return [];
+  }
+
+  const indexReadyRecords = articles.map(({ tags, ...articleRecord }) => {
+    return {
+      ...articleRecord,
+      metrics: {
+        // Flattens metric array
+        ...(articleRecord.metrics[0] || {}),
+      },
+      // Flatten tags:
+      tags: tags.map((articleTag) => articleTag.tag.name),
+    };
+  });
+
+  return indexReadyRecords;
+};
+
 const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
   if (!client) return;
 
@@ -95,55 +179,29 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       offset,
       offset + READ_BATCH_SIZE - 1
     );
-    const articles = await db.article.findMany({
+    const indexReadyRecords = await onFetchItemsToIndex({
+      db,
+      indexName,
       skip: offset,
-      take: READ_BATCH_SIZE,
-      select: {
-        ...articleDetailSelect,
-        metrics: {
-          select: {
-            commentCount: true,
-            cryCount: true,
-            dislikeCount: true,
-            favoriteCount: true,
-            heartCount: true,
-            hideCount: true,
-            laughCount: true,
-            viewCount: true,
-            likeCount: true,
-          },
-          where: {
-            timeframe: MetricTimeframe.AllTime,
-          },
-        },
-      },
-      where: {
-        publishedAt: {
-          not: null,
-        },
-        tosViolation: false,
-        // if lastUpdatedAt is not provided,
-        // this should generate the entirety of the index.
-        OR: !lastUpdatedAt
-          ? undefined
-          : [
-              {
-                createdAt: {
-                  gt: lastUpdatedAt,
-                },
+      whereOr: !lastUpdatedAt
+        ? undefined
+        : [
+            {
+              createdAt: {
+                gt: lastUpdatedAt,
               },
-              {
-                updatedAt: {
-                  gt: lastUpdatedAt,
-                },
+            },
+            {
+              updatedAt: {
+                gt: lastUpdatedAt,
               },
-              {
-                id: {
-                  in: queuedItems.map(({ id }) => id),
-                },
+            },
+            {
+              id: {
+                in: queuedItems.map(({ id }) => id),
               },
-            ],
-      },
+            },
+          ],
     });
     console.log(
       `onIndexUpdate :: fetching complete for ${indexName} range:`,
@@ -151,27 +209,14 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       offset + READ_BATCH_SIZE - 1
     );
 
-    // Avoids hitting the DB without data.
-    if (articles.length === 0) break;
-
-    const indexReadyRecords = articles.map(({ tags, ...articleRecord }) => {
-      return {
-        ...articleRecord,
-        metrics: {
-          // Flattens metric array
-          ...(articleRecord.metrics[0] || {}),
-        },
-        // Flatten tags:
-        tags: tags.map((articleTag) => articleTag.tag.name),
-      };
-    });
+    if (indexReadyRecords.length === 0) break;
 
     const tasks = await client
       .index(indexName)
       .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
     articlesTasks.push(...tasks);
 
-    offset += articles.length;
+    offset += indexReadyRecords.length;
   }
 
   console.log('onIndexUpdate :: start waitForTasks');

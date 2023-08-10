@@ -448,10 +448,9 @@ export function AppHeader() {
           className={features.enhancedSearch ? classes.searchArea : undefined}
         >
           {!features.enhancedSearch ? (
-            // <ListSearch onSearch={() => closeBurger()} />
-            <AutocompleteSearch />
+            <ListSearch onSearch={() => closeBurger()} />
           ) : (
-            <QuickSearch className={classes.search} />
+            <AutocompleteSearch searchAsYouType={false} />
           )}
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
