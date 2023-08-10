@@ -75,8 +75,24 @@ export function SearchableMultiSelectRefinementList({
   };
 
   useEffect(() => {
-    searchForItems(debouncedSearchValue);
+    if (props.searchable) {
+      searchForItems(debouncedSearchValue);
+    }
   }, [debouncedSearchValue]);
+
+  useEffect(() => {
+    const itemsAreRefined = items.filter((item) => item.isRefined);
+    if (refinedItems.length === 0 && itemsAreRefined.length > 0) {
+      // On initial render refine items
+      console.log('Setting refined items');
+      setRefinedItems(itemsAreRefined);
+    }
+  }, [items, refinedItems]);
+
+  const data = (isFromSearch ? [...refinedItems, ...items] : items).map((item) => ({
+    label: item.label,
+    value: item.value,
+  }));
 
   return (
     <Accordion defaultValue={props.attribute} variant="filled">
@@ -88,7 +104,7 @@ export function SearchableMultiSelectRefinementList({
         </Accordion.Control>
         <Accordion.Panel>
           <MultiSelect
-            data={isFromSearch ? [...refinedItems, ...items] : items}
+            data={data}
             value={refinedItems.map((item) => item.value)}
             onChange={onUpdateSelection}
             searchable
