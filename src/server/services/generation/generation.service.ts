@@ -117,7 +117,7 @@ export const getGenerationResources = async ({
       m.id "modelId",
       m.name "modelName",
       m.type "modelType",
-      mv."baseModel",
+      mv."baseModel"
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     ${Prisma.raw(
@@ -131,47 +131,9 @@ export const getGenerationResources = async ({
     LIMIT ${take}
   `;
 
-  // const results = await dbRead.$queryRaw<
-  //   Array<Generation.Resource & { index: number; serviceProviders?: string[] }>
-  // >`
-  //   SELECT
-  //     mv.id,
-  //     mv.index,
-  //     mv.name,
-  //     mv."trainedWords",
-  //     m.id "modelId",
-  //     m.name "modelName",
-  //     m.type "modelType",
-  //     mv."baseModel",
-  //     ${Prisma.raw(supported ? `mgc."serviceProviders"` : `null`)} "serviceProviders"
-  //   FROM "ModelVersion" mv
-  //   JOIN "Model" m ON m.id = mv."modelId"
-  //   ${Prisma.raw(
-  //     supported
-  //       ? `JOIN "ModelVersionGenerationCoverage" mgc ON mgc."modelVersionId" = mv.id AND mgc.workers > 0`
-  //       : ''
-  //   )}
-  //   ${Prisma.raw(orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : '')}
-  //   WHERE ${Prisma.join(sqlAnd, ' AND ')}
-  //   ORDER BY ${Prisma.raw(orderBy)}
-  //   LIMIT ${take}
-  // `;
-
-  // It would be preferrable to do a join when fetching the modelVersions
-  // Not sure if this is possible wth prisma queries are there is no defined relationship
-  // const allServiceProviders = await dbRead.generationServiceProvider.findMany({
-  //   select: {
-  //     name: true,
-  //     schedulers: true,
-  //   },
-  // });
-
   return results.map((resource) => ({
     ...resource,
     strength: resource.modelType === ModelType.LORA ? 1 : undefined,
-    // serviceProviders: allServiceProviders.filter(
-    //   (sp) => (resource?.serviceProviders ?? []).indexOf(sp.name) !== -1
-    // ),
   }));
 };
 
