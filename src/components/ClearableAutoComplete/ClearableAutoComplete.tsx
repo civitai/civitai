@@ -18,7 +18,7 @@ export const ClearableAutoComplete = forwardRef<HTMLInputElement, Props>(
           )?.set;
           nativeInputValueSetter?.call(inputRef.current, '');
 
-          const innerEvent = new Event('input', { bubbles: true });
+          const innerEvent = new Event('input', { bubbles: false });
           inputRef.current?.dispatchEvent(innerEvent);
           onClear();
         }}

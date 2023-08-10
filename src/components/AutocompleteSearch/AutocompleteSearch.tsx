@@ -1,6 +1,7 @@
 import {
   Anchor,
   AutocompleteItem,
+  AutocompleteProps,
   Badge,
   Center,
   Code,
@@ -42,11 +43,39 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { AutocompleteDropdown } from './AutocompleteDropdown';
 
-type Props = SearchBoxProps & { className?: string };
+type Props = Omit<AutocompleteProps, 'data'> & {
+  onClear?: VoidFunction;
+  onSubmit?: VoidFunction;
+  searchBoxProps?: SearchBoxProps;
+};
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
+const useStyles = createStyles((theme) => ({
+  root: {
+    [theme.fn.smallerThan('md')]: {
+      height: '100%',
+    },
+  },
+  wrapper: {
+    [theme.fn.smallerThan('md')]: {
+      height: '100%',
+    },
+  },
+  input: {
+    [theme.fn.smallerThan('md')]: {
+      height: '100%',
+    },
+  },
+}));
 
-export function AutocompleteSearch({ className, ...searchBoxProps }: Props) {
+export function AutocompleteSearch({
+  onClear,
+  onSubmit,
+  className,
+  searchBoxProps,
+  ...autocompleteProps
+}: Props) {
+  const { classes, cx } = useStyles();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -77,11 +106,13 @@ export function AutocompleteSearch({ className, ...searchBoxProps }: Props) {
 
   const handleSubmit = () => {
     if (search) router.push(`/search?q=${encodeURIComponent(search)}`);
+    onSubmit?.();
   };
 
   const handleClear = () => {
     clear();
     setSearch('');
+    onClear?.();
   };
 
   useHotkeys([
@@ -94,15 +125,6 @@ export function AutocompleteSearch({ className, ...searchBoxProps }: Props) {
     // and user didn't select from the list
     if (debouncedSearch !== query && !selectedItem) {
       setQuery(debouncedSearch);
-      return;
-    }
-
-    // If selecting from the list, then navigate to the selected item
-    if (selectedItem) {
-      selectedItem.hit
-        ? router.push(`/models/${selectedItem.hit.id}/${slugit(selectedItem.hit.name)}`) // When a model is selected
-        : router.push(`/search?q=${encodeURIComponent(selectedItem.value)}`); // Handling when view more is clicked
-
       return;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,6 +140,8 @@ export function AutocompleteSearch({ className, ...searchBoxProps }: Props) {
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} />
       <ClearableAutoComplete
         ref={inputRef}
+        className={className}
+        classNames={classes}
         placeholder="Search models, users, images, tags, etc."
         type="search"
         nothingFound={query && !hits.length ? 'No results found' : undefined}
@@ -136,7 +160,14 @@ export function AutocompleteSearch({ className, ...searchBoxProps }: Props) {
           ['Escape', blurInput],
           ['Enter', handleSubmit],
         ])}
-        onItemSubmit={setSelectedItem}
+        onBlur={() => onClear?.()}
+        onItemSubmit={(item) => {
+          item.hit
+            ? router.push(`/models/${item.hit.id}/${slugit(item.hit.name)}`) // When a model is clicked
+            : router.push(`/search?q=${encodeURIComponent(item.value)}`); // Handling when view more is clicked
+          setSelectedItem(item);
+          onSubmit?.();
+        }}
         itemComponent={ModelSearchItem}
         // dropdownComponent={AutocompleteDropdown}
         rightSection={
@@ -174,6 +205,7 @@ export function AutocompleteSearch({ className, ...searchBoxProps }: Props) {
         // prevent default filtering behavior
         filter={() => true}
         clearable={query.length > 0}
+        {...autocompleteProps}
       />
     </>
   );
