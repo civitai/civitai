@@ -6,7 +6,6 @@ import {
   Burger,
   Button,
   createStyles,
-  Divider,
   Grid,
   Group,
   Header,
@@ -56,15 +55,16 @@ import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { QuickSearch } from '~/components/QuickSearch/QuickSearch';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
-import { openSpotlight } from '@mantine/spotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
+import { InstantSearch, InstantSearchProps } from 'react-instantsearch-hooks-web';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { env } from '~/env/client.mjs';
 
 const HEADER_HEIGHT = 70;
 
@@ -182,6 +182,37 @@ type MenuLink = {
   href: string;
   redirectReason?: LoginRedirectReason;
   visible?: boolean;
+};
+
+const meilisearch = instantMeiliSearch(
+  env.NEXT_PUBLIC_SEARCH_HOST as string,
+  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  { primaryKey: 'id' }
+);
+const searchClient: InstantSearchProps['searchClient'] = {
+  ...meilisearch,
+  search(requests) {
+    // Prevent making a request if there is no query
+    // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+    // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+    if (requests.every(({ params }) => !params?.query)) {
+      return Promise.resolve({
+        results: requests.map(() => ({
+          hits: [],
+          nbHits: 0,
+          nbPages: 0,
+          page: 0,
+          processingTimeMS: 0,
+          hitsPerPage: 0,
+          exhaustiveNbHits: false,
+          query: '',
+          params: '',
+        })),
+      });
+    }
+
+    return meilisearch.search(requests);
+  },
 };
 
 export function AppHeader() {
@@ -341,7 +372,7 @@ export function AppHeader() {
         ),
       },
     ],
-    [currentUser, router.asPath, theme]
+    [currentUser, router.asPath, theme, features.alternateHome]
   );
 
   const burgerMenuItems = useMemo(
@@ -389,13 +420,15 @@ export function AppHeader() {
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
       {showSearch ? (
         // Only displayed in mobile
-        <AutocompleteSearch
-          variant="filled"
-          onClear={() => setShowSearch(false)}
-          onSubmit={() => setShowSearch(false)}
-          rightSection={null}
-          autoFocus
-        />
+        <InstantSearch searchClient={searchClient} indexName="models">
+          <AutocompleteSearch
+            variant="filled"
+            onClear={() => setShowSearch(false)}
+            onSubmit={() => setShowSearch(false)}
+            rightSection={null}
+            autoFocus
+          />
+        </InstantSearch>
       ) : (
         <Grid className={classes.header} m={0} gutter="xs" align="center">
           <Grid.Col span="auto" pl={0}>
@@ -458,10 +491,12 @@ export function AppHeader() {
             md={5}
             className={features.enhancedSearch ? classes.searchArea : undefined}
           >
-            {!features.enhancedSearch ? (
-              <ListSearch onSearch={() => closeBurger()} />
+            {features.enhancedSearch ? (
+              <InstantSearch searchClient={searchClient} indexName="models">
+                <AutocompleteSearch />
+              </InstantSearch>
             ) : (
-              <AutocompleteSearch />
+              <ListSearch onSearch={() => closeBurger()} />
             )}
           </Grid.Col>
           <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>

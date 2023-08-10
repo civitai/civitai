@@ -41,7 +41,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
-import { AutocompleteDropdown } from './AutocompleteDropdown';
+// import { AutocompleteDropdown } from './AutocompleteDropdown';
 
 type Props = Omit<AutocompleteProps, 'data'> & {
   onClear?: VoidFunction;
@@ -75,17 +75,16 @@ export function AutocompleteSearch({
   searchBoxProps,
   ...autocompleteProps
 }: Props) {
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { query, refine: setQuery, clear } = useSearchBox(searchBoxProps);
+  const { query, refine: setQuery } = useSearchBox(searchBoxProps);
   const { hits, results } = useHits<ModelSearchIndexRecord>();
 
   const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
-  // const debouncedSetQuery = useMemo(() => debounce(setQuery, 300), [setQuery]);
 
   // Prep items to display in dropdown
   const items = useMemo(() => {
@@ -110,7 +109,6 @@ export function AutocompleteSearch({
   };
 
   const handleClear = () => {
-    clear();
     setSearch('');
     onClear?.();
   };
@@ -163,8 +161,9 @@ export function AutocompleteSearch({
         onBlur={() => onClear?.()}
         onItemSubmit={(item) => {
           item.hit
-            ? router.push(`/models/${item.hit.id}/${slugit(item.hit.name)}`) // When a model is clicked
-            : router.push(`/search?q=${encodeURIComponent(item.value)}`); // Handling when view more is clicked
+            ? router.push(`/models/${item.hit.id}/${slugit(item.hit.name)}`) // when a model is clicked
+            : router.push(`/search?q=${encodeURIComponent(item.value)}`); // when view more is clicked
+
           setSelectedItem(item);
           onSubmit?.();
         }}
@@ -244,8 +243,6 @@ const ModelSearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
       if (image.nsfw === 'None') {
         coverImage = image;
         break;
-      } else if (image.nsfw === 'Soft' && coverImage.nsfw !== 'Soft') {
-        coverImage = image;
       }
     }
 
