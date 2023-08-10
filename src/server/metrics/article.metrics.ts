@@ -6,70 +6,76 @@ import { articlesSearchIndex } from '~/server/search-index';
 export const articleMetrics = createMetricProcessor({
   name: 'Article',
   async update({ db, ch, lastUpdate }) {
-    // --------------------------------------------
-    // Update Article Views from ClickHouse
-    // --------------------------------------------
-    const viewedArticlesResponse = await ch.query({
+    const affectedArticlesResponse = await ch.query({
       query: `
-      SELECT
-        a.entityId AS entityId,
-        SUM(if(uv.time >= subtractDays(now(), 1), 1, null)) AS viewsDay,
-        SUM(if(uv.time >= subtractDays(now(), 7), 1, null)) AS viewsWeek,
-        SUM(if(uv.time >= subtractMonths(now(), 1), 1, null)) AS viewsMonth,
-        SUM(if(uv.time >= subtractYears(now(), 1), 1, null)) AS viewsYear,
-        COUNT() AS viewsAll
-      FROM uniqueViews uv
-      JOIN (
-        SELECT entityId
-        FROM uniqueViews
-        WHERE type = 'ArticleView'
-          AND time >= parseDateTimeBestEffortOrNull(
-            '${lastUpdate.toISOString()}'
-          )
-        GROUP BY entityId
-      ) a ON a.entityId = uv.entityId
-      GROUP BY a.entityId
+      SELECT DISTINCT entityId AS entityId
+      FROM views
+      WHERE type = 'ArticleView' AND time >= parseDateTimeBestEffortOrNull('${lastUpdate.toISOString()}')
       `,
       format: 'JSONEachRow',
     });
+    const affectedArticles = (
+      (await affectedArticlesResponse?.json()) as { entityId: number }[]
+    ).map((x) => x.entityId);
 
-    const viewedArticles = (await viewedArticlesResponse?.json()) as ArticleViews[];
-
-    // We batch the affected articles up when sending it to the db
-    const batchSize = 500;
-    const batches = chunk(viewedArticles, batchSize);
+    const batches = chunk(affectedArticles, 5000);
     for (const batch of batches) {
-      const batchJson = JSON.stringify(batch);
-
-      await db.$executeRaw`
-      INSERT INTO "ArticleMetric" ("articleId", timeframe, "viewCount")
-      SELECT
-          a.entityId, a.timeframe, a.views
-      FROM
-      (
+      try {
+        const viewedArticlesResponse = await ch.query({
+          query: `
           SELECT
-              CAST(js::json->>'entityId' AS INT) AS entityId,
-              tf.timeframe,
-              CAST(
-                CASE
-                  WHEN tf.timeframe = 'Day' THEN js::json->>'viewsDay'
-                  WHEN tf.timeframe = 'Week' THEN js::json->>'viewsWeek'
-                  WHEN tf.timeframe = 'Month' THEN js::json->>'viewsMonth'
-                  WHEN tf.timeframe = 'Year' THEN js::json->>'viewsYear'
-                  WHEN tf.timeframe = 'AllTime' THEN js::json->>'viewsAll'
-                END
-              AS int) as views
-          FROM json_array_elements(${batchJson}::json) js
-          CROSS JOIN (
-              SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-          ) tf
-      ) a
-      WHERE
-        a.views IS NOT NULL
-        AND a.entityId IN (SELECT id FROM "Article")
-      ON CONFLICT ("articleId", timeframe) DO UPDATE
-        SET "viewCount" = EXCLUDED."viewCount";
-    `;
+            entityId,
+            SUM(if(uv.time >= subtractDays(now(), 1), 1, null)) AS viewsDay,
+            SUM(if(uv.time >= subtractDays(now(), 7), 1, null)) AS viewsWeek,
+            SUM(if(uv.time >= subtractMonths(now(), 1), 1, null)) AS viewsMonth,
+            SUM(if(uv.time >= subtractYears(now(), 1), 1, null)) AS viewsYear,
+            COUNT() AS viewsAll
+          FROM uniqueViews uv
+          WHERE type = 'ArticleView' AND entityId IN (${batch.join(',')})
+          GROUP BY entityId
+          `,
+          format: 'JSONEachRow',
+        });
+
+        const viewedArticles = (await viewedArticlesResponse?.json()) as ArticleViews[];
+        // We batch the affected articles up when sending it to the db
+        const batches = chunk(viewedArticles, 1000);
+        for (const batch of batches) {
+          const batchJson = JSON.stringify(batch);
+
+          await db.$executeRaw`
+            INSERT INTO "ArticleMetric" ("articleId", timeframe, "viewCount")
+            SELECT
+                a.entityId, a.timeframe, a.views
+            FROM
+            (
+                SELECT
+                    CAST(js::json->>'entityId' AS INT) AS entityId,
+                    tf.timeframe,
+                    CAST(
+                      CASE
+                        WHEN tf.timeframe = 'Day' THEN js::json->>'viewsDay'
+                        WHEN tf.timeframe = 'Week' THEN js::json->>'viewsWeek'
+                        WHEN tf.timeframe = 'Month' THEN js::json->>'viewsMonth'
+                        WHEN tf.timeframe = 'Year' THEN js::json->>'viewsYear'
+                        WHEN tf.timeframe = 'AllTime' THEN js::json->>'viewsAll'
+                      END
+                    AS int) as views
+                FROM json_array_elements(${batchJson}::json) js
+                CROSS JOIN (
+                    SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+                ) tf
+            ) a
+            WHERE
+              a.views IS NOT NULL
+              AND a.entityId IN (SELECT id FROM "Article")
+            ON CONFLICT ("articleId", timeframe) DO UPDATE
+              SET "viewCount" = EXCLUDED."viewCount";
+          `;
+        }
+      } catch (e) {
+        throw e;
+      }
     }
 
     // --------------------------------------------
@@ -293,7 +299,7 @@ export const articleMetrics = createMetricProcessor({
       SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "favoriteCount" = EXCLUDED."favoriteCount", "hideCount" = EXCLUDED."hideCount";
   `;
 
-    const affectedArticles: Array<{ id: number }> = await db.$queryRaw`
+    const additionallyAffected: Array<{ id: number }> = await db.$queryRaw`
       ${recentEngagementSubquery}
       SELECT DISTINCT
             a.id
@@ -302,8 +308,12 @@ export const articleMetrics = createMetricProcessor({
       WHERE r.id IS NOT NULL
     `;
 
+    affectedArticles.push(...additionallyAffected.map((x) => x.id));
     await articlesSearchIndex.queueUpdate(
-      affectedArticles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      [...new Set(affectedArticles)].map((id) => ({
+        id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
     );
   },
   async clearDay({ db }) {
