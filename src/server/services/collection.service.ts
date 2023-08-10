@@ -330,6 +330,7 @@ export const saveItemInCollections = async ({
   input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
+  if (!itemKey) throw throwBadRequestError(`We don't know the type of thing you're adding`);
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
     const type = inputToCollectionType[itemKey as keyof typeof inputToCollectionType];
@@ -353,7 +354,7 @@ export const saveItemInCollections = async ({
     }
   }
 
-  const data: Prisma.CollectionItemCreateManyInput[] = (
+  const data = (
     await Promise.all(
       collectionIds.map(async (collectionId) => {
         const permission = await getUserCollectionPermissionsById({
@@ -372,18 +373,36 @@ export const saveItemInCollections = async ({
         }
 
         return {
-          ...input,
           addedById: userId,
           collectionId,
           status: permission.writeReview
             ? CollectionItemStatus.REVIEW
             : CollectionItemStatus.ACCEPTED,
+          [itemKey]: input[itemKey as keyof typeof input],
         };
       })
     )
   ).filter(isDefined);
 
-  const transactions = [dbWrite.collectionItem.createMany({ data })];
+  const transactions: Prisma.PrismaPromise<Prisma.BatchPayload | number>[] = [
+    dbWrite.$executeRaw`
+      INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(itemKey)}")
+      SELECT
+        v."collectionId",
+        v."addedById",
+        v."status",
+        v."${Prisma.raw(itemKey)}"
+      FROM jsonb_to_recordset(${JSON.stringify(data)}::jsonb) AS v(
+        "collectionId" INTEGER,
+        "addedById" INTEGER,
+        "status" "CollectionItemStatus",
+        "${Prisma.raw(itemKey)}" INTEGER
+      )
+      ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
+        WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
+        DO NOTHING;
+    `,
+  ];
 
   if (removeFromCollectionIds?.length) {
     const removeAllowedCollectionItemIds = (
