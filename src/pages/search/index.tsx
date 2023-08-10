@@ -1,5 +1,21 @@
-import { Container, Title, Stack } from '@mantine/core';
-import { InstantSearch, InstantSearchProps } from 'react-instantsearch-hooks-web';
+import {
+  Container,
+  Title,
+  Stack,
+  SegmentedControl,
+  SegmentedControlItem,
+  Group,
+  ThemeIcon,
+  Text,
+  createStyles,
+} from '@mantine/core';
+import {
+  InstantSearch,
+  InstantSearchProps,
+  SearchBox,
+  useInstantSearch,
+  useSearchBox,
+} from 'react-instantsearch-hooks-web';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs';
 import singletonRouter from 'next/router';
@@ -12,8 +28,15 @@ import {
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
 import { ModelsHitList } from '~/components/Search/ModelsHitList';
-import { removeEmpty } from '~/utils/object-helpers';
-import { z } from 'zod';
+import {
+  getRoutingForIndex,
+  SearchIndex,
+  SearchParams,
+  searchParamsSchema,
+  useSearchStore,
+} from '~/components/Search/useSearchState';
+import { IconCategory, IconFileText } from '@tabler/icons-react';
+import { UiState } from 'instantsearch.js';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -21,52 +44,13 @@ const searchClient = instantMeiliSearch(
   { primaryKey: 'id', keepZeroFacets: true }
 );
 
-const searchParamsSchema = z.object({
-  index: z.enum(['models']),
-});
-
-type SearchParams = z.output<typeof searchParamsSchema>;
-
-const ModelIndexSortBy = [
-  'models:metrics.weightedRating:desc',
-  'models:metrics.downloadCount:desc',
-  'models:metrics.favoriteCount:desc',
-  'models:metrics.commentCount:desc',
-  'models:createdAt:desc',
-] as const;
-
-const modelSearchParamsSchema = z
-  .object({
-    query: z.string(),
-    index: z.literal('models'),
-    sortBy: z.enum(ModelIndexSortBy),
-    baseModel: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    modelType: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    checkpointType: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    tags: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-  })
-  .partial();
-
-type ModelSearchParams = z.output<typeof modelSearchParamsSchema>;
-
 const routing: InstantSearchProps['routing'] = {
   router: createInstantSearchRouterNext({
     singletonRouter,
     routerOptions: {
       windowTitle(routeState) {
-        if (routeState.models) {
-          return 'Searching for: Models';
-        }
-
-        return '';
+        const [index] = Object.keys(routeState);
+        return getRoutingForIndex((index as SearchIndex) || 'models').windowTitle(routeState);
       },
       createURL({ routeState, location }) {
         let query = '';
@@ -83,76 +67,33 @@ const routing: InstantSearchProps['routing'] = {
 
         const { index } = queryData;
 
-        if (index === 'models') {
-          const modelSearchIndexResult = modelSearchParamsSchema.safeParse(
-            QS.parse(location.search)
-          );
-          const modelSearchIndexData: ModelSearchParams | Record<string, string[]> =
-            modelSearchIndexResult.success ? modelSearchIndexResult.data : {};
-
-          return { [index]: removeEmpty(modelSearchIndexData) };
+        if (!index) {
+          return {
+            '': {},
+          };
         }
 
-        return {
-          [index]: {},
-        };
+        return getRoutingForIndex(index as SearchIndex).parseURL({ location });
       },
     },
   }),
   stateMapping: {
     routeToState(routeState) {
-      const routeStateFinal: typeof routeState = {};
-
       if (routeState.models) {
-        const models: ModelSearchParams = routeState.models as ModelSearchParams;
-        const refinementList: Record<string, string[]> = removeEmpty({
-          'modelVersion.baseModel': models.baseModel,
-          type: models.modelType,
-          checkpointType: models.checkpointType,
-          tags: models.tags,
-        });
-
-        routeStateFinal.models = {
-          refinementList,
-          sortBy: models.sortBy,
-        };
-
-        return routeStateFinal;
+        return getRoutingForIndex('models').routeToState(routeState);
       }
 
       return routeState;
     },
     stateToRoute(uiState) {
       const [index] = Object.keys(uiState);
-
-      switch (index) {
-        default: // Default to models:
-        case 'models': {
-          const baseModel = uiState[index].refinementList?.['modelVersion.baseModel'];
-          const modelType = uiState[index].refinementList?.['type'];
-          const checkpointType = uiState[index].refinementList?.['checkpointType'];
-          const tags = uiState[index].refinementList?.['tags'];
-          const sortBy =
-            (uiState[index].sortBy as ModelSearchParams['sortBy']) ||
-            'models:metrics.weightedRating:desc';
-
-          const state: ModelSearchParams = {
-            index: 'models',
-            baseModel,
-            modelType,
-            checkpointType,
-            tags,
-            sortBy,
-          };
-
-          return {
-            models: state,
-          };
-        }
-      }
+      const routing = getRoutingForIndex(index ? (index as SearchIndex) : 'models');
+      return routing.stateToRoute(uiState);
     },
   },
 };
+
+const useStyles = createStyles((theme) => ({}));
 
 export default function Search() {
   return (
@@ -174,6 +115,7 @@ export default function Search() {
             padding: theme.spacing.md,
           })}
         >
+          <SearchBox />
           <SortBy
             title="Sort models by"
             items={[
@@ -206,10 +148,93 @@ export default function Search() {
         </Stack>
 
         <Stack pl={377} w="100%">
-          <Title>Models Search experience</Title>
+          <SearchHeader />
+          <RenderHits />
           <ModelsHitList />
         </Stack>
       </Container>
     </InstantSearch>
   );
 }
+
+const SearchHeader = () => {
+  const { query } = useSearchBox();
+  const { uiState, setUiState } = useInstantSearch();
+  const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
+  const { theme } = useStyles();
+
+  const [index] = Object.keys(uiState);
+  const onChangeIndex = (value: string) => {
+    console.log(value);
+    // Now the complicated part:
+    switch (index) {
+      case 'models': {
+        // We are on models, so we need to save the state of models
+        setSearchParamsByUiState(uiState);
+      }
+    }
+
+    if (states.hasOwnProperty(value)) {
+      // Redirect to the route with the relevant state:
+      const updatedUiState = getRoutingForIndex(value as SearchIndex).routeToState(
+        states as UiState
+      );
+
+      setUiState(updatedUiState);
+    } else {
+      setUiState({ [value]: {} });
+    }
+  };
+
+  const data: SegmentedControlItem[] = [
+    {
+      label: (
+        <Group align="center" spacing={8} noWrap>
+          <ThemeIcon
+            size={30}
+            color={index === 'models' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
+            <IconCategory />
+          </ThemeIcon>
+          <Text size="sm" inline>
+            Models
+          </Text>
+        </Group>
+      ),
+      value: 'models',
+    },
+    {
+      label: (
+        <Group align="center" spacing={8} noWrap>
+          <ThemeIcon
+            size={30}
+            color={index === 'articles' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
+            <IconFileText />
+          </ThemeIcon>
+          <Text size="sm" inline>
+            Articles
+          </Text>
+        </Group>
+      ),
+      value: 'articles',
+    },
+  ];
+
+  return (
+    <>
+      <Title>{query || 'Search page'}</Title>
+      <SegmentedControl size="md" value={index} data={data} onChange={onChangeIndex} />
+    </>
+  );
+};
+
+const RenderHits = () => {
+  const { uiState } = useInstantSearch();
+
+  // console.log(uiState);
+
+  return null;
+};
