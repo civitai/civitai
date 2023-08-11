@@ -162,7 +162,7 @@ export function AutocompleteSearch({
         onItemSubmit={(item) => {
           item.hit
             ? router.push(`/models/${item.hit.id}/${slugit(item.hit.name)}`) // when a model is clicked
-            : router.push(`/search?q=${encodeURIComponent(item.value)}`); // when view more is clicked
+            : router.push(`/search/models?query=${encodeURIComponent(item.value)}`); // when view more is clicked
 
           setSelectedItem(item);
           onSubmit?.();
@@ -227,6 +227,7 @@ const ViewMoreItem = forwardRef<HTMLDivElement, AutocompleteItem>(({ value, ...p
     </Center>
   );
 });
+
 ViewMoreItem.displayName = 'SearchItem';
 
 const ModelSearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
@@ -326,4 +327,5 @@ const ModelSearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
     );
   }
 );
+
 ModelSearchItem.displayName = 'ModelSearchItem';
