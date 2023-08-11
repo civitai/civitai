@@ -112,6 +112,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       trainedWords: true,
       inaccurate: true,
       baseModel: true,
+      baseModelType: true,
       earlyAccessTimeFrame: true,
       status: true,
       publishedAt: true,
@@ -127,7 +128,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       files: {
         select: modelFileSelect,
       },
-      modelVersionGenerationCoverage: { select: { workers: true } },
+      generationCoverage: { select: { covered: true } },
     },
   },
   rank: {
@@ -171,7 +172,7 @@ export const modelForHomePageSelector = Prisma.validator<Prisma.ModelSelect>()({
       id: true,
       earlyAccessTimeFrame: true,
       createdAt: true,
-      modelVersionGenerationCoverage: { select: { workers: true } },
+      generationCoverage: { select: { covered: true } },
     },
   },
   user: { select: simpleUserSelect },

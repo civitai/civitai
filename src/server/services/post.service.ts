@@ -55,6 +55,7 @@ type GetAllPostsRaw = {
   userImage: string | null;
   deletedAt: Date | null;
   publishedAt: Date | null;
+  cursorId: Date | number | null;
   stats: {
     commentCount: number;
     likeCount: number;
@@ -86,9 +87,13 @@ export const getPostsInfinite = async ({
   const AND = [Prisma.sql`1 = 1`];
 
   const isOwnerRequest = user && user.username === username;
+  let targetUser: number | undefined;
   if (username) {
-    const targetUser = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
-    if (targetUser) AND.push(Prisma.sql`p."userId" = ${targetUser.id}`);
+    const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
+    if (record) {
+      targetUser = record.id;
+      AND.push(Prisma.sql`p."userId" = ${targetUser}`);
+    }
   }
   if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
@@ -99,20 +104,17 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));
     }
     if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
-    if (!!excludedTagIds?.length) {
-      const excludedOr = [
-        Prisma.sql`NOT EXISTS (
-          SELECT 1 FROM
-          "TagsOnPost" top
-          WHERE top."postId" = p.id
-          AND top."tagId" IN (${Prisma.join(excludedTagIds)})
-        ) AND EXISTS (
-          SELECT 1 FROM "Image" i
-          WHERE i."postId" = p.id AND i."ingestion" = 'Scanned'
-        )`,
-      ];
-      if (user?.id) excludedOr.push(Prisma.sql`p."userId" = ${user.id}`);
-      AND.push(Prisma.sql`(${Prisma.join(excludedOr, ' OR ')})`);
+    if (!!excludedTagIds?.length && (!user || user.id !== targetUser)) {
+      AND.push(Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM
+        "TagsOnPost" top
+        WHERE top."postId" = p.id
+        AND top."tagId" IN (${Prisma.join(excludedTagIds)})
+      )`);
+      AND.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM "Image" i
+        WHERE i."postId" = p.id AND i."ingestion" = 'Scanned'
+      )`);
     }
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
@@ -166,7 +168,7 @@ export const getPostsInfinite = async ({
 
   // sorting
   let orderBy = 'p."publishedAt" DESC NULLS LAST';
-  if (sort === PostSort.MostComments) orderBy = `r."comment${period}Rank"`;
+  if (sort === PostSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
   else if (sort === PostSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
   const includeRank = orderBy.startsWith('r.');
   if (includeRank) {
@@ -179,7 +181,8 @@ export const getPostsInfinite = async ({
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
     const cursorValue = cursorProp === 'p."publishedAt"' ? new Date(cursor) : Number(cursor);
-    if (cursorProp) AND.push(Prisma.sql`${cursorProp} ${cursorOperator} ${cursorValue}`);
+    if (cursorProp)
+      AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
   }
 
   const postsRaw = await dbRead.$queryRaw<GetAllPostsRaw[]>`
@@ -212,10 +215,10 @@ export const getPostsInfinite = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
 
-  let nextCursor: number | undefined;
+  let nextCursor: number | Date | undefined | null;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    nextCursor = nextItem?.id;
+    nextCursor = nextItem?.cursorId;
   }
 
   const images = postsRaw.length

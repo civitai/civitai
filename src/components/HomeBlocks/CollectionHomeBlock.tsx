@@ -126,7 +126,10 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
   const { collection } = homeBlock || {};
   const items = useMemo(() => shuffle(collection?.items ?? []).slice(0, 14), [collection?.items]);
 
-  if (isLoading) {
+  // Masonry provider takes a sec to calculate
+  // columns, causing the grid view to go full page for a
+  // sec there. Instead, let's just show a skeleton.
+  if (isLoading || !columnCount) {
     return <CollectionHomeBlockSkeleton />;
   }
 

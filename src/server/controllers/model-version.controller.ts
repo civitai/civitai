@@ -1,6 +1,6 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { BaseModel } from '~/server/common/constants';
+import { BaseModel, BaseModelType } from '~/server/common/constants';
 
 import { Context } from '~/server/createContext';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -48,6 +48,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         name: true,
         description: true,
         baseModel: true,
+        baseModelType: true,
         earlyAccessTimeFrame: true,
         trainedWords: true,
         epochs: true,
@@ -95,6 +96,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
     return {
       ...version,
       baseModel: version.baseModel as BaseModel,
+      baseModelType: version.baseModelType as BaseModelType,
       files: version.files as Array<
         Omit<(typeof version.files)[number], 'metadata'> & { metadata: FileMetadata }
       >,

@@ -24,6 +24,10 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
   readonly?: boolean;
 };
 
+const availableReactions: Partial<Record<ToggleReactionInput['entityType'], ReviewReactions[]>> = {
+  image: ['Like', 'Heart', 'Laugh', 'Cry'],
+};
+
 export function PostReactions({
   metrics = {},
   imageCount,
@@ -150,6 +154,8 @@ function ReactionsList({
 }) {
   const currentUser = useCurrentUser();
   const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
+  available ??= availableReactions[entityType];
+
   return (
     <>
       {keys

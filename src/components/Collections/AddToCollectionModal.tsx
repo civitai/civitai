@@ -150,6 +150,7 @@ function CollectionListForm({
 
   useEffect(() => {
     if (collectionItems.length === 0) return;
+
     const collectionIds = collectionItems.map((collectionItem) =>
       collectionItem.collectionId.toString()
     );
@@ -184,73 +185,76 @@ function CollectionListForm({
               <Loader variant="bars" />
             </Center>
           ) : (
-            <ScrollArea.Autosize maxHeight={200}>
-              {ownedCollections.length > 0 ? (
-                <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                  {ownedCollections.map((collection) => {
-                    const Icon = collectionReadPrivacyData[collection.read].icon;
+            <>
+              <ScrollArea.Autosize maxHeight={200}>
+                {ownedCollections.length > 0 ? (
+                  <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                    {ownedCollections.map((collection) => {
+                      const Icon = collectionReadPrivacyData[collection.read].icon;
 
-                    return (
-                      <Checkbox
-                        key={collection.id}
-                        classNames={classes}
-                        value={collection.id.toString()}
-                        label={
-                          <Group spacing="xs" position="apart" w="100%" noWrap>
-                            <Text lineClamp={1} inherit>
-                              {collection.name}
-                            </Text>
-                            <Icon size={18} />
-                          </Group>
-                        }
-                      />
-                    );
-                  })}
-                </InputCheckboxGroup>
-              ) : (
-                <Center py="xl">
-                  <Text color="dimmed">{`You don't have any ${
-                    props.type?.toLowerCase() || ''
-                  } collections yet.`}</Text>
-                </Center>
+                      return (
+                        <Checkbox
+                          key={collection.id}
+                          classNames={classes}
+                          value={collection.id.toString()}
+                          label={
+                            <Group spacing="xs" position="apart" w="100%" noWrap>
+                              <Text lineClamp={1} inherit>
+                                {collection.name}
+                              </Text>
+                              <Icon size={18} />
+                            </Group>
+                          }
+                        />
+                      );
+                    })}
+                  </InputCheckboxGroup>
+                ) : (
+                  <Center py="xl">
+                    <Text color="dimmed">{`You don't have any ${
+                      props.type?.toLowerCase() || ''
+                    } collections yet.`}</Text>
+                  </Center>
+                )}
+              </ScrollArea.Autosize>
+              {contributingCollections.length > 0 && (
+                <Stack>
+                  <Text size="sm" weight="bold">
+                    Collections you contribute in
+                  </Text>
+                  <ScrollArea.Autosize maxHeight={200}>
+                    <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                      {contributingCollections.map((collection) => {
+                        const collectionItem = collectionItems.find(
+                          (item) => item.collectionId === collection.id
+                        );
+                        const Icon = collectionReadPrivacyData[collection.read].icon;
+
+                        return (
+                          <Checkbox
+                            key={collection.id}
+                            classNames={classes}
+                            value={collection.id.toString()}
+                            disabled={collectionItem && !collectionItem.canRemoveItem}
+                            label={
+                              <Group spacing="xs" position="apart" w="100%" noWrap>
+                                <Text lineClamp={1} inherit>
+                                  {collection.name}
+                                </Text>
+                                <Icon size={18} />
+                              </Group>
+                            }
+                          />
+                        );
+                      })}
+                    </InputCheckboxGroup>
+                  </ScrollArea.Autosize>
+                </Stack>
               )}
-            </ScrollArea.Autosize>
+            </>
           )}
         </Stack>
-        {contributingCollections.length > 0 && (
-          <Stack>
-            <Text size="sm" weight="bold">
-              Collections you contribute in
-            </Text>
-            <ScrollArea.Autosize maxHeight={200}>
-              <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                {contributingCollections.map((collection) => {
-                  const collectionItem = collectionItems.find(
-                    (item) => item.collectionId === collection.id
-                  );
-                  const Icon = collectionReadPrivacyData[collection.read].icon;
 
-                  return (
-                    <Checkbox
-                      key={collection.id}
-                      classNames={classes}
-                      value={collection.id.toString()}
-                      disabled={collectionItem && !collectionItem.canRemoveItem}
-                      label={
-                        <Group spacing="xs" position="apart" w="100%" noWrap>
-                          <Text lineClamp={1} inherit>
-                            {collection.name}
-                          </Text>
-                          <Icon size={18} />
-                        </Group>
-                      }
-                    />
-                  );
-                })}
-              </InputCheckboxGroup>
-            </ScrollArea.Autosize>
-          </Stack>
-        )}
         <Group position="right">
           <Button type="submit" loading={addCollectionItemMutation.isLoading}>
             Save

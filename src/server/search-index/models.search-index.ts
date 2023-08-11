@@ -43,32 +43,47 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const updateSearchableAttributesTask = await index.updateSearchableAttributes([
+  const settings = await index.getSettings();
+
+  const searchableAttributes = [
     'name',
     'user.username',
     'category.id',
     'hashes',
     'tags',
     'triggerWords',
-  ]);
+  ];
 
-  console.log(
-    'onIndexSetup :: updateSearchableAttributesTask created',
-    updateSearchableAttributesTask
-  );
+  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+    const updateSearchableAttributesTask = await index.updateSearchableAttributes(
+      searchableAttributes
+    );
+    console.log(
+      'onIndexSetup :: updateSearchableAttributesTask created',
+      updateSearchableAttributesTask
+    );
+  }
 
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes([
+  const sortableAttributes = [
+    // sort
     'createdAt',
     'metrics.commentCount',
     'metrics.favoriteCount',
     'metrics.downloadCount',
     'metrics.rating',
     'metrics.ratingCount',
-  ]);
+  ];
 
-  console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+  // Meilisearch stores sorted.
+  if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
+    const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
+    console.log(
+      'onIndexSetup :: sortableFieldsAttributesTask created',
+      sortableFieldsAttributesTask
+    );
+  }
 
-  const updateRankingRulesTask = await index.updateRankingRules([
+  const rankingRules = [
     'attribute',
     'metrics.weightedRating:desc',
     'words',
@@ -76,20 +91,35 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'sort',
     'exactness',
     'typo',
-  ]);
+  ];
 
-  console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+    console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  }
 
-  const updateFilterableAttributesTask = await index.updateFilterableAttributes([
+  const filterableAttributes = [
+    'hashes',
     'nsfw',
     'type',
-    'hashes',
-  ]);
+    'checkpointType',
+    'tags',
+    'modelVersion.baseModel',
+    'status',
+  ];
 
-  console.log(
-    'onIndexSetup :: updateFilterableAttributesTask created',
-    updateFilterableAttributesTask
-  );
+  if (
+    // Meilisearch stores sorted.
+    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  ) {
+    const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+      filterableAttributes
+    );
+    console.log(
+      'onIndexSetup :: updateFilterableAttributesTask created',
+      updateFilterableAttributesTask
+    );
+  }
 };
 
 export type ModelSearchIndexRecord = Awaited<
@@ -135,6 +165,7 @@ const onFetchItemsToIndex = async ({
       locked: true,
       earlyAccessDeadline: true,
       mode: true,
+      checkpointType: true,
       // Joins:
       user: {
         select: userWithCosmeticsSelect,
@@ -146,8 +177,13 @@ const onFetchItemsToIndex = async ({
           id: true,
           earlyAccessTimeFrame: true,
           createdAt: true,
-          modelVersionGenerationCoverage: { select: { workers: true } },
+          generationCoverage: { select: { covered: true } },
           trainedWords: true,
+          baseModel: true,
+          baseModelType: true,
+        },
+        where: {
+          status: ModelStatus.Published,
         },
       },
       tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },

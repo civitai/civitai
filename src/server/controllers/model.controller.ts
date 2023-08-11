@@ -63,7 +63,7 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
-import { BaseModel, constants, ModelFileType } from '~/server/common/constants';
+import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
 import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -138,7 +138,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canDownload =
           model.mode !== ModelModifier.Archived &&
           (!earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator);
-        const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+        const canGenerate = !!version.generationCoverage?.covered;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -172,6 +172,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
           baseModel: version.baseModel as BaseModel,
+          baseModelType: version.baseModelType as BaseModelType,
           meta: version.meta as ModelVersionMeta,
         };
       }),
@@ -993,7 +994,8 @@ export const getAssociatedResourcesCardDataHandler = async ({
               earlyAccessTimeFrame: true,
               createdAt: true,
               baseModel: true,
-              modelVersionGenerationCoverage: { select: { workers: true } },
+              baseModelType: true,
+              generationCoverage: { select: { covered: true } },
             },
           },
           user: { select: simpleUserSelect },
@@ -1031,7 +1033,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             (user?.isModerator || model.user.id === user?.id) &&
             (modelInput.user || modelInput.username);
           if (!image && !showImageless) return null;
-          const canGenerate = !!version.modelVersionGenerationCoverage?.workers;
+          const canGenerate = !!version.generationCoverage?.covered;
 
           return {
             ...model,

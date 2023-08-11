@@ -130,7 +130,7 @@ export default RateLimitedEndpoint(
 
     // Get the correct file
     let file: FileResult | null = null;
-    if (type === 'VAE' || modelVersion.model.type === 'VAE') {
+    if (type === 'VAE') {
       if (!modelVersion.vaeId) return errorResponse(404, 'VAE not found');
       const vae = await getVaeFiles({ vaeIds: [modelVersion.vaeId] });
       if (!vae.length) return errorResponse(404, 'VAE not found');

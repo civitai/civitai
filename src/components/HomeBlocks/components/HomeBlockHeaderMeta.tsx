@@ -8,7 +8,6 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 
 const HomeBlockHeaderMeta = ({ metadata }: Props) => {
-  const isMobile = useIsMobile();
   const { classes: homeBlockClasses } = useHomeBlockStyles();
 
   return (
@@ -18,7 +17,11 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
           position="apart"
           align="center"
           pb="md"
-          pr={isMobile ? 'md' : undefined}
+          sx={(theme) => ({
+            [theme.fn.smallerThan('sm')]: {
+              paddingRight: theme.spacing.md,
+            },
+          })}
           className={homeBlockClasses.header}
           noWrap
         >
