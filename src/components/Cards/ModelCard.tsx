@@ -150,7 +150,7 @@ export function ModelCard({ data }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
-  const isSDXL = baseModelSets.SDXL.includes(data.version.baseModel as BaseModel);
+  const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
 
   useEffect(() => {
     if (!modelId || modelId !== data.id) return;
