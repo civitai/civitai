@@ -5,9 +5,7 @@ import { UiState } from 'instantsearch.js';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import singletonRouter, { useRouter } from 'next/router';
-import { useMemo } from 'react';
-import { ModelQueryParams } from '~/components/Model/model.utils';
+import singletonRouter from 'next/router';
 import { InstantSearchProps } from 'react-instantsearch-hooks-web';
 import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs';
 
@@ -18,6 +16,7 @@ export const searchParamsSchema = z.object({
     .any()
     .transform((val) => val.toString())
     .optional(),
+  page: z.number().optional(),
 });
 
 export type SearchParams = z.output<typeof searchParamsSchema>;
@@ -47,7 +46,6 @@ export const ModelSearchIndexSortBy = [
 
 const modelSearchParamsSchema = searchParamsSchema
   .extend({
-    index: z.literal('models'),
     sortBy: z.enum(ModelSearchIndexSortBy),
     baseModel: z
       .union([z.array(z.string()), z.string()])
@@ -92,10 +90,13 @@ const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       tags: models.tags,
     });
 
+    const { query, page, sortBy } = models;
+
     return {
       models: {
-        query: models.query,
-        sortBy: models.sortBy ?? 'models:metrics.weightedRating:desc',
+        query,
+        page,
+        sortBy: sortBy ?? 'models:metrics.weightedRating:desc',
         refinementList,
       },
     };
@@ -108,7 +109,7 @@ const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const sortBy =
       (uiState.models.sortBy as ModelSearchParams['sortBy']) ||
       'models:metrics.weightedRating:desc';
-    const query = uiState.models.query;
+    const { query, page } = uiState.models;
 
     const state: ModelSearchParams = {
       baseModel,
@@ -117,6 +118,7 @@ const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       tags,
       sortBy,
       query,
+      page,
     };
 
     return {
@@ -167,10 +169,13 @@ const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       tags: articles.tags,
     });
 
+    const { query, page, sortBy } = articles;
+
     return {
       articles: {
-        query: articles.query,
-        sortBy: articles.sortBy ?? 'articles:metrics.favoriteCount:desc',
+        query,
+        page,
+        sortBy: sortBy ?? 'articles:metrics.favoriteCount:desc',
         refinementList,
       },
     };
@@ -181,12 +186,13 @@ const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       (uiState.articles.sortBy as ArticleSearchParams['sortBy']) ||
       'articles:metrics.favoriteCount:desc';
 
-    const query = uiState.articles.query;
+    const { query, page } = uiState.articles;
 
     const state: ArticleSearchParams = {
       tags,
-      query,
       sortBy,
+      query,
+      page,
     };
 
     return {
@@ -292,7 +298,6 @@ export const routing: InstantSearchProps['routing'] = {
     },
     stateToRoute(uiState) {
       const [index] = Object.keys(uiState);
-      console.log('stateToRoute', index);
       const routing = getRoutingForIndex(index ? (index as SearchIndex) : 'models');
       return routing.stateToRoute(uiState);
     },

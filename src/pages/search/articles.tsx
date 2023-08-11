@@ -38,7 +38,6 @@ export default function Search() {
             padding: theme.spacing.md,
           })}
         >
-          <SearchBox />
           <RenderFilters />
         </Stack>
 
