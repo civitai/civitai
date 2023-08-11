@@ -150,7 +150,7 @@ export function ModelCard({ data }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
-  const isSDXL = baseModelSets.SDXL.includes(data.version.baseModel as BaseModel);
+  const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
 
   useEffect(() => {
     if (!modelId || modelId !== data.id) return;
@@ -335,51 +335,53 @@ export function ModelCard({ data }: Props) {
           <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
             {data.name}
           </Text>
-          <Group spacing={4} position="apart">
-            {!data.locked && (
-              <IconBadge
-                className={classes.iconBadge}
-                sx={{ userSelect: 'none' }}
-                icon={
-                  <Rating
-                    size="xs"
-                    value={data.rank.rating}
-                    fractions={4}
-                    emptySymbol={
-                      theme.colorScheme === 'dark' ? (
-                        <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                      ) : undefined
-                    }
-                    readOnly
-                  />
-                }
-              >
-                <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
-                  {abbreviateNumber(data.rank.ratingCount)}
-                </Text>
-              </IconBadge>
-            )}
-            <Group spacing={4} noWrap>
-              <IconBadge
-                className={classes.iconBadge}
-                icon={
-                  <IconHeart
-                    size={14}
-                    style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                    color={isFavorite ? theme.colors.red[6] : undefined}
-                  />
-                }
-              >
-                <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
-              </IconBadge>
-              <IconBadge className={classes.iconBadge} icon={<IconMessageCircle2 size={14} />}>
-                <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-              </IconBadge>
-              <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
-                <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-              </IconBadge>
+          {data.rank && (
+            <Group spacing={4} position="apart">
+              {!data.locked && (
+                <IconBadge
+                  className={classes.iconBadge}
+                  sx={{ userSelect: 'none' }}
+                  icon={
+                    <Rating
+                      size="xs"
+                      value={data.rank.rating}
+                      fractions={4}
+                      emptySymbol={
+                        theme.colorScheme === 'dark' ? (
+                          <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
+                        ) : undefined
+                      }
+                      readOnly
+                    />
+                  }
+                >
+                  <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
+                    {abbreviateNumber(data.rank.ratingCount)}
+                  </Text>
+                </IconBadge>
+              )}
+              <Group spacing={4} noWrap>
+                <IconBadge
+                  className={classes.iconBadge}
+                  icon={
+                    <IconHeart
+                      size={14}
+                      style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                      color={isFavorite ? theme.colors.red[6] : undefined}
+                    />
+                  }
+                >
+                  <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
+                </IconBadge>
+                <IconBadge className={classes.iconBadge} icon={<IconMessageCircle2 size={14} />}>
+                  <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                </IconBadge>
+                <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
+                  <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                </IconBadge>
+              </Group>
             </Group>
-          </Group>
+          )}
         </Stack>
       </div>
     </FeedCard>

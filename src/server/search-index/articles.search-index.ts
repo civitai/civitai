@@ -29,6 +29,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
+  const settings = await index.getSettings();
+
   const updateSearchableAttributesTask = await index.updateSearchableAttributes([
     'title',
     'content',
@@ -44,25 +46,27 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
     'createdAt',
     'metrics.commentCount',
-    'metrics.cryCount',
-    'metrics.dislikeCount',
     'metrics.favoriteCount',
-    'metrics.heartCount',
-    'metrics.hideCount',
-    'metrics.laughCount',
     'metrics.viewCount',
-    'metrics.likeCount',
-    'stats.viewCountAllTime',
-    'stats.commentCountAllTime',
-    'stats.likeCountAllTime',
-    'stats.dislikeCountAllTime',
-    'stats.heartCountAllTime',
-    'stats.laughCountAllTime',
-    'stats.cryCountAllTime',
-    'stats.favoriteCountAllTime',
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+
+  const filterableAttributes = ['tags'];
+
+  if (
+    // Meilisearch stores sorted.
+    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  ) {
+    const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+      filterableAttributes
+    );
+
+    console.log(
+      'onIndexSetup :: updateFilterableAttributesTask created',
+      updateFilterableAttributesTask
+    );
+  }
 
   console.log('onIndexSetup :: all tasks completed');
 };

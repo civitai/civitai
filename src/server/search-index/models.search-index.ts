@@ -66,6 +66,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     // sort
+    'metrics.weightedRating',
     'createdAt',
     'metrics.commentCount',
     'metrics.favoriteCount',
@@ -84,11 +85,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const rankingRules = [
+    'sort',
     'attribute',
     'metrics.weightedRating:desc',
     'words',
     'proximity',
-    'sort',
     'exactness',
     'typo',
   ];
@@ -115,6 +116,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
       filterableAttributes
     );
+
     console.log(
       'onIndexSetup :: updateFilterableAttributesTask created',
       updateFilterableAttributesTask
