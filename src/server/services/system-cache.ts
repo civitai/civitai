@@ -1,4 +1,4 @@
-import { TagEngagementType, TagType } from '@prisma/client';
+import { NsfwLevel, TagEngagementType, TagType } from '@prisma/client';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
@@ -11,12 +11,12 @@ const log = createLogger('system-cache', 'green');
 const SYSTEM_CACHE_EXPIRY = 60 * 60 * 4;
 export async function getModerationTags() {
   const cachedTags = await redis.get(`system:moderation-tags`);
-  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw: NsfwLevel }[];
 
   log('getting moderation tags');
   const tags = await dbWrite.tag.findMany({
     where: { type: TagType.Moderation },
-    select: { id: true, name: true },
+    select: { id: true, name: true, nsfw: true },
   });
   await redis.set(`system:moderation-tags`, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
@@ -24,6 +24,12 @@ export async function getModerationTags() {
 
   log('got moderation tags');
   return tags;
+}
+
+export async function getBlockedTags() {
+  const moderatedTags = await getModerationTags();
+  const blockedTags = moderatedTags.filter((x) => x.nsfw === NsfwLevel.Blocked);
+  return blockedTags;
 }
 
 /** gets tags we don't want to show to not-signed-in users */

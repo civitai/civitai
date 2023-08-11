@@ -874,6 +874,7 @@ enum NsfwLevel {
   Soft
   Mature
   X
+  Blocked
 }
 
 enum ImageIngestionStatus {
