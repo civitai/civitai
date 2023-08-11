@@ -29,18 +29,64 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   }));
 
   useEffect(() => {
-    if (initRef) {
-      hiddenPreferences.getPreferences().then(() => {
-        initRef.current = false;
-      });
+    if (initRef.current) {
+      initRef.current = false;
+      hiddenPreferences.getPreferences();
     }
   }, []);
 
   const users = useMemo(() => new Map(explicit.users.map((id) => [id, true])), [explicit.users]);
-  const images = useMemo(() => {
-    const arr = [...explicit.images];
-    // if(browsingMode === BrowsingMode.NSFW)
-  }, [explicit.images, hidden.images, moderated.images, browsingMode]);
+  const images = useMemo(
+    () =>
+      getMapped({
+        explicit: explicit.images,
+        hidden: hidden.images,
+        moderated: moderated.images,
+        browsingMode,
+      }),
+    [explicit.images, hidden.images, moderated.images, browsingMode]
+  );
+  const models = useMemo(
+    () =>
+      getMapped({
+        explicit: explicit.models,
+        hidden: hidden.models,
+        moderated: moderated.models,
+        browsingMode,
+      }),
+    [explicit.models, hidden.models, moderated.models, browsingMode]
+  );
+  const tags = useMemo(
+    () => getMapped({ hidden: hidden.tags, moderated: moderated.tags, browsingMode }),
+    [hidden.tags, moderated.tags, browsingMode]
+  );
 
-  return <HiddenPreferencesContext.Provider value={}>{children}</HiddenPreferencesContext.Provider>;
+  console.log({ users, images, models, tags });
+
+  return (
+    <HiddenPreferencesContext.Provider value={{ users, images, models, tags }}>
+      {children}
+    </HiddenPreferencesContext.Provider>
+  );
+};
+
+const getMapped = ({
+  explicit = [],
+  hidden,
+  moderated,
+  browsingMode,
+}: {
+  explicit?: number[];
+  hidden: number[];
+  moderated: number[];
+  browsingMode: BrowsingMode;
+}) => {
+  let arr = [...explicit];
+  if (browsingMode !== BrowsingMode.All) {
+    arr = [...arr, ...hidden];
+    if (browsingMode !== BrowsingMode.NSFW) {
+      arr = [...arr, ...moderated];
+    }
+  }
+  return new Map(arr.map((id) => [id, true]));
 };

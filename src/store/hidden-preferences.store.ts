@@ -4,7 +4,7 @@ import { immer } from 'zustand/middleware/immer';
 import {
   HiddenPreferencesOutput,
   hiddenPreferencesSchema,
-} from '~/server/services/user-preferences.service';
+} from '~/server/schema/user-preferences.schema';
 
 type UserPreferencesStore = HiddenPreferencesOutput & {
   getPreferences: () => Promise<void>;
@@ -96,7 +96,7 @@ export const hiddenPreferences = {
 };
 
 const fetchPreferences = async () => {
-  const result = await fetch('');
+  const result = await fetch('/api/user/preferences');
   if (!result.ok) throw new Error('could not fetch user preferences');
   const data = await result.json();
   return hiddenPreferencesSchema.parse(data);

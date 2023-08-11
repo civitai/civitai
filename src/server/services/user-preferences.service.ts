@@ -1,7 +1,8 @@
 import { ModelEngagementType, TagEngagementType, UserEngagementType } from '@prisma/client';
-import { z } from 'zod';
+
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
+import { HiddenPreferencesInput } from '~/server/schema/user-preferences.schema';
 import { getModerationTags } from '~/server/services/system-cache';
 import { createLogger } from '~/utils/logging';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -36,9 +37,12 @@ function createUserCache<T>({
       // log(`got${logLabel} for user: ${userId} (cached)`);
       return JSON.parse(cachedTags) as T;
     }
-    if (refreshCache) await redis.del(`user:${userId}:${key}`);
+    if (refreshCache) {
+      // console.log('refreshing: ', `user:${userId}:${key}`);
+      await redis.del(`user:${userId}:${key}`);
+    }
 
-    const data = callback({ userId });
+    const data = await callback({ userId });
 
     await redis.set(`user:${userId}:${key}`, JSON.stringify(data), {
       EX: HIDDEN_CACHE_EXPIRY,
@@ -69,6 +73,10 @@ const HiddenTags = createUserCache({
     });
     let hiddenTags = tagEngagment.map((x) => x.tagId);
 
+    // todo - return as system tags
+    // todo - also need to do hidden tags of hidden tags for user hidden tags
+    // [...hiddenTagsOfHiddenTags, ...moderation Tags]
+    // [...hiddenTagsOfHiddenTags, ...user hidden tags]
     if (userId === -1) {
       const moderatedTags = await getModerated();
       const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
@@ -168,32 +176,6 @@ const HiddenUsers = createUserCache({
     ).map((x) => x.targetUserId),
 });
 
-export type HiddenPreferencesOutput = z.output<typeof hiddenPreferencesSchema>;
-type HiddenPreferencesInput = z.input<typeof hiddenPreferencesSchema>;
-export const hiddenPreferencesSchema = z.object({
-  explicit: z
-    .object({
-      users: z.number().array().default([]),
-      images: z.number().array().default([]),
-      models: z.number().array().default([]),
-    })
-    .default({}),
-  hidden: z
-    .object({
-      tags: z.number().array().default([]),
-      images: z.number().array().default([]),
-      models: z.number().array().default([]),
-    })
-    .default({}),
-  moderated: z
-    .object({
-      tags: z.number().array().default([]),
-      images: z.number().array().default([]),
-      models: z.number().array().default([]),
-    })
-    .default({}),
-});
-
 export async function getAllHiddenForUser({
   userId = -1, // Default to civitai account
   refreshCache,
@@ -245,32 +227,33 @@ export async function toggleHiddenTags({
   userId: number;
   hidden?: boolean;
 }) {
-  if (hidden === true) {
-    // hide tags
-    await dbWrite.tagEngagement.updateMany({
-      where: { userId, tagId: { in: tagIds } },
-      data: { type: 'Hide' },
+  if (hidden === false) {
+    await dbWrite.tagEngagement.deleteMany({
+      where: { userId, tagId: { in: tagIds }, type: 'Hide' },
     });
-  } else if (hidden === false) {
-    // unhide tags
-    await dbWrite.tagEngagement.deleteMany({ where: { userId, tagId: { in: tagIds } } });
   } else {
-    // toggle hide tags
     const matchedTags = await dbWrite.tagEngagement.findMany({
       where: { userId, tagId: { in: tagIds } },
       select: { tagId: true, type: true },
     });
-    const toRemove = matchedTags.filter((x) => x.type === 'Hide').map((x) => x.tagId);
-    const toHide = matchedTags.filter((x) => x.type !== 'Hide').map((x) => x.tagId);
 
-    if (toRemove.length)
-      await dbWrite.tagEngagement.deleteMany({ where: { userId, tagId: { in: toRemove } } });
-    if (toHide.length)
-      await dbWrite.tagEngagement.updateMany({
-        where: { userId, tagId: { in: toHide } },
-        data: { type: 'Hide' },
+    const existingHidden = matchedTags.filter((x) => x.type !== 'Hide').map((x) => x.tagId);
+    const toCreate = tagIds.filter((id) => !existingHidden.includes(id));
+    // if hidden === true, then I only need to create non-existing tagEngagements, no need to remove an engagements
+    const toDelete = hidden ? [] : tagIds.filter((id) => existingHidden.includes(id));
+
+    if (toCreate.length) {
+      await dbWrite.tagEngagement.createMany({
+        data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
       });
+    }
+    if (toDelete.length) {
+      await dbWrite.tagEngagement.deleteMany({
+        where: { userId, tagId: { in: toDelete } },
+      });
+    }
   }
+
   const tags = HiddenTags.getCached({ userId, refreshCache: true });
   // these functions depend on having fresh data from tags
   const [images, models] = await Promise.all([
