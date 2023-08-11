@@ -1,24 +1,5 @@
-import {
-  Container,
-  Title,
-  Stack,
-  SegmentedControl,
-  SegmentedControlItem,
-  Group,
-  ThemeIcon,
-  Text,
-  createStyles,
-  Box,
-  Center,
-  Loader,
-} from '@mantine/core';
-import {
-  InstantSearch,
-  SearchBox,
-  useInfiniteHits,
-  useInstantSearch,
-  useSearchBox,
-} from 'react-instantsearch';
+import { Container, Title, Stack, createStyles, Box, Center, Loader } from '@mantine/core';
+import { InstantSearch, SearchBox, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
 import { env } from '~/env/client.mjs';
@@ -30,10 +11,8 @@ import {
 import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
 import { useEffect } from 'react';
-import { ModelGetAll } from '~/types/router';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { IconCloudOff } from '@tabler/icons-react';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 
 const searchClient = instantMeiliSearch(
@@ -156,7 +135,13 @@ export function ModelsHitList() {
   // }
 
   if (hits.length === 0 && status === 'loading') {
-    return <Box>Loading...</Box>;
+    return (
+      <Box>
+        <Center ref={ref} sx={{ height: 36 }} mt="md">
+          <Loader />
+        </Center>
+      </Box>
+    );
   }
 
   return (

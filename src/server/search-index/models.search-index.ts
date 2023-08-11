@@ -208,6 +208,15 @@ const onFetchItemsToIndex = async ({
           timeframe: MetricTimeframe.AllTime,
         },
       },
+      rank: {
+        select: {
+          [`downloadCount${MetricTimeframe.AllTime}`]: true,
+          [`favoriteCount${MetricTimeframe.AllTime}`]: true,
+          [`commentCount${MetricTimeframe.AllTime}`]: true,
+          [`ratingCount${MetricTimeframe.AllTime}`]: true,
+          [`rating${MetricTimeframe.AllTime}`]: true,
+        },
+      },
     },
     where: {
       status: ModelStatus.Published,
@@ -273,7 +282,7 @@ const onFetchItemsToIndex = async ({
 
   const indexReadyRecords = models
     .map((modelRecord) => {
-      const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+      const { user, modelVersions, tagsOnModels, hashes, rank, ...model } = modelRecord;
 
       const metrics = modelRecord.metrics[0] || {};
 
@@ -281,11 +290,13 @@ const onFetchItemsToIndex = async ({
         (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
         (metrics.ratingCount + RATING_BAYESIAN_C);
 
-      const [modelVersion] = modelVersions;
+      const [version] = modelVersions;
 
-      if (!modelVersion) {
+      if (!version) {
         return null;
       }
+
+      const canGenerate = !!version.generationCoverage?.covered;
 
       const category = tagsOnModels.find((tagOnModel) =>
         modelCategoriesIds.includes(tagOnModel.tag.id)
@@ -295,7 +306,7 @@ const onFetchItemsToIndex = async ({
         ...model,
         user,
         category,
-        modelVersion,
+        version,
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],
@@ -305,6 +316,14 @@ const onFetchItemsToIndex = async ({
           ...metrics,
           weightedRating,
         },
+        rank: {
+          downloadCount: rank?.[`downloadCount${MetricTimeframe.AllTime}`] ?? 0,
+          favoriteCount: rank?.[`favoriteCount${MetricTimeframe.AllTime}`] ?? 0,
+          commentCount: rank?.[`commentCount${MetricTimeframe.AllTime}`] ?? 0,
+          ratingCount: rank?.[`ratingCount${MetricTimeframe.AllTime}`] ?? 0,
+          rating: rank?.[`rating${MetricTimeframe.AllTime}`] ?? 0,
+        },
+        canGenerate,
       };
     })
     // Removes null models that have no versionIDs
