@@ -56,12 +56,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
+  const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
 
   // Get VAE options
   const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
     { type: 'VAE' },
     {
       cacheTime: 60 * 1000,
+      enabled: hasVAE,
     }
   );
   const vaeOptions = useMemo(() => {
@@ -74,6 +76,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     name: version?.name ?? 'v1.0',
     baseModel: version?.baseModel ?? 'SD 1.5',
     baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
+    vaeId: hasVAE ? version?.vaeId ?? null : null,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
       ? version?.trainedWords
@@ -114,6 +117,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
+        vaeId: hasVAE ? data.vaeId : undefined,
       });
       await queryUtils.modelVersion.getById.invalidate();
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
@@ -299,14 +303,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 min={1}
                 max={12}
               />
-              <InputSelect
-                name="vaeId"
-                label="VAE"
-                placeholder="VAE"
-                data={vaeOptions}
-                clearable
-                searchable
-              />
+              {hasVAE && (
+                <InputSelect
+                  name="vaeId"
+                  label="VAE"
+                  placeholder="VAE"
+                  data={vaeOptions}
+                  clearable
+                  searchable
+                />
+              )}
             </Group>
           </Stack>
         </Stack>
