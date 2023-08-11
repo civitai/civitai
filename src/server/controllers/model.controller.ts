@@ -3,7 +3,6 @@ import {
   ModelStatus,
   ModelHashType,
   Prisma,
-  UserActivityType,
   ModelModifier,
   MetricTimeframe,
   SearchIndexUpdateQueueAction,
@@ -586,17 +585,25 @@ export const getDownloadCommandHandler = async ({
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();
-    await dbWrite.userActivity.create({
-      data: {
-        userId,
-        activity: UserActivityType.ModelDownload,
-        details: {
-          modelId: modelVersion.model.id,
-          modelVersionId: modelVersion.id,
+    if (userId) {
+      await dbWrite.downloadHistory.upsert({
+        where: {
+          userId_modelVersionId: {
+            userId: userId,
+            modelVersionId: modelVersion.id,
+          },
         },
-        createdAt: now,
-      },
-    });
+        create: {
+          userId,
+          modelVersionId: modelVersion.id,
+          downloadAt: now,
+          hidden: false,
+        },
+        update: {
+          downloadAt: now,
+        },
+      });
+    }
     ctx.track.modelVersionEvent({
       type: 'Download',
       modelId: modelVersion.model.id,
