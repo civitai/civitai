@@ -368,7 +368,6 @@ model Model {
   licenses           License[]
   rank               ModelRank?
   reportStats        ModelReportStat?
-  downloads          DownloadHistory[]
   hashes             ModelHash[]
   threads            Thread[]
   resourceReviews    ResourceReview[]
@@ -616,11 +615,9 @@ model DownloadHistory {
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
   downloadAt     DateTime
   hidden         Boolean      @default(false)
-  Model          Model?       @relation(fields: [modelId], references: [id])
-  modelId        Int?
 
   @@id([userId, modelVersionId])
-  @@index([downloadAt])
+  @@index([userId, downloadAt])
 }
 
 model ModActivity {
