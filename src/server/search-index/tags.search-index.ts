@@ -71,6 +71,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
+export type TagSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
+
 const onFetchItemsToIndex = async ({
   db,
   whereOr,
@@ -178,7 +180,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
 
   const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
 
-  const itemsToIndex: Awaited<ReturnType<typeof onFetchItemsToIndex>> = [];
+  const itemsToIndex: TagSearchIndexRecord[] = [];
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
     const batch = queuedItems.slice(

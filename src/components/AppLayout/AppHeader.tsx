@@ -6,7 +6,6 @@ import {
   Burger,
   Button,
   createStyles,
-  Divider,
   Grid,
   Group,
   Header,
@@ -56,15 +55,16 @@ import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { QuickSearch } from '~/components/QuickSearch/QuickSearch';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
-import { openSpotlight } from '@mantine/spotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
+import { InstantSearch, InstantSearchProps } from 'react-instantsearch-hooks-web';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { env } from '~/env/client.mjs';
 
 const HEADER_HEIGHT = 70;
 
@@ -182,6 +182,37 @@ type MenuLink = {
   href: string;
   redirectReason?: LoginRedirectReason;
   visible?: boolean;
+};
+
+const meilisearch = instantMeiliSearch(
+  env.NEXT_PUBLIC_SEARCH_HOST as string,
+  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  { primaryKey: 'id' }
+);
+const searchClient: InstantSearchProps['searchClient'] = {
+  ...meilisearch,
+  search(requests) {
+    // Prevent making a request if there is no query
+    // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+    // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+    if (requests.every(({ params }) => !params?.query)) {
+      return Promise.resolve({
+        results: requests.map(() => ({
+          hits: [],
+          nbHits: 0,
+          nbPages: 0,
+          page: 0,
+          processingTimeMS: 0,
+          hitsPerPage: 0,
+          exhaustiveNbHits: false,
+          query: '',
+          params: '',
+        })),
+      });
+    }
+
+    return meilisearch.search(requests);
+  },
 };
 
 export function AppHeader() {
@@ -341,7 +372,7 @@ export function AppHeader() {
         ),
       },
     ],
-    [currentUser, router.asPath, theme]
+    [currentUser, router.asPath, theme, features.alternateHome]
   );
 
   const burgerMenuItems = useMemo(
@@ -383,233 +414,252 @@ export function AppHeader() {
         )),
     [links]
   );
+  const [showSearch, setShowSearch] = useState(false);
 
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
-      <Grid className={classes.header} m={0} gutter="xs" align="center">
-        <Grid.Col span="auto" pl={0}>
-          <Group spacing="xs" noWrap>
-            <Link href={homeUrl ?? '/'} passHref>
-              <Anchor variant="text" onClick={() => closeBurger()}>
-                <Logo />
-              </Anchor>
-            </Link>
-            {!isMuted && (
-              <Menu position="bottom-start" withArrow>
-                <Menu.Target>
-                  <ActionIcon
-                    className={classes.links}
-                    size="md"
-                    variant="filled"
-                    color="green"
-                    radius="xl"
-                  >
-                    <IconPlus size={24} stroke={2.5} />
-                  </ActionIcon>
-                  {/* <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
+      {showSearch ? (
+        // Only displayed in mobile
+        <InstantSearch searchClient={searchClient} indexName="models">
+          <AutocompleteSearch
+            variant="filled"
+            onClear={() => setShowSearch(false)}
+            onSubmit={() => setShowSearch(false)}
+            rightSection={null}
+            autoFocus
+          />
+        </InstantSearch>
+      ) : (
+        <Grid className={classes.header} m={0} gutter="xs" align="center">
+          <Grid.Col span="auto" pl={0}>
+            <Group spacing="xs" noWrap>
+              <Link href={homeUrl ?? '/'} passHref>
+                <Anchor variant="text" onClick={() => closeBurger()}>
+                  <Logo />
+                </Anchor>
+              </Link>
+              {!isMuted && (
+                <Menu position="bottom-start" withArrow>
+                  <Menu.Target>
+                    <ActionIcon
+                      className={classes.links}
+                      size="md"
+                      variant="filled"
+                      color="green"
+                      radius="xl"
+                    >
+                      <IconPlus size={24} stroke={2.5} />
+                    </ActionIcon>
+                    {/* <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
                     <IconPlus size={16} /> New
                   </Button> */}
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    {mainActions
+                      .filter(({ visible }) => visible !== false)
+                      .map((link, index) => {
+                        const menuItem = (
+                          <Menu.Item
+                            key={!link.redirectReason ? index : undefined}
+                            component={NextLink}
+                            href={link.href}
+                          >
+                            {link.label}
+                          </Menu.Item>
+                        );
+
+                        return link.redirectReason ? (
+                          <LoginRedirect
+                            key={index}
+                            reason={link.redirectReason}
+                            returnUrl={link.href}
+                          >
+                            {menuItem}
+                          </LoginRedirect>
+                        ) : (
+                          menuItem
+                        );
+                      })}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+              <SupportButton />
+            </Group>
+          </Grid.Col>
+          <Grid.Col
+            span={6}
+            md={5}
+            className={features.enhancedSearch ? classes.searchArea : undefined}
+          >
+            {features.enhancedSearch ? (
+              <InstantSearch searchClient={searchClient} indexName="models">
+                <AutocompleteSearch />
+              </InstantSearch>
+            ) : (
+              <ListSearch onSearch={() => closeBurger()} />
+            )}
+          </Grid.Col>
+          <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
+            <Group spacing="xs" align="center">
+              {!currentUser ? (
+                <Button
+                  component={NextLink}
+                  href={`/login?returnUrl=${router.asPath}`}
+                  variant="default"
+                >
+                  Sign In
+                </Button>
+              ) : null}
+              {currentUser && (
+                <>
+                  <UploadTracker />
+                  <CivitaiLinkPopover />
+                </>
+              )}
+              {currentUser?.showNsfw && <BrowsingModeIcon />}
+              {currentUser && <NotificationBell />}
+              {currentUser?.isModerator && <ModerationNav />}
+              <Menu
+                width={260}
+                opened={userMenuOpened}
+                position="bottom-end"
+                transition="pop-top-right"
+                onClose={() => setUserMenuOpened(false)}
+              >
+                <Menu.Target>
+                  <UnstyledButton
+                    className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
+                    onClick={() => setUserMenuOpened(true)}
+                  >
+                    <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
+                  </UnstyledButton>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  {mainActions
-                    .filter(({ visible }) => visible !== false)
-                    .map((link, index) => {
-                      const menuItem = (
-                        <Menu.Item
-                          key={!link.redirectReason ? index : undefined}
-                          component={NextLink}
-                          href={link.href}
-                        >
-                          {link.label}
-                        </Menu.Item>
-                      );
+                  {userMenuItems}
+                  <Menu.Item
+                    closeMenuOnClick={false}
+                    icon={<IconPalette stroke={1.5} />}
+                    onClick={() => toggleColorScheme()}
+                  >
+                    <Group align="center" position="apart">
+                      Dark mode
+                      <Switch
+                        checked={colorScheme === 'dark'}
+                        sx={{ display: 'flex', alignItems: 'center' }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Group>
+                  </Menu.Item>
 
-                      return link.redirectReason ? (
-                        <LoginRedirect
-                          key={index}
-                          reason={link.redirectReason}
-                          returnUrl={link.href}
-                        >
-                          {menuItem}
-                        </LoginRedirect>
-                      ) : (
-                        menuItem
-                      );
-                    })}
+                  {currentUser ? (
+                    <>
+                      <Menu.Item
+                        icon={<IconSettings stroke={1.5} />}
+                        component={NextLink}
+                        href="/user/account"
+                      >
+                        Account settings
+                      </Menu.Item>
+                      <Menu.Item
+                        icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
+                        onClick={() => signOut()}
+                      >
+                        Logout
+                      </Menu.Item>
+                    </>
+                  ) : null}
                 </Menu.Dropdown>
               </Menu>
-            )}
-            <SupportButton />
-          </Group>
-        </Grid.Col>
-        <Grid.Col
-          span={6}
-          md={5}
-          className={features.enhancedSearch ? classes.searchArea : undefined}
-        >
-          {!features.enhancedSearch ? (
-            // <ListSearch onSearch={() => closeBurger()} />
-            <AutocompleteSearch />
-          ) : (
-            <QuickSearch className={classes.search} />
-          )}
-        </Grid.Col>
-        <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
-          <Group spacing="xs" align="center">
-            {!currentUser ? (
-              <Button
-                component={NextLink}
-                href={`/login?returnUrl=${router.asPath}`}
-                variant="default"
-              >
-                Sign In
-              </Button>
-            ) : null}
-            {currentUser && (
-              <>
-                <UploadTracker />
-                <CivitaiLinkPopover />
-              </>
-            )}
-            {currentUser?.showNsfw && <BrowsingModeIcon />}
-            {currentUser && <NotificationBell />}
-            {currentUser?.isModerator && <ModerationNav />}
-            <Menu
-              width={260}
-              opened={userMenuOpened}
-              position="bottom-end"
-              transition="pop-top-right"
-              onClose={() => setUserMenuOpened(false)}
-            >
-              <Menu.Target>
-                <UnstyledButton
-                  className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
-                  onClick={() => setUserMenuOpened(true)}
-                >
-                  <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
-                </UnstyledButton>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {userMenuItems}
-                <Menu.Item
-                  closeMenuOnClick={false}
-                  icon={<IconPalette stroke={1.5} />}
-                  onClick={() => toggleColorScheme()}
-                >
-                  <Group align="center" position="apart">
-                    Dark mode
-                    <Switch
-                      checked={colorScheme === 'dark'}
-                      sx={{ display: 'flex', alignItems: 'center' }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Group>
-                </Menu.Item>
-
-                {currentUser ? (
-                  <>
-                    <Menu.Item
-                      icon={<IconSettings stroke={1.5} />}
-                      component={NextLink}
-                      href="/user/account"
-                    >
-                      Account settings
-                    </Menu.Item>
-                    <Menu.Item
-                      icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                      onClick={() => signOut()}
-                    >
-                      Logout
-                    </Menu.Item>
-                  </>
-                ) : null}
-              </Menu.Dropdown>
-            </Menu>
-          </Group>
-        </Grid.Col>
-        <Grid.Col span="auto" className={classes.burger}>
-          <Group spacing={4} noWrap>
-            {features.enhancedSearch && (
-              <ActionIcon onClick={() => openSpotlight()}>
-                <IconSearch />
-              </ActionIcon>
-            )}
-            {currentUser && <CivitaiLinkPopover />}
-            {currentUser && <NotificationBell />}
-            <Burger
-              opened={burgerOpened}
-              onClick={burgerOpened ? closeBurger : openBurger}
-              size="sm"
-            />
-            <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
-              {(styles) => (
-                <Paper
-                  className={classes.dropdown}
-                  withBorder
-                  shadow="md"
-                  style={{ ...styles, borderLeft: 0, borderRight: 0 }}
-                  radius={0}
-                >
-                  {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                  <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
-                    {burgerMenuItems}
-                  </ScrollArea.Autosize>
-                  {currentUser && (
-                    <Box px="md">
-                      <BrowsingModeMenu />
-                    </Box>
-                  )}
-
-                  <Group p="md" position="apart" grow>
-                    <ActionIcon
-                      variant="default"
-                      onClick={() => toggleColorScheme()}
-                      size="lg"
-                      sx={(theme) => ({
-                        color:
-                          theme.colorScheme === 'dark'
-                            ? theme.colors.yellow[theme.fn.primaryShade()]
-                            : theme.colors.blue[theme.fn.primaryShade()],
-                      })}
-                    >
-                      {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoonStars size={18} />}
-                    </ActionIcon>
-                    {currentUser && (
-                      <>
-                        {currentUser?.showNsfw && (
-                          <BlurToggle iconProps={{ stroke: 1.5 }}>
-                            {({ icon, toggle }) => (
-                              <ActionIcon variant="default" size="lg" onClick={toggle}>
-                                {icon}
-                              </ActionIcon>
-                            )}
-                          </BlurToggle>
-                        )}
-                        <Link href="/user/account" passHref>
-                          <ActionIcon
-                            variant="default"
-                            component="a"
-                            size="lg"
-                            onClick={closeBurger}
-                          >
-                            <IconSettings stroke={1.5} />
-                          </ActionIcon>
-                        </Link>
-                        <ActionIcon variant="default" onClick={() => signOut()} size="lg">
-                          <IconLogout
-                            stroke={1.5}
-                            color={theme.colors.red[theme.fn.primaryShade()]}
-                          />
-                        </ActionIcon>
-                      </>
-                    )}
-                  </Group>
-                </Paper>
+            </Group>
+          </Grid.Col>
+          <Grid.Col span="auto" className={classes.burger}>
+            <Group spacing={4} noWrap>
+              {features.enhancedSearch && (
+                <ActionIcon onClick={() => setShowSearch(true)}>
+                  <IconSearch />
+                </ActionIcon>
               )}
-            </Transition>
-          </Group>
-        </Grid.Col>
-      </Grid>
+              {currentUser && <CivitaiLinkPopover />}
+              {currentUser && <NotificationBell />}
+              <Burger
+                opened={burgerOpened}
+                onClick={burgerOpened ? closeBurger : openBurger}
+                size="sm"
+              />
+              <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
+                {(styles) => (
+                  <Paper
+                    className={classes.dropdown}
+                    withBorder
+                    shadow="md"
+                    style={{ ...styles, borderLeft: 0, borderRight: 0 }}
+                    radius={0}
+                  >
+                    {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
+                    <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
+                      {burgerMenuItems}
+                    </ScrollArea.Autosize>
+                    {currentUser && (
+                      <Box px="md">
+                        <BrowsingModeMenu />
+                      </Box>
+                    )}
+
+                    <Group p="md" position="apart" grow>
+                      <ActionIcon
+                        variant="default"
+                        onClick={() => toggleColorScheme()}
+                        size="lg"
+                        sx={(theme) => ({
+                          color:
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.yellow[theme.fn.primaryShade()]
+                              : theme.colors.blue[theme.fn.primaryShade()],
+                        })}
+                      >
+                        {colorScheme === 'dark' ? (
+                          <IconSun size={18} />
+                        ) : (
+                          <IconMoonStars size={18} />
+                        )}
+                      </ActionIcon>
+                      {currentUser && (
+                        <>
+                          {currentUser?.showNsfw && (
+                            <BlurToggle iconProps={{ stroke: 1.5 }}>
+                              {({ icon, toggle }) => (
+                                <ActionIcon variant="default" size="lg" onClick={toggle}>
+                                  {icon}
+                                </ActionIcon>
+                              )}
+                            </BlurToggle>
+                          )}
+                          <Link href="/user/account" passHref>
+                            <ActionIcon
+                              variant="default"
+                              component="a"
+                              size="lg"
+                              onClick={closeBurger}
+                            >
+                              <IconSettings stroke={1.5} />
+                            </ActionIcon>
+                          </Link>
+                          <ActionIcon variant="default" onClick={() => signOut()} size="lg">
+                            <IconLogout
+                              stroke={1.5}
+                              color={theme.colors.red[theme.fn.primaryShade()]}
+                            />
+                          </ActionIcon>
+                        </>
+                      )}
+                    </Group>
+                  </Paper>
+                )}
+              </Transition>
+            </Group>
+          </Grid.Col>
+        </Grid>
+      )}
     </Header>
   );
 }

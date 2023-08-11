@@ -41,7 +41,8 @@ export function UserAvatar({
 }: Props) {
   const currentUser = useCurrentUser();
 
-  if (!user) return null;
+  // If no user or user is civitai, return null
+  if (!user || user.id === -1) return null;
   const userDeleted = !!user.deletedAt;
 
   textSize ??= mapAvatarTextSize[size].textSize;
