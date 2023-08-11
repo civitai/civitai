@@ -34,10 +34,10 @@ const featureFlags = createFeatureFlags({
   },
   alternateHome: {
     toggleable: true,
-    default: false,
+    default: true,
     displayName: 'New Home Page',
     description: `A new home page with a more modern design and more features. This is a beta feature, so please report any issues you find!`,
-    availability: ['mod'],
+    availability: ['public'],
   },
   collections: ['public'],
   air: {

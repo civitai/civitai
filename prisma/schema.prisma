@@ -355,26 +355,28 @@ model Model {
   allowDerivatives      Boolean       @default(true)
   allowDifferentLicense Boolean       @default(true)
 
-  modelVersions     ModelVersion[]
-  tagsOnModels      TagsOnModels[]
-  tagsOnModelsVotes TagsOnModelsVote[]
-  tags              ModelTag[]
-  metrics           ModelMetric[]
-  saves             SavedModel[]
-  reports           ModelReport[]
-  engagements       ModelEngagement[]
-  comments          Comment[]
-  interests         ModelInterest[]
-  licenses          License[]
-  rank              ModelRank?
-  reportStats       ModelReportStat?
-  hashes            ModelHash[]
-  threads           Thread[]
-  resourceReviews   ResourceReview[]
-  metricsDaily      ModelMetricDaily[]
-  associatedFrom    ModelAssociations[] @relation("ToModelAssociation")
-  associations      ModelAssociations[] @relation("FromModelAssociation")
-  collectionItems   CollectionItem[]
+  modelVersions      ModelVersion[]
+  tagsOnModels       TagsOnModels[]
+  tagsOnModelsVotes  TagsOnModelsVote[]
+  tags               ModelTag[]
+  metrics            ModelMetric[]
+  saves              SavedModel[]
+  reports            ModelReport[]
+  engagements        ModelEngagement[]
+  comments           Comment[]
+  interests          ModelInterest[]
+  licenses           License[]
+  rank               ModelRank?
+  reportStats        ModelReportStat?
+  downloads          DownloadHistory[]
+  hashes             ModelHash[]
+  threads            Thread[]
+  resourceReviews    ResourceReview[]
+  metricsDaily       ModelMetricDaily[]
+  associatedFrom     ModelAssociations[]  @relation("ToModelAssociation")
+  associations       ModelAssociations[]  @relation("FromModelAssociation")
+  collectionItems    CollectionItem[]
+  generationCoverage GenerationCoverage[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -435,23 +437,24 @@ model ModelVersion {
   fromImportId         Int?
   inaccurate           Boolean       @default(false)
   baseModel            String
+  baseModelType        String?
   meta                 Json          @default("{}")
   earlyAccessTimeFrame Int           @default(0)
 
-  metrics                        ModelVersionMetric[]
-  files                          ModelFile[]
-  runStrategies                  RunStrategy[]
-  engagements                    ModelVersionEngagement[]
-  rank                           ModelVersionRank?
-  downloads                      DownloadHistory[]
-  imageResources                 ImageResource[]
-  posts                          Post[]
-  resourceReviews                ResourceReview[]
-  hashes                         ModelHash[]
-  metricsDaily                   ModelMetricDaily[]
-  modelVersionExploration        ModelVersionExploration[]
-  modelVersionGenerationCoverage ModelVersionGenerationCoverage?
-  vaeFor                         ModelVersion[]                  @relation("vae")
+  metrics                 ModelVersionMetric[]
+  files                   ModelFile[]
+  runStrategies           RunStrategy[]
+  engagements             ModelVersionEngagement[]
+  rank                    ModelVersionRank?
+  downloads               DownloadHistory[]
+  imageResources          ImageResource[]
+  posts                   Post[]
+  resourceReviews         ResourceReview[]
+  hashes                  ModelHash[]
+  metricsDaily            ModelMetricDaily[]
+  modelVersionExploration ModelVersionExploration[]
+  vaeFor                  ModelVersion[]            @relation("vae")
+  generationCoverage      GenerationCoverage?
 
   @@index([modelId], type: Hash)
 }
@@ -613,6 +616,8 @@ model DownloadHistory {
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
   downloadAt     DateTime
   hidden         Boolean      @default(false)
+  Model          Model?       @relation(fields: [modelId], references: [id])
+  modelId        Int?
 
   @@id([userId, modelVersionId])
   @@index([downloadAt])
@@ -1691,15 +1696,6 @@ model ModelVersionExploration {
   @@id([modelVersionId, name])
 }
 
-model ModelVersionGenerationCoverage {
-  modelVersionId   Int
-  workers          Int
-  serviceProviders String[]
-  modelVersion     ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-
-  @@id([modelVersionId])
-}
-
 enum GenerationSchedulers {
   EulerA
   Euler
@@ -2683,4 +2679,15 @@ model ResourceReviewHelper {
   resourceReviewId Int            @id
   resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id])
   imageCount       Int
+}
+
+/// @view
+model GenerationCoverage {
+  modelId        Int
+  model          Model        @relation(fields: [modelId], references: [id])
+  modelVersionId Int          @unique
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  covered        Boolean
+
+  @@id([modelId, modelVersionId])
 }

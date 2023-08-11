@@ -19,8 +19,8 @@ import {
   HomeBlockMetaSchema,
   SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
-import { HomeBlockType } from '@prisma/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { CollectionType, HomeBlockType } from '@prisma/client';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';
 
@@ -85,7 +85,7 @@ export const getHomeBlocksByIdHandler = async ({
   input,
 }: {
   ctx: Context;
-  input: GetHomeBlockByIdInputSchema;
+  input: GetHomeBlockByIdInputSchema & UserPreferencesInput;
 }): Promise<HomeBlockWithData> => {
   try {
     const homeBlock = await getHomeBlockById({

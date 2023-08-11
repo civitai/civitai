@@ -108,26 +108,49 @@ function CollectionListForm({
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = (data: AddCollectionItemInput) => {
-    addCollectionItemMutation.mutate(data, {
-      async onSuccess() {
-        await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
-        onSubmit();
-        showNotification({
-          title: 'Item added',
-          message: 'Your item has been added to the selected collections.',
-        });
-      },
-      onError(error) {
-        showErrorNotification({
-          title: 'Unable to add item',
-          error: new Error(error.message),
-        });
-      },
-    });
+    const removeFromCollectionIds = collectionItems
+      .map((item) => item.collectionId)
+      .filter((collectionId) => !data.collectionIds.includes(collectionId));
+
+    addCollectionItemMutation.mutate(
+      { ...data, removeFromCollectionIds },
+      {
+        async onSuccess(_, { type }) {
+          showNotification({
+            title: 'Item added',
+            message: 'Your item has been added to the selected collections.',
+          });
+          onSubmit();
+
+          // Invalidate the right query based on the collection type
+          const endpointTarget =
+            type === CollectionType.Article
+              ? queryUtils.article.getInfinite
+              : type === CollectionType.Model
+              ? queryUtils.model.getAll
+              : type === CollectionType.Post
+              ? queryUtils.post.getInfinite
+              : type === CollectionType.Image
+              ? queryUtils.image.getInfinite
+              : null;
+          await Promise.all([
+            queryUtils.collection.getUserCollectionItemsByItem.invalidate(),
+            endpointTarget?.invalidate(),
+          ]);
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Unable to update item',
+            error: new Error(error.message),
+          });
+        },
+      }
+    );
   };
 
   useEffect(() => {
     if (collectionItems.length === 0) return;
+
     const collectionIds = collectionItems.map((collectionItem) =>
       collectionItem.collectionId.toString()
     );
@@ -162,73 +185,76 @@ function CollectionListForm({
               <Loader variant="bars" />
             </Center>
           ) : (
-            <ScrollArea.Autosize maxHeight={200}>
-              {ownedCollections.length > 0 ? (
-                <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                  {ownedCollections.map((collection) => {
-                    const Icon = collectionReadPrivacyData[collection.read].icon;
+            <>
+              <ScrollArea.Autosize maxHeight={200}>
+                {ownedCollections.length > 0 ? (
+                  <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                    {ownedCollections.map((collection) => {
+                      const Icon = collectionReadPrivacyData[collection.read].icon;
 
-                    return (
-                      <Checkbox
-                        key={collection.id}
-                        classNames={classes}
-                        value={collection.id.toString()}
-                        label={
-                          <Group spacing="xs" position="apart" w="100%" noWrap>
-                            <Text lineClamp={1} inherit>
-                              {collection.name}
-                            </Text>
-                            <Icon size={18} />
-                          </Group>
-                        }
-                      />
-                    );
-                  })}
-                </InputCheckboxGroup>
-              ) : (
-                <Center py="xl">
-                  <Text color="dimmed">{`You don't have any ${
-                    props.type?.toLowerCase() || ''
-                  } collections yet.`}</Text>
-                </Center>
+                      return (
+                        <Checkbox
+                          key={collection.id}
+                          classNames={classes}
+                          value={collection.id.toString()}
+                          label={
+                            <Group spacing="xs" position="apart" w="100%" noWrap>
+                              <Text lineClamp={1} inherit>
+                                {collection.name}
+                              </Text>
+                              <Icon size={18} />
+                            </Group>
+                          }
+                        />
+                      );
+                    })}
+                  </InputCheckboxGroup>
+                ) : (
+                  <Center py="xl">
+                    <Text color="dimmed">{`You don't have any ${
+                      props.type?.toLowerCase() || ''
+                    } collections yet.`}</Text>
+                  </Center>
+                )}
+              </ScrollArea.Autosize>
+              {contributingCollections.length > 0 && (
+                <Stack>
+                  <Text size="sm" weight="bold">
+                    Collections you contribute in
+                  </Text>
+                  <ScrollArea.Autosize maxHeight={200}>
+                    <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                      {contributingCollections.map((collection) => {
+                        const collectionItem = collectionItems.find(
+                          (item) => item.collectionId === collection.id
+                        );
+                        const Icon = collectionReadPrivacyData[collection.read].icon;
+
+                        return (
+                          <Checkbox
+                            key={collection.id}
+                            classNames={classes}
+                            value={collection.id.toString()}
+                            disabled={collectionItem && !collectionItem.canRemoveItem}
+                            label={
+                              <Group spacing="xs" position="apart" w="100%" noWrap>
+                                <Text lineClamp={1} inherit>
+                                  {collection.name}
+                                </Text>
+                                <Icon size={18} />
+                              </Group>
+                            }
+                          />
+                        );
+                      })}
+                    </InputCheckboxGroup>
+                  </ScrollArea.Autosize>
+                </Stack>
               )}
-            </ScrollArea.Autosize>
+            </>
           )}
         </Stack>
-        {contributingCollections.length > 0 && (
-          <Stack>
-            <Text size="sm" weight="bold">
-              Collections you contribute in
-            </Text>
-            <ScrollArea.Autosize maxHeight={200}>
-              <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
-                {contributingCollections.map((collection) => {
-                  const collectionItem = collectionItems.find(
-                    (item) => item.collectionId === collection.id
-                  );
-                  const Icon = collectionReadPrivacyData[collection.read].icon;
 
-                  return (
-                    <Checkbox
-                      key={collection.id}
-                      classNames={classes}
-                      value={collection.id.toString()}
-                      disabled={collectionItem && !collectionItem.canRemoveItem}
-                      label={
-                        <Group spacing="xs" position="apart" w="100%" noWrap>
-                          <Text lineClamp={1} inherit>
-                            {collection.name}
-                          </Text>
-                          <Icon size={18} />
-                        </Group>
-                      }
-                    />
-                  );
-                })}
-              </InputCheckboxGroup>
-            </ScrollArea.Autosize>
-          </Stack>
-        )}
         <Group position="right">
           <Button type="submit" loading={addCollectionItemMutation.isLoading}>
             Save

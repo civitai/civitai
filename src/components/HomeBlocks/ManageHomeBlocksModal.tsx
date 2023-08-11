@@ -268,7 +268,7 @@ function SortableHomeBlock({
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    cursor: isDragging ? 'grabbing' : 'pointer',
+    cursor: isDragging ? 'grabbing' : 'grab',
     zIndex: isDragging ? 1 : undefined,
   };
   const metadata = homeBlock.metadata as HomeBlockMetaSchema;

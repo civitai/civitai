@@ -28,6 +28,7 @@ export type AddCollectionItemInput = z.infer<typeof saveCollectionItemInputSchem
 export const saveCollectionItemInputSchema = collectionItemSchema
   .extend({
     collectionIds: z.coerce.number().array(),
+    removeFromCollectionIds: z.coerce.number().array().optional(),
   })
   .refine(
     ({ articleId, imageId, postId, modelId }) =>

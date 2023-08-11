@@ -64,7 +64,6 @@ export default function ContentPage({
           className="markdown-content"
           components={{
             a: ({ node, ...props }) => {
-              console.log('props: ', { props });
               return (
                 <Link href={props.href as string}>
                   <a target={props.href?.includes('http') ? '_blank' : '_self'}>

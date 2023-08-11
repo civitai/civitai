@@ -3,20 +3,21 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
 
+const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
+
 export const comfyMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => exif.prompt && exif.workflow,
   parse: (exif) => {
-    console.log(exif);
-    const data = JSON.parse(exif.prompt as string) as Record<string, ComfyNode>;
+    const prompt = JSON.parse(exif.prompt as string) as Record<string, ComfyNode>;
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
     const upscalers: string[] = [];
     const vaes: string[] = [];
     const controlNets: string[] = [];
     const additionalResources: AdditionalResource[] = [];
-    for (const node of Object.values(data)) {
+    for (const node of Object.values(prompt)) {
       for (const [key, value] of Object.entries(node.inputs)) {
-        if (Array.isArray(value)) node.inputs[key] = data[value[0]];
+        if (Array.isArray(value)) node.inputs[key] = prompt[value[0]];
       }
 
       if (node.class_type == 'KSamplerAdvanced') {
@@ -56,6 +57,22 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const initialSamplerNode =
       samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ?? samplerNodes[0];
 
+    const workflow = JSON.parse(exif.workflow as string) as any;
+    const versionIds: number[] = [];
+    const modelIds: number[] = [];
+    if (workflow?.extra) {
+      for (const key of AIR_KEYS) {
+        const airs = workflow.extra[key];
+        if (!airs) continue;
+
+        for (const air of airs) {
+          const [modelId, versionId] = air.split('@');
+          if (versionId) versionIds.push(parseInt(versionId));
+          else if (modelId) modelIds.push(parseInt(modelId));
+        }
+      }
+    }
+
     const metadata: ImageMetaProps = {
       prompt: getPromptText(initialSamplerNode.positive),
       negativePrompt: getPromptText(initialSamplerNode.negative),
@@ -72,9 +89,11 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       vaes,
       additionalResources,
       controlNets,
+      versionIds,
+      modelIds,
       comfy: {
-        prompt: JSON.parse(exif.prompt),
-        workflow: JSON.parse(exif.workflow),
+        prompt,
+        workflow,
       },
     };
 

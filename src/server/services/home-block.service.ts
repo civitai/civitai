@@ -1,7 +1,7 @@
 import { HomeBlockType, Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetHomeBlockByIdInputSchema,
   GetHomeBlocksInputSchema,
@@ -22,7 +22,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { getSystemHomeBlocksCached } from '~/server/services/system-cache';
+import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -94,8 +94,6 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
 
 export const getHomeBlockById = async ({
   id,
-  user,
-  ...input
 }: GetHomeBlockByIdInputSchema & {
   // SessionUser required because it's passed down to getHomeBlockData
   user?: SessionUser;
@@ -113,7 +111,14 @@ export const getHomeBlockById = async ({
     },
   });
 
-  return getHomeBlockData({ homeBlock, user, input });
+  if (!homeBlock) {
+    return null;
+  }
+
+  return getHomeBlockCached({
+    ...homeBlock,
+    metadata: homeBlock.metadata as HomeBlockMetaSchema,
+  });
 };
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
@@ -138,7 +143,6 @@ export const getHomeBlockData = async ({
   user,
   input,
   homeBlock,
-  bypassCache = false,
 }: {
   homeBlock: {
     id: number;
@@ -151,21 +155,7 @@ export const getHomeBlockData = async ({
   // Session user required because it's passed down to collection get items service
   // which requires it for models/posts/etc
   user?: SessionUser;
-  bypassCache?: boolean;
 }): Promise<HomeBlockWithData | null> => {
-  if (!bypassCache) {
-    const systemHomeBlocksWithData = await getSystemHomeBlocksCached();
-    const systemHomeBlock = systemHomeBlocksWithData.find(
-      (systemHomeBlock) =>
-        systemHomeBlock.id === homeBlock.id || systemHomeBlock.id === homeBlock.sourceId
-    );
-
-    if (systemHomeBlock) {
-      // System home block. Likely found in the cache:
-      return systemHomeBlock;
-    }
-  }
-
   const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
 
   switch (homeBlock.type) {
@@ -187,7 +177,6 @@ export const getHomeBlockData = async ({
         : await getCollectionItemsByCollectionId({
             user,
             input: {
-              ...(input as UserPreferencesInput),
               collectionId: collection.id,
               limit: input.limit || metadata.collection.limit,
             },
@@ -252,8 +241,8 @@ export const getHomeBlockData = async ({
         ...homeBlock,
         metadata,
         announcements: announcements.sort((a, b) => {
-          const aIndex = a.metadata.index ?? 999;
-          const bIndex = b.metadata.index ?? 999;
+          const aIndex = a.metadata?.index ?? 999;
+          const bIndex = b.metadata?.index ?? 999;
 
           return aIndex - bIndex;
         }),

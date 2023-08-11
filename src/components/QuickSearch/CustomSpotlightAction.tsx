@@ -223,7 +223,7 @@ function ModelSpotlightAction({
           <Highlight size="md" highlight={query.split(' ')}>
             {title}
           </Highlight>
-          {features.imageGeneration && !!modelVersion.modelVersionGenerationCoverage?.workers && (
+          {features.imageGeneration && !!modelVersion.generationCoverage?.covered && (
             <ThemeIcon color="green" variant="filled" radius="xl" size="sm">
               <IconBrush size={12} stroke={2.5} />
             </ThemeIcon>
