@@ -44,7 +44,9 @@ export function SearchableMultiSelectRefinementList({
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
   // We need to keep the state of the select here because the items may dissapear while searching.
-  const [refinedItems, setRefinedItems] = useState<typeof items>([]);
+  const [refinedItems, setRefinedItems] = useState<typeof items>(
+    (items ?? []).filter((item) => item.isRefined) ?? []
+  );
 
   const onUpdateSelection = (updatedSelectedItems: string[]) => {
     const addedItems = updatedSelectedItems.length > refinedItems.length;
@@ -82,6 +84,7 @@ export function SearchableMultiSelectRefinementList({
 
   useEffect(() => {
     const itemsAreRefined = items.filter((item) => item.isRefined);
+
     if (refinedItems.length === 0 && itemsAreRefined.length > 0) {
       // On initial render refine items
       setRefinedItems(itemsAreRefined);

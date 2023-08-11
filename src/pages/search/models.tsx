@@ -34,6 +34,7 @@ import { ModelGetAll } from '~/types/router';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { IconCloudOff } from '@tabler/icons-react';
+import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -71,13 +72,14 @@ export default function Search() {
 const RenderFilters = () => {
   return (
     <>
+      <SearchBox />
       <SortBy
         title="Sort models by"
         items={[
           { label: 'Highest Rated', value: 'models:metrics.weightedRating:desc' },
-          { label: 'Most downloaded', value: 'models:metrics.downloadCount:desc' },
+          { label: 'Most Downloaded', value: 'models:metrics.downloadCount:desc' },
           { label: 'Most Liked', value: 'models:metrics.favoriteCount:desc' },
-          { label: 'Most discussed', value: 'models:metrics.commentCount:desc' },
+          { label: 'Most Discussed', value: 'models:metrics.commentCount:desc' },
           { label: 'Newest', value: 'models:createdAt:desc' },
         ]}
       />
@@ -120,8 +122,8 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function ModelsHitList() {
-  const { hits, showMore, isLastPage } = useInfiniteHits();
-  const { status, ...other } = useInstantSearch();
+  const { hits, showMore, isLastPage } = useInfiniteHits<ModelSearchIndexRecord>();
+  const { status } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes } = useStyles();
 
@@ -132,26 +134,26 @@ export function ModelsHitList() {
     }
   }, [status, inView, showMore, isLastPage]);
 
-  if (hits.length === 0 && status === 'idle') {
-    return (
-      <Box>
-        <Center>
-          <Stack spacing="md" align="center" maw={800}>
-            <Title order={1} inline>
-              No models found
-            </Title>
-            <Text align="center">
-              We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
-              query.
-            </Text>
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
-              <IconCloudOff size={80} />
-            </ThemeIcon>
-          </Stack>
-        </Center>
-      </Box>
-    );
-  }
+  // if (hits.length === 0 && status === 'idle') {
+  //   return (
+  //     <Box>
+  //       <Center>
+  //         <Stack spacing="md" align="center" maw={800}>
+  //           <Title order={1} inline>
+  //             No models found
+  //           </Title>
+  //           <Text align="center">
+  //             We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
+  //             query.
+  //           </Text>
+  //           <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+  //             <IconCloudOff size={80} />
+  //           </ThemeIcon>
+  //         </Stack>
+  //       </Center>
+  //     </Box>
+  //   );
+  // }
 
   if (hits.length === 0 && status === 'loading') {
     return <Box>Loading...</Box>;
@@ -161,15 +163,14 @@ export function ModelsHitList() {
     <Stack>
       <Box className={classes.grid}>
         {hits.map((hit) => {
-          const modelHit = hit as unknown as ModelGetAll['items'][number];
-          const images = (hit.images ?? []) as ModelGetAll['items'][number]['image'][];
+          const images = hit.images ?? [];
 
           const model = {
-            ...modelHit,
+            ...hit,
             image: images[0],
           };
 
-          return <ModelCard key={modelHit.id} data={model} />;
+          return <ModelCard key={hit.id} data={model} />;
         })}
       </Box>
       {hits.length > 0 && (

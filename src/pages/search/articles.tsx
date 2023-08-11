@@ -104,7 +104,7 @@ export function ArticlesHitList() {
 
   return (
     <Stack>
-      <Text>So we got: {hits.length}</Text>
+      <Text>No articles found... (TODO)</Text>
     </Stack>
   );
 }

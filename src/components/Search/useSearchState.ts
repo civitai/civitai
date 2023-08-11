@@ -12,10 +12,7 @@ import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs
 export const searchIndexes = ['models', 'articles'] as const;
 export type SearchIndex = (typeof searchIndexes)[number];
 export const searchParamsSchema = z.object({
-  query: z
-    .any()
-    .transform((val) => val.toString())
-    .optional(),
+  query: z.coerce.string().optional(),
   page: z.number().optional(),
 });
 
