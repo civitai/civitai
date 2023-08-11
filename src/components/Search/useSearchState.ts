@@ -33,7 +33,6 @@ type InstantSearchRoutingParser = {
   parseURL: (params: { location: Location }) => UiState;
   routeToState: (routeState: UiState) => UiState;
   stateToRoute: (routeState: UiState) => UiState;
-  windowTitle: (routeState: UiState) => string;
 };
 
 export const ModelSearchIndexSortBy = [
@@ -65,15 +64,6 @@ const modelSearchParamsSchema = searchParamsSchema
 type ModelSearchParams = z.output<typeof modelSearchParamsSchema>;
 
 const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
-  windowTitle: (routeState) => {
-    if (!routeState.models) {
-      return '';
-    }
-
-    return routeState.models.query
-      ? `Civitai | Search Models - ${routeState.models.query}`
-      : 'Civitai | Search Models';
-  },
   parseURL: ({ location }) => {
     const modelSearchIndexResult = modelSearchParamsSchema.safeParse(QS.parse(location.search));
     const modelSearchIndexData: ModelSearchParams | Record<string, string[]> =
@@ -147,15 +137,6 @@ const articleSearchParamsSchema = searchParamsSchema
 type ArticleSearchParams = z.output<typeof articleSearchParamsSchema>;
 
 const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
-  windowTitle: (routeState) => {
-    if (!routeState.articles) {
-      return '';
-    }
-
-    return routeState.articles.query
-      ? `Civitai | Search Articles - ${routeState.articles.query}`
-      : 'Civitai | Search Articles';
-  },
   parseURL: ({ location }) => {
     const articleSearchIndexResult = articleSearchParamsSchema.safeParse(QS.parse(location.search));
     const articleSearchIndexData: ArticleSearchParams | Record<string, string[]> =
@@ -255,14 +236,6 @@ export const routing: InstantSearchProps['routing'] = {
   router: createInstantSearchRouterNext({
     singletonRouter,
     routerOptions: {
-      windowTitle(routeState) {
-        const [index] = Object.keys(routeState);
-        if (!index) {
-          return 'Civitai | Search';
-        }
-
-        return getRoutingForIndex(index as SearchIndex).windowTitle(routeState);
-      },
       createURL({ routeState, location }) {
         let query = '';
 

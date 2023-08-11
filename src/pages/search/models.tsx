@@ -33,6 +33,7 @@ import { useEffect } from 'react';
 import { ModelGetAll } from '~/types/router';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
+import { IconCloudOff } from '@tabler/icons-react';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -120,7 +121,7 @@ const useStyles = createStyles((theme) => ({
 
 export function ModelsHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits();
-  const { status } = useInstantSearch();
+  const { status, ...other } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes } = useStyles();
 
@@ -130,6 +131,31 @@ export function ModelsHitList() {
       showMore?.();
     }
   }, [status, inView, showMore, isLastPage]);
+
+  if (hits.length === 0 && status === 'idle') {
+    return (
+      <Box>
+        <Center>
+          <Stack spacing="md" align="center" maw={800}>
+            <Title order={1} inline>
+              No models found
+            </Title>
+            <Text align="center">
+              We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
+              query.
+            </Text>
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
+          </Stack>
+        </Center>
+      </Box>
+    );
+  }
+
+  if (hits.length === 0 && status === 'loading') {
+    return <Box>Loading...</Box>;
+  }
 
   return (
     <Stack>
