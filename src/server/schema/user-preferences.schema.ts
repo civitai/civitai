@@ -26,13 +26,13 @@ export const hiddenPreferencesSchema = z.object({
     .default({}),
 });
 
-export type ToggleHiddenTagsOutput = z.infer<typeof toggleHiddenTagsSchema>;
+export type ToggleHiddenTagsInput = z.input<typeof toggleHiddenTagsSchema>;
 export const toggleHiddenTagsSchema = z.object({
   tagIds: z.number().array(),
   hidden: z.boolean().optional(),
 });
 
-export type ToggleHiddenEntityOutput = z.infer<typeof toggleHiddenEntitySchema>;
+export type ToggleHiddenEntityInput = z.input<typeof toggleHiddenEntitySchema>;
 export const toggleHiddenEntitySchema = z.object({
   entityId: z.number(),
   entityType: z.enum(['model', 'user', 'image']),

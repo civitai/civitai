@@ -308,7 +308,7 @@ export async function toggleHideUser({
   await HiddenUsers.refreshCache({ userId });
 }
 
-export async function ToggleHideImage({ userId, imageId }: { userId: number; imageId: number }) {
+export async function toggleHideImage({ userId, imageId }: { userId: number; imageId: number }) {
   const engagement = await dbWrite.imageEngagement.findUnique({
     where: { userId_imageId: { userId, imageId } },
     select: { type: true },

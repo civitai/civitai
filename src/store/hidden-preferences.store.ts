@@ -3,16 +3,15 @@ import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import {
   HiddenPreferencesOutput,
+  ToggleHiddenEntityInput,
+  ToggleHiddenTagsInput,
   hiddenPreferencesSchema,
 } from '~/server/schema/user-preferences.schema';
 
 type UserPreferencesStore = HiddenPreferencesOutput & {
   getPreferences: () => Promise<void>;
-  toggleTags: (tagIds: number[], hidden?: boolean) => Promise<void>;
-  toggleEntity: (args: {
-    entityId: number;
-    entityType: 'model' | 'user' | 'image';
-  }) => Promise<void>;
+  toggleTags: (args: ToggleHiddenTagsInput) => Promise<void>;
+  toggleEntity: (args: ToggleHiddenEntityInput) => Promise<void>;
   toggleTagVote: (args: {
     vote: -1 | 0 | 1;
     tagId: number;
@@ -31,7 +30,7 @@ export const useUserPreferencesStore = create<UserPreferencesStore>()(
         const data = await fetchPreferences();
         set({ ...data });
       },
-      toggleTags: async (tagIds, hidden) => {
+      toggleTags: async ({ tagIds, hidden }) => {
         set((state) => {
           if (hidden === true) state.hidden.tags = [...state.hidden.tags, ...tagIds];
           else if (hidden === false)
@@ -44,7 +43,7 @@ export const useUserPreferencesStore = create<UserPreferencesStore>()(
             }
           }
         });
-        const data = await toggleHiddenTags(tagIds, hidden);
+        const data = await toggleHiddenTags({ tagIds, hidden });
         set((state) => {
           state.hidden = data;
         });
@@ -102,8 +101,8 @@ const fetchPreferences = async () => {
   return hiddenPreferencesSchema.parse(data);
 };
 
-const toggleHiddenTags = async (tagIds: number[], hidden?: boolean) => {
-  const result = await fetch('', {
+const toggleHiddenTags = async ({ tagIds, hidden }: ToggleHiddenTagsInput) => {
+  const result = await fetch('/api/user/preferences/tags', {
     method: 'POST',
     body: JSON.stringify({ tagIds, hidden }),
   });
@@ -116,14 +115,8 @@ const toggleHiddenTags = async (tagIds: number[], hidden?: boolean) => {
   return data;
 };
 
-const toggleHiddenEntity = async ({
-  entityId,
-  entityType,
-}: {
-  entityId: number;
-  entityType: 'model' | 'image' | 'user';
-}) => {
-  const result = await fetch('', {
+const toggleHiddenEntity = async ({ entityId, entityType }: ToggleHiddenEntityInput) => {
+  const result = await fetch('/api/user/preferences/toggle', {
     method: 'POST',
     body: JSON.stringify({ entityId, entityType }),
   });
