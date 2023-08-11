@@ -105,7 +105,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'type',
     'checkpointType',
     'tags.name',
-    'modelVersion.baseModel',
+    'version.baseModel',
     'status',
   ];
 
