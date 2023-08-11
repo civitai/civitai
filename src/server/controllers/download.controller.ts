@@ -24,10 +24,10 @@ export const getUserDownloadsInfiniteHandler = async ({
       select: getAllDownloadsSelect,
     });
 
-    let nextCursor: number | undefined;
+    let nextCursor: Date | undefined;
     if (items.length > limit) {
       const nextItem = items.pop();
-      nextCursor = nextItem?.id;
+      nextCursor = nextItem?.downloadAt;
     }
 
     return { items, nextCursor };
@@ -40,10 +40,10 @@ export const hideDownloadHandler = async ({ input }: { input: HideDownloadInput 
   try {
     const download = await updateUserActivityById({
       ...input,
-      data: { hide: true },
+      data: { hidden: true },
     });
 
-    if (!download) throw throwNotFoundError(`No download with id ${input.id}`);
+    if (!download) throw throwNotFoundError(`No download with id ${input.modelVersionId}`);
 
     return { download };
   } catch (error) {

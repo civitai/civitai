@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const getUserDownloadsSchema = getAllQuerySchema.extend({
-  cursor: z.number(),
+  cursor: z.date(),
   unread: z.boolean().default(false),
 });
 export type GetUserDownloadsSchema = z.infer<typeof getUserDownloadsSchema>;

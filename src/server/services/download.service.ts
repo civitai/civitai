@@ -7,6 +7,7 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySelect>({
   limit = DEFAULT_PAGE_SIZE,
   userId,
+  cursor,
   select,
   count = false,
 }: Partial<GetUserDownloadsSchema> & {
