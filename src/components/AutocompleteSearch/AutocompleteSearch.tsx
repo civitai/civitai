@@ -104,7 +104,10 @@ export function AutocompleteSearch({
   const blurInput = () => inputRef.current?.blur();
 
   const handleSubmit = () => {
-    if (search) router.push(`/search/models?query=${encodeURIComponent(search)}`);
+    if (search) {
+      router.push(`/search/models?query=${encodeURIComponent(search)}`);
+      blurInput();
+    }
     onSubmit?.();
   };
 
@@ -289,7 +292,7 @@ const ModelSearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
             <Text>
               <Highlight attribute="name" hit={hit} classNames={classes} />
             </Text>
-            {features.imageGeneration && !!modelVersion.modelVersionGenerationCoverage?.workers && (
+            {features.imageGeneration && !!modelVersion.generationCoverage?.covered && (
               <ThemeIcon color="white" variant="filled" radius="xl" size="sm">
                 <IconBrush size={12} stroke={2.5} color={theme.colors.dark[6]} />
               </ThemeIcon>
