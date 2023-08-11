@@ -257,6 +257,10 @@ export const routing: InstantSearchProps['routing'] = {
     routerOptions: {
       windowTitle(routeState) {
         const [index] = Object.keys(routeState);
+        if (!index) {
+          return 'Civitai | Search';
+        }
+
         return getRoutingForIndex(index as SearchIndex).windowTitle(routeState);
       },
       createURL({ routeState, location }) {
