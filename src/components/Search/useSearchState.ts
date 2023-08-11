@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
-import { UiState } from 'instantsearch.js';
+import type { UiState } from 'instantsearch.js';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';

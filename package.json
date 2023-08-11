@@ -101,6 +101,7 @@
     "gray-matter": "^4.0.3",
     "idb-keyval": "^6.2.0",
     "immer": "^9.0.15",
+    "instantsearch.js": "^4.56.9",
     "jsonwebtoken": "^9.0.1",
     "lodash-es": "^4.17.21",
     "mantine-react-table": "^0.9.5",
