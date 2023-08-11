@@ -8,6 +8,7 @@ import { useRef, useEffect, useMemo, forwardRef } from 'react';
 
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -24,6 +25,7 @@ export function ListSearch({ onSearch }: Props) {
   const { tag, query, username, set } = useModelQueryParams();
   const searchRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useDebouncedState('', 300);
+  const features = useFeatureFlags();
 
   const form = useForm({
     initialValues: { query: '' },
@@ -89,7 +91,10 @@ export function ListSearch({ onSearch }: Props) {
   };
 
   const handleSetQuery = (query: string) => {
-    set({ tag: undefined, query, username: undefined, view: 'feed' }, '/');
+    set(
+      { tag: undefined, query, username: undefined, view: 'feed' },
+      features.alternateHome ? '/models' : '/'
+    );
   };
 
   const handleClear = () => {

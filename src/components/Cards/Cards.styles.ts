@@ -67,6 +67,17 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
       infoChip: {
         borderRadius: theme.radius.sm,
         backgroundColor: theme.fn.rgba('#000', 0.31),
+        [`.mantine-Badge-inner`]: {
+          display: 'flex',
+          overflow: 'visible',
+        },
+        [`.mantine-Divider-root`]: {
+          margin: `-4px 8px`,
+          borderLeftColor: theme.fn.rgba('#fff', 0.31),
+          borderRightColor: theme.fn.rgba('#000', 0.2),
+          borderRightWidth: 1,
+          borderRightStyle: 'solid',
+        },
       },
 
       chip: {

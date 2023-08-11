@@ -1,7 +1,9 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons-react';
-import { useEffect } from 'react';
+import { debounce } from 'lodash-es';
+import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { ModelCard } from '~/components/Cards/ModelCard';
@@ -31,20 +33,20 @@ export function ModelsInfinite({
   const modelFilters = useModelFilters();
   const RenderItem = renderItem ?? features.modelCardV2 ? ModelCard : AmbientModelCard;
 
-  const filters = { ...modelFilters, ...removeEmpty(filterOverrides) };
+  const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryModels(filters, {
-      keepPreviousData: true,
-    });
+    useQueryModels(debouncedFilters, { keepPreviousData: true });
+  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
 
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && !isFetching) {
-      fetchNextPage?.();
+      debouncedFetchNextPage();
     }
-  }, [fetchNextPage, inView, isFetching]);
+  }, [debouncedFetchNextPage, inView, isFetching]);
   // #endregion
 
   return (

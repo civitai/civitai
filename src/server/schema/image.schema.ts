@@ -159,6 +159,8 @@ export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
   type: z.nativeEnum(MediaType).optional(),
+  height: z.coerce.number().nullish(),
+  width: z.coerce.number().nullish(),
 });
 
 // #region [new schemas]
@@ -195,6 +197,7 @@ export const getInfiniteImagesSchema = z
     excludeCrossPosts: z.boolean().optional(),
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
     ids: z.array(z.number()).optional(),
+    includeBaseModel: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

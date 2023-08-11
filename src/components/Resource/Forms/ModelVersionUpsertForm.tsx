@@ -41,6 +41,8 @@ const schema = modelVersionUpsertSchema2
   });
 type Schema = z.infer<typeof schema>;
 
+const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
+
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
   const queryUtils = trpc.useContext();
@@ -53,12 +55,15 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     'Wildcards',
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
+  const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
+  const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
 
   // Get VAE options
   const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
     { type: 'VAE' },
     {
       cacheTime: 60 * 1000,
+      enabled: hasVAE,
     }
   );
   const vaeOptions = useMemo(() => {
@@ -70,6 +75,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     ...version,
     name: version?.name ?? 'v1.0',
     baseModel: version?.baseModel ?? 'SD 1.5',
+    baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
+    vaeId: hasVAE ? version?.vaeId ?? null : null,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
       ? version?.trainedWords
@@ -109,6 +116,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         modelId: model?.id ?? -1,
         earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
         trainedWords: skipTrainedWords ? [] : trainedWords,
+        baseModelType: hasBaseModelType ? data.baseModelType : undefined,
+        vaeId: hasVAE ? data.vaeId : undefined,
       });
       await queryUtils.modelVersion.getById.invalidate();
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
@@ -207,14 +216,24 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               />
             </Input.Wrapper>
           )}
-          <InputSelect
-            name="baseModel"
-            label="Base Model"
-            placeholder="Base Model"
-            withAsterisk
-            style={{ flex: 1 }}
-            data={constants.baseModels.map((x) => ({ value: x, label: x }))}
-          />
+          <Group spacing="xs" grow>
+            <InputSelect
+              name="baseModel"
+              label="Base Model"
+              placeholder="Base Model"
+              withAsterisk
+              style={{ flex: 1 }}
+              data={constants.baseModels.map((x) => ({ value: x, label: x }))}
+            />
+            {hasBaseModelType && (
+              <InputSelect
+                name="baseModelType"
+                label="Base Model Type"
+                placeholder="Base Model Type"
+                data={baseModelTypeOptions}
+              />
+            )}
+          </Group>
           <InputRTE
             key="description"
             name="description"
@@ -284,14 +303,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 min={1}
                 max={12}
               />
-              <InputSelect
-                name="vaeId"
-                label="VAE"
-                placeholder="VAE"
-                data={vaeOptions}
-                clearable
-                searchable
-              />
+              {hasVAE && (
+                <InputSelect
+                  name="vaeId"
+                  label="VAE"
+                  placeholder="VAE"
+                  data={vaeOptions}
+                  clearable
+                  searchable
+                />
+              )}
             </Group>
           </Stack>
         </Stack>

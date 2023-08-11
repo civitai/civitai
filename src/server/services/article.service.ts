@@ -154,7 +154,7 @@ export const getArticles = async ({
     });
 
     let nextCursor: number | undefined;
-    if (articles.length > take) {
+    if (articles.length > limit) {
       const nextItem = articles.pop();
       nextCursor = nextItem?.id;
     }

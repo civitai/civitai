@@ -6,6 +6,7 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
   trainedWords: true,
   index: true,
   baseModel: true,
+  baseModelType: true,
   model: {
     select: {
       id: true,

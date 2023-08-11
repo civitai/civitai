@@ -199,7 +199,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
 export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-  const { url, id, type } = ingestImageSchema.parse(image);
+  const { url, id, type, width, height } = ingestImageSchema.parse(image);
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
@@ -215,6 +215,8 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
       imageId: id,
       imageKey: url,
       type,
+      width,
+      height,
       // wait: true,
       scans: [ImageScanType.Label, ImageScanType.Moderation],
       callbackUrl,
@@ -312,6 +314,7 @@ type GetAllImagesRaw = {
   cursorId?: bigint;
   type: MediaType;
   metadata: Prisma.JsonValue;
+  baseModel?: string;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -345,6 +348,7 @@ export const getAllImages = async ({
   reactions,
   ids,
   headers,
+  includeBaseModel,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
@@ -448,14 +452,14 @@ export const getAllImages = async ({
   // Filter to a specific collection and relevant status:
   if (collectionId) {
     const displayReviewItems = userId
-      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${userId})`
+      ? ` OR (ci."status" = 'REVIEW' AND ci."addedById" = ${userId})`
       : '';
 
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "CollectionItem" ci
       WHERE ci."collectionId" = ${collectionId}
         AND ci."imageId" = i.id
-        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+        AND (ci."status" = 'ACCEPTED'${Prisma.raw(displayReviewItems)})
     )`);
   }
 
@@ -533,6 +537,7 @@ export const getAllImages = async ({
         ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
         : ''
     )}
+    
     ${Prisma.raw(
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
@@ -582,6 +587,17 @@ export const getAllImages = async ({
       u.username,
       u.image "userImage",
       u."deletedAt",
+      ${Prisma.raw(
+        includeBaseModel
+          ? `(
+        SELECT mv."baseModel" FROM "ModelVersion" mv
+        RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+        JOIN "Model" m ON mv."modelId" = m.id
+        WHERE m."type" = 'Checkpoint'
+        LIMIT 1
+      ) "baseModel",`
+          : ''
+      )}
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -662,6 +678,7 @@ export const getAllImages = async ({
     user: { id: number; username: string | null };
     imageId: number;
   }>;
+
   if (include?.includes('report')) {
     const imageIds = rawImages.map((i) => i.id);
     const rawReports = await dbRead.imageReport.findMany({
@@ -692,6 +709,7 @@ export const getAllImages = async ({
       report: (typeof reportVar)[number] | undefined;
       publishedAt: Date | null;
       modelVersionId: number | null;
+      baseModel?: string | null;
     }
   > = rawImages.map(
     ({
@@ -1148,10 +1166,17 @@ export function applyModRulesSql(
   if (userId) {
     const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
     needsReviewOr.push(belongsToUser);
-    publishedOr.push(belongsToUser);
+
+    if (publishedOnly) {
+      publishedOr.push(belongsToUser);
+    }
   }
+
   AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-  if (publishedOr.length > 0) AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+
+  if (publishedOr.length > 0) {
+    AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+  }
 }
 
 export async function applyAnonymousUserRules(excludedImageTags: number[]) {

@@ -1,3 +1,4 @@
+import { uniq } from 'lodash-es';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   BulkSaveCollectionItemsInput,
@@ -16,6 +17,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  HomeBlockType,
   ImageIngestionStatus,
   MetricTimeframe,
   Prisma,
@@ -51,6 +53,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -323,11 +326,15 @@ const inputToCollectionType = {
 } as const;
 
 export const saveItemInCollections = async ({
-  input: { collectionIds, type, userId, ...input },
+  input: { collectionIds, type, userId, isModerator, removeFromCollectionIds, ...input },
 }: {
-  input: AddCollectionItemInput & { userId: number };
+  input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
+  if (!itemKey) throw throwBadRequestError(`We don't know the type of thing you're adding`);
+  // Safeguard against duppes.
+  collectionIds = uniq(collectionIds);
+  removeFromCollectionIds = uniq(removeFromCollectionIds);
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
     const type = inputToCollectionType[itemKey as keyof typeof inputToCollectionType];
@@ -351,10 +358,15 @@ export const saveItemInCollections = async ({
     }
   }
 
-  const data: Prisma.CollectionItemCreateManyInput[] = (
+  const data = (
     await Promise.all(
       collectionIds.map(async (collectionId) => {
-        const permission = await getUserCollectionPermissionsById({ userId, id: collectionId });
+        const permission = await getUserCollectionPermissionsById({
+          userId,
+          isModerator,
+          id: collectionId,
+        });
+
         if (!permission.isContributor && !permission.isOwner) {
           // Person adding content to stuff they don't follow.
           return null;
@@ -365,35 +377,85 @@ export const saveItemInCollections = async ({
         }
 
         return {
-          ...input,
           addedById: userId,
           collectionId,
           status: permission.writeReview
             ? CollectionItemStatus.REVIEW
             : CollectionItemStatus.ACCEPTED,
+          [itemKey]: input[itemKey as keyof typeof input],
         };
       })
     )
   ).filter(isDefined);
 
-  const transactions = [dbWrite.collectionItem.createMany({ data })];
+  const transactions: Prisma.PrismaPromise<Prisma.BatchPayload | number>[] = [
+    dbWrite.$executeRaw`
+      INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(itemKey)}")
+      SELECT
+        v."collectionId",
+        v."addedById",
+        v."status",
+        v."${Prisma.raw(itemKey)}"
+      FROM jsonb_to_recordset(${JSON.stringify(data)}::jsonb) AS v(
+        "collectionId" INTEGER,
+        "addedById" INTEGER,
+        "status" "CollectionItemStatus",
+        "${Prisma.raw(itemKey)}" INTEGER
+      )
+      ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
+        WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
+        DO NOTHING;
+    `,
+  ];
 
-  // Determine which items need to be removed
-  const itemsToRemove = await dbRead.collectionItem.findMany({
-    where: {
-      ...input,
-      addedById: userId,
-      collectionId: { notIn: collectionIds },
-    },
-    select: { id: true },
-  });
+  if (removeFromCollectionIds?.length) {
+    const removeAllowedCollectionItemIds = (
+      await Promise.all(
+        removeFromCollectionIds.map(async (collectionId) => {
+          const permission = await getUserCollectionPermissionsById({
+            userId,
+            isModerator,
+            id: collectionId,
+          });
+
+          const item = await dbRead.collectionItem.findFirst({
+            where: {
+              collectionId,
+              ...input,
+            },
+            select: {
+              addedById: true,
+              id: true,
+            },
+          });
+
+          if (!item) {
+            return null;
+          }
+
+          if (item.addedById !== userId && !permission.isOwner && !permission.manage) {
+            // This person shouldn't cannot be removing that item
+            return null;
+          }
+
+          return item.id;
+        })
+      )
+    ).filter(isDefined);
+
+    if (removeAllowedCollectionItemIds.length > 0)
+      transactions.push(
+        dbWrite.collectionItem.deleteMany({
+          where: { id: { in: removeAllowedCollectionItemIds } },
+        })
+      );
+  }
+
   // if we have items to remove, add a deleteMany mutation to the transaction
-  if (itemsToRemove.length)
-    transactions.push(
-      dbWrite.collectionItem.deleteMany({
-        where: { id: { in: itemsToRemove.map((i) => i.id) } },
-      })
-    );
+
+  await Promise.all(
+    collectionIds.map((collectionId) => homeBlockCacheBust(HomeBlockType.Collection, collectionId))
+  );
 
   return dbWrite.$transaction(transactions);
 };
@@ -505,12 +567,11 @@ interface ArticleCollectionItem {
   data: ArticleGetAll['items'][0];
 }
 
-export type CollectionItemExpanded = { id: number; status?: CollectionItemStatus } & (
-  | ModelCollectionItem
-  | PostCollectionItem
-  | ImageCollectionItem
-  | ArticleCollectionItem
-);
+export type CollectionItemExpanded = {
+  id: number;
+  status?: CollectionItemStatus;
+  createdAt: Date | null;
+} & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 export const getCollectionItemsByCollectionId = async ({
   input,
@@ -539,10 +600,18 @@ export const getCollectionItemsByCollectionId = async ({
   ) {
     throw throwAuthorizationError('You do not have permission to view review items');
   }
+  const collection = await dbRead.collection.findUniqueOrThrow({ where: { id: collectionId } });
 
   const where: Prisma.CollectionItemWhereInput = {
     collectionId,
     status: { in: statuses },
+    // Ensure we only show images that have been scanned
+    image:
+      collection.type === CollectionType.Image
+        ? {
+            ingestion: ImageIngestionStatus.Scanned,
+          }
+        : undefined,
   };
 
   const collectionItems = await dbRead.collectionItem.findMany({
@@ -556,6 +625,7 @@ export const getCollectionItemsByCollectionId = async ({
       imageId: true,
       articleId: true,
       status: input.forReview,
+      createdAt: true,
     },
     where,
     orderBy: { createdAt: 'desc' },
@@ -615,6 +685,7 @@ export const getCollectionItemsByCollectionId = async ({
           isModerator: user?.isModerator,
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
+          includeBaseModel: true,
         })
       : { items: [] };
 
@@ -704,9 +775,9 @@ export const getCollectionItemsByCollectionId = async ({
 export const getUserCollectionItemsByItem = async ({
   input,
 }: {
-  input: GetUserCollectionItemsByItemSchema & { userId: number };
+  input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, modelId, imageId, articleId, postId } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId } = input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -743,9 +814,11 @@ export const getUserCollectionItemsByItem = async ({
   return Promise.all(
     collectionItems.map(async (collectionItem) => {
       const permission = await getUserCollectionPermissionsById({
-        userId,
         id: collectionItem.collectionId,
+        userId,
+        isModerator,
       });
+
       return {
         ...collectionItem,
         canRemoveItem: collectionItem.addedById === userId || permission.manage,
@@ -880,24 +953,28 @@ export const updateCollectionItemsStatus = async ({
   input: UpdateCollectionItemsStatusInput & { userId: number };
 }) => {
   const { userId, collectionId, collectionItemIds, status } = input;
+
+  // Check if collection actually exists before anything
+  const collection = await dbWrite.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, type: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
   const { manage, isOwner } = await getUserCollectionPermissionsById({
     id: collectionId,
     userId,
   });
+  if (!manage && !isOwner)
+    throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
-  if (!manage && !isOwner) {
-    throw throwAuthorizationError('You do not have permission manage contributor item status.');
-  }
-  try {
-    return await dbWrite.collectionItem.updateMany({
-      where: {
-        id: { in: collectionItemIds },
-      },
-      data: { status },
-    });
-  } catch {
-    // Ignore errors
-  }
+  await dbWrite.collectionItem.updateMany({
+    where: { id: { in: collectionItemIds }, collectionId },
+    data: { status },
+  });
+
+  // Send back the collection to update/invalidate state accordingly
+  return collection;
 };
 
 export const bulkSaveItems = async ({
@@ -918,43 +995,89 @@ export const bulkSaveItems = async ({
     articleIds.length > 0 &&
     (collection.type === CollectionType.Article || collection.type === null)
   ) {
-    data = articleIds.map((articleId) => ({
-      articleId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingArticleIds = (
+      await dbRead.collectionItem.findMany({
+        select: { articleId: true },
+        where: { articleId: { in: articleIds }, collectionId },
+      })
+    ).map((item) => item.articleId);
+
+    data = articleIds
+      .filter((id) => !existingArticleIds.includes(id))
+      .map((articleId) => ({
+        articleId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
   if (
     modelIds.length > 0 &&
     (collection.type === CollectionType.Model || collection.type === null)
   ) {
-    data = modelIds.map((modelId) => ({
-      modelId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingModelIds = (
+      await dbRead.collectionItem.findMany({
+        select: { modelId: true },
+        where: { modelId: { in: modelIds }, collectionId },
+      })
+    ).map((item) => item.modelId);
+
+    data = modelIds
+      .filter((id) => !existingModelIds.includes(id))
+      .map((modelId) => ({
+        modelId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
   if (
     imageIds.length > 0 &&
     (collection.type === CollectionType.Image || collection.type === null)
   ) {
-    data = imageIds.map((imageId) => ({
-      imageId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingImageIds = (
+      await dbRead.collectionItem.findMany({
+        select: { imageId: true },
+        where: { imageId: { in: imageIds }, collectionId },
+      })
+    ).map((item) => item.imageId);
+
+    data = imageIds
+      .filter((id) => !existingImageIds.includes(id))
+      .map((imageId) => ({
+        imageId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
   if (postIds.length > 0 && (collection.type === CollectionType.Post || collection.type === null)) {
-    data = postIds.map((postId) => ({
-      postId,
-      collectionId,
-      addedById: userId,
-      status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    }));
+    const existingPostIds = (
+      await dbRead.collectionItem.findMany({
+        select: { postId: true },
+        where: { postId: { in: postIds }, collectionId },
+      })
+    ).map((item) => item.postId);
+
+    data = postIds
+      .filter((id) => !existingPostIds.includes(id))
+      .map((postId) => ({
+        postId,
+        collectionId,
+        addedById: userId,
+        status: permissions.writeReview
+          ? CollectionItemStatus.REVIEW
+          : CollectionItemStatus.ACCEPTED,
+      }));
   }
+
+  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
   return dbWrite.collectionItem.createMany({ data });
 };

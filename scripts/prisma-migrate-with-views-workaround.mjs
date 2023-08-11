@@ -7,6 +7,7 @@ import { argv } from 'process';
 import { spawnSync } from 'child_process';
 const spawnOptions = { stdio: 'inherit', shell: true };
 
+
 // Backup the schema
 await copyFile(SCHEMA, BACKUP);
 console.log('Backed up schema to', BACKUP);
@@ -21,6 +22,16 @@ for (const modelName of modelNames) {
   const modelRegex = new RegExp(`^.+${modelName}(\\[\\]|\\n|\\?).*\n?`, 'gm');
   modifiedSchema = modifiedSchema.replace(modelRegex, '');
 }
+
+// If no check, change DB to dark-pit
+const noCheckFlagIndex = argv.indexOf('--no-check');
+const noCheck = noCheckFlagIndex > -1;
+if (noCheck) {
+  argv.splice(noCheckFlagIndex, 1);
+  modifiedSchema = modifiedSchema.replace('DATABASE_URL', 'DARKPIT_URL');
+}
+
+// Write the modified schema
 await writeFile(SCHEMA, modifiedSchema, 'utf-8');
 console.log('Removing views from schema... Done');
 

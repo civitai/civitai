@@ -22,6 +22,8 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
       id: true,
       url: true,
       type: true,
+      width: true,
+      height: true,
     },
   });
 

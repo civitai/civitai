@@ -423,28 +423,28 @@ async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContex
     await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "collectedCount")
       SELECT
-          mv."id",
-          tf.timeframe,
-          COALESCE(SUM(
-              CASE
-                  WHEN tf.timeframe = 'AllTime' THEN 1
-                  WHEN tf.timeframe = 'Year' THEN IIF(i."createdAt" >= NOW() - interval '1 year', 1, 0)
-                  WHEN tf.timeframe = 'Month' THEN IIF(i."createdAt" >= NOW() - interval '1 month', 1, 0)
-                  WHEN tf.timeframe = 'Week' THEN IIF(i."createdAt" >= NOW() - interval '1 week', 1, 0)
-                  WHEN tf.timeframe = 'Day' THEN IIF(i."createdAt" >= NOW() - interval '1 day', 1, 0)
-              END
-          ), 0)
+        mv."id",
+        tf.timeframe,
+        COALESCE(SUM(
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN 1
+            WHEN tf.timeframe = 'Year' THEN IIF(i."createdAt" >= NOW() - interval '1 year', 1, 0)
+            WHEN tf.timeframe = 'Month' THEN IIF(i."createdAt" >= NOW() - interval '1 month', 1, 0)
+            WHEN tf.timeframe = 'Week' THEN IIF(i."createdAt" >= NOW() - interval '1 week', 1, 0)
+            WHEN tf.timeframe = 'Day' THEN IIF(i."createdAt" >= NOW() - interval '1 day', 1, 0)
+          END
+        ), 0)
       FROM (
-          SELECT
-              "modelId",
-              "userId",
-              MAX(c."createdAt") "createdAt"
-          FROM "CollectionItem" c
-          JOIN "Model" m ON m.id = c."modelId"
-          WHERE "modelId" IS NOT NULL
-            AND m."userId" != c."addedById"
-            AND "modelId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-          GROUP BY "modelId", "userId"
+        SELECT
+          "modelId",
+          "addedById",
+          MAX(c."createdAt") "createdAt"
+        FROM "CollectionItem" c
+        JOIN "Model" m ON m.id = c."modelId"
+        WHERE "modelId" IS NOT NULL
+          AND m."userId" != c."addedById"
+          AND "modelId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+        GROUP BY "modelId", "addedById"
       ) i
       JOIN "ModelVersion" mv ON mv."modelId" = i."modelId"
       CROSS JOIN (

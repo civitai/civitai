@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Badge,
   Box,
-  Card,
   Center,
   Checkbox,
   Chip,
@@ -20,6 +19,7 @@ import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
   IconExternalLink,
+  IconInfoCircle,
   IconReload,
   IconSquareCheck,
   IconSquareOff,
@@ -40,7 +40,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { CollectionItemStatus } from '@prisma/client';
+import { CollectionItemStatus, CollectionType } from '@prisma/client';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -49,6 +49,11 @@ import { FeedCard } from '~/components/Cards/FeedCard';
 import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import Link from 'next/link';
+import { BackButton } from '~/components/BackButton/BackButton';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { formatDate } from '~/utils/date-helpers';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -87,7 +92,6 @@ const useStore = create<StoreState>()(
 );
 
 const ReviewCollection = () => {
-  const { ref, inView } = useInView();
   const router = useRouter();
   const { collectionId: collectionIdString } = router.query;
   const collectionId = Number(collectionIdString);
@@ -105,7 +109,7 @@ const ReviewCollection = () => {
     }),
     [collectionId, statuses]
   );
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+  const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
@@ -119,10 +123,6 @@ const ReviewCollection = () => {
     setStatuses(value as CollectionItemStatus[]);
     deselectAll();
   };
-
-  useEffect(() => {
-    if (inView) fetchNextPage();
-  }, [fetchNextPage, inView]);
 
   return (
     <Container size="xl" py="xl">
@@ -138,15 +138,18 @@ const ReviewCollection = () => {
             marginRight: 6,
             position: 'sticky',
             top: 'calc(var(--mantine-header-height,0) + 16px)',
-            marginBottom: -80,
-            zIndex: 10,
+            marginBottom: -60,
+            zIndex: 1000,
           }}
         >
           <ModerationControls collectionItems={collectionItems} filters={filters} />
         </Paper>
 
         <Stack spacing="sm" mb="lg">
-          <Title order={1}>Collection items that need review</Title>
+          <Group spacing="xs">
+            <BackButton url={`/collections/${collectionId}`} />
+            <Title order={1}>Collection items that need review</Title>
+          </Group>
           <Text color="dimmed">
             You are reviewing items on the collection that are either pending review or have been
             rejected. You can change the status of these to be accepted or rejected.
@@ -180,11 +183,6 @@ const ReviewCollection = () => {
         ) : (
           <NoContent mt="lg" message="There are no images that need review" />
         )}
-        {!isLoading && hasNextPage && (
-          <Group position="center" ref={ref}>
-            <Loader />
-          </Group>
-        )}
       </Stack>
     </Container>
   );
@@ -209,7 +207,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   return (
     <FeedCard>
       <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
-        <Group
+        <Stack
           sx={{
             position: 'absolute',
             top: 5,
@@ -217,29 +215,32 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             zIndex: 11,
           }}
         >
-          {reviewData.url && (
-            <Link href={reviewData.url} passHref>
-              <ActionIcon
-                component="a"
-                variant="transparent"
-                size="lg"
-                target="_blank"
-                onClick={(e) => {
-                  e.stopPropagation();
-                }}
-              >
-                <IconExternalLink
-                  color="white"
-                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                  opacity={0.8}
-                  strokeWidth={2.5}
-                  size={26}
-                />
-              </ActionIcon>
-            </Link>
-          )}
-          <Checkbox checked={selected} readOnly size="lg" />
-        </Group>
+          <Group>
+            {reviewData.url && (
+              <Link href={reviewData.url} passHref>
+                <ActionIcon
+                  component="a"
+                  variant="transparent"
+                  size="lg"
+                  target="_blank"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                  }}
+                >
+                  <IconExternalLink
+                    color="white"
+                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    opacity={0.8}
+                    strokeWidth={2.5}
+                    size={26}
+                  />
+                </ActionIcon>
+              </Link>
+            )}
+            <Checkbox checked={selected} readOnly size="lg" />
+          </Group>
+          {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
+        </Stack>
         {reviewData.image && (
           <ImageGuard
             images={[reviewData.image]}
@@ -284,6 +285,31 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                         />
                       ) : (
                         <MediaHash {...image} />
+                      )}
+                      {reviewData.meta && (
+                        <ImageMetaPopover
+                          meta={reviewData.meta as ImageMetaProps}
+                          generationProcess={reviewData.meta.generationProcess ?? 'txt2img'}
+                        >
+                          <ActionIcon
+                            variant="transparent"
+                            style={{
+                              position: 'absolute',
+                              bottom: '5px',
+                              right: '5px',
+                              zIndex: 999,
+                            }}
+                            size="lg"
+                          >
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
+                            />
+                          </ActionIcon>
+                        </ImageMetaPopover>
                       )}
                     </>
                   );
@@ -341,9 +367,21 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
               }}
             >
               <UserAvatar
+                withUsername
                 user={reviewData.user}
                 avatarProps={{ radius: 'md', size: 32 }}
-                withUsername
+                subText={
+                  reviewData.itemAddedAt ? (
+                    <>
+                      <Text size="sm">
+                        Added to collection: {formatDate(reviewData.itemAddedAt)}
+                      </Text>
+                      {reviewData.dataCreatedAt && (
+                        <Text size="sm">Created: {formatDate(reviewData.dataCreatedAt)}</Text>
+                      )}
+                    </>
+                  ) : undefined
+                }
               />
             </UnstyledButton>
           )}
@@ -364,7 +402,7 @@ function ModerationControls({
   filters,
 }: {
   collectionItems: CollectionItemExpanded[];
-  filters: any;
+  filters: { collectionId: number; statuses: CollectionItemStatus[]; forReview: boolean };
 }) {
   const queryUtils = trpc.useContext();
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
@@ -418,11 +456,33 @@ function ModerationControls({
 
   const handleApproveSelected = () => {
     deselectAll();
-    updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: selected,
-      status: CollectionItemStatus.ACCEPTED,
-      collectionId: filters.collectionId,
-    });
+    updateCollectionItemsStatusMutation.mutate(
+      {
+        collectionItemIds: selected,
+        status: CollectionItemStatus.ACCEPTED,
+        collectionId: filters.collectionId,
+      },
+      {
+        onSuccess: async ({ type }) => {
+          switch (type) {
+            case CollectionType.Model:
+              await queryUtils.model.getAll.invalidate();
+              break;
+            case CollectionType.Image:
+              await queryUtils.image.getInfinite.invalidate();
+              break;
+            case CollectionType.Post:
+              await queryUtils.post.getInfinite.invalidate();
+              break;
+            case CollectionType.Article:
+              await queryUtils.article.getInfinite.invalidate();
+              break;
+            default:
+              break;
+          }
+        },
+      }
+    );
   };
 
   const handleRefresh = () => {

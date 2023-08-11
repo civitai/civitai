@@ -64,6 +64,7 @@ export const constants = {
     'Config',
     'Archive',
   ],
+  baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32'],
@@ -106,6 +107,7 @@ export const constants = {
     'DPM++ 2S a',
     'DPM++ 2M',
     'DPM++ SDE',
+    'DPM++ 2M SDE',
     'DPM fast',
     'DPM adaptive',
     'LMS Karras',
@@ -114,6 +116,7 @@ export const constants = {
     'DPM++ 2S a Karras',
     'DPM++ 2M Karras',
     'DPM++ SDE Karras',
+    'DPM++ 2M SDE Karras',
     'DDIM',
     'PLMS',
     'UniPC',
@@ -158,6 +161,8 @@ export const constants = {
 export const POST_IMAGE_LIMIT = 20;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
+
+export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 export const baseModelSets: Record<string, BaseModel[]> = {
@@ -211,6 +216,7 @@ export const samplerMap = new Map<Sampler, string[]>([
   ['DPM++ 2S a', ['dpmpp_2s_ancestral']],
   ['DPM++ 2M', ['dpmpp_2m']],
   ['DPM++ SDE', ['dpmpp_sde', 'dpmpp_sde_gpu']],
+  ['DPM++ 2M SDE', ['dpmpp_2m_sde']],
   ['DPM fast', ['dpm_fast']],
   ['DPM adaptive', ['dpm_adaptive']],
   ['LMS Karras', ['lms_karras']],
@@ -219,6 +225,7 @@ export const samplerMap = new Map<Sampler, string[]>([
   ['DPM++ 2S a Karras', ['dpmpp_2s_ancestral_karras']],
   ['DPM++ 2M Karras', ['dpmpp_2m_karras']],
   ['DPM++ SDE Karras', ['dpmpp_sde_karras']],
+  ['DPM++ 2M SDE Karras', ['dpmpp_2m_sde_karras']],
   ['DDIM', ['ddim']],
   ['PLMS', ['plms']],
   ['UniPC', ['uni_pc', 'uni_pc_bh2']],

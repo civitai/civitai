@@ -29,6 +29,7 @@ const modelQueryParamSchema = z
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'draft']),
     collectionId: z.coerce.number(),
+    excludedTagIds: z.array(z.coerce.number()),
     excludedImageTagIds: z.array(z.coerce.number()),
     baseModels: z.preprocess(
       (val) => (Array.isArray(val) ? val : [val]),
