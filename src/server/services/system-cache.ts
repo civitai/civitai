@@ -1,4 +1,4 @@
-import { TagType } from '@prisma/client';
+import { TagEngagementType, TagType } from '@prisma/client';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
@@ -19,6 +19,39 @@ export async function getModerationTags() {
     select: { id: true, name: true },
   });
   await redis.set(`system:moderation-tags`, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got moderation tags');
+  return tags;
+}
+
+/** gets tags we don't want to show to not-signed-in users */
+export async function getSystemHiddenTags() {
+  const cachedTags = await redis.get(`system:hidden-tags`);
+  if (cachedTags) return JSON.parse(cachedTags) as number[];
+
+  const tagEngagment = await dbWrite.tagEngagement.findMany({
+    where: { userId: -1, type: TagEngagementType.Hide },
+    select: { tagId: true },
+  });
+
+  const moderation = await getModerationTags();
+  const moderatedTags = moderation.map((x) => x.id);
+
+  const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
+    where: { fromTagId: { in: [...moderatedTags] } },
+    select: { toTagId: true },
+  });
+
+  const tags = [
+    ...new Set([
+      ...tagEngagment.map((x) => x.tagId),
+      ...hiddenTagsOfHiddenTags.map((x) => x.toTagId),
+    ]),
+  ];
+
+  await redis.set(`system:hidden-tags`, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 

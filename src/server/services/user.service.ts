@@ -273,9 +273,10 @@ export const toggleModelEngagement = async ({
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
   if (type === 'Hide') {
     await refreshHiddenModelsForUser({ userId });
-    await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
-  } else if (type === 'Favorite')
-    await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
+    // await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
+  } else if (type === 'Favorite') {
+    // await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
+  }
   return true;
 };
 
