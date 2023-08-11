@@ -3,7 +3,7 @@ import {
   SortByProps,
   useRefinementList,
   useSortBy,
-} from 'react-instantsearch-hooks-web';
+} from 'react-instantsearch';
 import { Accordion, Chip, Group, MultiSelect, Select, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';

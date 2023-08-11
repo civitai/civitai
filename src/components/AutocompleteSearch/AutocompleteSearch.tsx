@@ -25,13 +25,7 @@ import {
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
 import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Configure,
-  Highlight,
-  SearchBoxProps,
-  useHits,
-  useSearchBox,
-} from 'react-instantsearch-hooks-web';
+import { Configure, Highlight, SearchBoxProps, useHits, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';

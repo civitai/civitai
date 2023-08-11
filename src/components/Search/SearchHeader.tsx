@@ -1,5 +1,5 @@
 import { useSearchStore } from '~/components/Search/useSearchState';
-import { useInstantSearch, useSearchBox } from 'react-instantsearch-hooks-web';
+import { useInstantSearch, useSearchBox } from 'react-instantsearch';
 import {
   Group,
   SegmentedControl,

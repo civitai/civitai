@@ -18,7 +18,7 @@ import {
   useInfiniteHits,
   useInstantSearch,
   useSearchBox,
-} from 'react-instantsearch-hooks-web';
+} from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
 import { env } from '~/env/client.mjs';

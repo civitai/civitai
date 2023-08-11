@@ -62,7 +62,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
-import { InstantSearch, InstantSearchProps } from 'react-instantsearch-hooks-web';
+import { InstantSearch, InstantSearchProps } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 

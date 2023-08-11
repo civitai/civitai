@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import singletonRouter from 'next/router';
-import { InstantSearchProps } from 'react-instantsearch-hooks-web';
+import { InstantSearchProps } from 'react-instantsearch';
 import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs';
 
 export const searchIndexes = ['models', 'articles'] as const;

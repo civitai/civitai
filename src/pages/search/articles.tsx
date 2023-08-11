@@ -1,10 +1,5 @@
 import { Container, Stack, Text, createStyles } from '@mantine/core';
-import {
-  InstantSearch,
-  SearchBox,
-  useInfiniteHits,
-  useInstantSearch,
-} from 'react-instantsearch-hooks-web';
+import { InstantSearch, SearchBox, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
 import { env } from '~/env/client.mjs';
