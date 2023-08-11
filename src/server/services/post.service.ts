@@ -55,6 +55,7 @@ type GetAllPostsRaw = {
   userImage: string | null;
   deletedAt: Date | null;
   publishedAt: Date | null;
+  cursorId: Date | number | null;
   stats: {
     commentCount: number;
     likeCount: number;
@@ -166,7 +167,7 @@ export const getPostsInfinite = async ({
 
   // sorting
   let orderBy = 'p."publishedAt" DESC NULLS LAST';
-  if (sort === PostSort.MostComments) orderBy = `r."comment${period}Rank"`;
+  if (sort === PostSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
   else if (sort === PostSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
   const includeRank = orderBy.startsWith('r.');
   if (includeRank) {
@@ -179,7 +180,8 @@ export const getPostsInfinite = async ({
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
     const cursorValue = cursorProp === 'p."publishedAt"' ? new Date(cursor) : Number(cursor);
-    if (cursorProp) AND.push(Prisma.sql`${cursorProp} ${cursorOperator} ${cursorValue}`);
+    if (cursorProp)
+      AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
   }
 
   const postsRaw = await dbRead.$queryRaw<GetAllPostsRaw[]>`
@@ -212,10 +214,10 @@ export const getPostsInfinite = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
 
-  let nextCursor: number | undefined;
+  let nextCursor: number | Date | undefined | null;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    nextCursor = nextItem?.id;
+    nextCursor = nextItem?.cursorId;
   }
 
   const images = postsRaw.length
