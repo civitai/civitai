@@ -104,7 +104,7 @@ export function AutocompleteSearch({
   const blurInput = () => inputRef.current?.blur();
 
   const handleSubmit = () => {
-    if (search) router.push(`/search?q=${encodeURIComponent(search)}`);
+    if (search) router.push(`/search/models?query=${encodeURIComponent(search)}`);
     onSubmit?.();
   };
 
