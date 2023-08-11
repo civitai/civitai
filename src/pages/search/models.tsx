@@ -1,5 +1,5 @@
-import { Container, Title, Stack, createStyles, Box, Center, Loader } from '@mantine/core';
-import { InstantSearch, SearchBox, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
+import { Container, Stack, createStyles, Box, Center, Loader } from '@mantine/core';
+import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
 import { env } from '~/env/client.mjs';
@@ -51,7 +51,6 @@ export default function Search() {
 const RenderFilters = () => {
   return (
     <>
-      <SearchBox />
       <SortBy
         title="Sort models by"
         items={[
@@ -75,7 +74,7 @@ const RenderFilters = () => {
       />
       <SearchableMultiSelectRefinementList
         title="Tags"
-        attribute="tags"
+        attribute="tags.name"
         // TODO.Search: Meiliserach & facet searching is not supported when used with sort by as Angolia provides it.  https://github.com/meilisearch/meilisearch-js-plugins/issues/1222
         // If that ever gets fixed, just make sortable true + limit 20 or something
         limit={9999}

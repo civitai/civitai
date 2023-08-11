@@ -104,7 +104,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'nsfw',
     'type',
     'checkpointType',
-    'tags',
+    'tags.name',
     'modelVersion.baseModel',
     'status',
   ];
@@ -311,7 +311,7 @@ const onFetchItemsToIndex = async ({
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],
         hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
+        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag),
         metrics: {
           ...metrics,
           weightedRating,

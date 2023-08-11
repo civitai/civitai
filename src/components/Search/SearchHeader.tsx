@@ -1,25 +1,60 @@
 import { useSearchStore } from '~/components/Search/useSearchState';
 import { useInstantSearch, useSearchBox } from 'react-instantsearch';
 import {
+  createStyles,
   Group,
   SegmentedControl,
   SegmentedControlItem,
+  Stack,
   Text,
   ThemeIcon,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconCategory, IconFileText } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
 
+const useStyles = createStyles((theme) => ({
+  label: {
+    paddingTop: 6,
+    paddingBottom: 6,
+    paddingLeft: 6,
+    paddingRight: 10,
+  },
+  root: {
+    backgroundColor: 'transparent',
+    gap: 8,
+
+    [theme.fn.smallerThan('sm')]: {
+      overflow: 'auto hidden',
+      maxWidth: '100%',
+    },
+  },
+  control: {
+    border: 'none !important',
+    backgroundColor: theme.colors.dark[6],
+    borderRadius: theme.radius.xl,
+  },
+  active: { borderRadius: theme.radius.xl },
+  controlActive: {
+    borderRadius: theme.radius.xl,
+    backgroundColor: theme.colors.gray[3],
+    '& label': {
+      color: theme.colors.dark[7],
+
+      '&:hover': {
+        color: theme.colors.dark[3],
+      },
+    },
+  },
+}));
 export const SearchHeader = () => {
   const { uiState } = useInstantSearch();
   const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
-  const theme = useMantineTheme();
   const [index] = Object.keys(uiState);
   const { query } = useSearchBox();
   const router = useRouter();
+  const { classes, theme } = useStyles();
 
   const onChangeIndex = (value: string) => {
     setSearchParamsByUiState(uiState);
@@ -82,9 +117,17 @@ export const SearchHeader = () => {
   ];
 
   return (
-    <>
-      <Title>{query || `Searching for ${index}`}</Title>
-      <SegmentedControl size="md" value={index} data={data} onChange={onChangeIndex} />
-    </>
+    <Stack>
+      <Title>{query ? `"${query}"` : `Searching for ${index}`}</Title>
+      <Group>
+        <SegmentedControl
+          classNames={classes}
+          size="md"
+          value={index}
+          data={data}
+          onChange={onChangeIndex}
+        />
+      </Group>
+    </Stack>
   );
 };

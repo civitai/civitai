@@ -1,6 +1,7 @@
 import {
   RefinementListProps,
   SortByProps,
+  useClearRefinements,
   useRefinementList,
   useSortBy,
 } from 'react-instantsearch';
@@ -149,3 +150,7 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
     </Accordion>
   );
 }
+
+export const ClearRefinements = () => {
+  const { refine } = useClearRefinements();
+};

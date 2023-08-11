@@ -40,6 +40,8 @@ export const ModelSearchIndexSortBy = [
   'models:createdAt:desc',
 ] as const;
 
+const ModelDefaultSortBy = ModelSearchIndexSortBy[0];
+
 const modelSearchParamsSchema = searchParamsSchema
   .extend({
     sortBy: z.enum(ModelSearchIndexSortBy),
@@ -74,7 +76,7 @@ const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       'modelVersion.baseModel': models.baseModel,
       type: models.modelType,
       checkpointType: models.checkpointType,
-      tags: models.tags,
+      'tags.name': models.tags,
     });
 
     const { query, page, sortBy } = models;
@@ -83,7 +85,7 @@ const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       models: {
         query,
         page,
-        sortBy: sortBy ?? 'models:metrics.weightedRating:desc',
+        sortBy: sortBy ?? ModelDefaultSortBy,
         refinementList,
       },
     };
@@ -92,10 +94,8 @@ const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const baseModel = uiState.models.refinementList?.['modelVersion.baseModel'];
     const modelType = uiState.models.refinementList?.['type'];
     const checkpointType = uiState.models.refinementList?.['checkpointType'];
-    const tags = uiState.models.refinementList?.['tags'];
-    const sortBy =
-      (uiState.models.sortBy as ModelSearchParams['sortBy']) ||
-      'models:metrics.weightedRating:desc';
+    const tags = uiState.models.refinementList?.['tags.name'];
+    const sortBy = (uiState.models.sortBy as ModelSearchParams['sortBy']) || ModelDefaultSortBy;
     const { query, page } = uiState.models;
 
     const state: ModelSearchParams = {
