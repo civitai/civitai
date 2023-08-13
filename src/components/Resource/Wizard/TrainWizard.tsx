@@ -43,32 +43,22 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const maxWizardSteps = {
-  create: 4,
-  train: 4,
-};
+const maxSteps = 3;
+const basePath = '/models/train';
 
-export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
+export default function TrainWizard() {
   const { classes } = useStyles();
   const router = useRouter();
   const { getStatus: getUploadStatus } = useS3UploadStore();
 
-  const { id } = router.query;
-  const isNew = router.pathname.includes('/create');
+  console.log(router.query);
+
+  const { modelId } = router.query;
+  const pathWithId = `${basePath}?modelId=${modelId}`;
+  const isNew = router.pathname === basePath;
   const [state, setState] = useState<WizardState>({ step: 1 });
 
-  const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
-
-  let uploadType = type;
-  if (!uploadType) {
-    if (!!model) {
-      uploadType = model.uploadType === ModelUploadType.Trained ? 'train' : 'create';
-    } else {
-      uploadType = 'create';
-    }
-  }
-
-  const maxSteps = maxWizardSteps[uploadType];
+  const { data: model } = trpc.model.getById.useQuery({ id: Number(modelId) }, { enabled: !!modelId })
 
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
@@ -80,14 +70,14 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
 
   const goNext = () => {
     if (state.step < maxSteps)
-      router.replace(`/models/${id}/wizard?step=${state.step + 1}`, undefined, {
+      router.replace(`${pathWithId}&step=${state.step + 1}`, undefined, {
         shallow: true,
       });
   };
 
   const goBack = () => {
     if (state.step > 1)
-      router.replace(`/models/${id}/wizard?step=${state.step - 1}`, undefined, {
+      router.replace(`${pathWithId}&step=${state.step - 1}`, undefined, {
         shallow: true,
       });
   };
@@ -95,10 +85,10 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
-      if (!hasVersions) router.replace(`/models/${id}/wizard?step=2`, undefined, { shallow: true });
+      if (!hasVersions) router.replace(`${pathWithId}&step=2`, undefined, { shallow: true });
       else if (!hasFiles)
-        router.replace(`/models/${id}/wizard?step=3`, undefined, { shallow: true });
-      else router.replace(`/models/${id}/wizard?step=4`, undefined, { shallow: true });
+        router.replace(`${pathWithId}&step=3`, undefined, { shallow: true });
+      else router.replace(`${pathWithId}&step=4`, undefined, { shallow: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFiles, hasVersions, id, isNew]);
@@ -136,12 +126,13 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
   return (
     <FilesProvider model={state.model} version={state.modelVersion}>
       <Container size="sm">
+        {/* should this go to the user page instead? */}
         <ActionIcon
           className={classes.closeButton}
           size="xl"
           radius="xl"
           variant="light"
-          onClick={() => (isNew ? router.back() : router.replace(`/models/${id}`))}
+          onClick={() => (isNew ? router.back() : router.replace(`/models/${modelId}`))}
         >
           <IconX />
         </ActionIcon>
@@ -149,11 +140,12 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
           <Stepper
             active={state.step - 1}
             onStepClick={(step) =>
-              router.replace(`/models/${id}/wizard?step=${step + 1}`, undefined, { shallow: true })
+              router.replace(`${pathWithId}&step=${step + 1}`, undefined, { shallow: true })
             }
             allowNextStepsSelect={false}
             size="sm"
           >
+            {/* Step 1: Model type selection + name */}
             <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
               <Stack>
                 <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>

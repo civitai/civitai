@@ -6,7 +6,6 @@ import {
   Burger,
   Button,
   createStyles,
-  Divider,
   Grid,
   Group,
   Header,
@@ -21,6 +20,7 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconBarbell,
   IconBookmark,
   IconCircleDashed,
   IconCrown,
@@ -30,6 +30,7 @@ import {
   IconLogout,
   IconMoonStars,
   IconPalette,
+  IconPhotoUp,
   IconPlaylistAdd,
   IconPlus,
   IconSearch,
@@ -45,8 +46,6 @@ import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-
-import { IconPhotoUp } from '@tabler/icons-react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
@@ -211,6 +210,17 @@ export function AppHeader() {
         ),
       },
       {
+        href: '/models/train',
+        visible: !isMuted,
+        redirectReason: 'train-model',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Train a model
+          </Group>
+        ),
+      },
+      {
         href: '/posts/create',
         visible: !isMuted,
         redirectReason: 'post-images',
@@ -340,7 +350,7 @@ export function AppHeader() {
         ),
       },
     ],
-    [currentUser, router.asPath, theme]
+    [currentUser, router.asPath, theme, features]
   );
 
   const burgerMenuItems = useMemo(
