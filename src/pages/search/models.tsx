@@ -5,6 +5,7 @@ import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 import {
   ChipRefinementList,
+  ClearRefinements,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
@@ -63,7 +64,7 @@ const RenderFilters = () => {
       />
       <ChipRefinementList
         title="Filter by Base Model"
-        attribute="modelVersion.baseModel"
+        attribute="version.baseModel"
         sortBy={['name']}
       />
       <ChipRefinementList title="Filter by Model Type" attribute="type" sortBy={['name']} />
@@ -80,6 +81,7 @@ const RenderFilters = () => {
         limit={9999}
         searchable={false}
       />
+      <ClearRefinements />
     </>
   );
 };

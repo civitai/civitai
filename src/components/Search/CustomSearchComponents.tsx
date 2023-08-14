@@ -5,9 +5,19 @@ import {
   useRefinementList,
   useSortBy,
 } from 'react-instantsearch';
-import { Accordion, Chip, Group, MultiSelect, Select, Text } from '@mantine/core';
+import {
+  Accordion,
+  Button,
+  ButtonProps,
+  Chip,
+  Group,
+  MultiSelect,
+  Select,
+  Text,
+} from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
+import { IconTrash } from '@tabler/icons-react';
 
 export function SortBy({ title, ...props }: SortByProps & { title: string }) {
   const { options, refine, currentRefinement, ...args } = useSortBy(props);
@@ -124,6 +134,10 @@ export function SearchableMultiSelectRefinementList({
 export function ChipRefinementList({ title, ...props }: RefinementListProps & { title: string }) {
   const { items, refine } = useRefinementList({ ...props });
 
+  if (!items.length) {
+    return null;
+  }
+
   return (
     <Accordion defaultValue={props.attribute} variant="filled">
       <Accordion.Item value={props.attribute}>
@@ -151,6 +165,24 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
   );
 }
 
-export const ClearRefinements = () => {
-  const { refine } = useClearRefinements();
+export const ClearRefinements = ({ ...props }: ButtonProps) => {
+  const { refine, canRefine } = useClearRefinements();
+
+  if (!canRefine) {
+    return null;
+  }
+
+  return (
+    <Button
+      rightIcon={<IconTrash size={16} />}
+      color="gray"
+      variant="filled"
+      size="md"
+      sx={{ flexShrink: 0 }}
+      {...props}
+      onClick={refine}
+    >
+      Reset all filters
+    </Button>
+  );
 };

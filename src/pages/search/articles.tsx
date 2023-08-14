@@ -1,4 +1,4 @@
-import { Container, Stack, Text, createStyles } from '@mantine/core';
+import { Container, Stack, Text, createStyles, Box, Center, Loader } from '@mantine/core';
 import { InstantSearch, SearchBox, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
@@ -11,6 +11,9 @@ import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
 import { useEffect } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
+import { ModelCard } from '~/components/Cards/ModelCard';
+import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
+import { ArticleCard } from '~/components/Cards/ArticleCard';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -51,15 +54,15 @@ const RenderFilters = () => {
       <SortBy
         title="Sort models by"
         items={[
-          { label: 'Most Bookmarked', value: 'articles:metrics.favoriteCount:desc' },
-          { label: 'Most Viewed', value: 'articles:metrics.viewCount:desc' },
-          { label: 'Most Discussed', value: 'articles:metrics.commentCount:desc' },
+          { label: 'Most Bookmarked', value: 'articles:stats.favoriteCount:desc' },
+          { label: 'Most Viewed', value: 'articles:stats.viewCount:desc' },
+          { label: 'Most Discussed', value: 'articles:stats.commentCount:desc' },
           { label: 'Newest', value: 'articles:createdAt:desc' },
         ]}
       />
       <SearchableMultiSelectRefinementList
         title="Tags"
-        attribute="tags"
+        attribute="tags.name"
         // TODO.Search: Meiliserach & facet searching is not supported when used with sort by as Angolia provides it.  https://github.com/meilisearch/meilisearch-js-plugins/issues/1222
         // If that ever gets fixed, just make sortable true + limit 20 or something
         limit={9999}
@@ -85,7 +88,7 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function ArticlesHitList() {
-  const { hits, showMore, isLastPage } = useInfiniteHits();
+  const { hits, showMore, isLastPage } = useInfiniteHits<ArticleSearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes } = useStyles();
@@ -99,7 +102,16 @@ export function ArticlesHitList() {
 
   return (
     <Stack>
-      <Text>No articles found... (TODO)</Text>
+      <Box className={classes.grid}>
+        {hits.map((hit) => {
+          return <ArticleCard key={hit.id} data={hit} />;
+        })}
+      </Box>
+      {hits.length > 0 && (
+        <Center ref={ref} sx={{ height: 36 }} mt="md">
+          {!isLastPage && status === 'idle' && <Loader />}
+        </Center>
+      )}
     </Stack>
   );
 }

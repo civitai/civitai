@@ -115,9 +115,9 @@ const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
 };
 
 export const ArticlesSearchIndexSortBy = [
-  'articles:metrics.favoriteCount:desc',
-  'articles:metrics.viewCount:desc',
-  'articles:metrics.commentCount:desc',
+  'articles:stats.favoriteCount:desc',
+  'articles:stats.viewCount:desc',
+  'articles:stats.commentCount:desc',
   'articles:createdAt:desc',
 ] as const;
 
@@ -144,7 +144,7 @@ const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   routeToState: (routeState: UiState) => {
     const articles: ArticleSearchParams = (routeState.articles || {}) as ArticleSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
-      tags: articles.tags,
+      'tags.name': articles.tags,
     });
 
     const { query, page, sortBy } = articles;
@@ -153,16 +153,17 @@ const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       articles: {
         query,
         page,
-        sortBy: sortBy ?? 'articles:metrics.favoriteCount:desc',
+        sortBy: sortBy ?? 'articles:stats.favoriteCount:desc',
         refinementList,
       },
     };
   },
   stateToRoute: (uiState: UiState) => {
-    const tags = uiState.articles.refinementList?.['tags'];
+    const tags = uiState.articles.refinementList?.['tags.name'];
+
     const sortBy =
       (uiState.articles.sortBy as ArticleSearchParams['sortBy']) ||
-      'articles:metrics.favoriteCount:desc';
+      'articles:stats.favoriteCount:desc';
 
     const { query, page } = uiState.articles;
 

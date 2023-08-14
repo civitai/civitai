@@ -45,14 +45,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableFieldsAttributesTask = await index.updateSortableAttributes([
     'createdAt',
-    'metrics.commentCount',
-    'metrics.favoriteCount',
-    'metrics.viewCount',
+    'stats.commentCount',
+    'stats.favoriteCount',
+    'stats.viewCount',
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
-  const filterableAttributes = ['tags'];
+  const filterableAttributes = ['tags.name'];
 
   if (
     // Meilisearch stores sorted.
@@ -99,20 +99,16 @@ const onFetchItemsToIndex = async ({
     take: READ_BATCH_SIZE,
     select: {
       ...articleDetailSelect,
-      metrics: {
+      stats: {
         select: {
-          commentCount: true,
-          cryCount: true,
-          dislikeCount: true,
-          favoriteCount: true,
-          heartCount: true,
-          hideCount: true,
-          laughCount: true,
-          viewCount: true,
-          likeCount: true,
-        },
-        where: {
-          timeframe: MetricTimeframe.AllTime,
+          favoriteCountAllTime: true,
+          commentCountAllTime: true,
+          likeCountAllTime: true,
+          dislikeCountAllTime: true,
+          heartCountAllTime: true,
+          laughCountAllTime: true,
+          cryCountAllTime: true,
+          viewCountAllTime: true,
         },
       },
     },
@@ -140,15 +136,23 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const indexReadyRecords = articles.map(({ tags, ...articleRecord }) => {
+  const indexReadyRecords = articles.map(({ tags, stats, ...articleRecord }) => {
     return {
       ...articleRecord,
-      metrics: {
-        // Flattens metric array
-        ...(articleRecord.metrics[0] || {}),
-      },
+      stats: stats
+        ? {
+            favoriteCount: stats.favoriteCountAllTime,
+            commentCount: stats.commentCountAllTime,
+            likeCount: stats.likeCountAllTime,
+            dislikeCount: stats.dislikeCountAllTime,
+            heartCount: stats.heartCountAllTime,
+            laughCount: stats.laughCountAllTime,
+            cryCount: stats.cryCountAllTime,
+            viewCount: stats.viewCountAllTime,
+          }
+        : undefined,
       // Flatten tags:
-      tags: tags.map((articleTag) => articleTag.tag.name),
+      tags: tags.map((articleTag) => articleTag.tag),
     };
   });
 
