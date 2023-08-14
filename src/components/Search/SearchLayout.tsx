@@ -10,7 +10,7 @@ import {
 } from '@mantine/core';
 import { createContext, Dispatch, SetStateAction, useContext, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-import { IconChevronsLeft, IconFilter } from '@tabler/icons-react';
+import { IconChevronsLeft } from '@tabler/icons-react';
 
 const SIDEBAR_SIZE = 377;
 
@@ -44,6 +44,16 @@ const useStyles = createStyles((theme, _, getRef) => {
       transition: 'transform 400ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+
+      [theme.fn.smallerThan('sm')]: {
+        top: 0,
+        zIndex: 1000,
+        height: '100vh',
+        left: '-100vw',
+        width: '100vw',
+        background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+        position: 'fixed',
+      },
     },
 
     content: {
@@ -56,9 +66,16 @@ const useStyles = createStyles((theme, _, getRef) => {
     sidebarOpen: {
       [`& .${sidebarRef}`]: {
         transform: `translate(${SIDEBAR_SIZE}px, 0)`,
+        [theme.fn.smallerThan('sm')]: {
+          transform: `translate(100vw, 0)`,
+          paddingBottom: theme.spacing.xl,
+        },
       },
       [`& .${contentRef}`]: {
         paddingLeft: `${SIDEBAR_SIZE}px`,
+        [theme.fn.smallerThan('sm')]: {
+          paddingLeft: 0,
+        },
       },
     },
   };

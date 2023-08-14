@@ -148,22 +148,20 @@ export const SearchHeader = () => {
   return (
     <Stack>
       <Title>{query ? `"${query}"` : `Searching for ${index}`}</Title>
-      <Group spacing="xs">
-        {!sidebarOpen && (
-          <Tooltip label="Filters & sorting" position="bottom" withArrow>
-            <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
-              <ThemeIcon
-                size={42}
-                color="gray"
-                radius="xl"
-                p={11}
-                className={searchLayoutStyles.filterButton}
-              >
-                <IconFilter />
-              </ThemeIcon>
-            </UnstyledButton>
-          </Tooltip>
-        )}
+      <Group spacing="xs" noWrap>
+        <Tooltip label="Filters & sorting" position="bottom" withArrow>
+          <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <ThemeIcon
+              size={42}
+              color="gray"
+              radius="xl"
+              p={11}
+              className={searchLayoutStyles.filterButton}
+            >
+              <IconFilter />
+            </ThemeIcon>
+          </UnstyledButton>
+        </Tooltip>
         <SegmentedControl
           classNames={classes}
           size="md"
