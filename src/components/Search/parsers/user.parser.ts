@@ -5,8 +5,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { UiState } from 'instantsearch.js';
 
 export const UsersSearchIndexSortBy = [
-  'users:stats.ratingAllTime:desc',
-  'users:stats.followerCount:desc',
+  'users:stats.followerCountAllTime:desc',
+  'users:stats.weightedRating:desc',
   'users:stats.uploadCountAllTime:desc',
   'users:createdAt:desc',
 ] as const;
@@ -36,13 +36,14 @@ export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
       users: {
         query,
         page,
-        sortBy: sortBy ?? 'users:stats.ratingAllTime:desc',
+        sortBy: sortBy ?? 'users:stats.followerCountAllTime:desc',
       },
     };
   },
   stateToRoute: (uiState: UiState) => {
     const sortBy =
-      (uiState.users.sortBy as UserSearchParams['sortBy']) || 'users:stats.ratingAllTime:desc';
+      (uiState.users.sortBy as UserSearchParams['sortBy']) ||
+      'users:stats.followerCountAllTime:desc';
 
     const { query, page } = uiState.users;
 

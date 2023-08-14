@@ -2,45 +2,68 @@ import {
   Anchor,
   AutocompleteItem,
   AutocompleteProps,
-  Badge,
   Center,
   Code,
-  Group,
   HoverCard,
-  Rating,
-  Stack,
   Text,
-  ThemeIcon,
   createStyles,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
-import {
-  IconBrush,
-  IconDownload,
-  IconHeart,
-  IconMessageCircle2,
-  IconPhotoOff,
-  IconSearch,
-} from '@tabler/icons-react';
+import { IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
 import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
-import { Configure, Highlight, SearchBoxProps, useHits, useSearchBox } from 'react-instantsearch';
+import {
+  Configure,
+  InstantSearch,
+  InstantSearchProps,
+  SearchBoxProps,
+  useHits,
+  useSearchBox,
+} from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
-// import { AutocompleteDropdown } from './AutocompleteDropdown';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { env } from '~/env/client.mjs';
+import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
+
+const meilisearch = instantMeiliSearch(
+  env.NEXT_PUBLIC_SEARCH_HOST as string,
+  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  { primaryKey: 'id' }
+);
 
 type Props = Omit<AutocompleteProps, 'data'> & {
   onClear?: VoidFunction;
   onSubmit?: VoidFunction;
   searchBoxProps?: SearchBoxProps;
+};
+
+const searchClient: InstantSearchProps['searchClient'] = {
+  ...meilisearch,
+  search(requests) {
+    // Prevent making a request if there is no query
+    // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+    // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+    if (requests.every(({ params }) => !params?.query)) {
+      return Promise.resolve({
+        results: requests.map(() => ({
+          hits: [],
+          nbHits: 0,
+          nbPages: 0,
+          page: 0,
+          processingTimeMS: 0,
+          hitsPerPage: 0,
+          exhaustiveNbHits: false,
+          query: '',
+          params: '',
+        })),
+      });
+    }
+
+    return meilisearch.search(requests);
+  },
 };
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
@@ -62,18 +85,32 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function AutocompleteSearch({
+export function AutocompleteSearch({ ...props }: Props) {
+  const router = useRouter();
+  const targetIndex = /\/(model|article|image|user)s?\/?/.exec(router.pathname)?.[1] || 'model';
+  const indexName = `${targetIndex}s`;
+
+  return (
+    <InstantSearch searchClient={searchClient} indexName={indexName}>
+      <AutocompleteSearchContent indexName={indexName} {...props} />
+    </InstantSearch>
+  );
+}
+
+function AutocompleteSearchContent({
   onClear,
   onSubmit,
   className,
   searchBoxProps,
+  indexName,
   ...autocompleteProps
-}: Props) {
+}: Props & { indexName: string }) {
   const { classes } = useStyles();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { query, refine: setQuery } = useSearchBox(searchBoxProps);
+  // TODO: Needs to be refactored to support hit type based off of indexName
   const { hits, results } = useHits<ModelSearchIndexRecord>();
 
   const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
@@ -99,7 +136,7 @@ export function AutocompleteSearch({
 
   const handleSubmit = () => {
     if (search) {
-      router.push(`/search/models?query=${encodeURIComponent(search)}`, undefined, {
+      router.push(`/search/${indexName}?query=${encodeURIComponent(search)}`, undefined, {
         shallow: false,
       });
 
@@ -140,7 +177,7 @@ export function AutocompleteSearch({
         ref={inputRef}
         className={className}
         classNames={classes}
-        placeholder="Search models, users, images, tags, etc."
+        placeholder={`Search ${indexName}`}
         type="search"
         nothingFound={query && !hits.length ? 'No results found' : undefined}
         icon={<IconSearch />}
@@ -169,7 +206,7 @@ export function AutocompleteSearch({
           setSelectedItem(item);
           onSubmit?.();
         }}
-        itemComponent={ModelSearchItem}
+        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
         // dropdownComponent={AutocompleteDropdown}
         rightSection={
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
@@ -212,122 +249,6 @@ export function AutocompleteSearch({
   );
 }
 
-type SearchItemProps = AutocompleteItem & { hit: Hit<ModelSearchIndexRecord> };
-
-const useSearchItemStyles = createStyles((theme) => ({
-  highlighted: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.yellow[5] : theme.colors.yellow[2],
-  },
-}));
-
-const ViewMoreItem = forwardRef<HTMLDivElement, AutocompleteItem>(({ value, ...props }, ref) => {
-  return (
-    <Center ref={ref} {...props} key="view-more">
-      <Anchor weight="bold" td="none !important">
-        View more results
-      </Anchor>
-    </Center>
-  );
-});
-
-ViewMoreItem.displayName = 'SearchItem';
-
-const ModelSearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
-  ({ value, hit, ...props }, ref) => {
-    const features = useFeatureFlags();
-    const { classes, theme } = useSearchItemStyles();
-
-    if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
-
-    const { images, user, nsfw, type, category, metrics, version } = hit;
-    let coverImage = images[0];
-    for (const image of images) {
-      if (coverImage.nsfw === 'None') break;
-      if (image.nsfw === 'None') {
-        coverImage = image;
-        break;
-      }
-    }
-
-    return (
-      <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
-        <Center
-          sx={{
-            width: 64,
-            height: 64,
-            position: 'relative',
-            overflow: 'hidden',
-            borderRadius: theme.radius.sm,
-          }}
-        >
-          {coverImage ? (
-            nsfw || coverImage.nsfw !== 'None' ? (
-              <MediaHash {...coverImage} cropFocus="top" />
-            ) : (
-              <EdgeMedia
-                src={coverImage.url}
-                name={coverImage.name ?? coverImage.id.toString()}
-                type={coverImage.type}
-                anim={false}
-                width={450}
-                style={{
-                  minWidth: '100%',
-                  minHeight: '100%',
-                  objectFit: 'cover',
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                }}
-              />
-            )
-          ) : (
-            <ThemeIcon variant="light" size={64} radius={0}>
-              <IconPhotoOff size={32} />
-            </ThemeIcon>
-          )}
-        </Center>
-        <Stack spacing={4} sx={{ flex: '1 !important' }}>
-          <Group spacing={8}>
-            <Text>
-              <Highlight attribute="name" hit={hit} classNames={classes} />
-            </Text>
-            {features.imageGeneration && !!version?.generationCoverage?.covered && (
-              <ThemeIcon color="white" variant="filled" radius="xl" size="sm">
-                <IconBrush size={12} stroke={2.5} color={theme.colors.dark[6]} />
-              </ThemeIcon>
-            )}
-          </Group>
-          <Group spacing={8}>
-            <UserAvatar size="xs" user={user} withUsername />
-            {nsfw && (
-              <Badge size="xs" color="red">
-                NSFW
-              </Badge>
-            )}
-            <Badge size="xs">{type}</Badge>
-            {category && <Badge size="xs">{category.tag.name}</Badge>}
-          </Group>
-          <Group spacing={4}>
-            <IconBadge
-              // @ts-ignore: ignoring because size doesn't allow number
-              icon={<Rating value={metrics.rating} size={12} readOnly />}
-            >
-              {abbreviateNumber(metrics.ratingCount)}
-            </IconBadge>
-            <IconBadge icon={<IconHeart size={12} stroke={2.5} />}>
-              {abbreviateNumber(metrics.favoriteCount)}
-            </IconBadge>
-            <IconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
-              {abbreviateNumber(metrics.commentCount)}
-            </IconBadge>
-            <IconBadge icon={<IconDownload size={12} stroke={2.5} />}>
-              {abbreviateNumber(metrics.downloadCount)}
-            </IconBadge>
-          </Group>
-        </Stack>
-      </Group>
-    );
-  }
-);
-
-ModelSearchItem.displayName = 'ModelSearchItem';
+const IndexRenderItem: Record<string, React.FC> = {
+  models: ModelSearchItem,
+};

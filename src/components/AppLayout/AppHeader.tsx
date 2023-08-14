@@ -184,37 +184,6 @@ type MenuLink = {
   visible?: boolean;
 };
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id' }
-);
-const searchClient: InstantSearchProps['searchClient'] = {
-  ...meilisearch,
-  search(requests) {
-    // Prevent making a request if there is no query
-    // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-    // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-    if (requests.every(({ params }) => !params?.query)) {
-      return Promise.resolve({
-        results: requests.map(() => ({
-          hits: [],
-          nbHits: 0,
-          nbPages: 0,
-          page: 0,
-          processingTimeMS: 0,
-          hitsPerPage: 0,
-          exhaustiveNbHits: false,
-          query: '',
-          params: '',
-        })),
-      });
-    }
-
-    return meilisearch.search(requests);
-  },
-};
-
 export function AppHeader() {
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
@@ -420,15 +389,13 @@ export function AppHeader() {
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
       {showSearch ? (
         // Only displayed in mobile
-        <InstantSearch searchClient={searchClient} indexName="models">
-          <AutocompleteSearch
-            variant="filled"
-            onClear={() => setShowSearch(false)}
-            onSubmit={() => setShowSearch(false)}
-            rightSection={null}
-            autoFocus
-          />
-        </InstantSearch>
+        <AutocompleteSearch
+          variant="filled"
+          onClear={() => setShowSearch(false)}
+          onSubmit={() => setShowSearch(false)}
+          rightSection={null}
+          autoFocus
+        />
       ) : (
         <Grid className={classes.header} m={0} gutter="xs" align="center">
           <Grid.Col span="auto" pl={0}>
@@ -492,9 +459,7 @@ export function AppHeader() {
             className={features.enhancedSearch ? classes.searchArea : undefined}
           >
             {features.enhancedSearch ? (
-              <InstantSearch searchClient={searchClient} indexName="models">
-                <AutocompleteSearch />
-              </InstantSearch>
+              <AutocompleteSearch />
             ) : (
               <ListSearch onSearch={() => closeBurger()} />
             )}

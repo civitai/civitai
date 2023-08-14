@@ -125,6 +125,9 @@ export const routing: InstantSearchProps['routing'] = {
         if (routeState.images) {
           query = QS.stringify(routeState.images);
         }
+        if (routeState.users) {
+          query = QS.stringify(routeState.users);
+        }
 
         // Needs to be absolute url, otherwise instantsearch complains
         return `${location.origin}${location.pathname}?${query}`;

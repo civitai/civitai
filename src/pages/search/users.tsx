@@ -69,8 +69,8 @@ const RenderFilters = () => {
       <SortBy
         title="Sort users by"
         items={[
-          { label: 'Highest Rated', value: 'users:stats.ratingAllTime:desc' },
-          { label: 'Most Followed', value: 'users:stats.followerCount:desc' },
+          { label: 'Highest Rated', value: 'users:stats.weightedRating:desc' },
+          { label: 'Most Followed', value: 'users:stats.followerCountAllTime:desc' },
           { label: 'Most Uploads', value: 'users:stats.uploadCountAllTime:desc' },
           { label: 'Newest', value: 'users:createdAt:desc' },
         ]}
