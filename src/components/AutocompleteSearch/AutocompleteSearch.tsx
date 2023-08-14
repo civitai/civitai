@@ -99,7 +99,10 @@ export function AutocompleteSearch({
 
   const handleSubmit = () => {
     if (search) {
-      router.push(`/search/models?query=${encodeURIComponent(search)}`);
+      router.push(`/search/models?query=${encodeURIComponent(search)}`, undefined, {
+        shallow: false,
+      });
+
       blurInput();
     }
     onSubmit?.();
@@ -159,7 +162,9 @@ export function AutocompleteSearch({
         onItemSubmit={(item) => {
           item.hit
             ? router.push(`/models/${item.hit.id}/${slugit(item.hit.name)}`) // when a model is clicked
-            : router.push(`/search/models?query=${encodeURIComponent(item.value)}`); // when view more is clicked
+            : router.push(`/search/models?query=${encodeURIComponent(item.value)}`, undefined, {
+                shallow: false,
+              }); // when view more is clicked
 
           setSelectedItem(item);
           onSubmit?.();
@@ -234,7 +239,7 @@ const ModelSearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
 
     if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-    const { images, user, nsfw, type, category, metrics, modelVersion } = hit;
+    const { images, user, nsfw, type, category, metrics, version } = hit;
     let coverImage = images[0];
     for (const image of images) {
       if (coverImage.nsfw === 'None') break;
@@ -286,7 +291,7 @@ const ModelSearchItem = forwardRef<HTMLDivElement, SearchItemProps>(
             <Text>
               <Highlight attribute="name" hit={hit} classNames={classes} />
             </Text>
-            {features.imageGeneration && !!modelVersion.generationCoverage?.covered && (
+            {features.imageGeneration && !!version?.generationCoverage?.covered && (
               <ThemeIcon color="white" variant="filled" radius="xl" size="sm">
                 <IconBrush size={12} stroke={2.5} color={theme.colors.dark[6]} />
               </ThemeIcon>

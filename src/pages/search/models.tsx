@@ -1,4 +1,14 @@
-import { Container, Stack, createStyles, Box, Center, Loader } from '@mantine/core';
+import {
+  Container,
+  Stack,
+  createStyles,
+  Box,
+  Center,
+  Loader,
+  Title,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
@@ -15,6 +25,8 @@ import { useEffect } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
+import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
+import { IconCloudOff } from '@tabler/icons-react';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -114,32 +126,30 @@ export function ModelsHitList() {
     }
   }, [status, inView, showMore, isLastPage]);
 
-  // if (hits.length === 0 && status === 'idle') {
-  //   return (
-  //     <Box>
-  //       <Center>
-  //         <Stack spacing="md" align="center" maw={800}>
-  //           <Title order={1} inline>
-  //             No models found
-  //           </Title>
-  //           <Text align="center">
-  //             We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
-  //             query.
-  //           </Text>
-  //           <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
-  //             <IconCloudOff size={80} />
-  //           </ThemeIcon>
-  //         </Stack>
-  //       </Center>
-  //     </Box>
-  //   );
-  // }
+  if (hits.length === 0) {
+    const NotFound = (
+      <Box>
+        <Center>
+          <Stack spacing="md" align="center" maw={800}>
+            <Title order={1} inline>
+              No models found
+            </Title>
+            <Text align="center">
+              We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
+              query.
+            </Text>
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
+          </Stack>
+        </Center>
+      </Box>
+    );
 
-  if (hits.length === 0 && status === 'loading') {
     return (
       <Box>
-        <Center ref={ref} sx={{ height: 36 }} mt="md">
-          <Loader />
+        <Center mt="md">
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
         </Center>
       </Box>
     );

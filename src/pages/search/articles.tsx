@@ -1,9 +1,20 @@
-import { Container, Stack, Text, createStyles, Box, Center, Loader } from '@mantine/core';
+import {
+  Container,
+  Stack,
+  Text,
+  createStyles,
+  Box,
+  Center,
+  Loader,
+  Title,
+  ThemeIcon,
+} from '@mantine/core';
 import { InstantSearch, SearchBox, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
 import { env } from '~/env/client.mjs';
 import {
+  ClearRefinements,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
@@ -14,6 +25,8 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
+import { IconCloudOff } from '@tabler/icons-react';
+import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -68,6 +81,7 @@ const RenderFilters = () => {
         limit={9999}
         searchable={false}
       />
+      <ClearRefinements />
     </>
   );
 };
@@ -99,6 +113,35 @@ export function ArticlesHitList() {
       showMore?.();
     }
   }, [status, inView, showMore, isLastPage]);
+
+  if (hits.length === 0) {
+    const NotFound = (
+      <Box>
+        <Center>
+          <Stack spacing="md" align="center" maw={800}>
+            <Title order={1} inline>
+              No models found
+            </Title>
+            <Text align="center">
+              We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
+              query.
+            </Text>
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
+          </Stack>
+        </Center>
+      </Box>
+    );
+
+    return (
+      <Box>
+        <Center mt="md">
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+        </Center>
+      </Box>
+    );
+  }
 
   return (
     <Stack>
