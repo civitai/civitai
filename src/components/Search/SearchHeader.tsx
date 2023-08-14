@@ -1,7 +1,6 @@
 import { useSearchStore } from '~/components/Search/useSearchState';
 import { useInstantSearch, useSearchBox } from 'react-instantsearch';
 import {
-  ActionIcon,
   createStyles,
   Group,
   SegmentedControl,
@@ -16,7 +15,7 @@ import {
 import { IconCategory, IconFileText, IconPhoto, IconFilter } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
-import { useSearchLayoutCtx } from '~/components/Search/SearchLayout';
+import { useSearchLayoutCtx, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 
 const useStyles = createStyles((theme) => ({
   label: {
@@ -36,18 +35,24 @@ const useStyles = createStyles((theme) => ({
   },
   control: {
     border: 'none !important',
-    backgroundColor: theme.colors.dark[6],
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+    svg: {
+      color: theme.colorScheme === 'dark' ? theme.colors.gray[1] : theme.colors.dark[6],
+    },
     borderRadius: theme.radius.xl,
   },
   active: { borderRadius: theme.radius.xl },
   controlActive: {
     borderRadius: theme.radius.xl,
-    backgroundColor: theme.colors.gray[3],
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[3] : theme.colors.dark[6],
+    svg: {
+      color: theme.colorScheme === 'dark' ? undefined : theme.colors.gray[1],
+    },
     '& label': {
-      color: theme.colors.dark[7],
+      color: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
 
       '&:hover': {
-        color: theme.colors.dark[3],
+        color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
       },
     },
   },
@@ -59,6 +64,7 @@ export const SearchHeader = () => {
   const { query } = useSearchBox();
   const router = useRouter();
   const { classes, theme } = useStyles();
+  const { classes: searchLayoutStyles } = useSearchLayoutStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayoutCtx();
 
   const onChangeIndex = (value: string) => {
@@ -142,19 +148,22 @@ export const SearchHeader = () => {
   return (
     <Stack>
       <Title>{query ? `"${query}"` : `Searching for ${index}`}</Title>
-      <Group>
-        <Tooltip label="Filters & Sort" position="bottom" withArrow>
-          <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
-            <ThemeIcon
-              size={30}
-              color={index === 'articles' ? theme.colors.dark[7] : 'transparent'}
-              p={6}
-              radius="xl"
-            >
-              <IconFilter />
-            </ThemeIcon>
-          </UnstyledButton>
-        </Tooltip>
+      <Group spacing="xs">
+        {!sidebarOpen && (
+          <Tooltip label="Filters & sorting" position="bottom" withArrow>
+            <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
+              <ThemeIcon
+                size={42}
+                color="gray"
+                radius="xl"
+                p={11}
+                className={searchLayoutStyles.filterButton}
+              >
+                <IconFilter />
+              </ThemeIcon>
+            </UnstyledButton>
+          </Tooltip>
+        )}
         <SegmentedControl
           classNames={classes}
           size="md"

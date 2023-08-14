@@ -1,6 +1,16 @@
-import { Container, createStyles, Stack } from '@mantine/core';
+import {
+  Container,
+  createStyles,
+  Group,
+  Stack,
+  Text,
+  ThemeIcon,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
 import { createContext, Dispatch, SetStateAction, useContext, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { IconChevronsLeft, IconFilter } from '@tabler/icons-react';
 
 const SIDEBAR_SIZE = 377;
 
@@ -32,6 +42,8 @@ const useStyles = createStyles((theme, _, getRef) => {
       overflowY: 'auto',
       padding: theme.spacing.md,
       transition: 'transform 400ms ease',
+      borderRight: '2px solid',
+      borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
     },
 
     content: {
@@ -76,7 +88,30 @@ SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
 
 SearchLayout.Filters = function Filters({ children }: { children: React.ReactNode }) {
   const { classes } = useStyles();
-  return <Stack className={classes.sidebar}>{children}</Stack>;
+  const { sidebarOpen, setSidebarOpen } = useSearchLayoutCtx();
+  const { classes: searchLayoutClasses } = useSearchLayoutStyles();
+
+  return (
+    <Stack className={classes.sidebar}>
+      <Group>
+        <Tooltip label="Filters & sorting" position="bottom" withArrow>
+          <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <ThemeIcon
+              size={42}
+              color="gray"
+              radius="xl"
+              p={11}
+              className={searchLayoutClasses.filterButton}
+            >
+              <IconChevronsLeft />
+            </ThemeIcon>
+          </UnstyledButton>
+        </Tooltip>
+        <Text size="lg">Filters &amp; sorting</Text>
+      </Group>
+      {children}
+    </Stack>
+  );
 };
 
 SearchLayout.Content = function Content({ children }: { children: React.ReactNode }) {
@@ -95,6 +130,13 @@ export const useSearchLayoutStyles = createStyles((theme) => ({
 
     '& > *': {
       marginTop: theme.spacing.md,
+    },
+  },
+
+  filterButton: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
+    svg: {
+      color: theme.colorScheme === 'dark' ? undefined : theme.colors.dark[6],
     },
   },
 }));

@@ -7,9 +7,11 @@ import {
 } from 'react-instantsearch';
 import {
   Accordion,
+  Box,
   Button,
   ButtonProps,
   Chip,
+  createStyles,
   Group,
   MultiSelect,
   Select,
@@ -20,7 +22,17 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 
+const useStyles = createStyles((theme) => ({
+  divider: {
+    flex: 1,
+    borderBottom: 0,
+    border: '1px solid',
+    borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[3],
+  },
+}));
+
 export function SortBy({ title, ...props }: SortByProps & { title: string }) {
+  const { classes } = useStyles();
   const { options, refine, currentRefinement, ...args } = useSortBy(props);
 
   if (options.length === 0) {
@@ -31,9 +43,12 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
     <Accordion defaultValue={title} variant="filled">
       <Accordion.Item value={title}>
         <Accordion.Control>
-          <Text size="md" weight={500}>
-            {title}
-          </Text>
+          <Group>
+            <Text size="md" weight={500}>
+              {title}
+            </Text>
+            <Box className={classes.divider} />
+          </Group>
         </Accordion.Control>
         <Accordion.Panel>
           <Select
@@ -52,6 +67,7 @@ export function SearchableMultiSelectRefinementList({
   title,
   ...props
 }: RefinementListProps & { title: string }) {
+  const { classes } = useStyles();
   const { items, refine, searchForItems, isFromSearch } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -112,9 +128,12 @@ export function SearchableMultiSelectRefinementList({
     <Accordion defaultValue={props.attribute} variant="filled">
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
-          <Text size="md" weight={500}>
-            {title}
-          </Text>
+          <Group>
+            <Text size="md" weight={500}>
+              {title}
+            </Text>
+            <Box className={classes.divider} />
+          </Group>
         </Accordion.Control>
         <Accordion.Panel>
           <MultiSelect
@@ -134,6 +153,7 @@ export function SearchableMultiSelectRefinementList({
 }
 
 export function ChipRefinementList({ title, ...props }: RefinementListProps & { title: string }) {
+  const { classes } = useStyles();
   const { items, refine } = useRefinementList({ ...props });
 
   if (!items.length) {
@@ -144,9 +164,12 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
     <Accordion defaultValue={props.attribute} variant="filled">
       <Accordion.Item value={props.attribute}>
         <Accordion.Control>
-          <Text size="md" weight={500}>
-            {title}
-          </Text>
+          <Group>
+            <Text size="md" weight={500}>
+              {title}
+            </Text>{' '}
+            <Box className={classes.divider} />
+          </Group>
         </Accordion.Control>
         <Accordion.Panel>
           <Group spacing="xs">
