@@ -13,7 +13,14 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { IconCategory, IconFileText, IconPhoto, IconFilter } from '@tabler/icons-react';
+import {
+  IconCategory,
+  IconFileText,
+  IconPhoto,
+  IconFilter,
+  IconUser,
+  IconUsers,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useSearchLayoutCtx, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
@@ -148,6 +155,24 @@ export const SearchHeader = () => {
         </Group>
       ),
       value: 'articles',
+    },
+    {
+      label: (
+        <Group align="center" spacing={8} noWrap>
+          <ThemeIcon
+            size={30}
+            color={index === 'users' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+            radius="xl"
+          >
+            <IconUsers />
+          </ThemeIcon>
+          <Text size="sm" inline>
+            Users
+          </Text>
+        </Group>
+      ),
+      value: 'users',
     },
   ];
 

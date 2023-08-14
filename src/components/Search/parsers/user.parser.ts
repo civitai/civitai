@@ -1,0 +1,59 @@
+import { InstantSearchRoutingParser, searchParamsSchema } from '~/components/Search/parsers/base';
+import { z } from 'zod';
+import { QS } from '~/utils/qs';
+import { removeEmpty } from '~/utils/object-helpers';
+import { UiState } from 'instantsearch.js';
+
+export const UsersSearchIndexSortBy = [
+  'users:stats.ratingAllTime:desc',
+  'users:stats.followerCount:desc',
+  'users:stats.uploadCountAllTime:desc',
+  'users:createdAt:desc',
+] as const;
+
+const userSearchParamsSchema = searchParamsSchema
+  .extend({
+    index: z.literal('users'),
+    sortBy: z.enum(UsersSearchIndexSortBy),
+  })
+  .partial();
+
+export type UserSearchParams = z.output<typeof userSearchParamsSchema>;
+
+export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
+  parseURL: ({ location }) => {
+    const userSearchIndexResult = userSearchParamsSchema.safeParse(QS.parse(location.search));
+    const userSearchIndexData: UserSearchParams | Record<string, string[]> =
+      userSearchIndexResult.success ? userSearchIndexResult.data : {};
+
+    return { users: removeEmpty(userSearchIndexData) };
+  },
+  routeToState: (routeState: UiState) => {
+    const users: UserSearchParams = (routeState.users || {}) as UserSearchParams;
+    const { query, page, sortBy } = users;
+
+    return {
+      users: {
+        query,
+        page,
+        sortBy: sortBy ?? 'users:stats.ratingAllTime:desc',
+      },
+    };
+  },
+  stateToRoute: (uiState: UiState) => {
+    const sortBy =
+      (uiState.users.sortBy as UserSearchParams['sortBy']) || 'users:stats.ratingAllTime:desc';
+
+    const { query, page } = uiState.users;
+
+    const state: UserSearchParams = {
+      sortBy,
+      query,
+      page,
+    };
+
+    return {
+      users: state,
+    };
+  },
+};

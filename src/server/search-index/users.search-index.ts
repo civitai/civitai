@@ -34,49 +34,58 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const updateSearchableAttributesTask = await index.updateSearchableAttributes(['username']);
+  const settings = await index.getSettings();
 
-  console.log(
-    'onIndexSetup :: updateSearchableAttributesTask created',
-    updateSearchableAttributesTask
-  );
+  const searchableAttributes = ['username'];
 
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes([
-    'stats.ratingAllTime',
-    'stats.ratingCountAllTime',
+  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+    const updateSearchableAttributesTask = await index.updateSearchableAttributes(
+      searchableAttributes
+    );
+    console.log(
+      'onIndexSetup :: updateSearchableAttributesTask created',
+      updateSearchableAttributesTask
+    );
+  }
+
+  const sortableAttributes = [
     'createdAt',
-    'stats.downloadCountAllTime',
-    'stats.favoriteCountAllTime',
-    'stats.followerCountAllTime',
-    'stats.answerAcceptCountAllTime',
-    'stats.answerCountAllTime',
-    'stats.followingCountAllTime',
-    'stats.hiddenCountAllTime',
-    'stats.reviewCountAllTime',
+    'stats.ratingAllTime',
+    'stats.followerCount',
     'stats.uploadCountAllTime',
-    'metrics.followerCount',
-    'metrics.uploadCount',
-    'metrics.followingCount',
-    'metrics.reviewCount',
-    'metrics.answerAcceptCount',
-    'metrics.hiddenCount',
-  ]);
+  ];
 
-  console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+  if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
+    const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
+    console.log(
+      'onIndexSetup :: sortableFieldsAttributesTask created',
+      sortableFieldsAttributesTask
+    );
+  }
 
-  const updateRankingRulesTask = await index.updateRankingRules([
-    'attribute',
-    'metrics.followerCount:desc',
-    'stats.ratingAllTime:desc',
-    'stats.ratingCountAllTime:desc',
-    'words',
-    'typo',
-    'proximity',
-    'sort',
-    'exactness',
-  ]);
+  const rankingRules = ['sort', 'attribute', 'words', 'typo', 'proximity', 'exactness'];
 
-  console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+    console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  }
+
+  // Uncomment & Add if we want to filter by some attribute at some point.
+  // const filterableAttributes = [];
+  //
+  // if (
+  //   // Meilisearch stores sorted.
+  //   JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  // ) {
+  //   const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+  //     filterableAttributes
+  //   );
+  //
+  //   console.log(
+  //     'onIndexSetup :: updateFilterableAttributesTask created',
+  //     updateFilterableAttributesTask
+  //   );
+  // }
 
   console.log('onIndexSetup :: all tasks completed');
 };

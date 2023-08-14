@@ -13,17 +13,13 @@ import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instants
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
 import { env } from '~/env/client.mjs';
-import {
-  ClearRefinements,
-  SearchableMultiSelectRefinementList,
-  SortBy,
-} from '~/components/Search/CustomSearchComponents';
+import { SortBy } from '~/components/Search/CustomSearchComponents';
 import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
 import { useEffect } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
+import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
@@ -31,6 +27,7 @@ import Link from 'next/link';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { ModelsHitList } from '~/pages/search/models';
 import ImageSearch from '~/pages/search/images';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -38,16 +35,16 @@ const searchClient = instantMeiliSearch(
   { primaryKey: 'id', keepZeroFacets: true }
 );
 
-export default function ArticlesSearch() {
+export default function UserSearch() {
   return (
-    <InstantSearch searchClient={searchClient} indexName="articles" routing={routing}>
+    <InstantSearch searchClient={searchClient} indexName="users" routing={routing}>
       <SearchLayout.Root>
         <SearchLayout.Filters>
           <RenderFilters />
         </SearchLayout.Filters>
         <SearchLayout.Content>
           <SearchHeader />
-          <ArticlesHitList />
+          <UserHitList />
         </SearchLayout.Content>
       </SearchLayout.Root>
     </InstantSearch>
@@ -58,24 +55,14 @@ const RenderFilters = () => {
   return (
     <>
       <SortBy
-        title="Sort articles by"
+        title="Sort users by"
         items={[
-          { label: 'Most Bookmarked', value: 'articles:stats.favoriteCount:desc' },
-          { label: 'Most Viewed', value: 'articles:stats.viewCount:desc' },
-          { label: 'Most Discussed', value: 'articles:stats.commentCount:desc' },
-          { label: 'Newest', value: 'articles:createdAt:desc' },
+          { label: 'Highest Rated', value: 'users:stats.ratingAllTime:desc' },
+          { label: 'Most Followed', value: 'users:stats.followerCount:desc' },
+          { label: 'Most Uploads', value: 'users:stats.uploadCountAllTime:desc' },
+          { label: 'Newest', value: 'users:createdAt:desc' },
         ]}
       />
-      <SearchableMultiSelectRefinementList
-        title="Tags"
-        attribute="tags.name"
-        // TODO.Search: Meiliserach & facet searching is not supported when used with sort by as Angolia provides it.  https://github.com/meilisearch/meilisearch-js-plugins/issues/1222
-        // If that ever gets fixed, just make sortable true + limit 20 or something
-        limit={9999}
-        searchable={false}
-        operator="and"
-      />
-      <ClearRefinements />
     </>
   );
 };
@@ -83,7 +70,7 @@ const RenderFilters = () => {
 const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(350px, 1fr))`,
     columnGap: theme.spacing.md,
     gridTemplateRows: `auto 1fr`,
     overflow: 'hidden',
@@ -95,8 +82,8 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ArticlesHitList() {
-  const { hits, showMore, isLastPage } = useInfiniteHits<ArticleSearchIndexRecord>();
+export function UserHitList() {
+  const { hits, showMore, isLastPage } = useInfiniteHits<UserSearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes } = useStyles();
@@ -114,17 +101,11 @@ export function ArticlesHitList() {
         <Center>
           <Stack spacing="md" align="center" maw={800}>
             <Title order={1} inline>
-              No articles found
+              No users found
             </Title>
             <Text align="center">
-              We have a bunch of articles, but it looks like we couldn&rsquo;t find any matching
-              your query.
-            </Text>
-            <Text>
-              Why not{' '}
-              <Link href="/articles/create" passHref>
-                <Anchor target="_blank">write your own!</Anchor>
-              </Link>
+              We have a bunch of users, but it looks like we couldn&rsquo;t find any matching your
+              query.
             </Text>
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
@@ -147,7 +128,7 @@ export function ArticlesHitList() {
     <Stack>
       <Box className={classes.grid}>
         {hits.map((hit) => {
-          return <ArticleCard key={hit.id} data={hit} />;
+          return <CreatorCard key={hit.id} user={hit} displayFollowUser={false} />;
         })}
       </Box>
       {hits.length > 0 && (
@@ -159,6 +140,6 @@ export function ArticlesHitList() {
   );
 }
 
-ArticlesSearch.getLayout = function getLayout(page: React.ReactNode) {
+UserSearch.getLayout = function getLayout(page: React.ReactNode) {
   return <SearchLayout>{page}</SearchLayout>;
 };

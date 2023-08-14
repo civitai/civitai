@@ -1,7 +1,7 @@
 import { UiState } from 'instantsearch.js';
 import { z } from 'zod';
 
-const searchIndexes = ['models', 'images', 'articles'] as const;
+const searchIndexes = ['models', 'images', 'articles', 'users'] as const;
 export type SearchIndex = (typeof searchIndexes)[number];
 
 export const searchParamsSchema = z.object({

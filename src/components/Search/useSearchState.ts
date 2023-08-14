@@ -1,6 +1,4 @@
-import { z } from 'zod';
 import { QS } from '~/utils/qs';
-import { removeEmpty } from '~/utils/object-helpers';
 import type { UiState } from 'instantsearch.js';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -18,15 +16,21 @@ import {
   ArticleSearchParams,
   articlesInstantSearchRoutingParser,
 } from '~/components/Search/parsers/article.parser';
+import {
+  UserSearchParams,
+  usersInstantSearchRoutingParser,
+} from '~/components/Search/parsers/user.parser';
 
 type StoreState = {
   models: ModelSearchParams;
   images: ImageSearchParams;
   articles: ArticleSearchParams;
+  users: UserSearchParams;
   setSearchParamsByUiState: (uiState: UiState) => void;
   setModelsSearchParams: (filters: Partial<ModelSearchParams>) => void;
   setImagesSearchParams: (filters: Partial<ImageSearchParams>) => void;
   setArticleSearchParams: (filters: Partial<ArticleSearchParams>) => void;
+  setUserSearchParams: (filters: Partial<UserSearchParams>) => void;
 };
 
 export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingParser => {
@@ -37,6 +41,8 @@ export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingPars
       return imagesInstantSearchRoutingParser;
     case 'articles':
       return articlesInstantSearchRoutingParser;
+    case 'users':
+      return usersInstantSearchRoutingParser;
   }
 };
 
@@ -48,6 +54,7 @@ export const useSearchStore = create<StoreState>()(
         models: {}, // Initially, all of these will be empty.
         images: {},
         articles: {},
+        users: {},
         // methods
         setSearchParamsByUiState: (uiState: UiState) => {
           const [index] = Object.keys(uiState);
@@ -74,6 +81,11 @@ export const useSearchStore = create<StoreState>()(
                 state.images = routing.stateToRoute(uiState).images as ImageSearchParams;
               });
               break;
+            case 'users':
+              set((state) => {
+                state.users = routing.stateToRoute(uiState).users as UserSearchParams;
+              });
+              break;
           }
         },
         setModelsSearchParams: (params) =>
@@ -87,6 +99,10 @@ export const useSearchStore = create<StoreState>()(
         setArticleSearchParams: (params) =>
           set((state) => {
             state.articles = params;
+          }),
+        setUserSearchParams: (params) =>
+          set((state) => {
+            state.users = params;
           }),
       };
     })
@@ -141,6 +157,9 @@ export const routing: InstantSearchProps['routing'] = {
       }
       if (routeState.articles) {
         return getRoutingForIndex('articles').routeToState(routeState);
+      }
+      if (routeState.users) {
+        return getRoutingForIndex('users').routeToState(routeState);
       }
 
       return routeState;
