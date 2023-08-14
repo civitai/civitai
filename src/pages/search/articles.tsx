@@ -8,6 +8,7 @@ import {
   Loader,
   Title,
   ThemeIcon,
+  Anchor,
 } from '@mantine/core';
 import { InstantSearch, SearchBox, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
@@ -27,6 +28,7 @@ import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
+import Link from 'next/link';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -120,11 +122,17 @@ export function ArticlesHitList() {
         <Center>
           <Stack spacing="md" align="center" maw={800}>
             <Title order={1} inline>
-              No models found
+              No articles found
             </Title>
             <Text align="center">
-              We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
-              query.
+              We have a bunch of articles, but it looks like we couldn&rsquo;t find any matching
+              your query.
+            </Text>
+            <Text>
+              Why not{' '}
+              <Link href="/articles/create" passHref>
+                <Anchor target="_blank">write your own!</Anchor>
+              </Link>
             </Text>
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
