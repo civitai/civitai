@@ -1,14 +1,4 @@
-import {
-  Container,
-  Stack,
-  createStyles,
-  Box,
-  Center,
-  Loader,
-  Title,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import { Stack, createStyles, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
 import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
@@ -27,6 +17,7 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
+import { SearchLayout } from '~/components/Search/SearchLayout';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -37,26 +28,15 @@ const searchClient = instantMeiliSearch(
 export default function Search() {
   return (
     <InstantSearch searchClient={searchClient} indexName="models" routing={routing}>
-      <Container fluid>
-        <Stack
-          sx={(theme) => ({
-            height: 'calc(100vh - 2 * var(--mantine-header-height,50px))',
-            position: 'fixed',
-            left: 0,
-            top: 'var(--mantine-header-height,50px)',
-            width: '377px',
-            overflowY: 'auto',
-            padding: theme.spacing.md,
-          })}
-        >
+      <SearchLayout>
+        <SearchLayout.Filters>
           <RenderFilters />
-        </Stack>
-
-        <Stack pl={377} w="100%">
+        </SearchLayout.Filters>
+        <SearchLayout.Content>
           <SearchHeader />
           <ModelsHitList />
-        </Stack>
-      </Container>
+        </SearchLayout.Content>
+      </SearchLayout>
     </InstantSearch>
   );
 }

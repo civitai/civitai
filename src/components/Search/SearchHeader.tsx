@@ -1,6 +1,7 @@
 import { useSearchStore } from '~/components/Search/useSearchState';
 import { useInstantSearch, useSearchBox } from 'react-instantsearch';
 import {
+  ActionIcon,
   createStyles,
   Group,
   SegmentedControl,
@@ -9,10 +10,13 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
-import { IconCategory, IconFileText } from '@tabler/icons-react';
+import { IconCategory, IconCirclePlus, IconFileText, IconFilter } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
+import { useSearchLayoutCtx } from '~/components/Search/SearchLayout';
 
 const useStyles = createStyles((theme) => ({
   label: {
@@ -55,6 +59,7 @@ export const SearchHeader = () => {
   const { query } = useSearchBox();
   const router = useRouter();
   const { classes, theme } = useStyles();
+  const { sidebarOpen, setSidebarOpen } = useSearchLayoutCtx();
 
   const onChangeIndex = (value: string) => {
     setSearchParamsByUiState(uiState);
@@ -120,6 +125,18 @@ export const SearchHeader = () => {
     <Stack>
       <Title>{query ? `"${query}"` : `Searching for ${index}`}</Title>
       <Group>
+        <Tooltip label="Filters & Sort" position="bottom" withArrow>
+          <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <ThemeIcon
+              size={30}
+              color={index === 'articles' ? theme.colors.dark[7] : 'transparent'}
+              p={6}
+              radius="xl"
+            >
+              <IconFilter />
+            </ThemeIcon>
+          </UnstyledButton>
+        </Tooltip>
         <SegmentedControl
           classNames={classes}
           size="md"
