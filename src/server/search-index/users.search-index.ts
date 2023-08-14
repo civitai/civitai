@@ -198,10 +198,12 @@ const onFetchItemsToIndex = async ({
 
     return {
       ...userRecord,
-      stats: {
-        ...(stats || {}),
-        weightedRating,
-      },
+      stats: stats
+        ? {
+            ...stats,
+            weightedRating,
+          }
+        : null,
       metrics: {
         // Flattens metric array
         ...(userRecord.metrics[0] || {}),
