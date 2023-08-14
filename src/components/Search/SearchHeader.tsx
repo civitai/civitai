@@ -1,6 +1,7 @@
 import { useSearchStore } from '~/components/Search/useSearchState';
 import { useInstantSearch, useSearchBox } from 'react-instantsearch';
 import {
+  Box,
   createStyles,
   Group,
   SegmentedControl,
@@ -18,6 +19,12 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { useSearchLayoutCtx, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 
 const useStyles = createStyles((theme) => ({
+  wrapper: {
+    [theme.fn.smallerThan('sm')]: {
+      overflow: 'auto',
+      maxWidth: '100%',
+    },
+  },
   label: {
     paddingTop: 6,
     paddingBottom: 6,
@@ -27,9 +34,8 @@ const useStyles = createStyles((theme) => ({
   root: {
     backgroundColor: 'transparent',
     gap: 8,
-
     [theme.fn.smallerThan('sm')]: {
-      overflow: 'auto hidden',
+      overflow: 'visible',
       maxWidth: '100%',
     },
   },
@@ -148,28 +154,30 @@ export const SearchHeader = () => {
   return (
     <Stack>
       <Title>{query ? `"${query}"` : `Searching for ${index}`}</Title>
-      <Group spacing="xs" noWrap>
-        <Tooltip label="Filters & sorting" position="bottom" withArrow>
-          <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
-            <ThemeIcon
-              size={42}
-              color="gray"
-              radius="xl"
-              p={11}
-              className={searchLayoutStyles.filterButton}
-            >
-              <IconFilter />
-            </ThemeIcon>
-          </UnstyledButton>
-        </Tooltip>
-        <SegmentedControl
-          classNames={classes}
-          size="md"
-          value={index}
-          data={data}
-          onChange={onChangeIndex}
-        />
-      </Group>
+      <Box sx={{ overflow: 'hidden' }}>
+        <Group spacing="xs" noWrap className={classes.wrapper}>
+          <Tooltip label="Filters & sorting" position="bottom" withArrow>
+            <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
+              <ThemeIcon
+                size={42}
+                color="gray"
+                radius="xl"
+                p={11}
+                className={searchLayoutStyles.filterButton}
+              >
+                <IconFilter />
+              </ThemeIcon>
+            </UnstyledButton>
+          </Tooltip>
+          <SegmentedControl
+            classNames={classes}
+            size="md"
+            value={index}
+            data={data}
+            onChange={onChangeIndex}
+          />
+        </Group>
+      </Box>
     </Stack>
   );
 };
