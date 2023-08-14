@@ -3,19 +3,17 @@ import {
   Autocomplete,
   Badge,
   Card,
-  Center,
   Group,
   Loader,
-  LoadingOverlay,
-  Paper,
   Skeleton,
   Stack,
   Text,
-  Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
+import { useHiddenPreferences } from '~/providers/HiddenPreferencesProvider';
+import { hiddenPreferences } from '~/store/hidden-preferences.store';
 import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 
 import { trpc } from '~/utils/trpc';
@@ -26,8 +24,11 @@ export function HiddenUsersSection() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { data: blocked = [], isLoading: loadingBlockedUsers } =
+  const { users: userHiddenUsers } = useHiddenPreferences();
+  const { data: hiddenUsers = [], isLoading: loadingBlockedUsers } =
     trpc.user.getHiddenUsers.useQuery();
+
+  const blocked = hiddenUsers.filter((x) => userHiddenUsers.get(x.id));
   const { data, isLoading, isFetching } = trpc.user.getAll.useQuery(
     { query: debouncedSearch.trim(), limit: 10 },
     { enabled: !loadingBlockedUsers && debouncedSearch !== '' }
@@ -36,30 +37,24 @@ export function HiddenUsersSection() {
     data?.filter((x) => x.username).map(({ id, username }) => ({ id, value: username ?? '' })) ??
     [];
 
-  const toggleBlockedUserMutation = trpc.user.toggleHide.useMutation({
-    async onMutate({ targetUserId, username }) {
-      await queryUtils.user.getHiddenUsers.cancel();
+  const handleToggleBlocked = async ({
+    id,
+    username,
+  }: {
+    id: number;
+    username?: string | null;
+  }) => {
+    await hiddenPreferences.toggleEntity({ entityType: 'user', entityId: id });
+    invalidateModeratedContentDebounced(queryUtils, ['user']); // TODO - remove this once frontend filtering is finished
 
-      const prevHidden = queryUtils.user.getHiddenUsers.getData();
+    const prevHidden = queryUtils.user.getHiddenUsers.getData();
+    const alreadyHidden = prevHidden?.some((user) => user.id === id);
+    queryUtils.user.getHiddenUsers.setData(undefined, (old = []) =>
+      alreadyHidden
+        ? old.filter((item) => item.id !== id)
+        : [...old, { id: id, username: username ?? '', image: null, deletedAt: null }]
+    );
 
-      const alreadyHidden = prevHidden?.some((user) => user.id === targetUserId);
-      queryUtils.user.getHiddenUsers.setData(undefined, (old = []) =>
-        alreadyHidden
-          ? old.filter((item) => item.id !== targetUserId)
-          : [...old, { id: targetUserId, username: username ?? '', image: null, deletedAt: null }]
-      );
-
-      return { prevHidden };
-    },
-    async onSuccess() {
-      invalidateModeratedContentDebounced(queryUtils, ['user']);
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getHiddenUsers.setData(undefined, context?.prevHidden);
-    },
-  });
-  const handleToggleBlocked = ({ id, username }: { id: number; username?: string | null }) => {
-    toggleBlockedUserMutation.mutate({ targetUserId: id, username });
     setSearch('');
   };
 

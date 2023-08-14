@@ -7,6 +7,8 @@ import {
   ToggleHiddenTagsInput,
   hiddenPreferencesSchema,
 } from '~/server/schema/user-preferences.schema';
+import { ToggleHiddenTagsReturn } from '~/server/services/user-preferences.service';
+import { showErrorNotification } from '~/utils/notifications';
 
 type UserPreferencesStore = HiddenPreferencesOutput & {
   getPreferences: () => Promise<void>;
@@ -20,7 +22,7 @@ type UserPreferencesStore = HiddenPreferencesOutput & {
   }) => Promise<void>;
 };
 
-export const useUserPreferencesStore = create<UserPreferencesStore>()(
+export const useHiddenPreferencesStore = create<UserPreferencesStore>()(
   devtools(
     immer((set, get) => ({
       explicit: { images: [], models: [], users: [] },
@@ -31,6 +33,7 @@ export const useUserPreferencesStore = create<UserPreferencesStore>()(
         set({ ...data });
       },
       toggleTags: async ({ tagIds, hidden }) => {
+        const old = get().hidden;
         set((state) => {
           if (hidden === true) state.hidden.tags = [...state.hidden.tags, ...tagIds];
           else if (hidden === false)
@@ -43,10 +46,23 @@ export const useUserPreferencesStore = create<UserPreferencesStore>()(
             }
           }
         });
-        const data = await toggleHiddenTags({ tagIds, hidden });
-        set((state) => {
-          state.hidden = data;
-        });
+        // update hidden tags/images/models with returned values
+        await toggleHiddenTags({ tagIds, hidden })
+          .then((data) => {
+            set((state) => {
+              state.hidden.tags = data.tags;
+              state.hidden.images = data.images.hidden;
+              state.hidden.models = data.models.hidden;
+              state.moderated.images = data.images.moderated;
+              state.moderated.models = data.models.moderated;
+            });
+          })
+          .catch((e) => {
+            showErrorNotification({ error: e });
+            set((state) => {
+              state.hidden = old;
+            });
+          });
       },
       toggleEntity: async ({ entityType, entityId }) => {
         set((state) => {
@@ -86,7 +102,7 @@ export const useUserPreferencesStore = create<UserPreferencesStore>()(
   )
 );
 
-const store = useUserPreferencesStore.getState();
+const store = useHiddenPreferencesStore.getState();
 export const hiddenPreferences = {
   getPreferences: store.getPreferences,
   toggleTags: store.toggleTags,
@@ -107,11 +123,7 @@ const toggleHiddenTags = async ({ tagIds, hidden }: ToggleHiddenTagsInput) => {
     body: JSON.stringify({ tagIds, hidden }),
   });
   if (!result.ok) throw new Error('could not toggle hidden tags');
-  const data = (await result.json()) as {
-    tags: number[];
-    images: number[];
-    models: number[];
-  };
+  const data = (await result.json()) as ToggleHiddenTagsReturn;
   return data;
 };
 

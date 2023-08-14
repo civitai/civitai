@@ -1,7 +1,7 @@
 import { useContext, createContext, useRef, useEffect, ReactNode, useMemo } from 'react';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
-import { hiddenPreferences, useUserPreferencesStore } from '~/store/hidden-preferences.store';
+import { hiddenPreferences, useHiddenPreferencesStore } from '~/store/hidden-preferences.store';
 
 type HiddenPreferencesState = {
   users: Map<number, boolean>;
@@ -22,7 +22,7 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   const initRef = useRef(true);
   const browsingMode = useFiltersContext((state) => state.browsingMode);
 
-  const { explicit, hidden, moderated } = useUserPreferencesStore((state) => ({
+  const { explicit, hidden, moderated } = useHiddenPreferencesStore((state) => ({
     explicit: state.explicit,
     hidden: state.hidden,
     moderated: state.moderated,
@@ -60,8 +60,6 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
     () => getMapped({ hidden: hidden.tags, moderated: moderated.tags, browsingMode }),
     [hidden.tags, moderated.tags, browsingMode]
   );
-
-  console.log({ users, images, models, tags });
 
   return (
     <HiddenPreferencesContext.Provider value={{ users, images, models, tags }}>

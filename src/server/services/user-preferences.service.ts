@@ -218,6 +218,7 @@ export async function getAllHiddenForUser({
   return removeEmpty({ explicit, hidden, moderated });
 }
 
+export type ToggleHiddenTagsReturn = AsyncReturnType<typeof toggleHiddenTags>;
 export async function toggleHiddenTags({
   tagIds,
   userId,
@@ -237,24 +238,32 @@ export async function toggleHiddenTags({
       select: { tagId: true, type: true },
     });
 
-    const existingHidden = matchedTags.filter((x) => x.type !== 'Hide').map((x) => x.tagId);
-    const toCreate = tagIds.filter((id) => !existingHidden.includes(id));
+    const existing = matchedTags.map((x) => x.tagId);
+    const existingHidden = matchedTags.filter((x) => x.type === 'Hide').map((x) => x.tagId);
+    const toUpdate = tagIds.filter((id) => !existingHidden.includes(id) && existing.includes(id));
+    const toCreate = tagIds.filter((id) => !existing.includes(id));
     // if hidden === true, then I only need to create non-existing tagEngagements, no need to remove an engagements
     const toDelete = hidden ? [] : tagIds.filter((id) => existingHidden.includes(id));
 
-    if (toCreate.length) {
-      await dbWrite.tagEngagement.createMany({
-        data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
-      });
-    }
     if (toDelete.length) {
       await dbWrite.tagEngagement.deleteMany({
         where: { userId, tagId: { in: toDelete } },
       });
     }
+    if (toUpdate.length) {
+      await dbWrite.tagEngagement.updateMany({
+        where: { userId, tagId: { in: toUpdate } },
+        data: { type: 'Hide' },
+      });
+    }
+    if (toCreate.length) {
+      await dbWrite.tagEngagement.createMany({
+        data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
+      });
+    }
   }
 
-  const tags = HiddenTags.getCached({ userId, refreshCache: true });
+  const tags = await HiddenTags.getCached({ userId, refreshCache: true });
   // these functions depend on having fresh data from tags
   const [images, models] = await Promise.all([
     ImplicitHiddenImages.getCached({ userId, refreshCache: true }),

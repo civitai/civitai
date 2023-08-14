@@ -3,19 +3,17 @@ import {
   Autocomplete,
   Badge,
   Card,
-  Center,
   Group,
   Loader,
-  LoadingOverlay,
-  Paper,
   Skeleton,
   Stack,
   Text,
-  Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
+import { useHiddenPreferences } from '~/providers/HiddenPreferencesProvider';
+import { hiddenPreferences } from '~/store/hidden-preferences.store';
 import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 
 import { trpc } from '~/utils/trpc';
@@ -26,9 +24,16 @@ export function HiddenTagsSection() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { data: blockedTags = [], isLoading: loadingBlockedTags } = trpc.user.getTags.useQuery({
+  const { data: moderationTags } = trpc.system.getModeratedTags.useQuery();
+  const { data: hiddenTags = [], isLoading: loadingBlockedTags } = trpc.user.getTags.useQuery({
     type: 'Hide',
   });
+  const { tags: userHiddenTags } = useHiddenPreferences();
+
+  const blockedTags = hiddenTags.filter(
+    (x) => !moderationTags?.some((m) => m.id === x.id) && userHiddenTags.get(x.id)
+  );
+
   const { data, isLoading } = trpc.tag.getAll.useQuery(
     {
       entityType: ['Model'],
@@ -38,34 +43,23 @@ export function HiddenTagsSection() {
   );
   const modelTags = data?.items.map(({ id, name }) => ({ id, value: name })) ?? [];
 
-  const toggleBlockedTagMutation = trpc.user.toggleBlockedTag.useMutation({
-    async onMutate({ tagId }) {
-      await queryUtils.user.getTags.cancel();
+  const handleToggleBlockedTag = async (tagId: number) => {
+    await hiddenPreferences.toggleTags({ tagIds: [tagId] });
 
-      const prevBlockedTags = queryUtils.user.getTags.getData({ type: 'Hide' }) ?? [];
-      const removing = prevBlockedTags.some((tag) => tag.id === tagId);
+    invalidateModeratedContentDebounced(queryUtils, ['tag']); // TODO - remove this once frontend filtering is finished
 
-      queryUtils.user.getTags.setData({ type: 'Hide' }, (old = []) => {
-        if (removing) return old.filter((tag) => tag.id !== tagId);
+    const prevBlockedTags = queryUtils.user.getTags.getData({ type: 'Hide' }) ?? [];
+    const removing = prevBlockedTags.some((tag) => tag.id === tagId);
 
-        const { models, ...addedTag } = data?.items.find((tag) => tag.id === tagId) ?? {
-          id: tagId,
-          name: '',
-        };
-        return [...old, addedTag];
-      });
+    queryUtils.user.getTags.setData({ type: 'Hide' }, (old = []) => {
+      if (removing) return old.filter((tag) => tag.id !== tagId);
 
-      return { prevBlockedTags };
-    },
-    async onSuccess() {
-      invalidateModeratedContentDebounced(queryUtils, ['tag']);
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getTags.setData({ type: 'Hide' }, context?.prevBlockedTags);
-    },
-  });
-  const handleToggleBlockedTag = (tagId: number) => {
-    toggleBlockedTagMutation.mutate({ tagId });
+      const { models, ...addedTag } = data?.items.find((tag) => tag.id === tagId) ?? {
+        id: tagId,
+        name: '',
+      };
+      return [...old, addedTag];
+    });
     setSearch('');
   };
 

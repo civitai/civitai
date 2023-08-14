@@ -8,9 +8,9 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default AuthedEndpoint(
   async function handler(req, res, user) {
+    const { entityId, entityType } = toggleHiddenEntitySchema.parse(JSON.parse(req.body));
+    const userId = user.id;
     try {
-      const { entityId, entityType } = toggleHiddenEntitySchema.parse(req.body);
-      const userId = user.id;
       switch (entityType) {
         case 'image':
           await toggleHideImage({ userId, imageId: entityId });
@@ -22,10 +22,13 @@ export default AuthedEndpoint(
           await toggleHideUser({ userId, targetUserId: entityId });
           break;
       }
-      res.status(200);
+      res.end();
     } catch (error: any) {
-      res.status(500).json({ message: 'failed to toggle hidden tags', error });
+      res.status(500).json({
+        message: `failed to toggle hidden entity: ${entityType} with id: ${entityId}`,
+        error,
+      });
     }
   },
-  ['POSt']
+  ['POST']
 );
