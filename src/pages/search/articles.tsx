@@ -1,5 +1,4 @@
 import {
-  Container,
   Stack,
   Text,
   createStyles,
@@ -10,7 +9,7 @@ import {
   ThemeIcon,
   Anchor,
 } from '@mantine/core';
-import { InstantSearch, SearchBox, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
+import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
 import { env } from '~/env/client.mjs';
@@ -29,6 +28,9 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import Link from 'next/link';
+import { SearchLayout } from '~/components/Search/SearchLayout';
+import { ModelsHitList } from '~/pages/search/models';
+import ImageSearch from '~/pages/search/images';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -36,29 +38,18 @@ const searchClient = instantMeiliSearch(
   { primaryKey: 'id', keepZeroFacets: true }
 );
 
-export default function Search() {
+export default function ArticlesSearch() {
   return (
     <InstantSearch searchClient={searchClient} indexName="articles" routing={routing}>
-      <Container fluid>
-        <Stack
-          sx={(theme) => ({
-            height: 'calc(100vh - 2 * var(--mantine-header-height,50px))',
-            position: 'fixed',
-            left: 0,
-            top: 'var(--mantine-header-height,50px)',
-            width: '377px',
-            overflowY: 'auto',
-            padding: theme.spacing.md,
-          })}
-        >
+      <SearchLayout.Root>
+        <SearchLayout.Filters>
           <RenderFilters />
-        </Stack>
-
-        <Stack pl={377} w="100%">
+        </SearchLayout.Filters>
+        <SearchLayout.Content>
           <SearchHeader />
           <ArticlesHitList />
-        </Stack>
-      </Container>
+        </SearchLayout.Content>
+      </SearchLayout.Root>
     </InstantSearch>
   );
 }
@@ -82,6 +73,7 @@ const RenderFilters = () => {
         // If that ever gets fixed, just make sortable true + limit 20 or something
         limit={9999}
         searchable={false}
+        operator="and"
       />
       <ClearRefinements />
     </>
@@ -166,3 +158,7 @@ export function ArticlesHitList() {
     </Stack>
   );
 }
+
+ArticlesSearch.getLayout = function getLayout(page: React.ReactNode) {
+  return <SearchLayout>{page}</SearchLayout>;
+};

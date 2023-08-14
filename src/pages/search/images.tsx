@@ -12,6 +12,7 @@ import { routing } from '~/components/Search/useSearchState';
 import { env } from '~/env/client.mjs';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import { SearchHeader } from '~/components/Search/SearchHeader';
+import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -19,45 +20,18 @@ const searchClient = instantMeiliSearch(
   { primaryKey: 'id', keepZeroFacets: true }
 );
 
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    columnGap: theme.spacing.md,
-    gridTemplateRows: `auto 1fr`,
-    overflow: 'hidden',
-    marginTop: -theme.spacing.md,
-
-    '& > *': {
-      marginTop: theme.spacing.md,
-    },
-  },
-
-  filtersWrapper: {
-    height: 'calc(100vh - 2 * var(--mantine-header-height,50px))',
-    position: 'fixed',
-    left: 0,
-    top: 'var(--mantine-header-height,50px)',
-    width: '377px',
-    overflowY: 'auto',
-    padding: theme.spacing.md,
-  },
-}));
-
-export default function Images() {
-  const { classes } = useStyles();
-
+export default function ImageSearch() {
   return (
     <InstantSearch searchClient={searchClient} indexName="images" routing={routing}>
-      <Container fluid>
-        <Stack className={classes.filtersWrapper}>
+      <SearchLayout.Root>
+        <SearchLayout.Filters>
           <RenderFilters />
-        </Stack>
-        <Stack pl={377} w="100%">
+        </SearchLayout.Filters>
+        <SearchLayout.Content>
           <SearchHeader />
           <ImagesHitList />
-        </Stack>
-      </Container>
+        </SearchLayout.Content>
+      </SearchLayout.Root>
     </InstantSearch>
   );
 }
@@ -80,13 +54,14 @@ function RenderFilters() {
         // If that ever gets fixed, just make sortable true + limit 20 or something
         limit={9999}
         searchable={false}
+        operator="and"
       />
     </>
   );
 }
 
 function ImagesHitList() {
-  const { classes } = useStyles();
+  const { classes } = useSearchLayoutStyles();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
 
@@ -114,3 +89,7 @@ function ImagesHitList() {
     </Stack>
   );
 }
+
+ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
+  return <SearchLayout>{page}</SearchLayout>;
+};

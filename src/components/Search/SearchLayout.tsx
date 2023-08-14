@@ -1,5 +1,6 @@
 import { Container, createStyles, Stack } from '@mantine/core';
 import { createContext, Dispatch, SetStateAction, useContext, useMemo, useState } from 'react';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 
 const SIDEBAR_SIZE = 377;
 
@@ -56,9 +57,9 @@ export function SearchLayout({ children }: { children: React.ReactNode }) {
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
 
   return (
-    <SearchLayoutCtx.Provider value={ctx}>
-      <SearchLayout.Root>{children}</SearchLayout.Root>
-    </SearchLayoutCtx.Provider>
+    <AppLayout>
+      <SearchLayoutCtx.Provider value={ctx}>{children}</SearchLayoutCtx.Provider>
+    </AppLayout>
   );
 }
 
@@ -82,3 +83,18 @@ SearchLayout.Content = function Content({ children }: { children: React.ReactNod
   const { classes } = useStyles();
   return <Stack className={classes.content}>{children}</Stack>;
 };
+
+export const useSearchLayoutStyles = createStyles((theme) => ({
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
+    columnGap: theme.spacing.md,
+    gridTemplateRows: `auto 1fr`,
+    overflow: 'hidden',
+    marginTop: -theme.spacing.md,
+
+    '& > *': {
+      marginTop: theme.spacing.md,
+    },
+  },
+}));

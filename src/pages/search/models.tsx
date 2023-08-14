@@ -17,7 +17,8 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
-import { SearchLayout } from '~/components/Search/SearchLayout';
+import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -25,10 +26,10 @@ const searchClient = instantMeiliSearch(
   { primaryKey: 'id', keepZeroFacets: true }
 );
 
-export default function Search() {
+export default function ModelsSearch() {
   return (
     <InstantSearch searchClient={searchClient} indexName="models" routing={routing}>
-      <SearchLayout>
+      <SearchLayout.Root>
         <SearchLayout.Filters>
           <RenderFilters />
         </SearchLayout.Filters>
@@ -36,7 +37,7 @@ export default function Search() {
           <SearchHeader />
           <ModelsHitList />
         </SearchLayout.Content>
-      </SearchLayout>
+      </SearchLayout.Root>
     </InstantSearch>
   );
 }
@@ -72,32 +73,18 @@ const RenderFilters = () => {
         // If that ever gets fixed, just make sortable true + limit 20 or something
         limit={9999}
         searchable={false}
+        operator="and"
       />
       <ClearRefinements />
     </>
   );
 };
 
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    columnGap: theme.spacing.md,
-    gridTemplateRows: `auto 1fr`,
-    overflow: 'hidden',
-    marginTop: -theme.spacing.md,
-
-    '& > *': {
-      marginTop: theme.spacing.md,
-    },
-  },
-}));
-
 export function ModelsHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<ModelSearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
-  const { classes } = useStyles();
+  const { classes } = useSearchLayoutStyles();
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -157,3 +144,7 @@ export function ModelsHitList() {
     </Stack>
   );
 }
+
+ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
+  return <SearchLayout>{page}</SearchLayout>;
+};
