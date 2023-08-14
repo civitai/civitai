@@ -33,8 +33,8 @@ export function createMetricProcessor({
       if (isFirstOfDay) await clearDay?.(ctx);
 
       // Check if update is needed
-      // const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
-      // if (!shouldUpdate) return;
+      const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
+      if (!shouldUpdate) return;
 
       // Run update
       ctx.lastUpdate = dayjs(lastUpdate).subtract(2, 'minute').toDate(); // Expand window to allow clickhouse tracker to catch up

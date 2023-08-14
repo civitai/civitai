@@ -49,7 +49,7 @@ export default function Images() {
 
   return (
     <InstantSearch searchClient={searchClient} indexName="images" routing={routing}>
-      <Container p={0} fluid>
+      <Container fluid>
         <Stack className={classes.filtersWrapper}>
           <RenderFilters />
         </Stack>
