@@ -22,6 +22,9 @@ const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = 'users';
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
+const RATING_BAYESIAN_M = 3.5;
+const RATING_BAYESIAN_C = 10;
+
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -50,8 +53,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     'createdAt',
-    'stats.ratingAllTime',
-    'stats.followerCount',
+    'stats.weightedRating',
+    'stats.followerCountAllTime',
     'stats.uploadCountAllTime',
   ];
 
@@ -118,6 +121,21 @@ const onFetchItemsToIndex = async ({
     take: READ_BATCH_SIZE,
     select: {
       ...userWithCosmeticsSelect,
+      createdAt: true,
+      rank: {
+        select: {
+          leaderboardRank: true,
+          leaderboardId: true,
+          leaderboardTitle: true,
+          leaderboardCosmetic: true,
+        },
+      },
+      links: {
+        select: {
+          url: true,
+          type: true,
+        },
+      },
       stats: {
         select: {
           ratingAllTime: true,
@@ -170,12 +188,23 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const indexReadyRecords = users.map((tagRecord) => {
+  const indexReadyRecords = users.map((userRecord) => {
+    const stats = userRecord.stats;
+
+    const weightedRating = !stats
+      ? 0
+      : (stats.ratingAllTime * stats.ratingCountAllTime + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
+        (stats.ratingCountAllTime + RATING_BAYESIAN_C);
+
     return {
-      ...tagRecord,
+      ...userRecord,
+      stats: {
+        ...(stats || {}),
+        weightedRating,
+      },
       metrics: {
         // Flattens metric array
-        ...(tagRecord.metrics[0] || {}),
+        ...(userRecord.metrics[0] || {}),
       },
     };
   });

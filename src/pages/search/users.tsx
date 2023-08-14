@@ -7,7 +7,11 @@ import {
   Loader,
   Title,
   ThemeIcon,
-  Anchor,
+  useMantineTheme,
+  Card,
+  Group,
+  Rating,
+  ActionIcon,
 } from '@mantine/core';
 import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
@@ -18,16 +22,25 @@ import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
 import { useEffect } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { ModelCard } from '~/components/Cards/ModelCard';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
-import { ArticleCard } from '~/components/Cards/ArticleCard';
-import { IconCloudOff } from '@tabler/icons-react';
+import {
+  IconCloudOff,
+  IconDownload,
+  IconHeart,
+  IconStar,
+  IconUpload,
+  IconUsers,
+} from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import Link from 'next/link';
-import { SearchLayout } from '~/components/Search/SearchLayout';
-import { ModelsHitList } from '~/pages/search/models';
-import ImageSearch from '~/pages/search/images';
-import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { formatDate } from '~/utils/date-helpers';
+import { RankBadge } from '~/components/Leaderboard/RankBadge';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { StatTooltip } from '~/components/Tooltips/StatTooltip';
+import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
+import { sortDomainLinks } from '~/utils/domain-link';
+import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -67,26 +80,11 @@ const RenderFilters = () => {
   );
 };
 
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(350px, 1fr))`,
-    columnGap: theme.spacing.md,
-    gridTemplateRows: `auto 1fr`,
-    overflow: 'hidden',
-    marginTop: -theme.spacing.md,
-
-    '& > *': {
-      marginTop: theme.spacing.md,
-    },
-  },
-}));
-
 export function UserHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<UserSearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
-  const { classes } = useStyles();
+  const { classes, cx } = useSearchLayoutStyles();
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -126,9 +124,15 @@ export function UserHitList() {
 
   return (
     <Stack>
-      <Box className={classes.grid}>
+      <Box
+        className={cx(classes.grid)}
+        style={{
+          // Overwrite default sizing here.
+          gridTemplateColumns: `repeat(auto-fill, minmax(350px, 1fr))`,
+        }}
+      >
         {hits.map((hit) => {
-          return <CreatorCard key={hit.id} user={hit} displayFollowUser={false} />;
+          return <CreatorCard key={hit.id} data={hit} />;
         })}
       </Box>
       {hits.length > 0 && (
@@ -137,6 +141,148 @@ export function UserHitList() {
         </Center>
       )}
     </Stack>
+  );
+}
+
+export function CreatorCard({ data }: { data: UserSearchIndexRecord }) {
+  const theme = useMantineTheme();
+
+  if (!data) return null;
+
+  const stats = data.stats;
+  const iconBadgeSize = 'sm';
+
+  const uploads = stats?.uploadCountAllTime;
+
+  return (
+    <Card p="xs" withBorder>
+      <Card.Section py="xs" inheritPadding>
+        <Stack spacing="xs">
+          <Group align="center" position="apart">
+            <UserAvatar
+              size="sm"
+              user={data}
+              subText={`Joined ${formatDate(data.createdAt)}`}
+              withUsername
+              linkToProfile
+            />
+            <Group spacing="xs">
+              <RankBadge size="md" rank={data.rank} />
+            </Group>
+          </Group>
+          {stats && (
+            <Group position="apart" spacing={0} noWrap>
+              <IconBadge
+                sx={{ userSelect: 'none' }}
+                size={iconBadgeSize}
+                icon={
+                  <Rating
+                    size="xs"
+                    value={stats.ratingAllTime}
+                    readOnly
+                    emptySymbol={
+                      theme.colorScheme === 'dark' ? (
+                        <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
+                      ) : undefined
+                    }
+                  />
+                }
+                variant={
+                  theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0 ? 'filled' : 'light'
+                }
+                tooltip={
+                  <StatTooltip
+                    value={`${formatToLeastDecimals(stats.ratingAllTime)} (${
+                      stats.ratingCountAllTime
+                    })`}
+                    label="Average Rating"
+                  />
+                }
+              >
+                <Text size="xs" color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}>
+                  {abbreviateNumber(stats.ratingCountAllTime)}
+                </Text>
+              </IconBadge>
+              <Group spacing={4} noWrap>
+                {!uploads || uploads === 0 ? null : (
+                  <IconBadge
+                    icon={<IconUpload size={14} />}
+                    href={`/user/${data.username}`}
+                    color="gray"
+                    size={iconBadgeSize}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    tooltip={<StatTooltip value={uploads} label="Uploads" />}
+                    sx={(theme) => ({
+                      [theme.fn.smallerThan('xs')]: {
+                        display: 'none',
+                      },
+                    })}
+                  >
+                    <Text size="xs">{abbreviateNumber(uploads)}</Text>
+                  </IconBadge>
+                )}
+                <IconBadge
+                  icon={<IconUsers size={14} />}
+                  href={`/user/${data.username}/followers`}
+                  color="gray"
+                  size={iconBadgeSize}
+                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                  tooltip={<StatTooltip value={stats.followerCountAllTime} label="Followers" />}
+                >
+                  <Text size="xs">{abbreviateNumber(stats.followerCountAllTime)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconHeart size={14} />}
+                  color="gray"
+                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                  size={iconBadgeSize}
+                  tooltip={<StatTooltip value={stats.favoriteCountAllTime} label="Favorites" />}
+                >
+                  <Text size="xs">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
+                </IconBadge>
+                {uploads === 0 ? null : (
+                  <IconBadge
+                    icon={<IconDownload size={14} />}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    size={iconBadgeSize}
+                    tooltip={
+                      <StatTooltip value={stats.downloadCountAllTime} label="Total Downloads" />
+                    }
+                  >
+                    <Text size="xs">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
+                  </IconBadge>
+                )}
+              </Group>
+            </Group>
+          )}
+        </Stack>
+      </Card.Section>
+      {data.links && data.links.length > 0 ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          sx={(theme) => ({
+            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+          })}
+          py={5}
+        >
+          <Group spacing={4}>
+            {sortDomainLinks(data.links).map((link, index) => (
+              <ActionIcon
+                key={index}
+                component="a"
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="md"
+              >
+                <DomainIcon domain={link.domain} size={20} />
+              </ActionIcon>
+            ))}
+          </Group>
+        </Card.Section>
+      ) : null}
+    </Card>
   );
 }
 

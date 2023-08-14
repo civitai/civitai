@@ -24,7 +24,7 @@ import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 
 const iconBadgeSize: MantineSize = 'sm';
 
-export function CreatorCard({ user, displayFollowUser = true }: Props) {
+export function CreatorCard({ user }: Props) {
   const theme = useMantineTheme();
 
   const { data: creator } = trpc.user.getCreator.useQuery(
@@ -65,7 +65,7 @@ export function CreatorCard({ user, displayFollowUser = true }: Props) {
             />
             <Group spacing="xs">
               <RankBadge size="md" rank={creator.rank} />
-              {displayFollowUser && <FollowUserButton userId={creator.id} size="xs" compact />}
+              <FollowUserButton userId={creator.id} size="xs" compact />
             </Group>
           </Group>
           {stats && (
@@ -186,5 +186,4 @@ export function CreatorCard({ user, displayFollowUser = true }: Props) {
 
 type Props = {
   user: UserWithCosmetics;
-  displayFollowUser?: boolean;
 };

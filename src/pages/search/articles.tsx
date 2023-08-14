@@ -28,7 +28,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import Link from 'next/link';
-import { SearchLayout } from '~/components/Search/SearchLayout';
+import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ModelsHitList } from '~/pages/search/models';
 import ImageSearch from '~/pages/search/images';
 
@@ -80,26 +80,11 @@ const RenderFilters = () => {
   );
 };
 
-const useStyles = createStyles((theme) => ({
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    columnGap: theme.spacing.md,
-    gridTemplateRows: `auto 1fr`,
-    overflow: 'hidden',
-    marginTop: -theme.spacing.md,
-
-    '& > *': {
-      marginTop: theme.spacing.md,
-    },
-  },
-}));
-
 export function ArticlesHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<ArticleSearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
-  const { classes } = useStyles();
+  const { classes } = useSearchLayoutStyles();
 
   // #region [infinite data fetching]
   useEffect(() => {
