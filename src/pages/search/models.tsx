@@ -52,7 +52,7 @@ export default function Search() {
           <RenderFilters />
         </Stack>
 
-        <Stack pl={377} align="flex-start" w="100%">
+        <Stack pl={377} w="100%">
           <SearchHeader />
           <ModelsHitList />
         </Stack>

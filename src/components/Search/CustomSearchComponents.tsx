@@ -18,6 +18,7 @@ import {
 import { useEffect, useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconTrash } from '@tabler/icons-react';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export function SortBy({ title, ...props }: SortByProps & { title: string }) {
   const { options, refine, currentRefinement, ...args } = useSortBy(props);
@@ -156,7 +157,7 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
                 checked={item.isRefined}
                 onClick={() => refine(item.value)}
               >
-                {item.label}
+                {getDisplayName(item.label)}
               </Chip>
             ))}
           </Group>
