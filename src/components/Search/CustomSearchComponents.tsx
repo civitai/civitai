@@ -123,6 +123,7 @@ export function SearchableMultiSelectRefinementList({
             searchable
             searchValue={searchValue}
             onSearchChange={setSearchValue}
+            placeholder={`Search ${title}`}
             nothingFound="Nothing found"
           />
         </Accordion.Panel>
