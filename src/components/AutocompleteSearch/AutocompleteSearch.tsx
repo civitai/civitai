@@ -88,7 +88,7 @@ const useStyles = createStyles((theme) => ({
 export function AutocompleteSearch({ ...props }: Props) {
   const router = useRouter();
   const targetIndex = /\/(model|article|image|user)s?\/?/.exec(router.pathname)?.[1] || 'model';
-  const indexName = `${targetIndex}s`;
+  const indexName = 'models'; // TODO: enabled this back: -> `${targetIndex}s`;
 
   return (
     <InstantSearch searchClient={searchClient} indexName={indexName}>
