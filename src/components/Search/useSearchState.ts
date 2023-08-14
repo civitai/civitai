@@ -8,28 +8,17 @@ import { immer } from 'zustand/middleware/immer';
 import singletonRouter from 'next/router';
 import { InstantSearchProps } from 'react-instantsearch';
 import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs';
-
-export const searchIndexes = ['models', 'articles'] as const;
-export type SearchIndex = (typeof searchIndexes)[number];
-export const searchParamsSchema = z.object({
-  query: z.coerce.string().optional(),
-  page: z.number().optional(),
-});
-
-export type SearchParams = z.output<typeof searchParamsSchema>;
+import { SearchIndex, InstantSearchRoutingParser, searchParamsSchema } from './parsers/base';
+import { ImageSearchParams, imagesInstantSearchRoutingParser } from './parsers/image.parser';
 
 type StoreState = {
   models: ModelSearchParams;
+  images: ImageSearchParams;
   articles: ArticleSearchParams;
   setSearchParamsByUiState: (uiState: UiState) => void;
   setModelsSearchParams: (filters: Partial<ModelSearchParams>) => void;
+  setImagesSearchParams: (filters: Partial<ImageSearchParams>) => void;
   setArticleSearchParams: (filters: Partial<ArticleSearchParams>) => void;
-};
-
-type InstantSearchRoutingParser = {
-  parseURL: (params: { location: Location }) => UiState;
-  routeToState: (routeState: UiState) => UiState;
-  stateToRoute: (routeState: UiState) => UiState;
 };
 
 export const ModelSearchIndexSortBy = [
@@ -184,6 +173,8 @@ export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingPars
   switch (index) {
     case 'models':
       return modelInstantSearchRoutingParser;
+    case 'images':
+      return imagesInstantSearchRoutingParser;
     case 'articles':
       return articlesInstantSearchRoutingParser;
   }
@@ -195,6 +186,7 @@ export const useSearchStore = create<StoreState>()(
     immer((set) => {
       return {
         models: {}, // Initially, all of these will be empty.
+        images: {},
         articles: {},
         // methods
         setSearchParamsByUiState: (uiState: UiState) => {
@@ -211,15 +203,26 @@ export const useSearchStore = create<StoreState>()(
               set((state) => {
                 state.articles = routing.stateToRoute(uiState).articles as ArticleSearchParams;
               });
+              break;
             case 'models':
               set((state) => {
                 state.models = routing.stateToRoute(uiState).models as ModelSearchParams;
               });
+              break;
+            case 'images':
+              set((state) => {
+                state.images = routing.stateToRoute(uiState).images as ImageSearchParams;
+              });
+              break;
           }
         },
         setModelsSearchParams: (params) =>
           set((state) => {
             state.models = params;
+          }),
+        setImagesSearchParams: (params) =>
+          set((state) => {
+            state.images = params;
           }),
         setArticleSearchParams: (params) =>
           set((state) => {
@@ -243,20 +246,28 @@ export const routing: InstantSearchProps['routing'] = {
         if (routeState.articles) {
           query = QS.stringify(routeState.articles);
         }
+        if (routeState.images) {
+          query = QS.stringify(routeState.images);
+        }
 
-        return `${location.pathname}?${query}`;
+        // Needs to be absolute url, otherwise instantsearch complains
+        return `${location.origin}${location.pathname}?${query}`;
       },
       parseURL({ location }) {
         const pattern = /\/search\/([^\/]+)/;
         const match = location.pathname.match(pattern);
 
-        if (!match) {
-          throw new Error('Invalid search path');
+        // if (!match) {
+        //   throw new Error('Invalid search path');
+        // }
+
+        if (match) {
+          const index = match[1] as SearchIndex;
+
+          return getRoutingForIndex(index).parseURL({ location });
         }
 
-        const index = match[1] as SearchIndex;
-
-        return getRoutingForIndex(index).parseURL({ location });
+        return { '': {} };
       },
     },
   }),
@@ -264,6 +275,9 @@ export const routing: InstantSearchProps['routing'] = {
     routeToState(routeState) {
       if (routeState.models) {
         return getRoutingForIndex('models').routeToState(routeState);
+      }
+      if (routeState.images) {
+        return getRoutingForIndex('images').routeToState(routeState);
       }
       if (routeState.articles) {
         return getRoutingForIndex('articles').routeToState(routeState);

@@ -4,7 +4,12 @@ import {
   onSearchIndexDocumentsCleanup,
   waitForTasksWithRetries,
 } from '~/server/meilisearch/util';
-import { EnqueuedTask } from 'meilisearch';
+import {
+  EnqueuedTask,
+  FilterableAttributes,
+  SearchableAttributes,
+  SortableAttributes,
+} from 'meilisearch';
 import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
@@ -17,6 +22,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { getImageV2Select } from '../selectors/imagev2.selector';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
@@ -35,28 +41,54 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const updateSearchableAttributesTask = await index.updateSearchableAttributes([
+  const settings = await index.getSettings();
+
+  const searchableAttributes: SearchableAttributes = [
     'meta.prompt',
-    'tags',
+    'generationProcess',
+    'tags.name',
     'user.username',
-  ]);
-
-  console.log(
-    'onIndexSetup :: updateSearchableAttributesTask created',
-    updateSearchableAttributesTask
-  );
-
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes([
+  ];
+  const sortableAttributes: SortableAttributes = [
     'createdAt',
-    'metric.commentCount',
-    'metric.laughCount',
-    'metric.heartCount',
-    'metric.dislikeCount',
-    'metric.likeCount',
-    'metric.cryCount',
-  ]);
+    'publishedAt',
+    'rank.commentCountAllTimeRank',
+    'rank.reactionCountAllTimeRank',
+  ];
+  const filterableAttributes: FilterableAttributes = ['tags.name'];
 
-  console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+    const updateSearchableAttributesTask = await index.updateSearchableAttributes(
+      searchableAttributes
+    );
+
+    console.log(
+      'onIndexSetup :: updateSearchableAttributesTask created',
+      updateSearchableAttributesTask
+    );
+  }
+
+  if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
+    const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
+
+    console.log(
+      'onIndexSetup :: sortableFieldsAttributesTask created',
+      sortableFieldsAttributesTask
+    );
+  }
+
+  if (
+    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  ) {
+    const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+      filterableAttributes
+    );
+
+    console.log(
+      'onIndexSetup :: updateFilterableAttributesTask created',
+      updateFilterableAttributesTask
+    );
+  }
 
   console.log('onIndexSetup :: all tasks completed');
 };
@@ -88,33 +120,33 @@ const onFetchItemsToIndex = async ({
     skip: offset,
     take: READ_BATCH_SIZE,
     select: {
-      ...imageSelect,
+      ...getImageV2Select({}),
       user: {
         select: {
           id: true,
           username: true,
         },
       },
-      metrics: {
+      stats: {
         select: {
-          commentCount: true,
-          laughCount: true,
-          heartCount: true,
-          dislikeCount: true,
-          likeCount: true,
-          cryCount: true,
-        },
-        where: {
-          timeframe: MetricTimeframe.AllTime,
+          commentCountAllTime: true,
+          laughCountAllTime: true,
+          heartCountAllTime: true,
+          dislikeCountAllTime: true,
+          likeCountAllTime: true,
+          cryCountAllTime: true,
         },
       },
+      rank: {
+        select: { commentCountAllTimeRank: true, reactionCountAllTimeRank: true },
+      },
+      tags: { select: { tag: { select: { name: true } } } },
     },
     where: {
       ingestion: ImageIngestionStatus.Scanned,
       tosViolation: false,
-      scannedAt: {
-        not: null,
-      },
+      type: 'image',
+      scannedAt: { not: null },
       OR: whereOr,
     },
   });
@@ -135,12 +167,8 @@ const onFetchItemsToIndex = async ({
   const indexReadyRecords = images.map(({ tags, ...imageRecord }) => {
     return {
       ...imageRecord,
-      metrics: {
-        // Flattens metric array
-        ...(imageRecord.metrics[0] || {}),
-      },
       // Flatten tags:
-      tags: tags.map((imageTag) => imageTag.tag.name),
+      tags: tags.map((imageTag) => imageTag.tag),
     };
   });
 
@@ -253,6 +281,8 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     imageTasks.push(...tasks);
 
     offset += indexReadyRecords.length;
+    // TODO.searchImages: Remove this break to index all images.
+    break;
   }
 
   console.log('onIndexUpdate :: start waitForTasks');
