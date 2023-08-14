@@ -11,7 +11,8 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { ImageGetInfinite } from '~/types/router';
+import { ImageGetById, ImageGetInfinite } from '~/types/router';
+import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 
 export function ImageCard({ data, collectionId }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -123,4 +124,4 @@ export function ImageCard({ data, collectionId }: Props) {
   );
 }
 
-type Props = { data: ImageGetInfinite[number]; collectionId?: number };
+type Props = { data: ImageGetInfinite[number] | ImageSearchIndexRecord; collectionId?: number };

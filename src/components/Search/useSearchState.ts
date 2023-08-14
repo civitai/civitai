@@ -8,8 +8,16 @@ import { immer } from 'zustand/middleware/immer';
 import singletonRouter from 'next/router';
 import { InstantSearchProps } from 'react-instantsearch';
 import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs';
-import { SearchIndex, InstantSearchRoutingParser, searchParamsSchema } from './parsers/base';
+import { SearchIndex, InstantSearchRoutingParser } from './parsers/base';
 import { ImageSearchParams, imagesInstantSearchRoutingParser } from './parsers/image.parser';
+import {
+  ModelSearchParams,
+  modelInstantSearchRoutingParser,
+} from '~/components/Search/parsers/model.parser';
+import {
+  ArticleSearchParams,
+  articlesInstantSearchRoutingParser,
+} from '~/components/Search/parsers/article.parser';
 
 type StoreState = {
   models: ModelSearchParams;
@@ -19,154 +27,6 @@ type StoreState = {
   setModelsSearchParams: (filters: Partial<ModelSearchParams>) => void;
   setImagesSearchParams: (filters: Partial<ImageSearchParams>) => void;
   setArticleSearchParams: (filters: Partial<ArticleSearchParams>) => void;
-};
-
-export const ModelSearchIndexSortBy = [
-  'models:metrics.weightedRating:desc',
-  'models:metrics.downloadCount:desc',
-  'models:metrics.favoriteCount:desc',
-  'models:metrics.commentCount:desc',
-  'models:createdAt:desc',
-] as const;
-
-const ModelDefaultSortBy = ModelSearchIndexSortBy[0];
-
-const modelSearchParamsSchema = searchParamsSchema
-  .extend({
-    sortBy: z.enum(ModelSearchIndexSortBy),
-    baseModel: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    modelType: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    checkpointType: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    tags: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-  })
-  .partial();
-
-type ModelSearchParams = z.output<typeof modelSearchParamsSchema>;
-
-const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
-  parseURL: ({ location }) => {
-    const modelSearchIndexResult = modelSearchParamsSchema.safeParse(QS.parse(location.search));
-    const modelSearchIndexData: ModelSearchParams | Record<string, string[]> =
-      modelSearchIndexResult.success ? modelSearchIndexResult.data : {};
-
-    return { models: removeEmpty(modelSearchIndexData) };
-  },
-  routeToState: (routeState: UiState) => {
-    const models: ModelSearchParams = routeState.models as ModelSearchParams;
-    const refinementList: Record<string, string[]> = removeEmpty({
-      'version.baseModel': models.baseModel,
-      type: models.modelType,
-      checkpointType: models.checkpointType,
-      'tags.name': models.tags,
-    });
-
-    const { query, page, sortBy } = models;
-
-    return {
-      models: {
-        query,
-        page,
-        sortBy: sortBy ?? ModelDefaultSortBy,
-        refinementList,
-      },
-    };
-  },
-  stateToRoute: (uiState: UiState) => {
-    const baseModel = uiState.models.refinementList?.['version.baseModel'];
-    const modelType = uiState.models.refinementList?.['type'];
-    const checkpointType = uiState.models.refinementList?.['checkpointType'];
-    const tags = uiState.models.refinementList?.['tags.name'];
-    const sortBy = (uiState.models.sortBy as ModelSearchParams['sortBy']) || ModelDefaultSortBy;
-    const { query, page } = uiState.models;
-
-    const state: ModelSearchParams = {
-      baseModel,
-      modelType,
-      checkpointType,
-      tags,
-      sortBy,
-      query,
-      page,
-    };
-
-    return {
-      models: state,
-    };
-  },
-};
-
-export const ArticlesSearchIndexSortBy = [
-  'articles:stats.favoriteCount:desc',
-  'articles:stats.viewCount:desc',
-  'articles:stats.commentCount:desc',
-  'articles:createdAt:desc',
-] as const;
-
-const articleSearchParamsSchema = searchParamsSchema
-  .extend({
-    index: z.literal('articles'),
-    sortBy: z.enum(ArticlesSearchIndexSortBy),
-    tags: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-  })
-  .partial();
-
-type ArticleSearchParams = z.output<typeof articleSearchParamsSchema>;
-
-const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
-  parseURL: ({ location }) => {
-    const articleSearchIndexResult = articleSearchParamsSchema.safeParse(QS.parse(location.search));
-    const articleSearchIndexData: ArticleSearchParams | Record<string, string[]> =
-      articleSearchIndexResult.success ? articleSearchIndexResult.data : {};
-
-    return { articles: removeEmpty(articleSearchIndexData) };
-  },
-  routeToState: (routeState: UiState) => {
-    const articles: ArticleSearchParams = (routeState.articles || {}) as ArticleSearchParams;
-    const refinementList: Record<string, string[]> = removeEmpty({
-      'tags.name': articles.tags,
-    });
-
-    const { query, page, sortBy } = articles;
-
-    return {
-      articles: {
-        query,
-        page,
-        sortBy: sortBy ?? 'articles:stats.favoriteCount:desc',
-        refinementList,
-      },
-    };
-  },
-  stateToRoute: (uiState: UiState) => {
-    const tags = uiState.articles.refinementList?.['tags.name'];
-
-    const sortBy =
-      (uiState.articles.sortBy as ArticleSearchParams['sortBy']) ||
-      'articles:stats.favoriteCount:desc';
-
-    const { query, page } = uiState.articles;
-
-    const state: ArticleSearchParams = {
-      tags,
-      sortBy,
-      query,
-      page,
-    };
-
-    return {
-      articles: state,
-    };
-  },
 };
 
 export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingParser => {

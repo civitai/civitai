@@ -705,10 +705,10 @@ export const getAllImages = async ({
 
   const images: Array<
     ImageV2Model & {
-      tags: VotableTagModel[] | undefined;
-      report: (typeof reportVar)[number] | undefined;
-      publishedAt: Date | null;
-      modelVersionId: number | null;
+      tags?: VotableTagModel[] | undefined;
+      report?: (typeof reportVar)[number] | undefined;
+      publishedAt?: Date | null;
+      modelVersionId?: number | null;
       baseModel?: string | null;
     }
   > = rawImages.map(

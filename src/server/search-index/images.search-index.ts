@@ -23,6 +23,7 @@ import {
 } from '@prisma/client';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getImageV2Select } from '../selectors/imagev2.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
@@ -121,12 +122,6 @@ const onFetchItemsToIndex = async ({
     take: READ_BATCH_SIZE,
     select: {
       ...getImageV2Select({}),
-      user: {
-        select: {
-          id: true,
-          username: true,
-        },
-      },
       stats: {
         select: {
           commentCountAllTime: true,
@@ -164,10 +159,11 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const indexReadyRecords = images.map(({ tags, ...imageRecord }) => {
+  const indexReadyRecords = images.map(({ tags, meta, ...imageRecord }) => {
     return {
       ...imageRecord,
       // Flatten tags:
+      meta: meta as ImageMetaProps,
       tags: tags.map((imageTag) => imageTag.tag),
     };
   });
