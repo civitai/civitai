@@ -24,11 +24,11 @@ export type ImageSearchParams = z.output<typeof imageSearchParamsSchema>;
 
 export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const articleSearchIndexResult = imageSearchParamsSchema.safeParse(QS.parse(location.search));
-    const articleSearchIndexData: ImageSearchParams | Record<string, string[]> =
-      articleSearchIndexResult.success ? articleSearchIndexResult.data : {};
+    const imageSearchIndexResult = imageSearchParamsSchema.safeParse(QS.parse(location.search));
+    const imageSearchIndexData: ImageSearchParams | Record<string, string[]> =
+      imageSearchIndexResult.success ? imageSearchIndexResult.data : {};
 
-    return { images: removeEmpty(articleSearchIndexData) };
+    return { images: removeEmpty(imageSearchIndexData) };
   },
   routeToState: (routeState: UiState) => {
     const images: ImageSearchParams = (routeState.images || {}) as ImageSearchParams;
