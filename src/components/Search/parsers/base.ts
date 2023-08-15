@@ -6,7 +6,7 @@ export type SearchIndex = (typeof searchIndexes)[number];
 
 export const searchParamsSchema = z.object({
   query: z.coerce.string().optional(),
-  page: z.number().optional(),
+  page: z.coerce.number().optional(),
 });
 
 export type InstantSearchRoutingParser = {

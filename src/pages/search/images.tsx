@@ -1,8 +1,8 @@
-import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Box, Center, Loader, Stack, Text, ThemeIcon, Title, UnstyledButton } from '@mantine/core';
 import { useEffect } from 'react';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { useInView } from 'react-intersection-observer';
-import { ImageCard } from '~/components/Cards/ImageCard';
+import { ImageCard, UnroutedImageCard } from '~/components/Cards/ImageCard';
 import {
   SearchableMultiSelectRefinementList,
   SortBy,
@@ -12,6 +12,8 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
 
 export default function ImageSearch() {
   return (
@@ -57,6 +59,7 @@ function ImagesHitList() {
   const { ref, inView } = useInView();
 
   const { hits, showMore, isLastPage } = useInfiniteHits<ImageSearchIndexRecord>();
+  const router = useRouter();
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -98,7 +101,17 @@ function ImagesHitList() {
     <Stack>
       <div className={classes.grid}>
         {hits.map((hit) => (
-          <ImageCard key={hit.id} data={hit} />
+          <Box
+            key={hit.id}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+
+              router.push(`/images/${hit.id}`);
+            }}
+          >
+            <UnroutedImageCard data={hit} />
+          </Box>
         ))}
       </div>
       {hits.length > 0 && (

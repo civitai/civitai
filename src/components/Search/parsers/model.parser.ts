@@ -40,12 +40,9 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const modelSearchIndexData: ModelSearchParams | Record<string, string[]> =
       modelSearchIndexResult.success ? modelSearchIndexResult.data : {};
 
-    console.log('modelSearchIndexData', modelSearchIndexData, removeEmpty(modelSearchIndexData));
-
     return { models: removeEmpty(modelSearchIndexData) };
   },
   routeToState: (routeState: UiState) => {
-    console.log('routeToState', routeState);
     const models: ModelSearchParams = routeState.models as ModelSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'version.baseModel': models.baseModel,
@@ -58,16 +55,14 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     return {
       models: {
-        query,
-        page,
         sortBy: sortBy ?? ModelDefaultSortBy,
         refinementList,
+        query,
+        page,
       },
     };
   },
   stateToRoute: (uiState: UiState) => {
-    console.log('stateToRoute', uiState);
-
     const baseModel = uiState.models.refinementList?.['version.baseModel'];
     const modelType = uiState.models.refinementList?.['type'];
     const checkpointType = uiState.models.refinementList?.['checkpointType'];

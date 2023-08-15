@@ -40,10 +40,10 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     return {
       images: {
-        query,
-        page,
         sortBy: sortBy ?? 'images:rank.reactionCountAllTimeRank:asc',
         refinementList,
+        query,
+        page,
       },
     };
   },

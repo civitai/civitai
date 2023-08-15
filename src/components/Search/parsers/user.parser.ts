@@ -34,9 +34,9 @@ export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     return {
       users: {
+        sortBy: sortBy ?? 'users:stats.followerCountAllTime:desc',
         query,
         page,
-        sortBy: sortBy ?? 'users:stats.followerCountAllTime:desc',
       },
     };
   },

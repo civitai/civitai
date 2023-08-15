@@ -41,10 +41,10 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     return {
       articles: {
-        query,
-        page,
         sortBy: sortBy ?? 'articles:stats.favoriteCount:desc',
         refinementList,
+        query,
+        page,
       },
     };
   },

@@ -118,6 +118,14 @@ export const routing: InstantSearchProps['routing'] = {
     singletonRouter,
     routerOptions: {
       createURL({ routeState, location }) {
+        const pattern = /\/search\/([^\/]+)/;
+        const match = location.pathname.match(pattern);
+
+        if (!match) {
+          // This means the user was redirected or a new URL was likely pushed.
+          return location.href;
+        }
+
         let query = '';
 
         if (routeState.models) {
