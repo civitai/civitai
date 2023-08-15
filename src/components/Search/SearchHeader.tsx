@@ -23,7 +23,7 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
-import { useSearchLayoutCtx, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { useSearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 
 const useStyles = createStyles((theme) => ({
   wrapper: {
@@ -78,7 +78,7 @@ export const SearchHeader = () => {
   const router = useRouter();
   const { classes, theme } = useStyles();
   const { classes: searchLayoutStyles } = useSearchLayoutStyles();
-  const { sidebarOpen, setSidebarOpen } = useSearchLayoutCtx();
+  const { sidebarOpen, setSidebarOpen } = useSearchLayout();
 
   const onChangeIndex = (value: string) => {
     setSearchParamsByUiState(uiState);
