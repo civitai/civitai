@@ -1,4 +1,4 @@
-import { Stack, createStyles, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
+import { Stack, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
 import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 
@@ -18,7 +18,6 @@ import { ModelSearchIndexRecord } from '~/server/search-index/models.search-inde
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,

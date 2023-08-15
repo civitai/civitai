@@ -27,6 +27,7 @@ import { slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
+import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -88,7 +89,7 @@ const useStyles = createStyles((theme) => ({
 export function AutocompleteSearch({ ...props }: Props) {
   const router = useRouter();
   const targetIndex = /\/(model|article|image|user)s?\/?/.exec(router.pathname)?.[1] || 'model';
-  const indexName = 'models'; // TODO: enabled this back: -> `${targetIndex}s`;
+  const indexName = `${targetIndex}s`;
 
   return (
     <InstantSearch searchClient={searchClient} indexName={indexName}>
@@ -121,7 +122,7 @@ function AutocompleteSearchContent({
   const items = useMemo(() => {
     if (!results || !results.nbHits) return [];
 
-    type Item = AutocompleteItem & { hit: Hit<ModelSearchIndexRecord> | null };
+    type Item = AutocompleteItem & { hit: Hit | null };
     const items: Item[] = hits.map((hit) => ({ value: hit.name, hit }));
     // If there are more results than the default limit,
     // then we add a "view more" option
@@ -170,6 +171,16 @@ function AutocompleteSearchContent({
     setSelectedItem(null);
   }, [debouncedSearch]);
 
+  const processHitUrl = (hit: Hit) => {
+    switch (indexName) {
+      case 'articles':
+        return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
+      case 'models':
+      default:
+        return `/${indexName}/${hit.id}/${slugit(hit.name)}`;
+    }
+  };
+
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} />
@@ -198,10 +209,14 @@ function AutocompleteSearchContent({
         onBlur={() => onClear?.()}
         onItemSubmit={(item) => {
           item.hit
-            ? router.push(`/models/${item.hit.id}/${slugit(item.hit.name)}`) // when a model is clicked
-            : router.push(`/search/models?query=${encodeURIComponent(item.value)}`, undefined, {
-                shallow: false,
-              }); // when view more is clicked
+            ? router.push(processHitUrl(item.hit)) // when a model is clicked
+            : router.push(
+                `/search/${indexName}?query=${encodeURIComponent(item.value)}`,
+                undefined,
+                {
+                  shallow: false,
+                }
+              ); // when view more is clicked
 
           setSelectedItem(item);
           onSubmit?.();
@@ -251,4 +266,5 @@ function AutocompleteSearchContent({
 
 const IndexRenderItem: Record<string, React.FC> = {
   models: ModelSearchItem,
+  articles: ArticlesSearchItem,
 };

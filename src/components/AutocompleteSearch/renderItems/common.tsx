@@ -1,5 +1,6 @@
 import React, { forwardRef } from 'react';
-import { Anchor, AutocompleteItem, Center, createStyles } from '@mantine/core';
+import { Anchor, AutocompleteItem, Center, createStyles, useMantineTheme } from '@mantine/core';
+import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
 
 export const ViewMoreItem = forwardRef<HTMLDivElement, AutocompleteItem>(
   ({ value, ...props }, ref) => {
@@ -20,3 +21,9 @@ export const useSearchItemStyles = createStyles((theme) => ({
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.yellow[5] : theme.colors.yellow[2],
   },
 }));
+
+export function ActionIconBadge(props: Omit<IconBadgeProps, 'color'>) {
+  const theme = useMantineTheme();
+
+  return <IconBadge color={theme.colorScheme === 'dark' ? 'dark' : 'gray'} size="xs" {...props} />;
+}
