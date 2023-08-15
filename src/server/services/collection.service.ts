@@ -590,6 +590,7 @@ export const getCollectionItemsByCollectionId = async ({
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
     userId: user?.id,
+    isModerator: user?.isModerator,
   });
 
   if (
@@ -949,10 +950,13 @@ export const getAvailableCollectionItemsFilterForUser = ({
 
 export const updateCollectionItemsStatus = async ({
   input,
+  sessionUser,
 }: {
-  input: UpdateCollectionItemsStatusInput & { userId: number };
+  input: UpdateCollectionItemsStatusInput;
+  sessionUser: SessionUser;
 }) => {
-  const { userId, collectionId, collectionItemIds, status } = input;
+  const { collectionId, collectionItemIds, status } = input;
+  const { id: userId, isModerator } = sessionUser;
 
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
@@ -964,6 +968,7 @@ export const updateCollectionItemsStatus = async ({
   const { manage, isOwner } = await getUserCollectionPermissionsById({
     id: collectionId,
     userId,
+    isModerator,
   });
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');

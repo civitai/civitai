@@ -144,13 +144,17 @@ export const getCollectionByIdHandler = async ({
   ctx,
   input,
 }: {
-  ctx: DeepNonNullable<Context>;
+  ctx: Context;
   input: GetByIdInput;
 }) => {
   const { user } = ctx;
 
   try {
-    const permissions = await getUserCollectionPermissionsById({ userId: user?.id, ...input });
+    const permissions = await getUserCollectionPermissionsById({
+      ...input,
+      userId: user?.id,
+      isModerator: user?.isModerator,
+    });
 
     // If the user has 0 permission over this collection, they have no business asking for it.
     if (!permissions.read && !permissions.write && !permissions.manage) {
@@ -194,14 +198,15 @@ export const bulkSaveItemsHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: BulkSaveCollectionItemsInput;
 }) => {
-  const { user } = ctx;
+  const { id: userId, isModerator } = ctx.user;
   try {
     const permissions = await getUserCollectionPermissionsById({
       id: input.collectionId,
-      userId: user?.id,
+      userId,
+      isModerator,
     });
 
-    return await bulkSaveItems({ input: { ...input, userId: user.id }, permissions });
+    return await bulkSaveItems({ input: { ...input, userId }, permissions });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -343,10 +348,8 @@ export const updateCollectionItemsStatusHandler = async ({
 }) => {
   try {
     return updateCollectionItemsStatus({
-      input: {
-        ...input,
-        userId: ctx.user.id,
-      },
+      input,
+      sessionUser: ctx.user,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -362,13 +365,14 @@ export const addSimpleImagePostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { user } = ctx;
+    const { id: userId, isModerator } = ctx.user;
     const collection = await getCollectionById({ input: { id: collectionId } });
     if (!collection) throw throwNotFoundError(`No collection with id ${collectionId}`);
 
     const permissions = await getUserCollectionPermissionsById({
       id: collection.id,
-      userId: user?.id,
+      userId,
+      isModerator,
     });
     if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
@@ -376,7 +380,7 @@ export const addSimpleImagePostHandler = async ({
     // create post
     const post = await createPost({
       title: `${collection.name} Images`,
-      userId: user.id,
+      userId,
       collectionId: collection.id,
       publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
     });
@@ -385,13 +389,13 @@ export const addSimpleImagePostHandler = async ({
         addPostImage({
           ...image,
           postId: post.id,
-          userId: user.id,
+          userId,
           index,
         })
       )
     );
     const imageIds = postImages.map((image) => image.id);
-    await bulkSaveItems({ input: { collectionId, imageIds, userId: user?.id }, permissions });
+    await bulkSaveItems({ input: { collectionId, imageIds, userId }, permissions });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
