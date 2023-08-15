@@ -121,7 +121,13 @@ export function ArticlesHitList() {
 
   return (
     <Stack>
-      <Box className={classes.grid}>
+      <Box
+        className={classes.grid}
+        style={{
+          // Overwrite default sizing here.
+          gridTemplateColumns: `repeat(auto-fill, minmax(300px, 1fr))`,
+        }}
+      >
         {hits.map((hit) => {
           return <ArticleCard key={hit.id} data={hit} />;
         })}
