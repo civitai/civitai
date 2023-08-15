@@ -1,65 +1,35 @@
-import {
-  ActionIcon,
-  Autocomplete,
-  Badge,
-  Card,
-  Group,
-  Loader,
-  Skeleton,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Autocomplete, Badge, Card, Group, Loader, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
-import { useHiddenPreferences } from '~/providers/HiddenPreferencesProvider';
-import { hiddenPreferences } from '~/store/hidden-preferences.store';
-import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
+import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { trpc } from '~/utils/trpc';
 
 export function HiddenTagsSection() {
-  const queryUtils = trpc.useContext();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { data: moderationTags } = trpc.system.getModeratedTags.useQuery();
-  const { data: hiddenTags = [], isLoading: loadingBlockedTags } = trpc.user.getTags.useQuery({
-    type: 'Hide',
+  const tags = useHiddenPreferences().tag;
+  const hiddenTags = tags.filter((x) => x.type === 'hidden');
+  const moderationTags = tags.filter((x) => x.type === 'moderated').map((x) => x.id);
+
+  const blockedTags = hiddenTags.filter((x) => !moderationTags.includes(x.id));
+
+  const { data, isLoading } = trpc.tag.getAll.useQuery({
+    entityType: ['Model'],
+    query: debouncedSearch.toLowerCase().trim(),
   });
-  const { tags: userHiddenTags } = useHiddenPreferences();
+  const modelTags =
+    data?.items
+      .filter((x) => !hiddenTags.some((y) => y.id === x.id))
+      .map(({ id, name }) => ({ id, value: name })) ?? [];
 
-  const blockedTags = hiddenTags.filter(
-    (x) => !moderationTags?.some((m) => m.id === x.id) && userHiddenTags.get(x.id)
-  );
+  const toggleHiddenMutation = useToggleHiddenPreferences();
 
-  const { data, isLoading } = trpc.tag.getAll.useQuery(
-    {
-      entityType: ['Model'],
-      query: debouncedSearch.toLowerCase().trim(),
-    },
-    { enabled: !loadingBlockedTags }
-  );
-  const modelTags = data?.items.map(({ id, name }) => ({ id, value: name })) ?? [];
-
-  const handleToggleBlockedTag = async (tagId: number) => {
-    await hiddenPreferences.toggleTags({ tagIds: [tagId] });
-
-    invalidateModeratedContentDebounced(queryUtils, ['tag']); // TODO - remove this once frontend filtering is finished
-
-    const prevBlockedTags = queryUtils.user.getTags.getData({ type: 'Hide' }) ?? [];
-    const removing = prevBlockedTags.some((tag) => tag.id === tagId);
-
-    queryUtils.user.getTags.setData({ type: 'Hide' }, (old = []) => {
-      if (removing) return old.filter((tag) => tag.id !== tagId);
-
-      const { models, ...addedTag } = data?.items.find((tag) => tag.id === tagId) ?? {
-        id: tagId,
-        name: '',
-      };
-      return [...old, addedTag];
-    });
+  const handleToggleBlockedTag = async (tag: { id: number; name: string }) => {
+    await toggleHiddenMutation.mutateAsync({ kind: 'tag', data: [tag] });
     setSearch('');
   };
 
@@ -75,7 +45,7 @@ export function HiddenTagsSection() {
           onChange={setSearch}
           icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
           onItemSubmit={(item: { value: string; id: number }) => {
-            handleToggleBlockedTag(item.id);
+            handleToggleBlockedTag({ id: item.id, name: item.value });
             searchInputRef.current?.focus();
           }}
           withinPortal
@@ -84,31 +54,29 @@ export function HiddenTagsSection() {
       </Card.Section>
       <Card.Section inheritPadding pt="md">
         <Stack spacing={5}>
-          <Skeleton visible={loadingBlockedTags}>
-            {blockedTags.length > 0 && (
-              <Group spacing={4}>
-                {blockedTags.map((tag) => (
-                  <Badge
-                    key={tag.id}
-                    sx={{ paddingRight: 3 }}
-                    rightSection={
-                      <ActionIcon
-                        size="xs"
-                        color="blue"
-                        radius="xl"
-                        variant="transparent"
-                        onClick={() => handleToggleBlockedTag(tag.id)}
-                      >
-                        <IconX size={10} />
-                      </ActionIcon>
-                    }
-                  >
-                    {tag.name}
-                  </Badge>
-                ))}
-              </Group>
-            )}
-          </Skeleton>
+          {blockedTags.length > 0 && (
+            <Group spacing={4}>
+              {blockedTags.map((tag) => (
+                <Badge
+                  key={tag.id}
+                  sx={{ paddingRight: 3 }}
+                  rightSection={
+                    <ActionIcon
+                      size="xs"
+                      color="blue"
+                      radius="xl"
+                      variant="transparent"
+                      onClick={() => handleToggleBlockedTag(tag)}
+                    >
+                      <IconX size={10} />
+                    </ActionIcon>
+                  }
+                >
+                  {tag.name}
+                </Badge>
+              ))}
+            </Group>
+          )}
           <Text color="dimmed" size="xs">
             {`We'll hide content with these tags throughout the site.`}
           </Text>

@@ -37,6 +37,7 @@ import { CollectionType } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -60,22 +61,16 @@ export function ModelCard({ data }: Props) {
   const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
   const modelId = queryResult.success ? queryResult.data.model : undefined;
 
-  const {
-    data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  const { data: { Favorite: favoriteModels = [] } = { Favorite: [], Hide: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
   const isFavorite = favoriteModels.find((modelId) => modelId === data.id);
-  const { data: hiddenUsers = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
-  const isHidden =
-    hiddenUsers.find(({ id }) => id === data.user.id) ||
-    hiddenModels.find((modelId) => modelId === data.id);
+
+  const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
+  const isHidden = hiddenUsers.get(data.user.id) || hiddenModels.get(data.id);
 
   const reportOption = (
     <ReportMenuItem
@@ -151,6 +146,7 @@ export function ModelCard({ data }: Props) {
     <FeedCard
       className={!data.image ? classes.noImage : undefined}
       href={`/models/${data.id}/${slugit(data.name)}`}
+      sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
       <div className={classes.root}>
         {data.image && (

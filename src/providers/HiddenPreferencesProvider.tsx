@@ -1,7 +1,8 @@
-import { useContext, createContext, useRef, useEffect, ReactNode, useMemo } from 'react';
+import { useContext, createContext, ReactNode, useMemo } from 'react';
+import { useHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
-import { hiddenPreferences, useHiddenPreferencesStore } from '~/store/hidden-preferences.store';
+import { HiddenPreferenceBase } from '~/server/services/user-preferences.service';
 
 type HiddenPreferencesState = {
   users: Map<number, boolean>;
@@ -11,7 +12,7 @@ type HiddenPreferencesState = {
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
-export const useHiddenPreferences = () => {
+export const useHiddenPreferencesContext = () => {
   const context = useContext(HiddenPreferencesContext);
   if (!context)
     throw new Error('useHiddenPreferences can only be used inside HiddenPreferencesProvider');
@@ -19,47 +20,21 @@ export const useHiddenPreferences = () => {
 };
 
 export const HiddenPreferencesProvider = ({ children }: { children: ReactNode }) => {
-  const initRef = useRef(true);
   const browsingMode = useFiltersContext((state) => state.browsingMode);
 
-  const { explicit, hidden, moderated } = useHiddenPreferencesStore((state) => ({
-    explicit: state.explicit,
-    hidden: state.hidden,
-    moderated: state.moderated,
-  }));
+  const data = useHiddenPreferences();
+  console.log(data);
 
-  useEffect(() => {
-    if (initRef.current) {
-      initRef.current = false;
-      hiddenPreferences.getPreferences();
-    }
-  }, []);
-
-  const users = useMemo(() => new Map(explicit.users.map((id) => [id, true])), [explicit.users]);
+  const users = useMemo(() => new Map(data.user.map((user) => [user.id, true])), [data.user]);
   const images = useMemo(
-    () =>
-      getMapped({
-        explicit: explicit.images,
-        hidden: hidden.images,
-        moderated: moderated.images,
-        browsingMode,
-      }),
-    [explicit.images, hidden.images, moderated.images, browsingMode]
+    () => getMapped({ data: data.image, browsingMode }),
+    [data.image, browsingMode]
   );
   const models = useMemo(
-    () =>
-      getMapped({
-        explicit: explicit.models,
-        hidden: hidden.models,
-        moderated: moderated.models,
-        browsingMode,
-      }),
-    [explicit.models, hidden.models, moderated.models, browsingMode]
+    () => getMapped({ data: data.model, browsingMode }),
+    [data.model, browsingMode]
   );
-  const tags = useMemo(
-    () => getMapped({ hidden: hidden.tags, moderated: moderated.tags, browsingMode }),
-    [hidden.tags, moderated.tags, browsingMode]
-  );
+  const tags = useMemo(() => getMapped({ data: data.tag, browsingMode }), [data.tag, browsingMode]);
 
   return (
     <HiddenPreferencesContext.Provider value={{ users, images, models, tags }}>
@@ -69,22 +44,18 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
 };
 
 const getMapped = ({
-  explicit = [],
-  hidden,
-  moderated,
+  data,
   browsingMode,
 }: {
-  explicit?: number[];
-  hidden: number[];
-  moderated: number[];
+  data: HiddenPreferenceBase[];
   browsingMode: BrowsingMode;
 }) => {
-  let arr = [...explicit];
+  let arr = [...data.filter((x) => x.type === 'always')];
   if (browsingMode !== BrowsingMode.All) {
-    arr = [...arr, ...hidden];
+    arr = [...arr, ...data.filter((x) => x.type === 'hidden')];
     if (browsingMode !== BrowsingMode.NSFW) {
-      arr = [...arr, ...moderated];
+      arr = [...arr, ...data.filter((x) => x.type === 'moderated')];
     }
   }
-  return new Map(arr.map((id) => [id, true]));
+  return new Map(arr.map((x) => [x.id, true]));
 };

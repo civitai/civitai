@@ -1,11 +1,18 @@
-import { ModelEngagementType, TagEngagementType, UserEngagementType } from '@prisma/client';
+import { NsfwLevel, TagEngagementType, UserEngagementType } from '@prisma/client';
+import { uniqBy } from 'lodash-es';
 
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
-import { HiddenPreferencesInput } from '~/server/schema/user-preferences.schema';
-import { getModerationTags } from '~/server/services/system-cache';
+import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import { getModerationTags, getSystemHiddenTags } from '~/server/services/system-cache';
+import {
+  refreshHiddenImagesForUser,
+  refreshHiddenModelsForUser,
+  refreshHiddenTagsForUser,
+  refreshHiddenUsersForUser,
+} from '~/server/services/user-cache.service';
 import { createLogger } from '~/utils/logging';
-import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
 const log = createLogger('user-preferences', 'green');
@@ -63,31 +70,29 @@ function createUserCache<T>({
   };
 }
 
+const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
+  return await dbWrite.tagsOnTags.findMany({
+    where: { fromTagId: { in: [...tagIds] } },
+    select: { fromTagId: true, toTag: { select: { id: true, name: true } } },
+  });
+};
+
 const HiddenTags = createUserCache({
   // logLabel: 'hidden tags',
   key: 'hidden-tags-2',
   callback: async ({ userId }) => {
-    const tagEngagment = await dbWrite.tagEngagement.findMany({
-      where: { userId, type: TagEngagementType.Hide },
-      select: { tagId: true },
-    });
-    let hiddenTags = tagEngagment.map((x) => x.tagId);
+    const tagEngagment = (
+      await dbWrite.tagEngagement.findMany({
+        where: { userId, type: TagEngagementType.Hide },
+        select: { tag: { select: { id: true, name: true } } },
+      })
+    ).map((x) => x.tag);
+    const hiddenTags = tagEngagment.map((x) => x.id);
 
-    // todo - return as system tags
-    // todo - also need to do hidden tags of hidden tags for user hidden tags
-    // [...hiddenTagsOfHiddenTags, ...moderation Tags]
-    // [...hiddenTagsOfHiddenTags, ...user hidden tags]
-    if (userId === -1) {
-      const moderatedTags = await getModerated();
-      const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
-        where: { fromTagId: { in: [...moderatedTags] } },
-        select: { toTagId: true },
-      });
+    const hiddenTagsOfHiddenTags = await getHiddenTagsOfHiddenTags(hiddenTags);
 
-      hiddenTags = [...new Set([...hiddenTags, ...hiddenTagsOfHiddenTags.map((x) => x.toTagId)])];
-    }
-
-    return hiddenTags;
+    const tags = uniqBy([...tagEngagment, ...hiddenTagsOfHiddenTags.map((x) => x.toTag)], 'id');
+    return tags;
   },
 });
 
@@ -102,29 +107,38 @@ const HiddenImages = createUserCache({
     ).map((x) => x.imageId),
 });
 
+const getVotedHideImages = async ({
+  hiddenIds = [],
+  moderatedIds = [],
+  userId,
+}: {
+  hiddenIds?: number[];
+  moderatedIds?: number[];
+  userId: number;
+}) => {
+  const allHidden = [...new Set([...hiddenIds, ...moderatedIds])];
+  if (!allHidden.length) return [];
+  const votedHideImages = await dbWrite.tagsOnImageVote.findMany({
+    where: { userId, tagId: { in: allHidden }, vote: { gt: 0 } },
+    select: { imageId: true, tagId: true },
+  });
+
+  const hidden = votedHideImages.filter((x) => hiddenIds.includes(x.tagId));
+  const moderated = votedHideImages.filter((x) => moderatedIds.includes(x.tagId));
+
+  return [
+    ...hidden.map((x) => ({ id: x.imageId, type: 'hidden', tagId: x.tagId })),
+    ...moderated.map((x) => ({ id: x.imageId, type: 'moderated', tagId: x.tagId })),
+  ] as HiddenImage[];
+};
+
 const ImplicitHiddenImages = createUserCache({
   key: 'hidden-images-implicit',
   callback: async ({ userId }) => {
-    const hiddenTags = await HiddenTags.getCached({ userId });
-    const moderatedTags = await getModerated();
-    const allHiddenTags = [...new Set([...hiddenTags, ...moderatedTags])];
+    const hiddenIds = (await HiddenTags.getCached({ userId })).map((x) => x.id);
+    const moderatedIds = await getModerated();
 
-    const votedHideImages = await dbWrite.tagsOnImageVote.findMany({
-      where: { userId, tagId: { in: allHiddenTags }, vote: { gt: 0 } },
-      select: { imageId: true, tagId: true },
-    });
-
-    const hidden = votedHideImages
-      .filter((x) => hiddenTags.includes(x.tagId))
-      .map((x) => x.imageId);
-    const moderated = votedHideImages
-      .filter((x) => moderatedTags.includes(x.tagId))
-      .map((x) => x.imageId);
-
-    return {
-      hidden,
-      moderated,
-    };
+    return await getVotedHideImages({ hiddenIds, moderatedIds, userId });
   },
 });
 
@@ -139,29 +153,38 @@ const HiddenModels = createUserCache({
     ).map((x) => x.modelId),
 });
 
+const getVotedHideModels = async ({
+  hiddenIds = [],
+  moderatedIds = [],
+  userId,
+}: {
+  hiddenIds?: number[];
+  moderatedIds?: number[];
+  userId: number;
+}) => {
+  const allHidden = [...new Set([...hiddenIds, ...moderatedIds])];
+  if (!allHidden.length) return [];
+  const votedHideModels = await dbWrite.tagsOnModelsVote.findMany({
+    where: { userId, tagId: { in: allHidden }, vote: { gt: 0 } },
+    select: { modelId: true, tagId: true },
+  });
+
+  const hidden = votedHideModels.filter((x) => hiddenIds.includes(x.tagId));
+  const moderated = votedHideModels.filter((x) => moderatedIds.includes(x.tagId));
+
+  return [
+    ...hidden.map((x) => ({ id: x.modelId, type: 'hidden', tagId: x.tagId })),
+    ...moderated.map((x) => ({ id: x.modelId, type: 'moderated', tagId: x.tagId })),
+  ] as HiddenModel[];
+};
+
 const ImplicitHiddenModels = createUserCache({
   key: 'hidden-models-implicit',
   callback: async ({ userId }) => {
-    const hiddenTags = await HiddenTags.getCached({ userId });
-    const moderatedTags = await getModerated();
-    const allHiddenTags = [...new Set([...hiddenTags, ...moderatedTags])];
+    const hiddenIds = (await HiddenTags.getCached({ userId })).map((x) => x.id);
+    const moderatedIds = await getModerated();
 
-    const votedHideModels = await dbWrite.tagsOnModelsVote.findMany({
-      where: { userId, tagId: { in: allHiddenTags }, vote: { gt: 0 } },
-      select: { modelId: true, tagId: true },
-    });
-
-    const hidden = votedHideModels
-      .filter((x) => hiddenTags.includes(x.tagId))
-      .map((x) => x.modelId);
-    const moderated = votedHideModels
-      .filter((x) => moderatedTags.includes(x.tagId))
-      .map((x) => x.modelId);
-
-    return {
-      hidden,
-      moderated,
-    };
+    return await getVotedHideModels({ hiddenIds, moderatedIds, userId });
   },
 });
 
@@ -171,10 +194,59 @@ const HiddenUsers = createUserCache({
     (
       await dbWrite.userEngagement.findMany({
         where: { userId, type: UserEngagementType.Hide },
-        select: { targetUserId: true },
+        select: { targetUser: { select: { id: true, username: true } } },
       })
-    ).map((x) => x.targetUserId),
+    ).map((x) => x.targetUser),
 });
+
+type HiddenPreferenceType = 'hidden' | 'moderated' | 'always';
+export interface HiddenPreferenceBase {
+  id: number;
+  type: HiddenPreferenceType;
+}
+
+interface HiddenTag extends HiddenPreferenceBase {
+  id: number;
+  name: string;
+  nsfw?: NsfwLevel;
+  type: HiddenPreferenceType;
+}
+
+interface HiddenUser extends HiddenPreferenceBase {
+  id: number;
+  username?: string | null;
+  type: HiddenPreferenceType;
+}
+
+interface HiddenModel extends HiddenPreferenceBase {
+  id: number;
+  type: HiddenPreferenceType;
+  tagId?: number;
+}
+
+interface HiddenImage extends HiddenPreferenceBase {
+  id: number;
+  type: HiddenPreferenceType;
+  tagId?: number;
+}
+
+type HiddenPreferencesKind =
+  | ({ kind: 'tag' } & HiddenTag)
+  | ({ kind: 'model' } & HiddenModel)
+  | ({ kind: 'image' } & HiddenImage)
+  | ({ kind: 'user' } & HiddenUser);
+
+interface HiddenPreferencesDiff {
+  added: Array<HiddenPreferencesKind>;
+  removed: Array<HiddenPreferencesKind>;
+}
+
+export type HiddenPreferenceTypes = {
+  tag: HiddenTag[];
+  user: HiddenUser[];
+  model: HiddenModel[];
+  image: HiddenImage[];
+};
 
 export async function getAllHiddenForUser({
   userId = -1, // Default to civitai account
@@ -182,9 +254,9 @@ export async function getAllHiddenForUser({
 }: {
   userId?: number;
   refreshCache?: boolean;
-}): Promise<HiddenPreferencesInput> {
+}): Promise<HiddenPreferenceTypes> {
   const [moderatedTags, hiddenTags, images, models, users] = await Promise.all([
-    getModerated(),
+    getSystemHiddenTags(),
     HiddenTags.getCached({ userId, refreshCache }),
     HiddenImages.getCached({ userId, refreshCache }),
     HiddenModels.getCached({ userId, refreshCache }),
@@ -197,25 +269,35 @@ export async function getAllHiddenForUser({
     ImplicitHiddenModels.getCached({ userId, refreshCache }),
   ]);
 
-  const explicit = removeEmpty({
-    users,
-    images,
-    models,
-  });
+  return {
+    image: [...images.map((id) => ({ id, type: 'always' })), ...implicitImages],
+    model: [...models.map((id) => ({ id, type: 'always' })), ...implicitModels],
+    user: [...users.map((user) => ({ ...user, type: 'always' }))],
+    tag: [
+      ...hiddenTags.map((tag) => ({ ...tag, type: 'hidden' })),
+      ...moderatedTags.map((tag) => ({ ...tag, type: 'moderated' })),
+    ],
+  } as HiddenPreferenceTypes;
+}
 
-  const hidden = removeEmpty({
-    tags: hiddenTags,
-    images: implicitImages.hidden,
-    model: implicitModels.hidden,
-  });
-
-  const moderated = removeEmpty({
-    tags: moderatedTags,
-    images: implicitImages.moderated,
-    model: implicitModels.moderated,
-  });
-
-  return removeEmpty({ explicit, hidden, moderated });
+export async function toggleHidden({
+  kind,
+  data,
+  hidden,
+  userId,
+}: ToggleHiddenSchemaOutput & { userId: number }): Promise<HiddenPreferencesDiff> {
+  switch (kind) {
+    case 'image':
+      return await toggleHideImage({ userId, imageId: data[0].id });
+    case 'model':
+      return await toggleHideModel({ userId, modelId: data[0].id });
+    case 'user':
+      return await toggleHideUser({ userId, targetUserId: data[0].id });
+    case 'tag':
+      return await toggleHiddenTags({ tagIds: data.map((x) => x.id), hidden, userId });
+    default:
+      throw new Error('unsupported hidden toggle kind');
+  }
 }
 
 export type ToggleHiddenTagsReturn = AsyncReturnType<typeof toggleHiddenTags>;
@@ -227,8 +309,12 @@ export async function toggleHiddenTags({
   tagIds: number[];
   userId: number;
   hidden?: boolean;
-}) {
+}): Promise<HiddenPreferencesDiff> {
+  let addedTags: number[] = [];
+  let deletedTags: number[] = [];
+
   if (hidden === false) {
+    deletedTags = tagIds;
     await dbWrite.tagEngagement.deleteMany({
       where: { userId, tagId: { in: tagIds }, type: 'Hide' },
     });
@@ -261,23 +347,66 @@ export async function toggleHiddenTags({
         data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
       });
     }
+
+    addedTags = [...new Set([...toUpdate, ...toCreate])];
+    deletedTags = [...toDelete];
   }
 
-  const tags = await HiddenTags.getCached({ userId, refreshCache: true });
-  // these functions depend on having fresh data from tags
-  const [images, models] = await Promise.all([
-    ImplicitHiddenImages.getCached({ userId, refreshCache: true }),
-    ImplicitHiddenModels.getCached({ userId, refreshCache: true }),
+  const hiddenChangedIds = [...addedTags, ...deletedTags];
+
+  const [votedHideModels, votedHideImages, changedHiddenTagsOfHiddenTags] = await Promise.all([
+    getVotedHideModels({ hiddenIds: hiddenChangedIds, userId }),
+    getVotedHideImages({ hiddenIds: hiddenChangedIds, userId }),
+    getHiddenTagsOfHiddenTags(hiddenChangedIds),
   ]);
 
-  return { tags, images, models };
+  await Promise.all([
+    HiddenTags.refreshCache({ userId }),
+    ImplicitHiddenImages.refreshCache({ userId }),
+    ImplicitHiddenModels.refreshCache({ userId }),
+    refreshHiddenTagsForUser({ userId }), // TODO - remove this once front end filtering is finished
+    refreshHiddenImagesForUser({ userId }), // TODO - remove this once front end filtering is finished
+    refreshHiddenModelsForUser({ userId }), // TODO - remove this once front end filtering is finished
+  ]);
+
+  const addedFn = <T extends { tagId?: number }>({ tagId }: T) =>
+    tagId && addedTags.includes(tagId);
+  const removeFn = <T extends { tagId?: number }>({ tagId }: T) =>
+    tagId && deletedTags.includes(tagId);
+
+  const imageMap = (image: HiddenImage): HiddenPreferencesKind => ({ ...image, kind: 'image' });
+  const modelMap = (model: HiddenModel): HiddenPreferencesKind => ({ ...model, kind: 'model' });
+
+  return {
+    added: [
+      ...votedHideImages.filter(addedFn).map(imageMap),
+      ...votedHideModels.filter(addedFn).map(modelMap),
+      ...changedHiddenTagsOfHiddenTags
+        .filter((x) => addedTags.includes(x.fromTagId))
+        .map(({ toTag }): HiddenPreferencesKind => ({ ...toTag, kind: 'tag', type: 'hidden' })),
+    ],
+    removed: [
+      ...votedHideImages.filter(removeFn).map(imageMap),
+      ...votedHideModels.filter(removeFn).map(modelMap),
+      ...changedHiddenTagsOfHiddenTags
+        .filter((x) => deletedTags.includes(x.fromTagId))
+        .map(({ toTag }): HiddenPreferencesKind => ({ ...toTag, kind: 'tag', type: 'hidden' })),
+    ],
+  };
 }
 
-export async function toggleHideModel({ userId, modelId }: { userId: number; modelId: number }) {
+export async function toggleHideModel({
+  userId,
+  modelId,
+}: {
+  userId: number;
+  modelId: number;
+}): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.modelEngagement.findUnique({
     where: { userId_modelId: { userId, modelId } },
     select: { type: true },
   });
+
   if (!engagement)
     await dbWrite.modelEngagement.create({ data: { userId, modelId, type: 'Hide' } });
   else if (engagement.type === 'Hide')
@@ -289,6 +418,12 @@ export async function toggleHideModel({ userId, modelId }: { userId: number; mod
     });
 
   await HiddenModels.refreshCache({ userId });
+  await refreshHiddenModelsForUser({ userId }); // TODO - remove this once front end filtering is finished
+
+  return {
+    added: [],
+    removed: [],
+  };
 }
 
 export async function toggleHideUser({
@@ -297,13 +432,15 @@ export async function toggleHideUser({
 }: {
   userId: number;
   targetUserId: number;
-}) {
+}): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.userEngagement.findUnique({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.userEngagement.create({ data: { userId, targetUserId, type: 'Hide' } });
+    await dbWrite.userEngagement.create({
+      data: { userId, targetUserId, type: 'Hide' },
+    });
   else if (engagement.type === 'Hide')
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
@@ -314,10 +451,32 @@ export async function toggleHideUser({
       data: { type: 'Hide' },
     });
 
+  const addedOrUpdated = !engagement || engagement.type !== 'Hide';
+  const user = await dbRead.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, username: true },
+  });
+
+  const toReturn = user
+    ? ({ ...user, kind: 'user', type: 'always' } as HiddenPreferencesKind)
+    : undefined;
+
   await HiddenUsers.refreshCache({ userId });
+  await refreshHiddenUsersForUser({ userId }); // TODO - remove this once front end filtering is finished
+
+  return {
+    added: addedOrUpdated ? [toReturn].filter(isDefined) : [],
+    removed: !addedOrUpdated ? [toReturn].filter(isDefined) : [],
+  };
 }
 
-export async function toggleHideImage({ userId, imageId }: { userId: number; imageId: number }) {
+export async function toggleHideImage({
+  userId,
+  imageId,
+}: {
+  userId: number;
+  imageId: number;
+}): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.imageEngagement.findUnique({
     where: { userId_imageId: { userId, imageId } },
     select: { type: true },
@@ -335,4 +494,10 @@ export async function toggleHideImage({ userId, imageId }: { userId: number; ima
     });
 
   await HiddenImages.refreshCache({ userId });
+  await refreshHiddenImagesForUser({ userId }); // TODO - remove this once front end filtering is finished
+
+  return {
+    added: [],
+    removed: [],
+  };
 }

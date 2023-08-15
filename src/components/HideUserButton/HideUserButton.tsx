@@ -1,41 +1,37 @@
 import { Button, ButtonProps, Menu } from '@mantine/core';
 import { IconUser, IconUserOff } from '@tabler/icons-react';
-import { MouseEventHandler, useState } from 'react';
+import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferences } from '~/providers/HiddenPreferencesProvider';
-import { hiddenPreferences } from '~/store/hidden-preferences.store';
 import { showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
 
-  const { users: userHiddenUsers } = useHiddenPreferences();
-  const alreadyHiding = userHiddenUsers.get(userId);
-  const [loading, setLoading] = useState(false);
+  const users = useHiddenPreferences().user;
+  const alreadyHiding = users.some((x) => x.id === userId);
+  const toggleHiddenMutation = useToggleHiddenPreferences();
 
   const handleHideClick: MouseEventHandler<HTMLElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (loading === true) return;
-    setLoading(true);
-    await hiddenPreferences.toggleEntity({ entityType: 'user', entityId: userId });
-    setLoading(false);
 
-    const prevHidden = queryUtils.user.getHiddenUsers.getData();
-    queryUtils.user.getHiddenUsers.setData(undefined, (old = []) =>
-      alreadyHiding
-        ? old.filter((item) => item.id !== userId)
-        : [...old, { id: userId, username: null, image: null, deletedAt: null }]
-    );
-
-    showSuccessNotification({
-      title: `User marked as ${alreadyHiding ? 'show' : 'hidden'}`,
-      message: `Content from this user will${alreadyHiding ? ' ' : ' not'} show up in your feed`,
-    });
+    toggleHiddenMutation
+      .mutateAsync({
+        kind: 'user',
+        data: [{ id: userId }],
+        hidden: !alreadyHiding,
+      })
+      .then(() => {
+        showSuccessNotification({
+          title: `User marked as ${alreadyHiding ? 'show' : 'hidden'}`,
+          message: `Content from this user will${
+            alreadyHiding ? ' ' : ' not'
+          } show up in your feed`,
+        });
+      });
 
     onToggleHide?.();
   };
@@ -47,7 +43,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
       <Button
         variant={alreadyHiding ? 'outline' : 'filled'}
         onClick={handleHideClick}
-        loading={loading}
+        loading={toggleHiddenMutation.isLoading}
         {...props}
       >
         {alreadyHiding ? 'Unhide' : 'Hide'}

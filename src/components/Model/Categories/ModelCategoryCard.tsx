@@ -42,9 +42,11 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetByCategoryModel } from '~/types/router';
@@ -79,21 +81,15 @@ export function ModelCategoryCard({
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
-  const {
-    data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  const { data: { Favorite: favoriteModels = [] } = { Favorite: [], Hide: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
-  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
-  const isHidden =
-    hidden.find(({ id }) => id === user.id) || hiddenModels.find((modelId) => modelId === id);
+  const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
+  const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
 
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>

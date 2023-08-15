@@ -1,4 +1,5 @@
 import { NsfwLevel, TagEngagementType, TagType } from '@prisma/client';
+import { uniqBy } from 'lodash-es';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
@@ -35,11 +36,11 @@ export async function getBlockedTags() {
 /** gets tags we don't want to show to not-signed-in users */
 export async function getSystemHiddenTags() {
   const cachedTags = await redis.get(`system:hidden-tags`);
-  if (cachedTags) return JSON.parse(cachedTags) as number[];
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
   const tagEngagment = await dbWrite.tagEngagement.findMany({
     where: { userId: -1, type: TagEngagementType.Hide },
-    select: { tagId: true },
+    select: { tag: { select: { id: true, name: true } } },
   });
 
   const moderation = await getModerationTags();
@@ -47,15 +48,17 @@ export async function getSystemHiddenTags() {
 
   const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
     where: { fromTagId: { in: [...moderatedTags] } },
-    select: { toTagId: true },
+    select: { toTag: { select: { id: true, name: true } } },
   });
 
-  const tags = [
-    ...new Set([
-      ...tagEngagment.map((x) => x.tagId),
-      ...hiddenTagsOfHiddenTags.map((x) => x.toTagId),
-    ]),
-  ];
+  const tags = uniqBy(
+    [
+      ...tagEngagment.map((x) => x.tag),
+      ...moderation,
+      ...hiddenTagsOfHiddenTags.map((x) => x.toTag),
+    ],
+    'id'
+  );
 
   await redis.set(`system:hidden-tags`, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
