@@ -8,24 +8,34 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { isEqual } from 'lodash-es';
+
 import { createContext, Dispatch, SetStateAction, useContext, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { AlgoliaMultipleQueriesQuery, instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 import { SearchIndex } from '~/components/Search/parsers/base';
-import { InstantSearch } from 'react-instantsearch';
+import { InstantSearch, InstantSearchProps } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 
 const SIDEBAR_SIZE = 377;
 
-const searchClient = instantMeiliSearch(
+const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
   env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
   { primaryKey: 'id', keepZeroFacets: true }
 );
+
+const searchClient: InstantSearchProps['searchClient'] = {
+  ...meilisearch,
+  search(requests) {
+    console.log(requests);
+    return meilisearch.search(requests);
+  },
+};
 
 // #region [ImageGuardContext]
 type SearchLayoutState = {
@@ -95,6 +105,10 @@ const useStyles = createStyles((theme, _, getRef) => {
 });
 
 function renderSearchComponent(props: RenderSearchComponentProps) {
+  // if (true) {
+  //   return null;
+  // }
+
   return <CustomSearchBox {...props} />;
 }
 

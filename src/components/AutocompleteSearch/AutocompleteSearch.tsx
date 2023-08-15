@@ -134,7 +134,11 @@ function AutocompleteSearchContent({
     if (!results || !results.nbHits) return [];
 
     type Item = AutocompleteItem & { hit: Hit | null };
-    const items: Item[] = hits.map((hit) => ({ value: hit.name, hit }));
+    const items: Item[] = hits.map((hit) => ({
+      // Value isn't really used, but better safe than sorry:
+      value: hit.id.toString(),
+      hit,
+    }));
     // If there are more results than the default limit,
     // then we add a "view more" option
     if (results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)

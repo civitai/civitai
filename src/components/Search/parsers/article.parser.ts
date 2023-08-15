@@ -11,6 +11,8 @@ export const ArticlesSearchIndexSortBy = [
   'articles:createdAt:desc',
 ] as const;
 
+const defaultSortBy = 'articles:stats.favoriteCount:desc';
+
 const articleSearchParamsSchema = searchParamsSchema
   .extend({
     index: z.literal('articles'),
@@ -41,7 +43,7 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     return {
       articles: {
-        sortBy: sortBy ?? 'articles:stats.favoriteCount:desc',
+        sortBy: sortBy ?? defaultSortBy,
         refinementList,
         query,
       },
@@ -50,9 +52,7 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   stateToRoute: (uiState: UiState) => {
     const tags = uiState.articles.refinementList?.['tags.name'];
 
-    const sortBy =
-      (uiState.articles.sortBy as ArticleSearchParams['sortBy']) ||
-      'articles:stats.favoriteCount:desc';
+    const sortBy = (uiState.articles.sortBy as ArticleSearchParams['sortBy']) || defaultSortBy;
 
     const { query } = uiState.articles;
 

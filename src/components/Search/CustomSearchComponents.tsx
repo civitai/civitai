@@ -3,6 +3,7 @@ import {
   SearchBoxProps,
   SortByProps,
   useClearRefinements,
+  useConfigure,
   useRefinementList,
   useSearchBox,
   useSortBy,
@@ -25,6 +26,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
+import { uniqBy } from 'lodash-es';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -174,6 +176,119 @@ export function SearchableMultiSelectRefinementList({
   );
 }
 
+export function SearchableFilterList({
+  title,
+  comparisonOperator = '=',
+  dividerOperator = 'OR',
+  isNegative = false,
+  ...props
+}: RefinementListProps & {
+  title: string;
+  comparisonOperator?: '=' | '!=';
+  dividerOperator?: 'AND' | 'OR';
+  isNegative?: boolean;
+}) {
+  const { classes } = useStyles();
+  const { refine } = useConfigure({});
+  const { items, searchForItems, isFromSearch } = useRefinementList({ ...props });
+  const [searchValue, setSearchValue] = useState('');
+  const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
+  // We need to keep the state of the select here because the items may dissapear while searching.
+  const [refinedItems, setRefinedItems] = useState<typeof items>(
+    (items ?? []).filter((item) => item.isRefined) ?? []
+  );
+
+  const onUpdateSelection = (updatedSelectedItems: string[]) => {
+    const addedItems = updatedSelectedItems.length > refinedItems.length;
+    if (addedItems) {
+      // Get the last item:
+      const lastAddedValue = updatedSelectedItems[updatedSelectedItems.length - 1];
+      const item = items.find((item) => item.value === lastAddedValue);
+
+      if (!item) {
+        return;
+      }
+
+      setRefinedItems([...refinedItems, item]);
+    } else {
+      // Remove the item that was removed:
+      const removedItem = refinedItems.filter(
+        (item) => !updatedSelectedItems.includes(item.value)
+      )[0];
+
+      if (!removedItem) {
+        return;
+      }
+
+      setRefinedItems(refinedItems.filter((item) => item.value !== removedItem.value));
+    }
+  };
+
+  useEffect(() => {
+    if (props.searchable) {
+      searchForItems(debouncedSearchValue);
+    }
+  }, [debouncedSearchValue]);
+
+  useEffect(() => {
+    const prepareFilter = (items: any[]) => {
+      if (items.length === 0) {
+        return '';
+      }
+
+      const filter = items.map((item) => {
+        const itemFilter = `"${props.attribute}"${comparisonOperator}"${item.value}"`;
+
+        if (isNegative) {
+          return `NOT(${itemFilter})`;
+        }
+
+        return itemFilter;
+      });
+
+      return filter.join(` ${dividerOperator} `);
+    };
+
+    const updatedFilters = prepareFilter(refinedItems);
+
+    refine({
+      filters: updatedFilters,
+    });
+  }, [refinedItems]);
+
+  const data = uniqBy([...refinedItems, ...items], 'value').map((item) => ({
+    label: item.label,
+    value: item.value,
+  }));
+
+  return (
+    <Accordion defaultValue={props.attribute} variant="filled">
+      <Accordion.Item value={props.attribute}>
+        <Accordion.Control>
+          <Group>
+            <Text size="md" weight={500}>
+              {title}
+            </Text>
+            <Box className={classes.divider} />
+          </Group>
+        </Accordion.Control>
+        <Accordion.Panel>
+          <MultiSelect
+            data={data}
+            value={refinedItems.map((item) => item.value)}
+            onChange={onUpdateSelection}
+            searchable
+            searchValue={searchValue}
+            onSearchChange={setSearchValue}
+            placeholder={`Search ${title}`}
+            nothingFound="Nothing found"
+          />
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
+}
+
 export function ChipRefinementList({ title, ...props }: RefinementListProps & { title: string }) {
   const { classes } = useStyles();
   const { items, refine } = useRefinementList({ ...props });
@@ -245,7 +360,9 @@ export const CustomSearchBox = ({
   const { classes } = useSearchInputStyles();
 
   useEffect(() => {
-    refine(debouncedSearch);
+    if (debouncedSearch !== query) {
+      refine(debouncedSearch);
+    }
   }, [debouncedSearch]);
 
   return (

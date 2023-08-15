@@ -145,7 +145,6 @@ export const routing: InstantSearchProps['routing'] = {
         const match = location.pathname.match(pattern);
 
         if (match) {
-          console.log('Matched!');
           const index = match[1] as SearchIndex;
 
           return getRoutingForIndex(index).parseURL({ location });
