@@ -36,14 +36,13 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       'tags.name': images.tags,
     });
 
-    const { query, page, sortBy } = images;
+    const { query, sortBy } = images;
 
     return {
       images: {
         sortBy: sortBy ?? 'images:rank.reactionCountAllTimeRank:asc',
         refinementList,
         query,
-        page,
       },
     };
   },
@@ -53,13 +52,12 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       (uiState.images.sortBy as ImageSearchParams['sortBy']) ||
       'images:rank.reactionCountAllTimeRank:asc';
 
-    const { query, page } = uiState.images;
+    const { query } = uiState.images;
 
     const state: ImageSearchParams = {
       tags,
       sortBy,
       query,
-      page,
     };
 
     return { images: state };

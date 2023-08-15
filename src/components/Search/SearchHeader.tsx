@@ -91,7 +91,7 @@ export const SearchHeader = () => {
           query: removeEmpty({
             ...states[value as keyof typeof states],
             query: query || null, // Remove empty string from URL
-            page: 0, // restart the active page. TOOD: We need to consider whetehr or not it makes sense to store the page in the URL.
+            page: null, // restart the active page. TODO: We need to consider whether or not it makes sense to store the page in the URL.
           }),
         },
         undefined,

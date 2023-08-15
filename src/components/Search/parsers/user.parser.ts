@@ -30,13 +30,12 @@ export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
   },
   routeToState: (routeState: UiState) => {
     const users: UserSearchParams = (routeState.users || {}) as UserSearchParams;
-    const { query, page, sortBy } = users;
+    const { query, sortBy } = users;
 
     return {
       users: {
         sortBy: sortBy ?? 'users:stats.followerCountAllTime:desc',
         query,
-        page,
       },
     };
   },
@@ -45,12 +44,11 @@ export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
       (uiState.users.sortBy as UserSearchParams['sortBy']) ||
       'users:stats.followerCountAllTime:desc';
 
-    const { query, page } = uiState.users;
+    const { query } = uiState.users;
 
     const state: UserSearchParams = {
       sortBy,
       query,
-      page,
     };
 
     return {

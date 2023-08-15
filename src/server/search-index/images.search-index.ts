@@ -277,8 +277,6 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     imageTasks.push(...tasks);
 
     offset += indexReadyRecords.length;
-    // TODO.searchImages: Remove this break to index all images.
-    break;
   }
 
   console.log('onIndexUpdate :: start waitForTasks');

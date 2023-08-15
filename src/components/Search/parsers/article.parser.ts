@@ -37,14 +37,13 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       'tags.name': articles.tags,
     });
 
-    const { query, page, sortBy } = articles;
+    const { query, sortBy } = articles;
 
     return {
       articles: {
         sortBy: sortBy ?? 'articles:stats.favoriteCount:desc',
         refinementList,
         query,
-        page,
       },
     };
   },
@@ -55,13 +54,12 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       (uiState.articles.sortBy as ArticleSearchParams['sortBy']) ||
       'articles:stats.favoriteCount:desc';
 
-    const { query, page } = uiState.articles;
+    const { query } = uiState.articles;
 
     const state: ArticleSearchParams = {
       tags,
       sortBy,
       query,
-      page,
     };
 
     return {

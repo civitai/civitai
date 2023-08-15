@@ -37,6 +37,7 @@ export type ModelSearchParams = z.output<typeof modelSearchParamsSchema>;
 export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
     const modelSearchIndexResult = modelSearchParamsSchema.safeParse(QS.parse(location.search));
+
     const modelSearchIndexData: ModelSearchParams | Record<string, string[]> =
       modelSearchIndexResult.success ? modelSearchIndexResult.data : {};
 
@@ -51,14 +52,13 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       'tags.name': models.tags,
     });
 
-    const { query, page, sortBy } = models;
+    const { query, sortBy } = models;
 
     return {
       models: {
         sortBy: sortBy ?? ModelDefaultSortBy,
         refinementList,
         query,
-        page,
       },
     };
   },
@@ -68,7 +68,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const checkpointType = uiState.models.refinementList?.['checkpointType'];
     const tags = uiState.models.refinementList?.['tags.name'];
     const sortBy = (uiState.models.sortBy as ModelSearchParams['sortBy']) || ModelDefaultSortBy;
-    const { query, page } = uiState.models;
+    const { query } = uiState.models;
 
     const state: ModelSearchParams = {
       baseModel,
@@ -77,7 +77,6 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       tags,
       sortBy,
       query,
-      page,
     };
 
     return {
