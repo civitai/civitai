@@ -75,17 +75,8 @@ const RenderFilters = () => {
         // limit={9999}
         searchable={false}
         operator="and"
+        sortBy={['count:desc']}
       />
-      {/*<SearchableFilterList*/}
-      {/*  title="Exclude Tags"*/}
-      {/*  attribute="tags.name"*/}
-      {/*  // TODO.Search: Meiliserach & facet searching is not supported when used with sort by as Angolia provides it.  https://github.com/meilisearch/meilisearch-js-plugins/issues/1222*/}
-      {/*  // If that ever gets fixed, just make sortable true + limit 20 or something*/}
-      {/*  limit={9999}*/}
-      {/*  searchable={false}*/}
-      {/*  dividerOperator={'AND'}*/}
-      {/*  comparisonOperator={'!='}*/}
-      {/*/>*/}
       <ClearRefinements />
     </>
   );

@@ -64,6 +64,7 @@ const RenderFilters = () => {
         // limit={9999}
         searchable={false}
         operator="and"
+        sortBy={['count:desc']}
       />
       <ClearRefinements />
     </>
