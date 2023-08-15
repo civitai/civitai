@@ -1,7 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
-import { getAllDownloadsSelect } from '~/server/selectors/download.selector';
 import { getUserDownloads, updateUserActivityById } from '~/server/services/download.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -21,7 +20,6 @@ export const getUserDownloadsInfiniteHandler = async ({
       ...input,
       limit: limit + 1,
       userId,
-      select: getAllDownloadsSelect,
     });
 
     let nextCursor: Date | undefined;
