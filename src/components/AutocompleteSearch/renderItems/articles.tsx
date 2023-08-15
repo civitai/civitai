@@ -1,30 +1,10 @@
 import React, { forwardRef } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  AutocompleteItem,
-  Badge,
-  Center,
-  Group,
-  Rating,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { AutocompleteItem, Badge, Center, Group, Stack } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import {
-  IconBookmark,
-  IconBrush,
-  IconDownload,
-  IconEye,
-  IconHeart,
-  IconMessageCircle2,
-  IconMoodSmile,
-  IconPhotoOff,
-} from '@tabler/icons-react';
+import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { Hit } from 'instantsearch.js';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
@@ -38,8 +18,7 @@ export const ArticlesSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: Hit<ArticleSearchIndexRecord> }
 >(({ value, hit, ...props }, ref) => {
-  const features = useFeatureFlags();
-  const { classes, theme } = useSearchItemStyles();
+  const { classes } = useSearchItemStyles();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 

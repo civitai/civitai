@@ -28,6 +28,7 @@ import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
+import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -175,6 +176,8 @@ function AutocompleteSearchContent({
     switch (indexName) {
       case 'articles':
         return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
+      case 'users':
+        return `/user/${hit.username}`;
       case 'models':
       default:
         return `/${indexName}/${hit.id}/${slugit(hit.name)}`;
@@ -267,4 +270,5 @@ function AutocompleteSearchContent({
 const IndexRenderItem: Record<string, React.FC> = {
   models: ModelSearchItem,
   articles: ArticlesSearchItem,
+  users: UserSearchItem,
 };
