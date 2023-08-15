@@ -11,7 +11,7 @@ const log = createLogger('system-cache', 'green');
 
 const SYSTEM_CACHE_EXPIRY = 60 * 60 * 4;
 export async function getModerationTags() {
-  const cachedTags = await redis.get(`system:moderation-tags`);
+  const cachedTags = await redis.get(`system:moderation-tags-2`);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw: NsfwLevel }[];
 
   log('getting moderation tags');
@@ -28,20 +28,22 @@ export async function getModerationTags() {
 }
 
 export async function getBlockedTags() {
+  const cachedTags = await redis.get(`system:blocked-tags`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw: NsfwLevel }[];
   const moderatedTags = await getModerationTags();
   const blockedTags = moderatedTags.filter((x) => x.nsfw === NsfwLevel.Blocked);
+  await redis.set(`system:blocked-tags`, JSON.stringify(blockedTags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
   return blockedTags;
 }
 
 /** gets tags we don't want to show to not-signed-in users */
-export async function getSystemHiddenTags() {
-  const cachedTags = await redis.get(`system:hidden-tags`);
-  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
-
-  const tagEngagment = await dbWrite.tagEngagement.findMany({
-    where: { userId: -1, type: TagEngagementType.Hide },
-    select: { tag: { select: { id: true, name: true } } },
-  });
+export async function getSystemHiddenTags(): Promise<
+  { id: number; name: string; nsfw?: NsfwLevel }[]
+> {
+  const cachedTags = await redis.get(`system:hidden-tags-2`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw?: NsfwLevel }[];
 
   const moderation = await getModerationTags();
   const moderatedTags = moderation.map((x) => x.id);
@@ -51,14 +53,7 @@ export async function getSystemHiddenTags() {
     select: { toTag: { select: { id: true, name: true } } },
   });
 
-  const tags = uniqBy(
-    [
-      ...tagEngagment.map((x) => x.tag),
-      ...moderation,
-      ...hiddenTagsOfHiddenTags.map((x) => x.toTag),
-    ],
-    'id'
-  );
+  const tags = uniqBy([...moderation, ...hiddenTagsOfHiddenTags.map((x) => x.toTag)], 'id');
 
   await redis.set(`system:hidden-tags`, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,

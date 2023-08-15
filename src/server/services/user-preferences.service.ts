@@ -189,7 +189,7 @@ const ImplicitHiddenModels = createUserCache({
 });
 
 const HiddenUsers = createUserCache({
-  key: 'hidden-users',
+  key: 'hidden-users-2',
   callback: async ({ userId }) =>
     (
       await dbWrite.userEngagement.findMany({
@@ -269,14 +269,18 @@ export async function getAllHiddenForUser({
     ImplicitHiddenModels.getCached({ userId, refreshCache }),
   ]);
 
+  const moderated = moderatedTags
+    .filter((x) => x.nsfw !== NsfwLevel.Blocked)
+    .map((tag) => ({ ...tag, type: 'moderated' }));
+  const blocked = moderatedTags
+    .filter((x) => x.nsfw === NsfwLevel.Blocked)
+    .map((tag) => ({ ...tag, type: 'always' }));
+
   return {
     image: [...images.map((id) => ({ id, type: 'always' })), ...implicitImages],
     model: [...models.map((id) => ({ id, type: 'always' })), ...implicitModels],
     user: [...users.map((user) => ({ ...user, type: 'always' }))],
-    tag: [
-      ...hiddenTags.map((tag) => ({ ...tag, type: 'hidden' })),
-      ...moderatedTags.map((tag) => ({ ...tag, type: 'moderated' })),
-    ],
+    tag: [...hiddenTags.map((tag) => ({ ...tag, type: 'hidden' })), ...moderated, ...blocked],
   } as HiddenPreferenceTypes;
 }
 

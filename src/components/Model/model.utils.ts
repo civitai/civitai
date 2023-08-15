@@ -13,6 +13,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 const modelQueryParamSchema = z
   .object({

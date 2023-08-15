@@ -23,7 +23,6 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   const browsingMode = useFiltersContext((state) => state.browsingMode);
 
   const data = useHiddenPreferences();
-  console.log(data);
 
   const users = useMemo(() => new Map(data.user.map((user) => [user.id, true])), [data.user]);
   const images = useMemo(

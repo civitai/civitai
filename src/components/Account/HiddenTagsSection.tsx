@@ -13,7 +13,9 @@ export function HiddenTagsSection() {
 
   const tags = useHiddenPreferences().tag;
   const hiddenTags = tags.filter((x) => x.type === 'hidden');
-  const moderationTags = tags.filter((x) => x.type === 'moderated').map((x) => x.id);
+  const moderationTags = tags
+    .filter((x) => x.type === 'moderated' || x.type === 'always')
+    .map((x) => x.id);
 
   const blockedTags = hiddenTags.filter((x) => !moderationTags.includes(x.id));
 
