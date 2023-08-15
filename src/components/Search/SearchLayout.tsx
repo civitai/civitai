@@ -44,7 +44,7 @@ type SearchLayoutState = {
 };
 
 const SearchLayoutCtx = createContext<SearchLayoutState>({} as any);
-export const useSearchLayoutCtx = () => {
+export const useSearchLayout = () => {
   const context = useContext(SearchLayoutCtx);
   if (!context) throw new Error('useSearchLayoutIdx can only be used inside SearchLayoutCtx');
   return context;
@@ -139,7 +139,7 @@ export function SearchLayout({
 
 SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
   const { classes, cx } = useStyles();
-  const { sidebarOpen } = useSearchLayoutCtx();
+  const { sidebarOpen } = useSearchLayout();
 
   return (
     <Container fluid className={cx({ [classes.sidebarOpen]: sidebarOpen })}>
@@ -150,7 +150,7 @@ SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
 
 SearchLayout.Filters = function Filters({ children }: { children: React.ReactNode }) {
   const { classes } = useStyles();
-  const { sidebarOpen, setSidebarOpen } = useSearchLayoutCtx();
+  const { sidebarOpen, setSidebarOpen } = useSearchLayout();
   const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
