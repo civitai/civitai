@@ -6,8 +6,8 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySelect>({
   limit = DEFAULT_PAGE_SIZE,
-  cursor,
   userId,
+  cursor,
   select,
   count = false,
 }: Partial<GetUserDownloadsSchema> & {
@@ -18,12 +18,16 @@ export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySel
   const where: Prisma.DownloadHistoryWhereInput = {
     userId,
   };
+
+  if (cursor) {
+    where.downloadAt = { lt: cursor };
+  }
+
   const downloadHistoryQuery = dbRead.downloadHistory.findMany({
     take: limit,
-    cursor: cursor ? { id: cursor } : undefined,
     where,
     select,
-    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+    orderBy: [{ downloadAt: 'desc' }, { modelVersionId: 'asc' }],
   });
 
   if (count) {
@@ -41,13 +45,13 @@ export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySel
 };
 
 export const updateUserActivityById = ({
-  id,
+  modelVersionId,
   userId,
   data,
   all = false,
-}: HideDownloadInput & { data: Prisma.UserActivityUpdateInput }) => {
-  return dbWrite.userActivity.updateMany({
-    where: { id: !all ? id : undefined, userId, hide: { equals: false } },
+}: HideDownloadInput & { data: Prisma.DownloadHistoryUpdateInput }) => {
+  return dbWrite.downloadHistory.updateMany({
+    where: { modelVersionId: !all ? modelVersionId : undefined, userId, hidden: { equals: false } },
     data,
   });
 };

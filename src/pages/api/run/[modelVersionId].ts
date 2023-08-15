@@ -1,5 +1,4 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { UserActivityType } from '@prisma/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { z } from 'zod';
@@ -59,20 +58,6 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
 
   // Track activity
   try {
-    await dbWrite.userActivity.create({
-      data: {
-        userId,
-        activity: UserActivityType.ModelRun,
-        details: {
-          modelId: modelVersion.model.id,
-          modelVersionId: modelVersion.id,
-          partnerId: runStrategy.partner.id,
-          strategyId: runStrategy.id,
-          partnerName: runStrategy.partner.name,
-        },
-      },
-    });
-
     const track = new Tracker(req, res);
     track.partnerEvent({
       type: 'Run',
