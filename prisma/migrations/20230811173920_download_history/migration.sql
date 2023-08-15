@@ -1,3 +1,4 @@
+-- This migration was manually applied.
 -- DropForeignKey
 ALTER TABLE "UserActivity" DROP CONSTRAINT "UserActivity_userId_fkey";
 
@@ -5,7 +6,7 @@ ALTER TABLE "UserActivity" DROP CONSTRAINT "UserActivity_userId_fkey";
 DROP VIEW "DownloadHistory";
 
 -- CreateTable
-CREATE TABLE "DownloadHistory" (
+CREATE TABLE "DownloadHistoryNew" (
     "userId" INTEGER NOT NULL,
     "modelVersionId" INTEGER NOT NULL,
     "downloadAt" TIMESTAMP(3) NOT NULL,
@@ -15,31 +16,25 @@ CREATE TABLE "DownloadHistory" (
 );
 
 -- Populate data
-INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", "hidden")
-SELECT "userId", "modelVersionId", MAX("downloadAt"), MAX(hidden)
-FROM (
-    SELECT
-        "userId",
-        (details ->> 'modelVersionId')::integer as "modelVersionId",
-        "createdAt" AS "downloadAt",
-        "hide" AS "hidden"
-    FROM "UserActivity"
-    WHERE "userId" > 0 AND activity = 'ModelDownload'
-) d
-WHERE "modelVersionId" IS NOT NULL
-GROUP BY "userId", "modelVersionId";
+INSERT INTO "DownloadHistoryNew"("userId", "modelVersionId", "downloadAt", "hidden")
+SELECT
+    "userId",
+    CAST(details->'modelVersionId' as int) as "modelVersionId",
+    "createdAt" AS "downloadAt",
+    "hide" AS "hidden"
+FROM "UserActivity"
+WHERE "userId" > 0 AND activity = 'ModelDownload'
+ORDER BY id DESC
+ON CONFLICT ("userId", "modelVersionId") DO NOTHING;
 
 -- CreateIndex
 CREATE INDEX "DownloadHistory_userId_downloadAt_idx" ON "DownloadHistory"("userId", "downloadAt");
 
 -- AddForeignKey
-ALTER TABLE "DownloadHistory" ADD CONSTRAINT "DownloadHistory_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE NO ACTION ON UPDATE CASCADE;
+ALTER TABLE "DownloadHistoryNew" ADD CONSTRAINT "DownloadHistory_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "DownloadHistory" ADD CONSTRAINT "DownloadHistory_modelVersionId_fkey" FOREIGN KEY ("modelVersionId") REFERENCES "ModelVersion"("id") ON DELETE NO ACTION ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "DownloadHistory" ADD CONSTRAINT "DownloadHistory_modelId_fkey" FOREIGN KEY ("modelId") REFERENCES "Model"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "DownloadHistoryNew" ADD CONSTRAINT "DownloadHistory_modelVersionId_fkey" FOREIGN KEY ("modelVersionId") REFERENCES "ModelVersion"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- DropTable
 DROP TABLE "UserActivity";

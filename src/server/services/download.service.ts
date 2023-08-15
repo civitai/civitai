@@ -15,15 +15,12 @@ export const getUserDownloads = async <TSelect extends Prisma.DownloadHistorySel
   select: TSelect;
   count?: boolean;
 }) => {
-  let where: Prisma.DownloadHistoryWhereInput = {
+  const where: Prisma.DownloadHistoryWhereInput = {
     userId,
   };
 
   if (cursor) {
-    where = {
-      ...where,
-      downloadAt: { lt: cursor },
-    };
+    where.downloadAt = { lt: cursor };
   }
 
   const downloadHistoryQuery = dbRead.downloadHistory.findMany({

@@ -611,8 +611,8 @@ model ModelAssociations {
 model DownloadHistory {
   userId         Int
   modelVersionId Int
-  user           User         @relation(fields: [userId], references: [id], onDelete: NoAction)
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   downloadAt     DateTime
   hidden         Boolean      @default(false)
 
