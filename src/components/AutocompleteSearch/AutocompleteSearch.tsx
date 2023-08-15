@@ -29,6 +29,8 @@ import { env } from '~/env/client.mjs';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
+import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/images';
+import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -176,6 +178,8 @@ function AutocompleteSearchContent({
     switch (indexName) {
       case 'articles':
         return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
+      case 'images':
+        return `/${indexName}/${hit.id}`;
       case 'users':
         return `/user/${hit.username}`;
       case 'models':
@@ -193,7 +197,11 @@ function AutocompleteSearchContent({
         classNames={classes}
         placeholder={`Search ${indexName}`}
         type="search"
-        nothingFound={query && !hits.length ? 'No results found' : undefined}
+        nothingFound={
+          query && !hits.length ? (
+            <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+          ) : undefined
+        }
         icon={<IconSearch />}
         limit={
           results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
@@ -261,6 +269,7 @@ function AutocompleteSearchContent({
         // prevent default filtering behavior
         filter={() => true}
         clearable={query.length > 0}
+        maxDropdownHeight={400}
         {...autocompleteProps}
       />
     </>
@@ -271,4 +280,5 @@ const IndexRenderItem: Record<string, React.FC> = {
   models: ModelSearchItem,
   articles: ArticlesSearchItem,
   users: UserSearchItem,
+  images: ImagesSearchItem,
 };

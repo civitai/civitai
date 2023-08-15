@@ -135,7 +135,7 @@ const onFetchItemsToIndex = async ({
       rank: {
         select: { commentCountAllTimeRank: true, reactionCountAllTimeRank: true },
       },
-      tags: { select: { tag: { select: { name: true } } } },
+      tags: { select: { tag: { select: { id: true, name: true } } } },
     },
     where: {
       ingestion: ImageIngestionStatus.Scanned,
