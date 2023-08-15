@@ -18,6 +18,7 @@ import { ModelSearchIndexRecord } from '~/server/search-index/models.search-inde
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { useRouter } from 'next/router';
 
 const searchClient = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -26,18 +27,18 @@ const searchClient = instantMeiliSearch(
 );
 
 export default function ModelsSearch() {
+  const router = useRouter();
+
   return (
-    <InstantSearch searchClient={searchClient} indexName="models" routing={routing}>
-      <SearchLayout.Root>
-        <SearchLayout.Filters>
-          <RenderFilters />
-        </SearchLayout.Filters>
-        <SearchLayout.Content>
-          <SearchHeader />
-          <ModelsHitList />
-        </SearchLayout.Content>
-      </SearchLayout.Root>
-    </InstantSearch>
+    <SearchLayout.Root>
+      <SearchLayout.Filters>
+        <RenderFilters />
+      </SearchLayout.Filters>
+      <SearchLayout.Content>
+        <SearchHeader />
+        <ModelsHitList />
+      </SearchLayout.Content>
+    </SearchLayout.Root>
   );
 }
 
@@ -145,5 +146,5 @@ export function ModelsHitList() {
 }
 
 ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout>{page}</SearchLayout>;
+  return <SearchLayout indexName="models">{page}</SearchLayout>;
 };

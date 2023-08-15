@@ -73,6 +73,7 @@ const useStyles = createStyles((theme) => ({
 export const SearchHeader = () => {
   const { uiState } = useInstantSearch();
   const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
+  console.log(uiState);
   const [index] = Object.keys(uiState);
   const { query } = useSearchBox();
   const router = useRouter();
@@ -98,7 +99,7 @@ export const SearchHeader = () => {
         { shallow: true }
       );
     } else {
-      router.replace(`/search/${value}`);
+      router.replace(`/search/${value}?query=${query || ''}`, undefined, { shallow: true });
     }
   };
 

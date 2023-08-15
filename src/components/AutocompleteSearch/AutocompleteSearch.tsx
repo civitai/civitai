@@ -87,6 +87,9 @@ const useStyles = createStyles((theme) => ({
       height: '100%',
     },
   },
+  dropdown: {
+    marginTop: '-7px',
+  },
 }));
 
 export function AutocompleteSearch({ ...props }: Props) {
@@ -233,7 +236,6 @@ function AutocompleteSearchContent({
           onSubmit?.();
         }}
         itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
-        // dropdownComponent={AutocompleteDropdown}
         rightSection={
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
             <HoverCard.Target>

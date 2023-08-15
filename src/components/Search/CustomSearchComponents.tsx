@@ -1,8 +1,10 @@
 import {
   RefinementListProps,
+  SearchBoxProps,
   SortByProps,
   useClearRefinements,
   useRefinementList,
+  useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
 import {
@@ -16,11 +18,13 @@ import {
   MultiSelect,
   Select,
   Text,
+  TextInput,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconTrash } from '@tabler/icons-react';
+import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
+import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -28,6 +32,24 @@ const useStyles = createStyles((theme) => ({
     borderBottom: 0,
     border: '1px solid',
     borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[3],
+  },
+}));
+
+const useSearchInputStyles = createStyles((theme) => ({
+  root: {
+    [theme.fn.smallerThan('md')]: {
+      height: '100%',
+    },
+  },
+  wrapper: {
+    [theme.fn.smallerThan('md')]: {
+      height: '100%',
+    },
+  },
+  input: {
+    [theme.fn.smallerThan('md')]: {
+      height: '100%',
+    },
   },
 }));
 
@@ -209,5 +231,33 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
     >
       Reset all filters
     </Button>
+  );
+};
+
+export const CustomSearchBox = ({
+  isMobile,
+  onSearchDone,
+  ...props
+}: SearchBoxProps & RenderSearchComponentProps) => {
+  const { query, refine } = useSearchBox({ ...props });
+  const [search, setSearch] = useState(query);
+  const [debouncedSearch] = useDebouncedValue(search, 300);
+  const { classes } = useSearchInputStyles();
+
+  useEffect(() => {
+    refine(debouncedSearch);
+  }, [debouncedSearch]);
+
+  return (
+    <TextInput
+      classNames={classes}
+      variant={isMobile ? 'filled' : undefined}
+      icon={<IconSearch size={20} />}
+      onChange={(e) => setSearch(e.target.value)}
+      value={search}
+      placeholder="Search..."
+      onBlur={onSearchDone}
+      onSubmit={onSearchDone}
+    />
   );
 };

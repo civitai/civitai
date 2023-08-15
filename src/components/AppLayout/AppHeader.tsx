@@ -62,9 +62,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
-import { InstantSearch, InstantSearchProps } from 'react-instantsearch';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { env } from '~/env/client.mjs';
 
 const HEADER_HEIGHT = 70;
 
@@ -184,7 +181,23 @@ type MenuLink = {
   visible?: boolean;
 };
 
-export function AppHeader() {
+function defaultRenderSearchComponent({ onSearchDone, isMobile }: RenderSearchComponentProps) {
+  if (isMobile) {
+    return (
+      <AutocompleteSearch
+        variant="filled"
+        onClear={onSearchDone}
+        onSubmit={onSearchDone}
+        rightSection={null}
+        autoFocus
+      />
+    );
+  }
+
+  return <AutocompleteSearch />;
+}
+
+export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent }: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -384,18 +397,13 @@ export function AppHeader() {
     [links]
   );
   const [showSearch, setShowSearch] = useState(false);
+  const onSearchDone = () => setShowSearch(false);
 
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
       {showSearch ? (
         // Only displayed in mobile
-        <AutocompleteSearch
-          variant="filled"
-          onClear={() => setShowSearch(false)}
-          onSubmit={() => setShowSearch(false)}
-          rightSection={null}
-          autoFocus
-        />
+        <>{renderSearchComponent({ onSearchDone, isMobile: true })}</>
       ) : (
         <Grid className={classes.header} m={0} gutter="xs" align="center">
           <Grid.Col span="auto" pl={0}>
@@ -459,7 +467,7 @@ export function AppHeader() {
             className={features.enhancedSearch ? classes.searchArea : undefined}
           >
             {features.enhancedSearch ? (
-              <AutocompleteSearch />
+              <>{renderSearchComponent({ onSearchDone, isMobile: true })}</>
             ) : (
               <ListSearch onSearch={() => closeBurger()} />
             )}
@@ -628,3 +636,6 @@ export function AppHeader() {
     </Header>
   );
 }
+
+type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement };
+export type RenderSearchComponentProps = { onSearchDone: () => void; isMobile: boolean };

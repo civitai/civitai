@@ -53,6 +53,7 @@ type Props = PopoverDropdownProps;
 
 export function AutocompleteDropdown({ children, ...props }: Props) {
   const { classes } = useStyles();
+  console.log(props);
 
   return (
     <div {...props}>

@@ -29,28 +29,18 @@ import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import Link from 'next/link';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { ModelsHitList } from '~/pages/search/models';
-import ImageSearch from '~/pages/search/images';
-
-const searchClient = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
 
 export default function ArticlesSearch() {
   return (
-    <InstantSearch searchClient={searchClient} indexName="articles" routing={routing}>
-      <SearchLayout.Root>
-        <SearchLayout.Filters>
-          <RenderFilters />
-        </SearchLayout.Filters>
-        <SearchLayout.Content>
-          <SearchHeader />
-          <ArticlesHitList />
-        </SearchLayout.Content>
-      </SearchLayout.Root>
-    </InstantSearch>
+    <SearchLayout.Root>
+      <SearchLayout.Filters>
+        <RenderFilters />
+      </SearchLayout.Filters>
+      <SearchLayout.Content>
+        <SearchHeader />
+        <ArticlesHitList />
+      </SearchLayout.Content>
+    </SearchLayout.Root>
   );
 }
 
@@ -145,5 +135,5 @@ export function ArticlesHitList() {
 }
 
 ArticlesSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout>{page}</SearchLayout>;
+  return <SearchLayout indexName="articles">{page}</SearchLayout>;
 };

@@ -1,38 +1,29 @@
-import { Center, Container, Loader, Stack, createStyles } from '@mantine/core';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { useEffect } from 'react';
-import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
+import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { useInView } from 'react-intersection-observer';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { routing } from '~/components/Search/useSearchState';
-import { env } from '~/env/client.mjs';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-
-const searchClient = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
+import { IconCloudOff } from '@tabler/icons-react';
+import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 
 export default function ImageSearch() {
   return (
-    <InstantSearch searchClient={searchClient} indexName="images" routing={routing}>
-      <SearchLayout.Root>
-        <SearchLayout.Filters>
-          <RenderFilters />
-        </SearchLayout.Filters>
-        <SearchLayout.Content>
-          <SearchHeader />
-          <ImagesHitList />
-        </SearchLayout.Content>
-      </SearchLayout.Root>
-    </InstantSearch>
+    <SearchLayout.Root>
+      <SearchLayout.Filters>
+        <RenderFilters />
+      </SearchLayout.Filters>
+      <SearchLayout.Content>
+        <SearchHeader />
+        <ImagesHitList />
+      </SearchLayout.Content>
+    </SearchLayout.Root>
   );
 }
 
@@ -74,6 +65,35 @@ function ImagesHitList() {
     }
   }, [status, inView, showMore, isLastPage]);
 
+  if (hits.length === 0) {
+    const NotFound = (
+      <Box>
+        <Center>
+          <Stack spacing="md" align="center" maw={800}>
+            <Title order={1} inline>
+              No images found
+            </Title>
+            <Text align="center">
+              We have a bunch of images, but it looks like we couldn&rsquo;t find any images with
+              prompt or tags matching your query.
+            </Text>
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
+          </Stack>
+        </Center>
+      </Box>
+    );
+
+    return (
+      <Box>
+        <Center mt="md">
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+        </Center>
+      </Box>
+    );
+  }
+
   return (
     <Stack>
       <div className={classes.grid}>
@@ -91,5 +111,5 @@ function ImagesHitList() {
 }
 
 ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout>{page}</SearchLayout>;
+  return <SearchLayout indexName="images">{page}</SearchLayout>;
 };

@@ -13,12 +13,12 @@ import { signOut } from 'next-auth/react';
 import React from 'react';
 
 import { AppFooter } from '~/components/AppLayout/AppFooter';
-import { AppHeader } from '~/components/AppLayout/AppHeader';
+import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { FloatingGenerationButton } from '~/components/ImageGeneration/FloatingGenerationButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function AppLayout({ children, navbar }: Props) {
+export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
   const theme = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
@@ -27,7 +27,7 @@ export function AppLayout({ children, navbar }: Props) {
   return (
     <AppShell
       padding="md"
-      header={!isBanned ? <AppHeader /> : undefined}
+      header={!isBanned ? <AppHeader renderSearchComponent={renderSearchComponent} /> : undefined}
       footer={<AppFooter />}
       className={`theme-${theme.colorScheme}`}
       navbar={navbar}
@@ -72,4 +72,5 @@ export function AppLayout({ children, navbar }: Props) {
 type Props = {
   children: React.ReactNode;
   navbar?: React.ReactElement;
+  renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
 };

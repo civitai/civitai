@@ -111,6 +111,10 @@ export const useSearchStore = create<StoreState>()(
 
 export const routing: InstantSearchProps['routing'] = {
   router: createInstantSearchRouterNext({
+    beforeStart(onUpdate) {
+      console.log('Starting?', onUpdate);
+      onUpdate();
+    },
     singletonRouter,
     routerOptions: {
       createURL({ routeState, location }) {
@@ -135,6 +139,8 @@ export const routing: InstantSearchProps['routing'] = {
       parseURL({ location }) {
         const pattern = /\/search\/([^\/]+)/;
         const match = location.pathname.match(pattern);
+
+        console.log(match);
 
         // if (!match) {
         //   throw new Error('Invalid search path');
@@ -168,6 +174,7 @@ export const routing: InstantSearchProps['routing'] = {
       return routeState;
     },
     stateToRoute(uiState) {
+      console.log('stateToRoute', uiState);
       const [index] = Object.keys(uiState);
       const routing = getRoutingForIndex(index ? (index as SearchIndex) : 'models');
       return routing.stateToRoute(uiState);

@@ -12,12 +12,9 @@ import {
   Rating,
   ActionIcon,
 } from '@mantine/core';
-import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 
-import { env } from '~/env/client.mjs';
 import { SortBy } from '~/components/Search/CustomSearchComponents';
-import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
 import { useEffect } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
@@ -41,25 +38,17 @@ import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers'
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 
-const searchClient = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
-
 export default function UserSearch() {
   return (
-    <InstantSearch searchClient={searchClient} indexName="users" routing={routing}>
-      <SearchLayout.Root>
-        <SearchLayout.Filters>
-          <RenderFilters />
-        </SearchLayout.Filters>
-        <SearchLayout.Content>
-          <SearchHeader />
-          <UserHitList />
-        </SearchLayout.Content>
-      </SearchLayout.Root>
-    </InstantSearch>
+    <SearchLayout.Root>
+      <SearchLayout.Filters>
+        <RenderFilters />
+      </SearchLayout.Filters>
+      <SearchLayout.Content>
+        <SearchHeader />
+        <UserHitList />
+      </SearchLayout.Content>
+    </SearchLayout.Root>
   );
 }
 
@@ -286,5 +275,5 @@ export function CreatorCard({ data }: { data: UserSearchIndexRecord }) {
 }
 
 UserSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout>{page}</SearchLayout>;
+  return <SearchLayout indexName="users">{page}</SearchLayout>;
 };

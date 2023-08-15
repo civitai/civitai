@@ -11,8 +11,21 @@ import {
 import { createContext, Dispatch, SetStateAction, useContext, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconChevronsLeft } from '@tabler/icons-react';
+import { routing } from '~/components/Search/useSearchState';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { env } from '~/env/client.mjs';
+import { SearchIndex } from '~/components/Search/parsers/base';
+import { InstantSearch } from 'react-instantsearch';
+import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
+import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 
 const SIDEBAR_SIZE = 377;
+
+const searchClient = instantMeiliSearch(
+  env.NEXT_PUBLIC_SEARCH_HOST as string,
+  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  { primaryKey: 'id', keepZeroFacets: true }
+);
 
 // #region [ImageGuardContext]
 type SearchLayoutState = {
@@ -81,14 +94,32 @@ const useStyles = createStyles((theme, _, getRef) => {
   };
 });
 
-export function SearchLayout({ children }: { children: React.ReactNode }) {
+function renderSearchComponent(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} />;
+}
+
+export function SearchLayout({
+  children,
+  indexName,
+}: {
+  children: React.ReactNode;
+  indexName: SearchIndex;
+}) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
 
   return (
-    <AppLayout>
-      <SearchLayoutCtx.Provider value={ctx}>{children}</SearchLayoutCtx.Provider>
-    </AppLayout>
+    <SearchLayoutCtx.Provider value={ctx}>
+      <InstantSearch
+        // Needs re-render. Otherwise the prev. index will screw up the app.
+        key={indexName}
+        searchClient={searchClient}
+        indexName={indexName}
+        routing={routing}
+      >
+        <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
+      </InstantSearch>
+    </SearchLayoutCtx.Provider>
   );
 }
 
