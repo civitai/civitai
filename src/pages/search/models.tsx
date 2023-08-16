@@ -73,11 +73,11 @@ const RenderFilters = () => {
 };
 
 export function ModelsHitList() {
-  const currentUser = useCurrentUser();
   const { hits, showMore, isLastPage } = useInfiniteHits<ModelSearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes } = useSearchLayoutStyles();
+  const currentUser = useCurrentUser();
   const {
     models: hiddenModels,
     images: hiddenImages,

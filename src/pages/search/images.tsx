@@ -1,5 +1,5 @@
 import { Box, Center, Loader, Stack, Text, ThemeIcon, Title, UnstyledButton } from '@mantine/core';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { useInView } from 'react-intersection-observer';
 import { ImageCard, UnroutedImageCard } from '~/components/Cards/ImageCard';
@@ -14,6 +14,9 @@ import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { isDefined } from '~/utils/type-guards';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 export default function ImageSearch() {
   return (
@@ -61,6 +64,25 @@ function ImagesHitList() {
 
   const { hits, showMore, isLastPage } = useInfiniteHits<ImageSearchIndexRecord>();
   const router = useRouter();
+  const currentUser = useCurrentUser();
+  const {
+    models: hiddenModels,
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+  } = useHiddenPreferencesContext();
+
+  const images = useMemo(() => {
+    const filtered = hits.filter((x) => {
+      if (x.user.id === currentUser?.id) return true;
+      if (hiddenUsers.get(x.user.id)) return false;
+      if (hiddenImages.get(x.id)) return false;
+      for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
+      return true;
+    });
+
+    return filtered;
+  }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -101,7 +123,7 @@ function ImagesHitList() {
   return (
     <Stack>
       <div className={classes.grid}>
-        {hits.map((hit) => (
+        {images.map((hit) => (
           <Box
             key={hit.id}
             onClick={(e) => {
