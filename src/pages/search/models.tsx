@@ -84,7 +84,7 @@ export function ModelsHitList() {
     tags: hiddenTags,
     users: hiddenUsers,
   } = useHiddenPreferencesContext();
-  // console.log(hiddenTags, hiddenUsers, hiddenModels, hiddenImages);
+
   const models = useMemo(() => {
     const filtered = hits
       .filter((x) => {
