@@ -1,4 +1,4 @@
-import { useContext, createContext, ReactNode, useMemo } from 'react';
+import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
 import { useHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
@@ -21,7 +21,6 @@ export const useHiddenPreferencesContext = () => {
 
 export const HiddenPreferencesProvider = ({ children }: { children: ReactNode }) => {
   const browsingMode = useFiltersContext((state) => state.browsingMode);
-
   const data = useHiddenPreferences();
 
   const users = useMemo(() => new Map(data.user.map((user) => [user.id, true])), [data.user]);
@@ -36,7 +35,14 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   const tags = useMemo(() => getMapped({ data: data.tag, browsingMode }), [data.tag, browsingMode]);
 
   return (
-    <HiddenPreferencesContext.Provider value={{ users, images, models, tags }}>
+    <HiddenPreferencesContext.Provider
+      value={{
+        users: useDeferredValue(users),
+        images: useDeferredValue(images),
+        models: useDeferredValue(models),
+        tags: useDeferredValue(tags),
+      }}
+    >
       {children}
     </HiddenPreferencesContext.Provider>
   );

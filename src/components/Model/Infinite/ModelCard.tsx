@@ -43,6 +43,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -582,6 +583,6 @@ export function AmbientModelCard({ data, height }: Props) {
 
 type Props = {
   index: number;
-  data: ModelGetAll['items'][number];
+  data: UseQueryModelReturn[number];
   height: number;
 };

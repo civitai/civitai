@@ -9,16 +9,20 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
-import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
+import {
+  ModelQueryParams,
+  UseQueryModelReturn,
+  useModelFilters,
+  useQueryModels,
+} from '~/components/Model/model.utils';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
-import { ModelGetAll } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
   showEof?: boolean;
-  renderItem?: React.ComponentType<MasonryRenderItemProps<ModelGetAll['items'][number]>>;
+  renderItem?: React.ComponentType<MasonryRenderItemProps<UseQueryModelReturn[number]>>;
 };
 
 export function ModelsInfinite({

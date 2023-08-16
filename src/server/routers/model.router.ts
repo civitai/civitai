@@ -147,7 +147,7 @@ export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
-    .use(applyUserPreferences)
+    // .use(applyUserPreferences)
     .query(getModelsInfiniteHandler),
   getAllPagedSimple: publicProcedure
     .input(getAllModelsSchema)

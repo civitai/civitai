@@ -363,6 +363,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           status: ModelStatus.Published,
         },
       },
+      tags: { select: { tagId: true } },
       user: { select: simpleUserSelect },
       hashes: {
         select: modelHashSelect,
@@ -378,10 +379,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
         modelVersionIds,
-        excludedTagIds: input.excludedImageTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
-        excludedUserIds: input.excludedUserIds,
-        currentUserId: user?.id,
+        imagesPerVersion: 10,
+        include: ['tags'],
       })
     : [];
 
@@ -397,10 +396,10 @@ export const getModelsWithImagesAndModelVersions = async ({
       .map(({ hashes, modelVersions, rank, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const [image] = images.filter((i) => i.modelVersionId === version.id);
+        const versionImages = images.filter((i) => i.modelVersionId === version.id);
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
-        if (!image && !showImageless) return null;
+        if (!versionImages.length && !showImageless) return null;
 
         const canGenerate = !!version.generationCoverage?.covered;
 
@@ -415,11 +414,9 @@ export const getModelsWithImagesAndModelVersions = async ({
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,
-          image:
-            model.mode !== ModelModifier.TakenDown
-              ? (image as (typeof images)[0] | undefined)
-              : undefined,
+          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
+          tags: model.tags.map((x) => x.tagId),
         };
       })
       .filter(isDefined),

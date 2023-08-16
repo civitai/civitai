@@ -42,7 +42,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
