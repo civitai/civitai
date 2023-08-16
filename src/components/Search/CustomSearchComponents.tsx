@@ -14,15 +14,17 @@ import {
   Button,
   ButtonProps,
   Chip,
+  Code,
   createStyles,
   Group,
+  HoverCard,
   MultiSelect,
   Select,
   Text,
   TextInput,
 } from '@mantine/core';
-import { useEffect, useState } from 'react';
-import { useDebouncedValue } from '@mantine/hooks';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
@@ -349,21 +351,40 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
   );
 };
 
-export const CustomSearchBox = ({
-  isMobile,
-  onSearchDone,
-  ...props
-}: SearchBoxProps & RenderSearchComponentProps) => {
+export const CustomSearchBox = forwardRef<
+  { focus: () => void },
+  SearchBoxProps & RenderSearchComponentProps
+>(({ isMobile, onSearchDone, ...props }, ref) => {
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const { classes } = useSearchInputStyles();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const blurInput = () => inputRef.current?.blur();
+  const focusInput = () => inputRef.current?.focus();
+
+  useImperativeHandle(ref, () => ({
+    focus: focusInput,
+  }));
 
   useEffect(() => {
     if (debouncedSearch !== query) {
       refine(debouncedSearch);
     }
   }, [debouncedSearch]);
+
+  useEffect(() => {
+    // If another search box is active somewhere, ensures we keep these 2 the same.
+    if (query !== search) {
+      setSearch(query);
+    }
+  }, [query]);
+
+  useHotkeys([
+    ['/', focusInput],
+    ['mod+k', focusInput],
+  ]);
 
   return (
     <TextInput
@@ -375,6 +396,44 @@ export const CustomSearchBox = ({
       placeholder="Search..."
       onBlur={onSearchDone}
       onSubmit={onSearchDone}
+      ref={inputRef}
+      onKeyDown={getHotkeyHandler([['Escape', blurInput]])}
+      rightSection={
+        !isMobile && (
+          <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
+            <HoverCard.Target>
+              <Text
+                weight="bold"
+                sx={(theme) => ({
+                  border: `1px solid ${
+                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                  }`,
+                  borderRadius: theme.radius.sm,
+                  backgroundColor:
+                    theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                  color: theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                  textAlign: 'center',
+                  width: 24,
+                  userSelect: 'none',
+                })}
+              >
+                /
+              </Text>
+            </HoverCard.Target>
+            <HoverCard.Dropdown>
+              <Text size="sm" color="yellow" weight={500}>
+                Pro-tip: Quick search faster!
+              </Text>
+              <Text size="xs" lh={1.2}>
+                Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
+                key from anywhere and just start typing.
+              </Text>
+            </HoverCard.Dropdown>
+          </HoverCard>
+        )
+      }
     />
   );
-};
+});
+
+CustomSearchBox.displayName = 'CustomSearchBox';

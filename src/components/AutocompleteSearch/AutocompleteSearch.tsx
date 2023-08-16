@@ -12,7 +12,14 @@ import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks'
 import { IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
-import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Configure,
   InstantSearch,
@@ -92,7 +99,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function AutocompleteSearch({ ...props }: Props) {
+export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const router = useRouter();
   const targetIndex =
     /\/(model|article|image|user|post)s?\/?/.exec(router.pathname)?.[1] || 'model';
@@ -104,188 +111,192 @@ export function AutocompleteSearch({ ...props }: Props) {
 
   return (
     <InstantSearch searchClient={searchClient} indexName={indexName}>
-      <AutocompleteSearchContent indexName={indexName} {...props} />
+      <AutocompleteSearchContent indexName={indexName} {...props} ref={ref} />
     </InstantSearch>
   );
-}
+});
 
-function AutocompleteSearchContent({
-  onClear,
-  onSubmit,
-  className,
-  searchBoxProps,
-  indexName,
-  ...autocompleteProps
-}: Props & { indexName: string }) {
-  const { classes } = useStyles();
-  const router = useRouter();
-  const inputRef = useRef<HTMLInputElement>(null);
+AutocompleteSearch.displayName = 'AutocompleteSearch';
 
-  const { query, refine: setQuery } = useSearchBox(searchBoxProps);
-  // TODO: Needs to be refactored to support hit type based off of indexName
-  const { hits, results } = useHits<ModelSearchIndexRecord>();
+const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { indexName: string }>(
+  ({ onClear, onSubmit, className, searchBoxProps, indexName, ...autocompleteProps }, ref) => {
+    const { classes } = useStyles();
+    const router = useRouter();
+    const inputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
-  const [search, setSearch] = useState(query);
-  const [debouncedSearch] = useDebouncedValue(search, 300);
+    const { query, refine: setQuery } = useSearchBox(searchBoxProps);
+    // TODO: Needs to be refactored to support hit type based off of indexName
+    const { hits, results } = useHits<ModelSearchIndexRecord>();
 
-  // Prep items to display in dropdown
-  const items = useMemo(() => {
-    if (!results || !results.nbHits) return [];
+    const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
+    const [search, setSearch] = useState(query);
+    const [debouncedSearch] = useDebouncedValue(search, 300);
 
-    type Item = AutocompleteItem & { hit: Hit | null };
-    const items: Item[] = hits.map((hit) => ({
-      // Value isn't really used, but better safe than sorry:
-      value: hit.id.toString(),
-      hit,
+    // Prep items to display in dropdown
+    const items = useMemo(() => {
+      if (!results || !results.nbHits) return [];
+
+      type Item = AutocompleteItem & { hit: Hit | null };
+      const items: Item[] = hits.map((hit) => ({
+        // Value isn't really used, but better safe than sorry:
+        value: hit.id.toString(),
+        hit,
+      }));
+      // If there are more results than the default limit,
+      // then we add a "view more" option
+      if (results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
+        items.push({ key: 'view-more', value: query, hit: null });
+
+      return items;
+    }, [hits, query, results]);
+
+    const focusInput = () => inputRef.current?.focus();
+    const blurInput = () => inputRef.current?.blur();
+
+    useImperativeHandle(ref, () => ({
+      focus: focusInput,
     }));
-    // If there are more results than the default limit,
-    // then we add a "view more" option
-    if (results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
-      items.push({ key: 'view-more', value: query, hit: null });
 
-    return items;
-  }, [hits, query, results]);
+    const handleSubmit = () => {
+      if (search) {
+        router.push(`/search/${indexName}?query=${encodeURIComponent(search)}`, undefined, {
+          shallow: false,
+        });
 
-  const focusInput = () => inputRef.current?.focus();
-  const blurInput = () => inputRef.current?.blur();
+        blurInput();
+      }
+      onSubmit?.();
+    };
 
-  const handleSubmit = () => {
-    if (search) {
-      router.push(`/search/${indexName}?query=${encodeURIComponent(search)}`, undefined, {
-        shallow: false,
-      });
+    const handleClear = () => {
+      setSearch('');
+      onClear?.();
+    };
 
-      blurInput();
-    }
-    onSubmit?.();
-  };
+    useHotkeys([
+      ['/', focusInput],
+      ['mod+k', focusInput],
+    ]);
 
-  const handleClear = () => {
-    setSearch('');
-    onClear?.();
-  };
+    useEffect(() => {
+      // Only set the query when the debounced search changes
+      // and user didn't select from the list
+      if (debouncedSearch !== query && !selectedItem) {
+        setQuery(debouncedSearch);
+        return;
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [debouncedSearch, query]);
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+    // Clear selected item after search changes
+    useEffect(() => {
+      setSelectedItem(null);
+    }, [debouncedSearch]);
 
-  useEffect(() => {
-    // Only set the query when the debounced search changes
-    // and user didn't select from the list
-    if (debouncedSearch !== query && !selectedItem) {
-      setQuery(debouncedSearch);
-      return;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query]);
+    const processHitUrl = (hit: Hit) => {
+      switch (indexName) {
+        case 'articles':
+          return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
+        case 'images':
+          return `/${indexName}/${hit.id}`;
+        case 'users':
+          return `/user/${hit.username}`;
+        case 'models':
+        default:
+          return `/${indexName}/${hit.id}/${slugit(hit.name)}`;
+      }
+    };
 
-  // Clear selected item after search changes
-  useEffect(() => {
-    setSelectedItem(null);
-  }, [debouncedSearch]);
+    return (
+      <>
+        <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} />
+        <ClearableAutoComplete
+          ref={inputRef}
+          className={className}
+          classNames={classes}
+          placeholder={`Search ${indexName}`}
+          type="search"
+          nothingFound={
+            query && !hits.length ? (
+              <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+            ) : undefined
+          }
+          icon={<IconSearch />}
+          limit={
+            results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
+              ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
+              : DEFAULT_DROPDOWN_ITEM_LIMIT
+          }
+          defaultValue={query}
+          value={search}
+          data={items}
+          onChange={setSearch}
+          onClear={handleClear}
+          onKeyDown={getHotkeyHandler([
+            ['Escape', blurInput],
+            ['Enter', handleSubmit],
+          ])}
+          onBlur={() => onClear?.()}
+          onItemSubmit={(item) => {
+            item.hit
+              ? router.push(processHitUrl(item.hit)) // when a model is clicked
+              : router.push(
+                  `/search/${indexName}?query=${encodeURIComponent(item.value)}`,
+                  undefined,
+                  {
+                    shallow: false,
+                  }
+                ); // when view more is clicked
 
-  const processHitUrl = (hit: Hit) => {
-    switch (indexName) {
-      case 'articles':
-        return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
-      case 'images':
-        return `/${indexName}/${hit.id}`;
-      case 'users':
-        return `/user/${hit.username}`;
-      case 'models':
-      default:
-        return `/${indexName}/${hit.id}/${slugit(hit.name)}`;
-    }
-  };
+            setSelectedItem(item);
+            onSubmit?.();
+          }}
+          itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
+          rightSection={
+            <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
+              <HoverCard.Target>
+                <Text
+                  weight="bold"
+                  sx={(theme) => ({
+                    border: `1px solid ${
+                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                    }`,
+                    borderRadius: theme.radius.sm,
+                    backgroundColor:
+                      theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                    color:
+                      theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                    textAlign: 'center',
+                    width: 24,
+                    userSelect: 'none',
+                  })}
+                >
+                  /
+                </Text>
+              </HoverCard.Target>
+              <HoverCard.Dropdown>
+                <Text size="sm" color="yellow" weight={500}>
+                  Pro-tip: Quick search faster!
+                </Text>
+                <Text size="xs" lh={1.2}>
+                  Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
+                  key from anywhere and just start typing.
+                </Text>
+              </HoverCard.Dropdown>
+            </HoverCard>
+          }
+          // prevent default filtering behavior
+          filter={() => true}
+          clearable={query.length > 0}
+          maxDropdownHeight={400}
+          {...autocompleteProps}
+        />
+      </>
+    );
+  }
+);
 
-  return (
-    <>
-      <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} />
-      <ClearableAutoComplete
-        ref={inputRef}
-        className={className}
-        classNames={classes}
-        placeholder={`Search ${indexName}`}
-        type="search"
-        nothingFound={
-          query && !hits.length ? (
-            <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-          ) : undefined
-        }
-        icon={<IconSearch />}
-        limit={
-          results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
-            ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
-            : DEFAULT_DROPDOWN_ITEM_LIMIT
-        }
-        defaultValue={query}
-        value={search}
-        data={items}
-        onChange={setSearch}
-        onClear={handleClear}
-        onKeyDown={getHotkeyHandler([
-          ['Escape', blurInput],
-          ['Enter', handleSubmit],
-        ])}
-        onBlur={() => onClear?.()}
-        onItemSubmit={(item) => {
-          item.hit
-            ? router.push(processHitUrl(item.hit)) // when a model is clicked
-            : router.push(
-                `/search/${indexName}?query=${encodeURIComponent(item.value)}`,
-                undefined,
-                {
-                  shallow: false,
-                }
-              ); // when view more is clicked
-
-          setSelectedItem(item);
-          onSubmit?.();
-        }}
-        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
-        rightSection={
-          <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
-            <HoverCard.Target>
-              <Text
-                weight="bold"
-                sx={(theme) => ({
-                  border: `1px solid ${
-                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                  }`,
-                  borderRadius: theme.radius.sm,
-                  backgroundColor:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-                  color: theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
-                  textAlign: 'center',
-                  width: 24,
-                  userSelect: 'none',
-                })}
-              >
-                /
-              </Text>
-            </HoverCard.Target>
-            <HoverCard.Dropdown>
-              <Text size="sm" color="yellow" weight={500}>
-                Pro-tip: Quick search faster!
-              </Text>
-              <Text size="xs" lh={1.2}>
-                Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
-                key from anywhere and just start typing.
-              </Text>
-            </HoverCard.Dropdown>
-          </HoverCard>
-        }
-        // prevent default filtering behavior
-        filter={() => true}
-        clearable={query.length > 0}
-        maxDropdownHeight={400}
-        {...autocompleteProps}
-      />
-    </>
-  );
-}
+AutocompleteSearchContent.displayName = 'AutocompleteSearchContent';
 
 const IndexRenderItem: Record<string, React.FC> = {
   models: ModelSearchItem,
