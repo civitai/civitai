@@ -1,6 +1,8 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { IconCloudOff } from '@tabler/icons-react';
-import { useEffect } from 'react';
+import { debounce } from 'lodash-es';
+import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
 import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
@@ -16,18 +18,18 @@ export function ArticlesInfinite({ filters: filterOverrides = {}, showEof = fals
   const articlesFilters = useArticleFilters();
 
   const filters = removeEmpty({ ...articlesFilters, ...filterOverrides });
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
 
   const { articles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryArticles(filters, {
-      keepPreviousData: true,
-    });
+    useQueryArticles(debouncedFilters, { keepPreviousData: true });
+  const debouncedFetchNextPage = useMemo(() => debounce(fetchNextPage, 500), [fetchNextPage]);
 
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && !isFetching) {
-      fetchNextPage?.();
+      debouncedFetchNextPage();
     }
-  }, [fetchNextPage, inView, isFetching]);
+  }, [debouncedFetchNextPage, inView, isFetching]);
   // #endregion
 
   return (

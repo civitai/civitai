@@ -1,4 +1,4 @@
-import { ModelModifier, ModelStatus, ModelType, Prisma, UserActivityType } from '@prisma/client';
+import { ModelModifier, ModelStatus, ModelType, Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
@@ -130,7 +130,7 @@ export default RateLimitedEndpoint(
 
     // Get the correct file
     let file: FileResult | null = null;
-    if (type === 'VAE' || modelVersion.model.type === 'VAE') {
+    if (type === 'VAE') {
       if (!modelVersion.vaeId) return errorResponse(404, 'VAE not found');
       const vae = await getVaeFiles({ vaeIds: [modelVersion.vaeId] });
       if (!vae.length) return errorResponse(404, 'VAE not found');
@@ -159,46 +159,46 @@ export default RateLimitedEndpoint(
     if (!file) return errorResponse(404, 'Model file not found');
 
     // Track download
-    try {
-      const now = new Date();
-      await dbWrite.userActivity.create({
-        data: {
-          userId,
-          activity: UserActivityType.ModelDownload,
-          createdAt: now,
-          details: {
-            modelId: modelVersion.model.id,
-            modelVersionId: modelVersion.id,
-            fileId: file.id,
-            // Just so we can catch exploits
-            ...(!userId
-              ? {
-                  ip,
-                  userAgent: req.headers['user-agent'],
-                }
-              : {}), // You'll notice we don't include this for authed users...
+    if (userId) {
+      try {
+        const now = new Date();
+        await dbWrite.downloadHistory.upsert({
+          where: {
+            userId_modelVersionId: {
+              userId: userId,
+              modelVersionId: modelVersion.id,
+            },
           },
-        },
-      });
+          create: {
+            userId,
+            modelVersionId: modelVersion.id,
+            downloadAt: now,
+            hidden: false,
+          },
+          update: {
+            downloadAt: now,
+          },
+        });
 
-      const tracker = new Tracker(req, res);
-      await tracker.modelVersionEvent({
-        type: 'Download',
-        modelId: modelVersion.model.id,
-        modelVersionId: modelVersion.id,
-        nsfw: modelVersion.model.nsfw,
-        time: now,
-      });
-
-      if (userId)
-        await playfab.trackEvent(userId, {
-          eventName: 'user_download_model',
+        const tracker = new Tracker(req, res);
+        await tracker.modelVersionEvent({
+          type: 'Download',
           modelId: modelVersion.model.id,
           modelVersionId: modelVersion.id,
+          nsfw: modelVersion.model.nsfw,
+          time: now,
         });
-    } catch (error) {
-      console.error(error);
-      return errorResponse(500, 'Invalid database operation');
+
+        if (userId)
+          await playfab.trackEvent(userId, {
+            eventName: 'user_download_model',
+            modelId: modelVersion.model.id,
+            modelVersionId: modelVersion.id,
+          });
+      } catch (error) {
+        console.error(error);
+        return errorResponse(500, 'Invalid database operation');
+      }
     }
 
     const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });

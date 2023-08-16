@@ -49,7 +49,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { constants } from '~/server/common/constants';
+import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetAll } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
@@ -208,10 +208,11 @@ export function AmbientModelCard({ data, height }: Props) {
     </Text>
   );
 
+  const isSDXL = baseModelSets.SDXL.includes(data.version.baseModel as BaseModel);
   const modelBadges = (
     <>
       <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
-        {getDisplayName(data.type)}
+        {getDisplayName(data.type)} {isSDXL && 'XL'}
       </Badge>
       {data.status !== ModelStatus.Published && (
         <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">

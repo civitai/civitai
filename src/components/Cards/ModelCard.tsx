@@ -1,4 +1,14 @@
-import { ActionIcon, Badge, Group, Menu, Rating, Stack, Text, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Divider,
+  Group,
+  Menu,
+  Rating,
+  Stack,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import {
   IconStar,
   IconDownload,
@@ -26,7 +36,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
+import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -136,6 +146,7 @@ export function ModelCard({ data }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+  const isSDXL = baseModelSets.SDXL.includes(data.version.baseModel as BaseModel);
 
   useEffect(() => {
     if (!modelId || modelId !== data.id) return;
@@ -187,6 +198,14 @@ export function ModelCard({ data }: Props) {
                                     <Text color="white" size="xs" transform="capitalize">
                                       {getDisplayName(data.type)}
                                     </Text>
+                                    {isSDXL && (
+                                      <>
+                                        <Divider orientation="vertical" />
+                                        <Text color="white" size="xs">
+                                          XL
+                                        </Text>
+                                      </>
+                                    )}
                                   </Badge>
 
                                   {(isNew || isUpdated) && (
