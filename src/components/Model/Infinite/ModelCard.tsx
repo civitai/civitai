@@ -43,10 +43,12 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ModelGetAll } from '~/types/router';
@@ -189,22 +191,16 @@ export function AmbientModelCard({ data, height }: Props) {
 
   const [loading, setLoading] = useState(false);
 
-  const {
-    data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  const { data: { Favorite: favoriteModels = [] } = { Favorite: [], Hide: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
   const isFavorite = favoriteModels.find((modelId) => modelId === id);
-  // TODO - hide models by user by updating query cache
-  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
-  const isHidden =
-    hidden.find(({ id }) => id === user.id) || hiddenModels.find((modelId) => modelId === id);
+
+  const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
+  const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
 
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
@@ -588,6 +584,6 @@ export function AmbientModelCard({ data, height }: Props) {
 
 type Props = {
   index: number;
-  data: ModelGetAll['items'][number];
+  data: UseQueryModelReturn[number];
   height: number;
 };

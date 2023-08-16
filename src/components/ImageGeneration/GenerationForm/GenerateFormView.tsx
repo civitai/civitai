@@ -209,7 +209,7 @@ export function GenerateFormView({
                           <InputNumberSlider
                             name="clipSkip"
                             label="Clip Skip"
-                            min={0}
+                            min={1}
                             max={10}
                             sliderProps={{
                               ...sharedSliderProps,

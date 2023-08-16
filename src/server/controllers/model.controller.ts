@@ -3,7 +3,6 @@ import {
   ModelStatus,
   ModelHashType,
   Prisma,
-  UserActivityType,
   ModelModifier,
   MetricTimeframe,
   SearchIndexUpdateQueueAction,
@@ -193,7 +192,12 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getModelsWithImagesAndModelVersions({ input, user: ctx.user });
+    const { isPrivate, ...results } = await getModelsWithImagesAndModelVersions({
+      input,
+      user: ctx.user,
+    });
+    if (isPrivate) ctx.cache.canCache = false;
+    return results;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -587,17 +591,25 @@ export const getDownloadCommandHandler = async ({
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();
-    await dbWrite.userActivity.create({
-      data: {
-        userId,
-        activity: UserActivityType.ModelDownload,
-        details: {
-          modelId: modelVersion.model.id,
-          modelVersionId: modelVersion.id,
+    if (userId) {
+      await dbWrite.downloadHistory.upsert({
+        where: {
+          userId_modelVersionId: {
+            userId: userId,
+            modelVersionId: modelVersion.id,
+          },
         },
-        createdAt: now,
-      },
-    });
+        create: {
+          userId,
+          modelVersionId: modelVersion.id,
+          downloadAt: now,
+          hidden: false,
+        },
+        update: {
+          downloadAt: now,
+        },
+      });
+    }
     ctx.track.modelVersionEvent({
       type: 'Download',
       modelId: modelVersion.model.id,
@@ -922,7 +934,6 @@ export const findResourcesToAssociateHandler = async ({
 };
 
 // Used to get the associated resources for a model
-type GetModelsInfiniteResult = AsyncReturnType<typeof getModelsInfiniteHandler>;
 export const getAssociatedResourcesCardDataHandler = async ({
   input,
   ctx,
@@ -1011,8 +1022,13 @@ export const getAssociatedResourcesCardDataHandler = async ({
       getArticles({ ...articleInput, sessionUser: user }),
     ]);
 
-    let completeModels = [] as GetModelsInfiniteResult['items'];
-    if (models.length) {
+    if (!models.length) {
+      return resourcesIds
+        .map(({ id, resourceType }) =>
+          resourceType === 'model' ? null : articles.find((article) => article.id === id)
+        )
+        .filter(isDefined);
+    } else {
       const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
       const images = !!modelVersionIds.length
         ? await getImagesForModelVersion({
@@ -1024,7 +1040,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
           })
         : [];
 
-      completeModels = models
+      const completeModels = models
         .map(({ hashes, modelVersions, rank, ...model }) => {
           const [version] = modelVersions;
           if (!version) return null;
@@ -1054,15 +1070,15 @@ export const getAssociatedResourcesCardDataHandler = async ({
           };
         })
         .filter(isDefined);
-    }
 
-    return resourcesIds
-      .map(({ id, resourceType }) =>
-        resourceType === 'model'
-          ? completeModels.find((model) => model.id === id)
-          : articles.find((article) => article.id === id)
-      )
-      .filter(isDefined);
+      return resourcesIds
+        .map(({ id, resourceType }) =>
+          resourceType === 'model'
+            ? completeModels.find((model) => model.id === id)
+            : articles.find((article) => article.id === id)
+        )
+        .filter(isDefined);
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

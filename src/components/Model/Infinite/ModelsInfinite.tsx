@@ -11,27 +11,30 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { AmbientModelCard } from '~/components/Model/Infinite/ModelCard';
-import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
+import {
+  ModelQueryParams,
+  UseQueryModelReturn,
+  useModelFilters,
+  useQueryModels,
+} from '~/components/Model/model.utils';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
-import { ModelGetAll } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NoContent } from '~/components/NoContent/NoContent';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
   showEof?: boolean;
-  renderItem?: React.ComponentType<MasonryRenderItemProps<ModelGetAll['items'][number]>>;
 };
 
 export function ModelsInfinite({
   filters: filterOverrides = {},
   showEof = false,
-  renderItem,
 }: InfiniteModelsProps) {
   const features = useFeatureFlags();
   const { ref, inView } = useInView();
   const modelFilters = useModelFilters();
-  const RenderItem = renderItem ?? features.modelCardV2 ? ModelCard : AmbientModelCard;
 
   const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
@@ -58,18 +61,28 @@ export function ModelsInfinite({
       ) : !!models.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryColumns
-            data={models}
-            imageDimensions={(data) => {
-              const width = data.image?.width ?? 450;
-              const height = data.image?.height ?? 450;
-              return { width, height };
-            }}
-            adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
-            maxItemHeight={600}
-            render={RenderItem}
-            itemId={(data) => data.id}
-          />
+          {features.modelCardV2 ? (
+            <MasonryGrid
+              data={models}
+              render={ModelCard}
+              itemId={(x) => x.id}
+              empty={<NoContent />}
+            />
+          ) : (
+            <MasonryColumns
+              data={models}
+              imageDimensions={(data) => {
+                const width = data.image?.width ?? 450;
+                const height = data.image?.height ?? 450;
+                return { width, height };
+              }}
+              adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
+              maxItemHeight={600}
+              render={AmbientModelCard}
+              itemId={(data) => data.id}
+            />
+          )}
+
           {hasNextPage && !isLoading && !isRefetching && (
             <Center ref={ref} sx={{ height: 36 }} mt="md">
               {inView && <Loader />}

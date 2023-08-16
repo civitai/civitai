@@ -1,7 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
-import { getAllDownloadsSelect } from '~/server/selectors/download.selector';
 import { getUserDownloads, updateUserActivityById } from '~/server/services/download.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -21,13 +20,12 @@ export const getUserDownloadsInfiniteHandler = async ({
       ...input,
       limit: limit + 1,
       userId,
-      select: getAllDownloadsSelect,
     });
 
-    let nextCursor: number | undefined;
+    let nextCursor: Date | undefined;
     if (items.length > limit) {
       const nextItem = items.pop();
-      nextCursor = nextItem?.id;
+      nextCursor = nextItem?.downloadAt;
     }
 
     return { items, nextCursor };
@@ -40,10 +38,10 @@ export const hideDownloadHandler = async ({ input }: { input: HideDownloadInput 
   try {
     const download = await updateUserActivityById({
       ...input,
-      data: { hide: true },
+      data: { hidden: true },
     });
 
-    if (!download) throw throwNotFoundError(`No download with id ${input.id}`);
+    if (!download) throw throwNotFoundError(`No download with id ${input.modelVersionId}`);
 
     return { download };
   } catch (error) {
