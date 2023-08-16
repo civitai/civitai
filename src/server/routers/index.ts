@@ -32,6 +32,8 @@ import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
 import { generationRouter } from './generation.router';
 import { newsletterRouter } from './newsletter.router';
+import { systemRouter } from './system.router';
+import { hiddenPreferencesRouter } from './hidden-preferences.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -50,7 +52,6 @@ export const appRouter = router({
   model: modelRouter,
   modelFile: modelFileRouter,
   modelVersion: modelVersionRouter,
-  moderation: moderationRouter,
   notification: notificationRouter,
   partner: partnerRouter,
   post: postRouter,
@@ -66,6 +67,8 @@ export const appRouter = router({
   leaderboard: leaderboardRouter,
   generation: generationRouter,
   newsletter: newsletterRouter,
+  system: systemRouter,
+  hiddenPreferences: hiddenPreferencesRouter,
 });
 
 // export type definition of API

@@ -192,7 +192,12 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getModelsWithImagesAndModelVersions({ input, user: ctx.user });
+    const { isPrivate, ...results } = await getModelsWithImagesAndModelVersions({
+      input,
+      user: ctx.user,
+    });
+    if (isPrivate) ctx.cache.canCache = false;
+    return results;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -929,7 +934,6 @@ export const findResourcesToAssociateHandler = async ({
 };
 
 // Used to get the associated resources for a model
-type GetModelsInfiniteResult = AsyncReturnType<typeof getModelsInfiniteHandler>;
 export const getAssociatedResourcesCardDataHandler = async ({
   input,
   ctx,
@@ -1018,8 +1022,13 @@ export const getAssociatedResourcesCardDataHandler = async ({
       getArticles({ ...articleInput, sessionUser: user }),
     ]);
 
-    let completeModels = [] as GetModelsInfiniteResult['items'];
-    if (models.length) {
+    if (!models.length) {
+      return resourcesIds
+        .map(({ id, resourceType }) =>
+          resourceType === 'model' ? null : articles.find((article) => article.id === id)
+        )
+        .filter(isDefined);
+    } else {
       const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
       const images = !!modelVersionIds.length
         ? await getImagesForModelVersion({
@@ -1031,7 +1040,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
           })
         : [];
 
-      completeModels = models
+      const completeModels = models
         .map(({ hashes, modelVersions, rank, ...model }) => {
           const [version] = modelVersions;
           if (!version) return null;
@@ -1061,15 +1070,15 @@ export const getAssociatedResourcesCardDataHandler = async ({
           };
         })
         .filter(isDefined);
-    }
 
-    return resourcesIds
-      .map(({ id, resourceType }) =>
-        resourceType === 'model'
-          ? completeModels.find((model) => model.id === id)
-          : articles.find((article) => article.id === id)
-      )
-      .filter(isDefined);
+      return resourcesIds
+        .map(({ id, resourceType }) =>
+          resourceType === 'model'
+            ? completeModels.find((model) => model.id === id)
+            : articles.find((article) => article.id === id)
+        )
+        .filter(isDefined);
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
