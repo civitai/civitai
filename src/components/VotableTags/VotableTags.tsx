@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 import { useVotableTagStore, VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
+import { useUpdateHiddenPreferences } from '~/hooks/hidden-preferences';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 
@@ -36,6 +37,8 @@ export function VotableTags({
   );
   canAdd = canAdd && !initialTags;
   canAddModerated = canAddModerated && !initialTags;
+
+  const updateHiddenPreferences = useUpdateHiddenPreferences();
 
   const handleTagMutation = (changedTags: string[], vote: number, tagType: TagType) => {
     const preppedTags = changedTags.map(
@@ -78,6 +81,7 @@ export function VotableTags({
     if (vote == 0) removeVotes({ tags: [tag], type, id });
     else addVotes({ tags: [tag], vote, type, id });
     handleTagMutation([tag], vote, tagType);
+    updateHiddenPreferences({ kind: type, data: [{ id }], hidden: vote > 0 });
   };
 
   const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });

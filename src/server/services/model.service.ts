@@ -133,22 +133,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
+  let isPrivate = false;
 
   // If the user is not a moderator, only show published models
-  if (!sessionUser?.isModerator) {
-    const statusVisibleOr: Prisma.Enumerable<Prisma.ModelWhereInput> = [
-      { status: ModelStatus.Published },
-    ];
-    if (sessionUser && (username || user))
-      statusVisibleOr.push({
-        AND: [{ user: { id: sessionUser.id } }, { status: ModelStatus.Draft }],
-      });
-
-    AND.push({ OR: statusVisibleOr });
-  }
-  if (sessionUser?.isModerator) {
+  if (!status?.length) {
+    AND.push({ status: ModelStatus.Published });
+  } else if (sessionUser?.isModerator) {
     if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
-    AND.push({ status: status && status.length > 0 ? { in: status } : ModelStatus.Published });
+    AND.push({ status: { in: status } });
+    isPrivate = true;
   }
 
   // Filter by model permissions
@@ -225,6 +218,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         { modelVersions: { some: { meta: { path: ['needsReview'], equals: true } } } },
       ],
     });
+    isPrivate = true;
   }
   if (earlyAccess) {
     AND.push({ earlyAccessDeadline: { gte: new Date() } });
@@ -255,6 +249,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         },
       },
     });
+    isPrivate = !permissions.publicCollection;
   }
 
   const hideNSFWModels = browsingMode === BrowsingMode.SFW || !canViewNsfw;
@@ -280,6 +275,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
         : undefined,
   };
+  if (favorites || hidden) isPrivate = true;
 
   let orderBy: Prisma.ModelOrderByWithRelationInput = {
     lastVersionAt: { sort: 'desc', nulls: 'last' },
@@ -307,7 +303,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     return { items, count };
   }
 
-  return { items };
+  return { items, isPrivate };
 };
 
 export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
@@ -324,7 +320,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
 
-  const { items } = await getModels({
+  const { items, isPrivate } = await getModels({
     input: { ...input, take },
     user,
     select: {
@@ -363,6 +359,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           status: ModelStatus.Published,
         },
       },
+      tags: { select: { tagId: true } },
       user: { select: simpleUserSelect },
       hashes: {
         select: modelHashSelect,
@@ -378,10 +375,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
         modelVersionIds,
-        excludedTagIds: input.excludedImageTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
-        excludedUserIds: input.excludedUserIds,
-        currentUserId: user?.id,
+        imagesPerVersion: 10,
+        include: ['tags'],
       })
     : [];
 
@@ -393,14 +388,15 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   const result = {
     nextCursor,
+    isPrivate,
     items: items
       .map(({ hashes, modelVersions, rank, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const [image] = images.filter((i) => i.modelVersionId === version.id);
+        const versionImages = images.filter((i) => i.modelVersionId === version.id);
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
-        if (!image && !showImageless) return null;
+        if (!versionImages.length && !showImageless) return null;
 
         const canGenerate = !!version.generationCoverage?.covered;
 
@@ -415,11 +411,9 @@ export const getModelsWithImagesAndModelVersions = async ({
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,
-          image:
-            model.mode !== ModelModifier.TakenDown
-              ? (image as (typeof images)[0] | undefined)
-              : undefined,
+          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
+          tags: model.tags.map((x) => x.tagId),
         };
       })
       .filter(isDefined),

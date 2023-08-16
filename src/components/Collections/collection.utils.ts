@@ -73,7 +73,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'model': {
       return {
         type: collectionItem.type,
-        image: collectionItem.data.image,
+        image: collectionItem.data.images?.[0], // TODO.frontend filters
         user: collectionItem.data.user,
         url: `/models/${collectionItem.data.id}`,
         itemAddedAt: collectionItem.createdAt,

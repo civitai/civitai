@@ -26,7 +26,6 @@ import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { CollectionHomeBlockSkeleton } from '~/components/HomeBlocks/CollectionHomeBlockSkeleton';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
@@ -263,7 +262,9 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
         {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
         {items.map((item) => (
           <Fragment key={item.id}>
-            {item.type === 'model' && <ModelCard data={item.data} />}
+            {item.type === 'model' && (
+              <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
+            )}
             {item.type === 'image' && <ImageCard data={item.data} collectionId={collection?.id} />}
             {item.type === 'post' && <PostCard data={item.data} />}
             {item.type === 'article' && <ArticleCard data={item.data} />}

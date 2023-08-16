@@ -1,4 +1,5 @@
-import { TagType } from '@prisma/client';
+import { NsfwLevel, TagEngagementType, TagType } from '@prisma/client';
+import { uniqBy } from 'lodash-es';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
@@ -10,15 +11,51 @@ const log = createLogger('system-cache', 'green');
 
 const SYSTEM_CACHE_EXPIRY = 60 * 60 * 4;
 export async function getModerationTags() {
-  const cachedTags = await redis.get(`system:moderation-tags`);
-  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+  const cachedTags = await redis.get(`system:moderation-tags-2`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw: NsfwLevel }[];
 
   log('getting moderation tags');
   const tags = await dbWrite.tag.findMany({
     where: { type: TagType.Moderation },
-    select: { id: true, name: true },
+    select: { id: true, name: true, nsfw: true },
   });
   await redis.set(`system:moderation-tags`, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got moderation tags');
+  return tags;
+}
+
+export async function getBlockedTags() {
+  const cachedTags = await redis.get(`system:blocked-tags`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw: NsfwLevel }[];
+  const moderatedTags = await getModerationTags();
+  const blockedTags = moderatedTags.filter((x) => x.nsfw === NsfwLevel.Blocked);
+  await redis.set(`system:blocked-tags`, JSON.stringify(blockedTags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+  return blockedTags;
+}
+
+/** gets tags we don't want to show to not-signed-in users */
+export async function getSystemHiddenTags(): Promise<
+  { id: number; name: string; nsfw?: NsfwLevel }[]
+> {
+  const cachedTags = await redis.get(`system:hidden-tags-2`);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string; nsfw?: NsfwLevel }[];
+
+  const moderation = await getModerationTags();
+  const moderatedTags = moderation.map((x) => x.id);
+
+  const hiddenTagsOfHiddenTags = await dbWrite.tagsOnTags.findMany({
+    where: { fromTagId: { in: [...moderatedTags] } },
+    select: { toTag: { select: { id: true, name: true } } },
+  });
+
+  const tags = uniqBy([...moderation, ...hiddenTagsOfHiddenTags.map((x) => x.toTag)], 'id');
+
+  await redis.set(`system:hidden-tags`, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 

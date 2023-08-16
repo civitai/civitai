@@ -82,7 +82,6 @@ model User {
   images               Image[]
   models               Model[]                    @relation("creator")
   deletedModels        Model[]                    @relation("deletedBy")
-  activities           UserActivity[]
   saves                SavedModel[]
   imports              Import[]
   keys                 ApiKey[]
@@ -369,7 +368,6 @@ model Model {
   licenses           License[]
   rank               ModelRank?
   reportStats        ModelReportStat?
-  downloads          DownloadHistory[]
   hashes             ModelHash[]
   threads            Thread[]
   resourceReviews    ResourceReview[]
@@ -610,26 +608,16 @@ model ModelAssociations {
   @@index([toArticleId], type: Hash)
 }
 
-enum UserActivityType {
-  ModelDownload
-  ModelRun
-  OtherDownload
-  TrainingDataDownload
-  HashReport
-}
+model DownloadHistory {
+  userId         Int
+  modelVersionId Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  downloadAt     DateTime
+  hidden         Boolean      @default(false)
 
-model UserActivity {
-  id        Int              @id @default(autoincrement())
-  userId    Int?
-  user      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  activity  UserActivityType
-  details   Json?
-  hide      Boolean          @default(false)
-  createdAt DateTime         @default(now())
-
-  @@index([userId, createdAt])
-  @@index([createdAt])
-  @@index([activity])
+  @@id([userId, modelVersionId])
+  @@index([userId, downloadAt])
 }
 
 model ModActivity {
@@ -874,6 +862,7 @@ enum NsfwLevel {
   Soft
   Mature
   X
+  Blocked
 }
 
 enum ImageIngestionStatus {
@@ -2379,18 +2368,6 @@ model TagRank {
   articleCountMonthRank    Int @default(0)
   articleCountYearRank     Int @default(0)
   articleCountAllTimeRank  Int @default(0)
-}
-
-/// @view
-model DownloadHistory {
-  id             Int          @id
-  userId         Int
-  user           User         @relation(fields: [userId], references: [id], onDelete: NoAction)
-  modelVersionId Int
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
-  modelId        Int
-  model          Model        @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  createdAt      DateTime
 }
 
 /// @view

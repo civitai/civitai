@@ -10,11 +10,16 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
   return (
     <Stack spacing={0}>
       {items.map((download) => {
-        const downloadDate = dayjs(download.createdAt);
+        const downloadDate = dayjs(download.downloadAt);
 
         return (
-          <Group key={download.id} noWrap>
-            <Link href={`/models/${download.model.id}/${slugit(download.model.name)}`} passHref>
+          <Group key={download.modelVersion.id} noWrap>
+            <Link
+              href={`/models/${download.modelVersion.model.id}/${slugit(
+                download.modelVersion.model.name
+              )}`}
+              passHref
+            >
               <Text
                 component="a"
                 sx={(theme) => ({
@@ -30,7 +35,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
               >
                 <Stack spacing={0}>
                   <Text size={textSize} weight={500} lineClamp={2} sx={{ lineHeight: 1 }}>
-                    {download.model.name}: {download.modelVersion.name}
+                    {download.modelVersion.model.name}: {download.modelVersion.name}
                   </Text>
                   <Text size="xs" color="dimmed">
                     <abbr title={downloadDate.format()}>{downloadDate.fromNow()}</abbr>

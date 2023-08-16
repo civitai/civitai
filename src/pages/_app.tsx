@@ -48,6 +48,7 @@ import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/F
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
+import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -145,19 +146,21 @@ function MyApp(props: CustomAppProps) {
         <CivitaiSessionProvider>
           <CookiesProvider value={cookies}>
             <FiltersProvider value={filters}>
-              <FeatureFlagsProvider flags={flags}>
-                <CivitaiLinkProvider>
-                  <CustomModalsProvider>
-                    <NotificationsProvider>
-                      <FreezeProvider>
-                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                      </FreezeProvider>
-                      <GenerationPanel />
-                      <RoutedContextProvider2 />
-                    </NotificationsProvider>
-                  </CustomModalsProvider>
-                </CivitaiLinkProvider>
-              </FeatureFlagsProvider>
+              <HiddenPreferencesProvider>
+                <FeatureFlagsProvider flags={flags}>
+                  <CivitaiLinkProvider>
+                    <CustomModalsProvider>
+                      <NotificationsProvider>
+                        <FreezeProvider>
+                          <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                        </FreezeProvider>
+                        <GenerationPanel />
+                        <RoutedContextProvider2 />
+                      </NotificationsProvider>
+                    </CustomModalsProvider>
+                  </CivitaiLinkProvider>
+                </FeatureFlagsProvider>
+              </HiddenPreferencesProvider>
             </FiltersProvider>
           </CookiesProvider>
         </CivitaiSessionProvider>

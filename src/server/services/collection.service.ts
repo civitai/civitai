@@ -64,6 +64,7 @@ export type CollectionContributorPermissionFlags = {
   isContributor: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
+  publicCollection: boolean;
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
@@ -115,6 +116,7 @@ export const getUserCollectionPermissionsById = async ({
     follow: false,
     isContributor: false,
     isOwner: false,
+    publicCollection: false,
     followPermissions: [],
   };
 
@@ -153,6 +155,7 @@ export const getUserCollectionPermissionsById = async ({
     permissions.read = true;
     permissions.follow = true;
     permissions.followPermissions.push(CollectionContributorPermission.VIEW);
+    permissions.publicCollection = true;
   }
 
   if (collection.write === CollectionWriteConfiguration.Public) {
@@ -590,6 +593,7 @@ export const getCollectionItemsByCollectionId = async ({
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
     userId: user?.id,
+    isModerator: user?.isModerator,
   });
 
   if (
@@ -949,10 +953,13 @@ export const getAvailableCollectionItemsFilterForUser = ({
 
 export const updateCollectionItemsStatus = async ({
   input,
+  sessionUser,
 }: {
-  input: UpdateCollectionItemsStatusInput & { userId: number };
+  input: UpdateCollectionItemsStatusInput;
+  sessionUser: SessionUser;
 }) => {
-  const { userId, collectionId, collectionItemIds, status } = input;
+  const { collectionId, collectionItemIds, status } = input;
+  const { id: userId, isModerator } = sessionUser;
 
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
@@ -964,6 +971,7 @@ export const updateCollectionItemsStatus = async ({
   const { manage, isOwner } = await getUserCollectionPermissionsById({
     id: collectionId,
     userId,
+    isModerator,
   });
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
