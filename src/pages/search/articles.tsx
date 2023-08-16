@@ -20,7 +20,7 @@ import {
 } from '~/components/Search/CustomSearchComponents';
 import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
@@ -29,6 +29,8 @@ import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import Link from 'next/link';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 export default function ArticlesSearch() {
   return (
@@ -76,6 +78,19 @@ export function ArticlesHitList() {
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes } = useSearchLayoutStyles();
+  const currentUser = useCurrentUser();
+  const { tags: hiddenTags, users: hiddenUsers } = useHiddenPreferencesContext();
+
+  const articles = useMemo(() => {
+    const filtered = hits.filter((x) => {
+      if (x.user.id === currentUser?.id) return true;
+      if (hiddenUsers.get(x.user.id)) return false;
+      for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
+      return true;
+    });
+
+    return filtered;
+  }, [hits, hiddenTags, hiddenUsers, currentUser]);
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -128,7 +143,7 @@ export function ArticlesHitList() {
           gridTemplateColumns: `repeat(auto-fill, minmax(300px, 1fr))`,
         }}
       >
-        {hits.map((hit) => {
+        {articles.map((hit) => {
           return <ArticleCard key={hit.id} data={hit} />;
         })}
       </Box>
