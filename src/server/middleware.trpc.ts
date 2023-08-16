@@ -93,7 +93,7 @@ export function cacheIt<TInput extends object>({
     }
 
     const result = await next();
-    if (result.ok) {
+    if (result.ok && ctx.cache?.canCache) {
       await redis.set(cacheKey, toJson(result.data), {
         EX: ttl,
       });
@@ -118,7 +118,7 @@ export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
-    if (ctx.cache) {
+    if (ctx.cache?.canCache) {
       ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;
       ctx.cache.edgeTTL = reqTTL;
       ctx.cache.staleWhileRevalidate = 30;

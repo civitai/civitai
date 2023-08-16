@@ -193,7 +193,12 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getModelsWithImagesAndModelVersions({ input, user: ctx.user });
+    const { isPrivate, ...results } = await getModelsWithImagesAndModelVersions({
+      input,
+      user: ctx.user,
+    });
+    if (isPrivate) ctx.cache.canCache = false;
+    return results;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -27,7 +27,7 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { cacheIt } from '~/server/middleware.trpc';
+import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   changeModelModifierSchema,
@@ -148,6 +148,7 @@ export const modelRouter = router({
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     // .use(applyUserPreferences)
+    .use(edgeCacheIt({ ttl: 60 }))
     .query(getModelsInfiniteHandler),
   getAllPagedSimple: publicProcedure
     .input(getAllModelsSchema)

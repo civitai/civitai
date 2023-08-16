@@ -105,7 +105,6 @@ export const useQueryModels = (
   } = useHiddenPreferencesContext();
   const models = useMemo(() => {
     const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
-    console.time('filter');
     const filtered = arr
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
@@ -130,7 +129,6 @@ export const useQueryModels = (
         };
       })
       .filter(isDefined);
-    console.timeEnd('filter');
 
     return filtered;
   }, [data, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
