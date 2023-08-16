@@ -50,7 +50,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'user.username',
     'category.id',
     'hashes',
-    'tags',
+    'tags.name',
     'triggerWords',
   ];
 

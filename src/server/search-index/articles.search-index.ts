@@ -34,7 +34,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const updateSearchableAttributesTask = await index.updateSearchableAttributes([
     'title',
     'content',
-    'tags',
+    'tags.name',
     'user.username',
   ]);
 
