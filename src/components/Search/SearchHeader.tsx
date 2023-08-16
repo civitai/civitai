@@ -98,7 +98,9 @@ export const SearchHeader = () => {
         { shallow: true }
       );
     } else {
-      router.replace(`/search/${value}?query=${query || ''}`, undefined, { shallow: true });
+      router.replace(`/search/${value}${query ? `?query=${query}` : ''}`, undefined, {
+        shallow: true,
+      });
     }
   };
 

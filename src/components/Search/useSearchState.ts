@@ -150,6 +150,8 @@ export const routing: InstantSearchProps['routing'] = {
           return getRoutingForIndex(index).parseURL({ location });
         }
 
+        // If no index can be matched from the URL, a default empty state will be returned to
+        // instantsearch.
         return { '': {} };
       },
     },
