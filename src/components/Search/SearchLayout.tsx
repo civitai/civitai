@@ -17,7 +17,7 @@ import { routing } from '~/components/Search/useSearchState';
 import { AlgoliaMultipleQueriesQuery, instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client.mjs';
 import { SearchIndex } from '~/components/Search/parsers/base';
-import { InstantSearch, InstantSearchProps } from 'react-instantsearch';
+import { Configure, InstantSearch, InstantSearchProps } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 
@@ -32,7 +32,6 @@ const meilisearch = instantMeiliSearch(
 const searchClient: InstantSearchProps['searchClient'] = {
   ...meilisearch,
   search(requests) {
-    console.log(requests);
     return meilisearch.search(requests);
   },
 };
@@ -131,6 +130,7 @@ export function SearchLayout({
         indexName={indexName}
         routing={routing}
       >
+        <Configure hitsPerPage={50} />
         <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>

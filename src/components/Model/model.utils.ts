@@ -121,6 +121,7 @@ export const useQueryModels = (
           }
           return true;
         });
+
         if (!filteredImages?.length) return null;
 
         return {

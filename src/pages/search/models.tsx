@@ -1,35 +1,25 @@
 import { Stack, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
-import { InstantSearch, useInfiniteHits, useInstantSearch } from 'react-instantsearch';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 
-import { env } from '~/env/client.mjs';
 import {
   ChipRefinementList,
   ClearRefinements,
-  SearchableFilterList,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { routing } from '~/components/Search/useSearchState';
 import { useInView } from 'react-intersection-observer';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { useRouter } from 'next/router';
-
-const searchClient = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { isDefined } from '~/utils/type-guards';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function ModelsSearch() {
-  const router = useRouter();
-
   return (
     <SearchLayout.Root>
       <SearchLayout.Filters>
@@ -83,10 +73,54 @@ const RenderFilters = () => {
 };
 
 export function ModelsHitList() {
+  const currentUser = useCurrentUser();
   const { hits, showMore, isLastPage } = useInfiniteHits<ModelSearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes } = useSearchLayoutStyles();
+  const {
+    models: hiddenModels,
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+  } = useHiddenPreferencesContext();
+  // console.log(hiddenTags, hiddenUsers, hiddenModels, hiddenImages);
+  const models = useMemo(() => {
+    const filtered = hits
+      .filter((x) => {
+        if (x.user.id === currentUser?.id) return true;
+        if (hiddenUsers.get(x.user.id)) return false;
+        if (hiddenModels.get(x.id)) return false;
+        for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
+        return true;
+      })
+      .map(({ images, ...x }) => {
+        const filteredImages = images?.filter((i) => {
+          if (hiddenImages.get(i.id)) return false;
+
+          for (const tag of i.tags ?? []) {
+            if (hiddenTags.get(tag.id)) return false;
+          }
+          return true;
+        });
+
+        if (!filteredImages?.length) return null;
+
+        return {
+          ...x,
+          // Search index stores tag name for searching purposes. We need to convert it back to id
+          tags: x.tags.map((t) => t.id),
+          image: {
+            ...filteredImages[0],
+            // Search index stores tag name for searching purposes. We need to convert it back to id
+            tags: filteredImages[0].tags?.map((t) => t.id),
+          },
+        };
+      })
+      .filter(isDefined);
+
+    return filtered;
+  }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -127,15 +161,8 @@ export function ModelsHitList() {
   return (
     <Stack>
       <Box className={classes.grid}>
-        {hits.map((hit) => {
-          const images = hit.images ?? [];
-
-          const model = {
-            ...hit,
-            image: images[0],
-          };
-
-          return <ModelCard key={hit.id} data={model} />;
+        {models.map((model) => {
+          return <ModelCard key={model.id} data={model} />;
         })}
       </Box>
       {hits.length > 0 && (

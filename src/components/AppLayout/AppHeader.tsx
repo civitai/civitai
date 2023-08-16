@@ -190,7 +190,6 @@ type MenuLink = {
 };
 
 function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSearchComponentProps) {
-  console.log(ref);
   if (isMobile) {
     return (
       <AutocompleteSearch

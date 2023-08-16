@@ -273,7 +273,8 @@ const onFetchItemsToIndex = async ({
   const imagesWithTags = images.map((image) => {
     const imageTags = tagsOnImages
       .filter((tagOnImage) => tagOnImage.imageId === image.id)
-      .map((tagOnImage) => tagOnImage.tag.name);
+      .map((tagOnImage) => tagOnImage.tag);
+
     return {
       ...image,
       tags: imageTags,
