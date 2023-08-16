@@ -45,8 +45,8 @@ export function MasonryGrid<TData>({
         const key = itemId?.(item) ?? index;
         return (
           <div key={key} id={key.toString()}>
-            <RenderComponent index={index} data={item} width={columnWidth} height={columnWidth} />
-            {/* {createRenderElement(RenderComponent, index, item, columnWidth)} */}
+            {/* <RenderComponent index={index} data={item} width={columnWidth} height={columnWidth} /> */}
+            {createRenderElement(RenderComponent, index, item, columnWidth)}
           </div>
         );
       })}
