@@ -16,7 +16,7 @@ import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 
 import { SortBy } from '~/components/Search/CustomSearchComponents';
 import { useInView } from 'react-intersection-observer';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import {
@@ -37,6 +37,8 @@ import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function UserSearch() {
   return (
@@ -73,6 +75,18 @@ export function UserHitList() {
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
   const { classes, cx } = useSearchLayoutStyles();
+  const currentUser = useCurrentUser();
+  const { users: hiddenUsers } = useHiddenPreferencesContext();
+
+  const users = useMemo(() => {
+    const filtered = hits.filter((x) => {
+      if (x.id === currentUser?.id) return true;
+      if (hiddenUsers.get(x.id)) return false;
+      return true;
+    });
+
+    return filtered;
+  }, [hits, hiddenUsers, currentUser]);
 
   // #region [infinite data fetching]
   useEffect(() => {
@@ -119,7 +133,7 @@ export function UserHitList() {
           gridTemplateColumns: `repeat(auto-fill, minmax(350px, 1fr))`,
         }}
       >
-        {hits.map((hit) => {
+        {users.map((hit) => {
           return <CreatorCard key={hit.id} data={hit} />;
         })}
       </Box>
