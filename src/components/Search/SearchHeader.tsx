@@ -1,5 +1,10 @@
 import { useSearchStore } from '~/components/Search/useSearchState';
-import { useInstantSearch, useSearchBox } from 'react-instantsearch';
+import {
+  useInfiniteHits,
+  useInstantSearch,
+  usePagination,
+  useSearchBox,
+} from 'react-instantsearch';
 import {
   Box,
   createStyles,
@@ -24,6 +29,7 @@ import {
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useSearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const useStyles = createStyles((theme) => ({
   wrapper: {
@@ -75,6 +81,8 @@ export const SearchHeader = () => {
   const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
   const [index] = Object.keys(uiState);
   const { query } = useSearchBox();
+  const { nbHits } = usePagination();
+
   const router = useRouter();
   const { classes, theme } = useStyles();
   const { classes: searchLayoutStyles } = useSearchLayoutStyles();
@@ -179,9 +187,36 @@ export const SearchHeader = () => {
     },
   ];
 
+  const titleString: React.ReactElement | string = (() => {
+    if (!query) {
+      return `Searching for ${index}`;
+    }
+
+    const hitsString =
+      nbHits === 1000 ? `Over ${numberWithCommas(nbHits)}` : numberWithCommas(nbHits);
+
+    const queryItem = (
+      <Text color="blue" span>
+        &lsquo;{query}&rsquo;
+      </Text>
+    );
+
+    return (
+      <Text>
+        {nbHits > 0 ? (
+          <>
+            {hitsString} results for {queryItem}
+          </>
+        ) : (
+          <>No results for {queryItem}</>
+        )}
+      </Text>
+    );
+  })();
+
   return (
     <Stack>
-      <Title>{query ? `"${query}"` : `Searching for ${index}`}</Title>
+      <Title order={3}>{titleString}</Title>
       <Box sx={{ overflow: 'hidden' }}>
         <Group spacing="xs" noWrap className={classes.wrapper}>
           <Tooltip label="Filters & sorting" position="bottom" withArrow>
