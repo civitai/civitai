@@ -55,11 +55,11 @@ const getMapped = ({
   data: HiddenPreferenceBase[];
   browsingMode: BrowsingMode;
 }) => {
-  let arr = [...data.filter((x) => x.type === 'always')];
+  const arr = data.filter((x) => x.type === 'always');
   if (browsingMode !== BrowsingMode.All) {
-    arr = [...arr, ...data.filter((x) => x.type === 'hidden')];
+    arr.push(...data.filter((x) => x.type === 'hidden'));
     if (browsingMode !== BrowsingMode.NSFW) {
-      arr = [...arr, ...data.filter((x) => x.type === 'moderated')];
+      arr.push(...data.filter((x) => x.type === 'moderated'));
     }
   }
   return new Map(arr.map((x) => [x.id, true]));

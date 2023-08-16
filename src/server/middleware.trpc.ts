@@ -109,8 +109,12 @@ type EdgeCacheItProps = {
   tags?: (input: any) => string[];
 };
 export function edgeCacheIt({ ttl, expireAt, tags }: EdgeCacheItProps = {}) {
+  if (ttl === undefined) ttl = 60 * 3;
+  else if (ttl === false) ttl = 24 * 60 * 60;
+  if (!isProd) return cacheIt({ ttl });
+
   return middleware(async ({ next, ctx, input }) => {
-    let reqTTL = ttl === false ? 24 * 60 * 60 : ttl ?? 60 * 3;
+    let reqTTL = ttl as number;
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
