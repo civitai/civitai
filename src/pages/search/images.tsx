@@ -67,6 +67,7 @@ function ImagesHitList() {
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
+    isLoading: loadingPreferences,
   } = useHiddenPreferencesContext();
 
   const images = useMemo(() => {
@@ -119,6 +120,16 @@ function ImagesHitList() {
       <Box>
         <Center mt="md">
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+        </Center>
+      </Box>
+    );
+  }
+
+  if (loadingPreferences) {
+    return (
+      <Box>
+        <Center mt="md">
+          <Loader />
         </Center>
       </Box>
     );

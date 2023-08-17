@@ -76,7 +76,11 @@ export function ArticlesHitList() {
   const { ref, inView } = useInView();
   const { classes } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
-  const { tags: hiddenTags, users: hiddenUsers } = useHiddenPreferencesContext();
+  const {
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: loadingPreferences,
+  } = useHiddenPreferencesContext();
 
   const articles = useMemo(() => {
     const filtered = hits.filter((x) => {
@@ -133,6 +137,16 @@ export function ArticlesHitList() {
       <Box>
         <Center mt="md">
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+        </Center>
+      </Box>
+    );
+  }
+
+  if (loadingPreferences) {
+    return (
+      <Box>
+        <Center mt="md">
+          <Loader />
         </Center>
       </Box>
     );

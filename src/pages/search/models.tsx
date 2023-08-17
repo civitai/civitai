@@ -82,6 +82,7 @@ export function ModelsHitList() {
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
+    isLoading: loadingPreferences,
   } = useHiddenPreferencesContext();
 
   const models = useMemo(() => {
@@ -159,6 +160,16 @@ export function ModelsHitList() {
       <Box>
         <Center mt="md">
           <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+        </Center>
+      </Box>
+    );
+  }
+
+  if (loadingPreferences) {
+    return (
+      <Box>
+        <Center mt="md">
+          <Loader />
         </Center>
       </Box>
     );

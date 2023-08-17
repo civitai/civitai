@@ -76,7 +76,7 @@ export function UserHitList() {
   const { ref, inView } = useInView();
   const { classes, cx } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
-  const { users: hiddenUsers } = useHiddenPreferencesContext();
+  const { users: hiddenUsers, isLoading: loadingPreferences } = useHiddenPreferencesContext();
 
   const users = useMemo(() => {
     const filtered = hits.filter((x) => {
@@ -96,6 +96,16 @@ export function UserHitList() {
       showMore?.();
     }
   }, [status, inView, showMore, isLastPage]);
+
+  if (loadingPreferences) {
+    return (
+      <Box>
+        <Center mt="md">
+          <Loader />
+        </Center>
+      </Box>
+    );
+  }
 
   if (hits.length === 0) {
     const NotFound = (
