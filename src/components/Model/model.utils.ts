@@ -80,7 +80,7 @@ export const useQueryModels = (
 ) => {
   filters ??= {};
   const queryUtils = trpc.useContext();
-  const { data, ...rest } = trpc.model.getAll.useInfiniteQuery(filters, {
+  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     trpc: { context: { skipBatch: true } },
@@ -102,14 +102,16 @@ export const useQueryModels = (
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
+    isLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
   const models = useMemo(() => {
+    if (isLoadingHidden) return [];
     const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
     const filtered = arr
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
         if (hiddenUsers.get(x.user.id)) return false;
-        if (hiddenModels.get(x.id)) return false;
+        if (hiddenModels.get(x.id) && !filters?.hidden) return false;
         for (const tag of x.tags) if (hiddenTags.get(tag)) return false;
         return true;
       })
@@ -131,9 +133,18 @@ export const useQueryModels = (
       .filter(isDefined);
 
     return filtered;
-  }, [data, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
+  }, [
+    data,
+    hiddenModels,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    currentUser,
+    isLoadingHidden,
+    filters?.hidden,
+  ]);
 
-  return { data, models, ...rest };
+  return { data, models, isLoading: isLoading || isLoadingHidden, ...rest };
 };
 
 export const useQueryModelCategories = (

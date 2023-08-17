@@ -15,7 +15,7 @@ import React from 'react';
 import { useState, useMemo } from 'react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { HiddenUsersSection } from '~/components/Account/HiddenUsersSection';
-import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { moderationCategories, ModerationCategory } from '~/libs/moderation';
 import { trpc } from '~/utils/trpc';
@@ -33,7 +33,7 @@ export function ModerationCard({
   const user = useCurrentUser();
   const [showNsfw, setShowNsfw] = useState(user?.showNsfw ?? false);
 
-  const tags = useHiddenPreferences().tag;
+  const tags = useHiddenPreferencesData().tag;
   const hiddenTags = tags.filter((x) => x.type === 'hidden').map((x) => x.id);
   const moderationTags = tags.filter((x) => x.type === 'moderated');
 

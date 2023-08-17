@@ -80,8 +80,8 @@ export function ModelCard({ data }: Props) {
     });
   const isFavorite = favoriteModels.find((modelId) => modelId === data.id);
 
-  const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
-  const isHidden = hiddenUsers.get(data.user.id) || hiddenModels.get(data.id);
+  // const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
+  // const isHidden = hiddenUsers.get(data.user.id) || hiddenModels.get(data.id);
 
   const reportOption = (
     <ReportMenuItem
@@ -158,7 +158,7 @@ export function ModelCard({ data }: Props) {
     <FeedCard
       className={!data.image ? classes.noImage : undefined}
       href={`/models/${data.id}/${slugit(data.name)}`}
-      sx={{ opacity: isHidden ? 0.1 : undefined }}
+      // sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
       <InView rootMargin="600px">
         {({ ref, inView }) => (

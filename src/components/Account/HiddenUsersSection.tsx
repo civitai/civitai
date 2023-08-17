@@ -12,7 +12,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
-import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { trpc } from '~/utils/trpc';
 
@@ -21,7 +21,7 @@ export function HiddenUsersSection() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const blockedUsers = useHiddenPreferences().user;
+  const blockedUsers = useHiddenPreferencesData().user;
 
   const { data, isLoading, isFetching } = trpc.user.getAll.useQuery(
     { query: debouncedSearch.trim(), limit: 10 },
