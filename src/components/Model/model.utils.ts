@@ -111,7 +111,7 @@ export const useQueryModels = (
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
         if (hiddenUsers.get(x.user.id)) return false;
-        if (hiddenModels.get(x.id)) return false;
+        if (hiddenModels.get(x.id) && !filters.hidden) return false;
         for (const tag of x.tags) if (hiddenTags.get(tag)) return false;
         return true;
       })
