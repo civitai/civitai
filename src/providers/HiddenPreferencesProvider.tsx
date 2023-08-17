@@ -9,6 +9,7 @@ type HiddenPreferencesState = {
   tags: Map<number, boolean>;
   models: Map<number, boolean>;
   images: Map<number, boolean>;
+  isLoading: boolean;
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -21,7 +22,7 @@ export const useHiddenPreferencesContext = () => {
 
 export const HiddenPreferencesProvider = ({ children }: { children: ReactNode }) => {
   const browsingMode = useFiltersContext((state) => state.browsingMode);
-  const data = useHiddenPreferences();
+  const { data, isLoading } = useHiddenPreferences();
 
   const users = useMemo(() => new Map(data.user.map((user) => [user.id, true])), [data.user]);
   const images = useMemo(
@@ -37,10 +38,11 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   return (
     <HiddenPreferencesContext.Provider
       value={{
-        users: useDeferredValue(users),
-        images: useDeferredValue(images),
-        models: useDeferredValue(models),
-        tags: useDeferredValue(tags),
+        users: users,
+        images: images,
+        models: models,
+        tags: tags,
+        isLoading,
       }}
     >
       {children}

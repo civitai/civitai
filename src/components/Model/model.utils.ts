@@ -80,7 +80,7 @@ export const useQueryModels = (
 ) => {
   filters ??= {};
   const queryUtils = trpc.useContext();
-  const { data, ...rest } = trpc.model.getAll.useInfiniteQuery(filters, {
+  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     trpc: { context: { skipBatch: true } },
@@ -102,8 +102,10 @@ export const useQueryModels = (
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
+    isLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
   const models = useMemo(() => {
+    if (isLoadingHidden) return [];
     const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
     const filtered = arr
       .filter((x) => {
@@ -132,9 +134,9 @@ export const useQueryModels = (
       .filter(isDefined);
 
     return filtered;
-  }, [data, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
+  }, [data, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
 
-  return { data, models, ...rest };
+  return { data, models, isLoading: isLoading || isLoadingHidden, ...rest };
 };
 
 export const useQueryModelCategories = (

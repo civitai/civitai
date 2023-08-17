@@ -1,14 +1,14 @@
 import { Button, Center, Chip, Group, Loader, Stack, Text } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
-import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { trpc } from '~/utils/trpc';
 
 const { openModal, Modal } = createContextModal<{ modelId: number }>({
   name: 'blockModelTags',
   title: 'Hide Tags',
   Element: ({ context, props: { modelId } }) => {
-    const tags = useHiddenPreferences().tag;
+    const tags = useHiddenPreferencesData().tag;
     const allHiddenTags = useMemo(() => tags.filter((x) => x.type === 'hidden'), [tags]);
     const { data, isLoading } = trpc.tag.getAll.useQuery({
       limit: 200,
