@@ -84,6 +84,8 @@ function ImagesHitList() {
     return filtered;
   }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
+  const hiddenItems = hits.length - images.length;
+
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && status === 'idle' && !isLastPage) {
@@ -96,6 +98,14 @@ function ImagesHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
+            {hiddenItems > 0 && (
+              <Text color="dimmed">
+                {hiddenItems} models have been hidden due to your settings.
+              </Text>
+            )}
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
             <Title order={1} inline>
               No images found
             </Title>
@@ -103,9 +113,6 @@ function ImagesHitList() {
               We have a bunch of images, but it looks like we couldn&rsquo;t find any images with
               prompt or tags matching your query.
             </Text>
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
-              <IconCloudOff size={80} />
-            </ThemeIcon>
           </Stack>
         </Center>
       </Box>
@@ -122,6 +129,9 @@ function ImagesHitList() {
 
   return (
     <Stack>
+      {hiddenItems > 0 && (
+        <Text color="dimmed">{hiddenItems} models have been hidden due to your settings.</Text>
+      )}
       <div className={classes.grid}>
         {images.map((hit) => (
           <Box

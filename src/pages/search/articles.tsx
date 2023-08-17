@@ -92,6 +92,8 @@ export function ArticlesHitList() {
     return filtered;
   }, [hits, hiddenTags, hiddenUsers, currentUser]);
 
+  const hiddenItems = hits.length - images.length;
+
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && status === 'idle' && !isLastPage) {
@@ -104,6 +106,14 @@ export function ArticlesHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
+            {hiddenItems > 0 && (
+              <Text color="dimmed">
+                {hiddenItems} articles have been hidden due to your settings.
+              </Text>
+            )}
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
             <Title order={1} inline>
               No articles found
             </Title>
@@ -117,9 +127,6 @@ export function ArticlesHitList() {
                 <Anchor target="_blank">write your own!</Anchor>
               </Link>
             </Text>
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
-              <IconCloudOff size={80} />
-            </ThemeIcon>
           </Stack>
         </Center>
       </Box>
@@ -136,6 +143,9 @@ export function ArticlesHitList() {
 
   return (
     <Stack>
+      {hiddenItems > 0 && (
+        <Text color="dimmed">{hiddenItems} articles have been hidden due to your settings.</Text>
+      )}{' '}
       <Box
         className={classes.grid}
         style={{

@@ -63,17 +63,17 @@ const useStyles = createStyles((theme, _, getRef) => {
       width: `${SIDEBAR_SIZE}px`,
       overflowY: 'auto',
       padding: theme.spacing.md,
-      transition: 'transform 400ms ease',
+      transition: 'transform 200ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+      zIndex: 1000,
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
 
       [theme.fn.smallerThan('sm')]: {
         top: 0,
-        zIndex: 1000,
         height: '100vh',
         left: '-100vw',
         width: '100vw',
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
         position: 'fixed',
       },
     },
@@ -82,7 +82,9 @@ const useStyles = createStyles((theme, _, getRef) => {
       ref: contentRef,
       width: '100%',
       paddingLeft: 0,
-      transition: 'padding-left 400ms ease',
+      // TODO: Performance wise - padding left is not the best route here.
+      // We should probably use a transform instead
+      transition: 'padding-left 200ms ease',
     },
 
     sidebarOpen: {

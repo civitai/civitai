@@ -18,6 +18,8 @@ import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchL
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import trieMemoize from 'trie-memoize';
+import OneKeyMap from '@essentials/one-key-map';
 
 export default function ModelsSearch() {
   return (
@@ -122,6 +124,8 @@ export function ModelsHitList() {
     return filtered;
   }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
+  const hiddenItems = hits.length - models.length;
+
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && status === 'idle' && !isLastPage) {
@@ -134,6 +138,14 @@ export function ModelsHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
+            {hiddenItems > 0 && (
+              <Text color="dimmed">
+                {hiddenItems} models have been hidden due to your settings.
+              </Text>
+            )}
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
             <Title order={1} inline>
               No models found
             </Title>
@@ -141,9 +153,6 @@ export function ModelsHitList() {
               We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
               query.
             </Text>
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
-              <IconCloudOff size={80} />
-            </ThemeIcon>
           </Stack>
         </Center>
       </Box>
@@ -160,9 +169,12 @@ export function ModelsHitList() {
 
   return (
     <Stack>
+      {hiddenItems > 0 && (
+        <Text color="dimmed">{hiddenItems} models have been hidden due to your settings.</Text>
+      )}
       <Box className={classes.grid}>
-        {models.map((model) => {
-          return <ModelCard key={model.id} data={model} />;
+        {models.map((model, index) => {
+          return <div key={index}>{createRenderElement(ModelCard, index, model)}</div>;
         })}
       </Box>
       {hits.length > 0 && (
@@ -177,3 +189,8 @@ export function ModelsHitList() {
 ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
   return <SearchLayout indexName="models">{page}</SearchLayout>;
 };
+
+const createRenderElement = trieMemoize(
+  [OneKeyMap, {}, WeakMap],
+  (RenderComponent, index, model) => <RenderComponent index={index} data={model} />
+);

@@ -88,6 +88,8 @@ export function UserHitList() {
     return filtered;
   }, [hits, hiddenUsers, currentUser]);
 
+  const hiddenItems = hits.length - users.length;
+
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && status === 'idle' && !isLastPage) {
@@ -100,6 +102,14 @@ export function UserHitList() {
       <Box>
         <Center>
           <Stack spacing="md" align="center" maw={800}>
+            {hiddenItems > 0 && (
+              <Text color="dimmed">
+                {hiddenItems} articles have been hidden due to your settings.
+              </Text>
+            )}
+            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+              <IconCloudOff size={80} />
+            </ThemeIcon>
             <Title order={1} inline>
               No users found
             </Title>
@@ -107,9 +117,6 @@ export function UserHitList() {
               We have a bunch of users, but it looks like we couldn&rsquo;t find any matching your
               query.
             </Text>
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
-              <IconCloudOff size={80} />
-            </ThemeIcon>
           </Stack>
         </Center>
       </Box>
@@ -126,6 +133,9 @@ export function UserHitList() {
 
   return (
     <Stack>
+      {hiddenItems > 0 && (
+        <Text color="dimmed">{hiddenItems} articles have been hidden due to your settings.</Text>
+      )}
       <Box
         className={cx(classes.grid)}
         style={{
