@@ -116,3 +116,7 @@ export enum CollectionSort {
   MostContributors = 'Most Followers',
   Newest = 'Newest',
 }
+
+export enum SignalMessages {
+  BuzzUpdate = 'buzz:update',
+}
