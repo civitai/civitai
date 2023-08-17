@@ -111,7 +111,7 @@ export const useQueryModels = (
       .filter((x) => {
         if (x.user.id === currentUser?.id) return true;
         if (hiddenUsers.get(x.user.id)) return false;
-        if (hiddenModels.get(x.id) && !filters.hidden) return false;
+        if (hiddenModels.get(x.id) && !filters?.hidden) return false;
         for (const tag of x.tags) if (hiddenTags.get(tag)) return false;
         return true;
       })
@@ -133,7 +133,16 @@ export const useQueryModels = (
       .filter(isDefined);
 
     return filtered;
-  }, [data, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
+  }, [
+    data,
+    hiddenModels,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    currentUser,
+    isLoadingHidden,
+    filters?.hidden,
+  ]);
 
   return { data, models, isLoading: isLoading || isLoadingHidden, ...rest };
 };
