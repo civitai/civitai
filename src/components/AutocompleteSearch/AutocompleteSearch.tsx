@@ -38,6 +38,17 @@ import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/
 import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
 import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/images';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import {
+  applyUserPreferencesArticles,
+  applyUserPreferencesImages,
+  applyUserPreferencesModels,
+  applyUserPreferencesUsers,
+} from '~/components/Search/search.utils';
+import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
+import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
+import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -132,13 +143,61 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
     const [search, setSearch] = useState(query);
     const [debouncedSearch] = useDebouncedValue(search, 300);
 
+    const currentUser = useCurrentUser();
+    const {
+      models: hiddenModels,
+      images: hiddenImages,
+      tags: hiddenTags,
+      users: hiddenUsers,
+      isLoading: loadingPreferences,
+    } = useHiddenPreferencesContext();
+
     // Prep items to display in dropdown
     const items = useMemo(() => {
       if (!results || !results.nbHits) return [];
 
-      type Item = AutocompleteItem & { hit: Hit | null };
-      const items: Item[] = hits.map((hit) => {
+      let filteredResults: (
+        | ModelSearchIndexRecord
+        | ArticleSearchIndexRecord
+        | ImageSearchIndexRecord
+        | UserSearchIndexRecord
+      )[] = [];
+      const opts = {
+        currentUserId: currentUser?.id,
+        hiddenImages: hiddenImages,
+        hiddenTags: hiddenTags,
+        hiddenUsers: hiddenUsers,
+        hiddenModels,
+      };
+
+      if (indexName === 'models') {
+        filteredResults = applyUserPreferencesModels({
+          ...opts,
+          items: hits as unknown as ModelSearchIndexRecord[],
+        });
+      } else if (indexName === 'articles') {
+        filteredResults = applyUserPreferencesArticles({
+          ...opts,
+          items: hits as unknown as ArticleSearchIndexRecord[],
+        });
+      } else if (indexName === 'images') {
+        filteredResults = applyUserPreferencesImages({
+          ...opts,
+          items: hits as unknown as ImageSearchIndexRecord[],
+        });
+      } else if (indexName === 'users') {
+        filteredResults = applyUserPreferencesUsers({
+          ...opts,
+          items: hits as unknown as UserSearchIndexRecord[],
+        });
+      } else {
+        filteredResults = [];
+      }
+
+      type Item = AutocompleteItem & { hit: any | null };
+      const items: Item[] = filteredResults.map((hit) => {
         const anyHit = hit as any;
+
         return {
           // Value isn't really used, but better safe than sorry:
           value: anyHit?.name || anyHit?.title || anyHit?.username || anyHit?.id,

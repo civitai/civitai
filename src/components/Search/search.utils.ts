@@ -29,7 +29,7 @@ export const applyUserPreferencesModels = <T>({
   hiddenImages: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
-  currentUserId: number;
+  currentUserId?: number | null;
 }) => {
   const filtered = items
     .filter((x) => {
@@ -86,7 +86,7 @@ export const applyUserPreferencesImages = <T>({
   hiddenImages: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
-  currentUserId: number;
+  currentUserId?: number | null;
 }) => {
   const filtered = items.filter((x) => {
     if (x.user.id === currentUserId) return true;
@@ -116,7 +116,7 @@ export const applyUserPreferencesArticles = <T>({
   }[];
   hiddenTags: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
-  currentUserId: number;
+  currentUserId?: number | null;
 }) => {
   const filtered = items.filter((x) => {
     if (x.user.id === currentUserId) return true;
@@ -137,7 +137,7 @@ export const applyUserPreferencesUsers = <T>({
     id: number;
   }[];
   hiddenUsers: Map<number, boolean>;
-  currentUserId: number;
+  currentUserId?: number | null;
 }) => {
   const filtered = items.filter((x) => {
     if (x.id === currentUserId) return true;
