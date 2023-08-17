@@ -17,6 +17,7 @@ import { useRouter } from 'next/router';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { applyUserPreferencesImages } from '~/components/Search/search.utils';
 
 export default function ImageSearch() {
   return (
@@ -63,7 +64,6 @@ function ImagesHitList() {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const {
-    models: hiddenModels,
     images: hiddenImages,
     tags: hiddenTags,
     users: hiddenUsers,
@@ -71,16 +71,14 @@ function ImagesHitList() {
   } = useHiddenPreferencesContext();
 
   const images = useMemo(() => {
-    const filtered = hits.filter((x) => {
-      if (x.user.id === currentUser?.id) return true;
-      if (hiddenUsers.get(x.user.id)) return false;
-      if (hiddenImages.get(x.id)) return false;
-      for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
-      return true;
+    return applyUserPreferencesImages<ImageSearchIndexRecord>({
+      items: hits,
+      hiddenImages,
+      hiddenTags,
+      hiddenUsers,
+      currentUserId: currentUser.id,
     });
-
-    return filtered;
-  }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
+  }, [hits, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - images.length;
 

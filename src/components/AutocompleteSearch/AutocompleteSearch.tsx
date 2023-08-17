@@ -126,7 +126,7 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
 
     const { query, refine: setQuery } = useSearchBox(searchBoxProps);
     // TODO: Needs to be refactored to support hit type based off of indexName
-    const { hits, results } = useHits<ModelSearchIndexRecord>();
+    const { hits, results } = useHits();
 
     const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
     const [search, setSearch] = useState(query);
@@ -137,11 +137,14 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
       if (!results || !results.nbHits) return [];
 
       type Item = AutocompleteItem & { hit: Hit | null };
-      const items: Item[] = hits.map((hit) => ({
-        // Value isn't really used, but better safe than sorry:
-        value: hit.id.toString(),
-        hit,
-      }));
+      const items: Item[] = hits.map((hit) => {
+        const anyHit = hit as any;
+        return {
+          // Value isn't really used, but better safe than sorry:
+          value: anyHit?.name || anyHit?.title || anyHit?.username || anyHit?.id,
+          hit,
+        };
+      });
       // If there are more results than the default limit,
       // then we add a "view more" option
       if (results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)

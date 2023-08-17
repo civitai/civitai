@@ -20,6 +20,7 @@ import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import trieMemoize from 'trie-memoize';
 import OneKeyMap from '@essentials/one-key-map';
+import { applyUserPreferencesModels } from '~/components/Search/search.utils';
 
 export default function ModelsSearch() {
   return (
@@ -86,40 +87,14 @@ export function ModelsHitList() {
   } = useHiddenPreferencesContext();
 
   const models = useMemo(() => {
-    const filtered = hits
-      .filter((x) => {
-        if (x.user.id === currentUser?.id) return true;
-        if (hiddenUsers.get(x.user.id)) return false;
-        if (hiddenModels.get(x.id)) return false;
-        for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
-        return true;
-      })
-      .map(({ images, ...x }) => {
-        const filteredImages = images?.filter((i) => {
-          if (hiddenImages.get(i.id)) return false;
-
-          for (const tag of i.tags ?? []) {
-            if (hiddenTags.get(tag.id)) return false;
-          }
-          return true;
-        });
-
-        if (!filteredImages?.length) return null;
-
-        return {
-          ...x,
-          // Search index stores tag name for searching purposes. We need to convert it back to id
-          tags: x.tags.map((t) => t.id),
-          image: {
-            ...filteredImages[0],
-            // Search index stores tag name for searching purposes. We need to convert it back to id
-            tags: filteredImages[0].tags?.map((t) => t.id),
-          },
-        };
-      })
-      .filter(isDefined);
-
-    return filtered;
+    return applyUserPreferencesModels<ModelSearchIndexRecord>({
+      items: hits,
+      hiddenModels,
+      hiddenImages,
+      hiddenTags,
+      hiddenUsers,
+      currentUserId: currentUser?.id,
+    });
   }, [hits, hiddenModels, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - models.length;

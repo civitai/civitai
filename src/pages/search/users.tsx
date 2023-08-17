@@ -39,6 +39,7 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { applyUserPreferencesUsers } from '~/components/Search/search.utils';
 
 export default function UserSearch() {
   return (
@@ -79,13 +80,11 @@ export function UserHitList() {
   const { users: hiddenUsers, isLoading: loadingPreferences } = useHiddenPreferencesContext();
 
   const users = useMemo(() => {
-    const filtered = hits.filter((x) => {
-      if (x.id === currentUser?.id) return true;
-      if (hiddenUsers.get(x.id)) return false;
-      return true;
+    return applyUserPreferencesUsers<UserSearchIndexRecord>({
+      items: hits,
+      hiddenUsers,
+      currentUserId: currentUser?.id,
     });
-
-    return filtered;
   }, [hits, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - users.length;

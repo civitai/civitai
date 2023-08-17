@@ -31,6 +31,7 @@ import Link from 'next/link';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { applyUserPreferencesArticles } from '~/components/Search/search.utils';
 
 export default function ArticlesSearch() {
   return (
@@ -83,14 +84,12 @@ export function ArticlesHitList() {
   } = useHiddenPreferencesContext();
 
   const articles = useMemo(() => {
-    const filtered = hits.filter((x) => {
-      if (x.user.id === currentUser?.id) return true;
-      if (hiddenUsers.get(x.user.id)) return false;
-      for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
-      return true;
+    return applyUserPreferencesArticles<ArticleSearchIndexRecord>({
+      items: hits,
+      hiddenTags,
+      hiddenUsers,
+      currentUserId: currentUser.id,
     });
-
-    return filtered;
   }, [hits, hiddenTags, hiddenUsers, currentUser]);
 
   const hiddenItems = hits.length - articles.length;
