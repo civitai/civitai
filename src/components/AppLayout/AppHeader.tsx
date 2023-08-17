@@ -70,6 +70,7 @@ import { openSpotlight } from '@mantine/spotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { UserBuzzBadge } from '../User/UserBuzzBadge';
+import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 
 const HEADER_HEIGHT = 70;
 
@@ -425,7 +426,13 @@ export function AppHeader() {
             <Text weight={600}>Buzz</Text>
             <UserBuzzBadge user={currentUser} size={badgeSize} p={4} iconSize={12} />
           </Group>
-          <Button variant="outline" size={buttonSize} px={12} compact>
+          <Button
+            variant="outline"
+            size={buttonSize}
+            px={12}
+            onClick={() => openBuyBuzzModal({})}
+            compact
+          >
             Buy more
           </Button>
         </Group>

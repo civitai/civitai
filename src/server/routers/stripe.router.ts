@@ -6,6 +6,7 @@ import {
   getUserSubscriptionHandler,
   createDonateSessionHandler,
   getBuzzPackagesHandler,
+  createBuzzSessionHandler,
 } from './../controllers/stripe.controller';
 import { publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import * as Schema from '../schema/stripe.schema';
@@ -26,4 +27,7 @@ export const stripeRouter = router({
     .input(Schema.createDonateSessionSchema)
     .mutation(createDonateSessionHandler),
   getBuzzPackages: publicProcedure.query(getBuzzPackagesHandler),
+  createBuzzSession: protectedProcedure
+    .input(Schema.createBuzzSessionSchema)
+    .mutation(createBuzzSessionHandler),
 });

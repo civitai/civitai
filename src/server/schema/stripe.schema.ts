@@ -11,3 +11,6 @@ export const getUserSubscriptionSchema = z.object({ userId: z.number() });
 
 export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>;
 export const createDonateSessionSchema = z.object({ returnUrl: z.string() });
+
+export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
+export const createBuzzSessionSchema = z.object({ priceId: z.string(), returnUrl: z.string() });

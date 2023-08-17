@@ -11,6 +11,7 @@ import { protectedProcedure, router } from '~/server/trpc';
 
 export const buzzRouter = router({
   getUserAccount: protectedProcedure.query(getUserAccountHandler),
+  // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: protectedProcedure
     .input(getUserBuzzTransactionsSchema)
     .query(getUserTransactionsHandler),

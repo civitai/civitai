@@ -200,6 +200,29 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
+export const createBuzzSession = async ({
+  customerId,
+  user,
+  returnUrl,
+  priceId,
+}: Schema.CreateBuzzSessionInput & { customerId?: string; user: Schema.CreateCustomerInput }) => {
+  const stripe = await getServerStripe();
+
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  const session = await stripe.checkout.sessions.create({
+    customer: customerId,
+    cancel_url: returnUrl,
+    line_items: [{ price: priceId, quantity: 1 }],
+    mode: 'payment',
+    success_url: returnUrl,
+  });
+
+  return { sessionId: session.id, url: session.url };
+};
+
 export const upsertSubscription = async (
   subscription: Stripe.Subscription,
   customerId: string,
@@ -379,7 +402,7 @@ export const cancelSubscription = async ({
 };
 
 export const getBuzzPackages = async () => {
-  const products = await dbRead.product.findMany({
+  const [buzzProduct] = await dbRead.product.findMany({
     where: { active: true, metadata: { path: ['tier'], equals: 'buzz' } },
     select: {
       id: true,
@@ -388,9 +411,10 @@ export const getBuzzPackages = async () => {
       defaultPriceId: true,
       prices: {
         where: { active: true },
+        orderBy: { unitAmount: { sort: 'asc', nulls: 'last' } },
         select: {
           id: true,
-          type: true,
+          description: true,
           unitAmount: true,
           currency: true,
           metadata: true,
@@ -399,5 +423,5 @@ export const getBuzzPackages = async () => {
     },
   });
 
-  return products;
+  return buzzProduct.prices;
 };

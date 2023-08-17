@@ -10,11 +10,13 @@ import {
   createDonateSession,
   getUserSubscription,
   getBuzzPackages,
+  createBuzzSession,
 } from './../services/stripe.service';
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
 
 import { getPlans } from '~/server/services/stripe.service';
+import { getTRPCErrorFromUnknown } from '@trpc/server';
 
 export const getPlansHandler = async () => {
   return await getPlans();
@@ -97,5 +99,34 @@ export const getBuzzPackagesHandler = async () => {
     return packages;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const createBuzzSessionHandler = async ({
+  input: { priceId, returnUrl },
+  ctx,
+}: {
+  input: Schema.CreateBuzzSessionInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id, email, customerId } = ctx.user;
+    if (!email) throw throwAuthorizationError('email required');
+
+    const result = await createBuzzSession({
+      priceId,
+      customerId,
+      returnUrl,
+      user: { id, email },
+    });
+
+    // await ctx.track.userActivity({
+    //   type: 'Buy',
+    //   targetUserId: id,
+    // });
+
+    return result;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
   }
 };
