@@ -57,6 +57,7 @@
     "@mantine/spotlight": "^5.10.4",
     "@mantine/tiptap": "^5.10.4",
     "@meilisearch/instant-meilisearch": "^0.13.3",
+    "@microsoft/signalr": "^7.0.10",
     "@next-auth/prisma-adapter": "^1.0.5",
     "@next-boost/next-boost": "^0.15.2",
     "@next-boost/redis-cache": "^0.4.0",

@@ -1,7 +1,10 @@
 import { SessionUser } from 'next-auth';
 import { useSession } from 'next-auth/react';
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useCallback, useContext, useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { SignalMessages } from '~/server/common/enums';
+import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 
 export type CivitaiSessionState = SessionUser & {
   isMember: boolean;
@@ -39,6 +42,19 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
 type QueryOptions = { enabled?: boolean };
 export const useQueryBuzzAccount = (options?: QueryOptions) => {
   const { data } = trpc.buzz.getUserAccount.useQuery(undefined, options);
+  const queryUtils = trpc.useContext();
+
+  const onBalanceUpdate = useCallback(
+    (updated: BuzzUpdateSignalSchema) => {
+      queryUtils.buzz.getUserAccount.setData(undefined, (old) => {
+        if (!old) return old;
+        return { ...old, balance: updated.balance };
+      });
+    },
+    [queryUtils]
+  );
+
+  useSignalConnection(SignalMessages.BuzzUpdate, onBalanceUpdate);
 
   return data ?? { balance: 0 };
 };

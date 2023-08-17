@@ -26,6 +26,7 @@ import { questionRouter } from './question.router';
 import { reactionRouter } from './reaction.router';
 import { reportRouter } from './report.router';
 import { resourceReviewRouter } from './resourceReview.router';
+import { signalsRouter } from './signals.router';
 import { stripeRouter } from './stripe.router';
 import { tagRouter } from './tag.router';
 import { trackRouter } from './track.router';
@@ -60,6 +61,7 @@ export const appRouter = router({
   reaction: reactionRouter,
   report: reportRouter,
   resourceReview: resourceReviewRouter,
+  signals: signalsRouter,
   stripe: stripeRouter,
   tag: tagRouter,
   track: trackRouter,
