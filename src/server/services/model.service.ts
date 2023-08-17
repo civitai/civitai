@@ -376,6 +376,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     ? await getImagesForModelVersion({
         modelVersionIds,
         imagesPerVersion: 10,
+        excludedTagIds: input.excludedImageTagIds,
         include: ['tags'],
       })
     : [];
