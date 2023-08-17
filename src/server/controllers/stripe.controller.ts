@@ -1,10 +1,15 @@
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   createCustomer,
   createSubscribeSession,
   createManageSubscriptionSession,
   createDonateSession,
   getUserSubscription,
+  getBuzzPackages,
 } from './../services/stripe.service';
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
@@ -83,4 +88,14 @@ export const createManageSubscriptionSessionHandler = async ({
 }) => {
   if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
   return await createManageSubscriptionSession({ customerId: ctx.user.customerId });
+};
+
+export const getBuzzPackagesHandler = async () => {
+  try {
+    const packages = await getBuzzPackages();
+
+    return packages;
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

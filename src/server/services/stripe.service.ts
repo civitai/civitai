@@ -377,3 +377,27 @@ export const cancelSubscription = async ({
   const stripe = await getServerStripe();
   await stripe.subscriptions.del(subscriptionId);
 };
+
+export const getBuzzPackages = async () => {
+  const products = await dbRead.product.findMany({
+    where: { active: true, metadata: { path: ['tier'], equals: 'buzz' } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      defaultPriceId: true,
+      prices: {
+        where: { active: true },
+        select: {
+          id: true,
+          type: true,
+          unitAmount: true,
+          currency: true,
+          metadata: true,
+        },
+      },
+    },
+  });
+
+  return products;
+};

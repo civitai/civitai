@@ -3,7 +3,11 @@ import { useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
 
-type CivitaiSessionState = SessionUser & { isMember: boolean; refresh: () => void };
+export type CivitaiSessionState = SessionUser & {
+  isMember: boolean;
+  refresh: () => void;
+  balance: number;
+};
 const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);
 export const useCivitaiSessionContext = () => useContext(CivitaiSessionContext);
 
