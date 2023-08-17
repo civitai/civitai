@@ -238,7 +238,7 @@ export const FiltersProvider = ({
   if (!storeRef.current)
     storeRef.current = createFilterStore({
       ...value,
-      browsingMode: !currentUser ? BrowsingMode.SFW : value.browsingMode,
+      browsingMode: !currentUser || !currentUser.showNsfw ? BrowsingMode.SFW : value.browsingMode,
     });
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
