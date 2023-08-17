@@ -6,6 +6,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
 import { useSession } from 'next-auth/react';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 
 type SignalState = {
   connected: boolean;
@@ -19,6 +20,7 @@ export const useSignalContext = () => {
   return context;
 };
 
+// Add possible types to this data structure. Leave any for safeguarding.
 type SignalCallback = (data: BuzzUpdateSignalSchema | any) => void;
 
 export const useSignalConnection = (message: SignalMessages, cb: SignalCallback) => {
@@ -93,6 +95,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         connection,
       }}
     >
+      <SignalNotifications />
       {children}
     </SignalContext.Provider>
   );
