@@ -48,6 +48,7 @@ import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/F
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
+import { SignalProvider } from '~/components/Signals/SignalsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -142,25 +143,27 @@ function MyApp(props: CustomAppProps) {
       <RegisterCatchNavigation />
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
-        <CivitaiSessionProvider>
-          <CookiesProvider value={cookies}>
-            <FiltersProvider value={filters}>
-              <FeatureFlagsProvider flags={flags}>
-                <CivitaiLinkProvider>
-                  <CustomModalsProvider>
-                    <NotificationsProvider>
-                      <FreezeProvider>
-                        <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                      </FreezeProvider>
-                      <GenerationPanel />
-                      <RoutedContextProvider2 />
-                    </NotificationsProvider>
-                  </CustomModalsProvider>
-                </CivitaiLinkProvider>
-              </FeatureFlagsProvider>
-            </FiltersProvider>
-          </CookiesProvider>
-        </CivitaiSessionProvider>
+        <SignalProvider>
+          <CivitaiSessionProvider>
+            <CookiesProvider value={cookies}>
+              <FiltersProvider value={filters}>
+                <FeatureFlagsProvider flags={flags}>
+                  <CivitaiLinkProvider>
+                    <CustomModalsProvider>
+                      <NotificationsProvider>
+                        <FreezeProvider>
+                          <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                        </FreezeProvider>
+                        <GenerationPanel />
+                        <RoutedContextProvider2 />
+                      </NotificationsProvider>
+                    </CustomModalsProvider>
+                  </CivitaiLinkProvider>
+                </FeatureFlagsProvider>
+              </FiltersProvider>
+            </CookiesProvider>
+          </CivitaiSessionProvider>
+        </SignalProvider>
       </SessionProvider>
     </>
   );
