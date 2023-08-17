@@ -2,7 +2,7 @@ import { Button, ButtonProps, Menu } from '@mantine/core';
 import { IconUser, IconUserOff } from '@tabler/icons-react';
 import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -10,7 +10,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
 
-  const users = useHiddenPreferences().user;
+  const users = useHiddenPreferencesData().user;
   const alreadyHiding = users.some((x) => x.id === userId);
   const toggleHiddenMutation = useToggleHiddenPreferences();
 

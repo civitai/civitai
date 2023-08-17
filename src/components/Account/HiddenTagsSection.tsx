@@ -2,7 +2,7 @@ import { ActionIcon, Autocomplete, Badge, Card, Group, Loader, Stack, Text } fro
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
-import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { trpc } from '~/utils/trpc';
 
@@ -11,7 +11,7 @@ export function HiddenTagsSection() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const tags = useHiddenPreferences().tag;
+  const tags = useHiddenPreferencesData().tag;
   const hiddenTags = tags.filter((x) => x.type === 'hidden');
   const moderationTags = tags
     .filter((x) => x.type === 'moderated' || x.type === 'always')
