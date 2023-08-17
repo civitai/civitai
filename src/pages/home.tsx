@@ -83,7 +83,7 @@ export default function Home() {
 
         <Box
           sx={(theme) => ({
-            '& > *:nth-child(even)': {
+            '& > *:nth-of-type(even)': {
               background:
                 theme.colorScheme === 'dark'
                   ? theme.colors.dark[8]

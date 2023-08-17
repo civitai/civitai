@@ -21,6 +21,7 @@ type CacheSettings = {
   edgeTTL?: number;
   staleWhileRevalidate?: number;
   tags?: string[];
+  canCache?: boolean;
 };
 
 const origins = [env.NEXTAUTH_URL, ...(env.TRPC_ORIGINS ?? [])];
@@ -39,6 +40,7 @@ export const createContext = async ({
     browserTTL: session?.user ? 0 : 60,
     edgeTTL: session?.user ? 0 : 60,
     staleWhileRevalidate: session?.user ? 0 : 30,
+    canCache: true,
   };
 
   return {
@@ -60,6 +62,7 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
     browserCacheTTL: 3 * 60,
     edgeCacheTTL: 3 * 60,
     staleWhileRevalidate: 60,
+    canCache: true,
   },
   res,
 });

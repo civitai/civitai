@@ -2,54 +2,37 @@ import { Button, ButtonProps, Menu } from '@mantine/core';
 import { IconUser, IconUserOff } from '@tabler/icons-react';
 import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
 
-  const { data: hidden = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
-  const alreadyHiding = hidden.map((user) => user.id).includes(userId);
+  const users = useHiddenPreferences().user;
+  const alreadyHiding = users.some((x) => x.id === userId);
+  const toggleHiddenMutation = useToggleHiddenPreferences();
 
-  const toggleHideMutation = trpc.user.toggleHide.useMutation({
-    async onMutate() {
-      await queryUtils.user.getHiddenUsers.cancel();
-
-      const prevHidden = queryUtils.user.getHiddenUsers.getData();
-
-      queryUtils.user.getHiddenUsers.setData(undefined, (old = []) =>
-        alreadyHiding
-          ? old.filter((item) => item.id !== userId)
-          : [...old, { id: userId, username: null, image: null, deletedAt: null }]
-      );
-
-      return { prevHidden };
-    },
-    onSuccess() {
-      // Because of optimistic updates, we have to revert the condition to display the correct message
-      showSuccessNotification({
-        title: `User marked as ${!alreadyHiding ? 'show' : 'hidden'}`,
-        message: `Content from this user will${!alreadyHiding ? ' ' : ' not'} show up in your feed`,
-      });
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getHiddenUsers.setData(undefined, context?.prevHidden);
-    },
-    async onSettled() {
-      await queryUtils.user.getHiddenUsers.invalidate();
-      await queryUtils.user.getCreator.invalidate();
-      await queryUtils.user.getLists.invalidate();
-    },
-  });
-  const handleHideClick: MouseEventHandler<HTMLElement> = (e) => {
+  const handleHideClick: MouseEventHandler<HTMLElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleHideMutation.mutate({ targetUserId: userId });
+
+    toggleHiddenMutation
+      .mutateAsync({
+        kind: 'user',
+        data: [{ id: userId }],
+        hidden: !alreadyHiding,
+      })
+      .then(() => {
+        showSuccessNotification({
+          title: `User marked as ${alreadyHiding ? 'show' : 'hidden'}`,
+          message: `Content from this user will${
+            alreadyHiding ? ' ' : ' not'
+          } show up in your feed`,
+        });
+      });
+
     onToggleHide?.();
   };
 
@@ -60,7 +43,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
       <Button
         variant={alreadyHiding ? 'outline' : 'filled'}
         onClick={handleHideClick}
-        loading={toggleHideMutation.isLoading}
+        loading={toggleHiddenMutation.isLoading}
         {...props}
       >
         {alreadyHiding ? 'Unhide' : 'Hide'}

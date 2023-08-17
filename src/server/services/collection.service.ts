@@ -64,6 +64,7 @@ export type CollectionContributorPermissionFlags = {
   isContributor: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
+  publicCollection: boolean;
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
@@ -115,6 +116,7 @@ export const getUserCollectionPermissionsById = async ({
     follow: false,
     isContributor: false,
     isOwner: false,
+    publicCollection: false,
     followPermissions: [],
   };
 
@@ -153,6 +155,7 @@ export const getUserCollectionPermissionsById = async ({
     permissions.read = true;
     permissions.follow = true;
     permissions.followPermissions.push(CollectionContributorPermission.VIEW);
+    permissions.publicCollection = true;
   }
 
   if (collection.write === CollectionWriteConfiguration.Public) {

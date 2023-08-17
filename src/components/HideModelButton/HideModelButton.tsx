@@ -2,53 +2,29 @@ import { Button, ButtonProps, Menu } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 
 export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
 
-  const { data: { Hide: hidden = [] } = { Hide: [] } } = trpc.user.getEngagedModels.useQuery(
-    undefined,
-    { enabled: !!currentUser }
-  );
-  const alreadyHiding = hidden.includes(modelId);
+  const models = useHiddenPreferences().model;
+  const hiddenModels = models.filter((x) => x.type === 'always');
+  const alreadyHiding = hiddenModels.some((x) => x.id === modelId);
 
-  const toggleHideMutation = trpc.user.toggleHideModel.useMutation({
-    async onMutate() {
-      await queryUtils.user.getEngagedModels.cancel();
+  const toggleHiddenMutation = useToggleHiddenPreferences();
 
-      const prevEngaged = queryUtils.user.getEngagedModels.getData();
-
-      // Toggle the model in the Hide list
-      queryUtils.user.getEngagedModels.setData(
-        undefined,
-        ({ Hide = [], ...old } = { Favorite: [], Hide: [] }) => {
-          if (alreadyHiding) return { Hide: Hide.filter((id) => id !== modelId), ...old };
-          return { Hide: [...Hide, modelId], ...old };
-        }
-      );
-
-      return { prevEngaged };
-    },
-    onSuccess() {
-      // Because of optimistic updates, we have to revert the condition to display the correct message
-      showSuccessNotification({
-        title: `Model ${!alreadyHiding ? 'unhidden' : 'hidden'}`,
-        message: `This model will${!alreadyHiding ? ' ' : ' not '}show up in your feed`,
-      });
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getEngagedModels.setData(undefined, context?.prevEngaged);
-    },
-  });
-  const handleHideClick: MouseEventHandler<HTMLElement> = (e) => {
+  const handleHideClick: MouseEventHandler<HTMLElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleHideMutation.mutate({ modelId });
+    toggleHiddenMutation.mutateAsync({ kind: 'model', data: [{ id: modelId }] }).then(() => {
+      showSuccessNotification({
+        title: `Model ${alreadyHiding ? 'unhidden' : 'hidden'}`,
+        message: `This model will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
+      });
+    });
     onToggleHide?.();
   };
 
@@ -59,7 +35,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
       <Button
         variant={alreadyHiding ? 'outline' : 'filled'}
         onClick={handleHideClick}
-        loading={toggleHideMutation.isLoading}
+        loading={toggleHiddenMutation.isLoading}
         {...props}
       >
         {alreadyHiding ? 'Unhide' : 'Hide'}
