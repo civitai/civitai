@@ -145,7 +145,7 @@ export function SearchableMultiSelectRefinementList({
     }
   }, [items, refinedItems]);
 
-  const data = (isFromSearch ? [...refinedItems, ...items] : items).map((item) => ({
+  const data = uniqBy([...refinedItems, ...items], 'value').map((item) => ({
     label: item.label,
     value: item.value,
   }));
