@@ -45,14 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes = [
-    'name',
-    'user.username',
-    'category.id',
-    'hashes',
-    'tags.name',
-    'triggerWords',
-  ];
+  const searchableAttributes = ['name', 'user.username', 'hashes', 'tags.name', 'triggerWords'];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
@@ -105,6 +98,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'type',
     'checkpointType',
     'tags.name',
+    'user.username',
     'version.baseModel',
     'status',
   ];
