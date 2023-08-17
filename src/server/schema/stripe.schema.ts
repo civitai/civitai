@@ -14,3 +14,8 @@ export const createDonateSessionSchema = z.object({ returnUrl: z.string() });
 
 export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
 export const createBuzzSessionSchema = z.object({ priceId: z.string(), returnUrl: z.string() });
+
+export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;
+export const buzzPriceMetadataSchema = z.object({
+  buzzAmount: z.coerce.number().positive(),
+});

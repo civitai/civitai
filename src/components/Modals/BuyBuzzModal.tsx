@@ -64,7 +64,6 @@ const { openModal, Modal } = createContextModal({
               else {
                 const stripe = await getClientStripe();
                 await stripe.redirectToCheckout({ sessionId });
-                // handleClose();
               }
             },
             onError: (error) => {
@@ -94,7 +93,6 @@ const { openModal, Modal } = createContextModal({
             : data.map((buzzPackage) => {
                 if (!buzzPackage.unitAmount) return null;
 
-                const amount = (buzzPackage.unitAmount ?? 0) * 10;
                 const price = (buzzPackage.unitAmount ?? 0) / 100;
 
                 return (
@@ -113,18 +111,18 @@ const { openModal, Modal } = createContextModal({
                       </ThemeIcon>
                       <Stack spacing={0}>
                         <Text size="lg" align="center">
-                          {amount.toLocaleString()}
+                          {buzzPackage.buzzAmount ? buzzPackage.buzzAmount.toLocaleString() : 0}
                         </Text>
                         <Text size="lg" align="center">
-                          {`${buzzPackage.description} buzz`}
+                          {buzzPackage.description ?? 'Buzz'}
                         </Text>
                       </Stack>
                     </Stack>
                     <Card.Section className={classes.priceBanner} py="xs" withBorder inheritPadding>
                       <Center>
-                        <Text color="white" weight="bold" align="center">{`$${price.toFixed(
-                          2
-                        )}`}</Text>
+                        <Text color="white" weight="bold" align="center">
+                          {`$${price.toFixed(2)}`}
+                        </Text>
                       </Center>
                     </Card.Section>
                   </Card>
