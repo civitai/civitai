@@ -106,7 +106,6 @@ export const useQueryModels = (
   } = useHiddenPreferencesContext();
   const models = useMemo(() => {
     if (isLoadingHidden) return [];
-    console.log({ hiddenModels, hiddenImages, hiddenTags, hiddenUsers });
     const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
     const filtered = arr
       .filter((x) => {
