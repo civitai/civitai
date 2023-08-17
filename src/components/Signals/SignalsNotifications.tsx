@@ -23,7 +23,7 @@ export const SignalNotifications = () => {
               <Text weight="bold" span>
                 {Math.abs(updated.delta)} Buzz
               </Text>{' '}
-              has been credited from your account
+              has been debited from your account
             </>
           ),
       });
