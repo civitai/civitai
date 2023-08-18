@@ -159,6 +159,19 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
+  // Determine if we need to update the model index based on any of these images
+  const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
+    SELECT
+      m.id "modelId"
+    FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
+    WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
+  `;
+  const affectedModelIds = new Set(affectedModels.map(({ modelId }) => modelId));
+  // TODO.luis - queue model index update
+
   const indexReadyRecords = images.map(({ tags, meta, ...imageRecord }) => {
     return {
       ...imageRecord,
