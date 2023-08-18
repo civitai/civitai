@@ -48,6 +48,7 @@ import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { SearchPathToIndexMap } from '~/components/Search/useSearchState';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -111,12 +112,19 @@ const useStyles = createStyles((theme) => ({
 
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const router = useRouter();
+  const features = useFeatureFlags();
+
   const targetIndex =
     /\/(model|article|image|user|post)s?\/?/.exec(router.pathname)?.[1] || 'model';
   let indexName = `${targetIndex}s`;
 
   if (indexName === 'posts') {
     indexName = 'images';
+  }
+
+  // Ensure we disable this search
+  if (indexName === 'images' && !features.imageSearch) {
+    indexName = 'models';
   }
 
   return (

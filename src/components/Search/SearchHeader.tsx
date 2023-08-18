@@ -36,6 +36,8 @@ import {
   MODELS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   wrapper: {
@@ -88,6 +90,7 @@ export const SearchHeader = () => {
   const [index] = Object.keys(uiState);
   const { query } = useSearchBox();
   const { nbHits } = usePagination();
+  const features = useFeatureFlags();
 
   const router = useRouter();
   const { classes, theme } = useStyles();
@@ -137,24 +140,26 @@ export const SearchHeader = () => {
       ),
       value: 'models',
     },
-    {
-      label: (
-        <Group align="center" spacing={8} noWrap>
-          <ThemeIcon
-            size={30}
-            color={index === IMAGES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
-            p={6}
-            radius="xl"
-          >
-            <IconPhoto />
-          </ThemeIcon>
-          <Text size="sm" inline>
-            Images
-          </Text>
-        </Group>
-      ),
-      value: 'images',
-    },
+    features.imageSearch
+      ? {
+          label: (
+            <Group align="center" spacing={8} noWrap>
+              <ThemeIcon
+                size={30}
+                color={index === IMAGES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+                p={6}
+                radius="xl"
+              >
+                <IconPhoto />
+              </ThemeIcon>
+              <Text size="sm" inline>
+                Images
+              </Text>
+            </Group>
+          ),
+          value: 'images',
+        }
+      : undefined,
     {
       label: (
         <Group align="center" spacing={8} noWrap>
@@ -191,7 +196,7 @@ export const SearchHeader = () => {
       ),
       value: 'users',
     },
-  ];
+  ].filter(isDefined);
 
   const titleString: React.ReactElement | string = (() => {
     if (!query) {
