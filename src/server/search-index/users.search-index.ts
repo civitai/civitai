@@ -1,4 +1,4 @@
-import { client } from '~/server/meilisearch/client';
+import { updateDocs } from '~/server/meilisearch/client';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
@@ -27,10 +27,6 @@ const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
-  if (!client) {
-    return;
-  }
-
   const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
@@ -257,8 +253,6 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
   return itemsToIndex;
 };
 const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
-  if (!client) return;
-
   // Confirm index setup & working:
   await onIndexSetup({ indexName });
   // Cleanup documents that require deletion:
@@ -280,9 +274,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     if (updateTasks.length > 0) {
-      const updateBaseTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateTasks, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateBaseTasks = await updateDocs({
+        indexName,
+        documents: updateTasks,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
       userTasks.push(...updateBaseTasks);
@@ -313,9 +309,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     if (indexReadyRecords.length === 0) break;
 
-    const tasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const tasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     userTasks.push(...tasks);
 

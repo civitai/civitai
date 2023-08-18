@@ -1,4 +1,4 @@
-import { client } from '~/server/meilisearch/client';
+import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import {
@@ -429,18 +429,22 @@ const onIndexUpdate = async ({
     });
 
     if (updateIndexReadyRecords.length > 0) {
-      const updateBaseTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateIndexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateBaseTasks = await updateDocs({
+        indexName,
+        documents: updateIndexReadyRecords,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
       modelTasks.push(...updateBaseTasks);
     }
 
     if (updateIndexRecordsWithImages.length > 0) {
-      const updateImageTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateIndexRecordsWithImages, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateImageTasks = await updateDocs({
+        indexName,
+        documents: updateIndexRecordsWithImages,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: image tasks for updated items have been added');
 
@@ -475,15 +479,19 @@ const onIndexUpdate = async ({
       break;
     }
 
-    const baseTasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const baseTasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     console.log('onIndexUpdate :: base tasks have been added');
 
-    const imagesTasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexRecordsWithImages, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const imagesTasks = await updateDocs({
+      indexName,
+      documents: indexRecordsWithImages,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     console.log('onIndexUpdate :: image tasks have been added');
 

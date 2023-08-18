@@ -1,4 +1,4 @@
-import { client } from '~/server/meilisearch/client';
+import { client, updateDocs } from '~/server/meilisearch/client';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
@@ -230,9 +230,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     if (updateTasks.length > 0) {
-      const updateBaseTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateTasks, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateBaseTasks = await updateDocs({
+        indexName,
+        documents: updateTasks,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
       tagTasks.push(...updateBaseTasks);
@@ -263,9 +265,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     // Avoids hitting the DB without data.
     if (indexReadyRecords.length === 0) break;
 
-    const tasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const tasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     tagTasks.push(...tasks);
 

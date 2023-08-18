@@ -1,4 +1,4 @@
-import { client } from '~/server/meilisearch/client';
+import { client, updateDocs } from '~/server/meilisearch/client';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
@@ -220,9 +220,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     if (indexReadyRecords.length === 0) break;
 
-    const tasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const tasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
     articlesTasks.push(...tasks);
 
     offset += indexReadyRecords.length;
