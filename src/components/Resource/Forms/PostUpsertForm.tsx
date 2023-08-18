@@ -21,6 +21,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 
 export function PostUpsertForm({ modelVersionId, modelId }: Props) {
   const queryUtils = trpc.useContext();
@@ -86,6 +87,7 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
       loading={createPostMutation.isLoading}
       max={POST_IMAGE_LIMIT}
       count={imagesCount}
+      accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
     />
   );
 }
