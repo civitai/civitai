@@ -359,7 +359,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           status: ModelStatus.Published,
         },
       },
-      tags: { select: { tagId: true } },
+      tagsOnModels: { select: { tagId: true } },
       user: { select: simpleUserSelect },
       hashes: {
         select: modelHashSelect,
@@ -391,7 +391,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     nextCursor,
     isPrivate,
     items: items
-      .map(({ hashes, modelVersions, rank, ...model }) => {
+      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
@@ -403,6 +403,7 @@ export const getModelsWithImagesAndModelVersions = async ({
 
         return {
           ...model,
+          tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           rank: {
             downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
@@ -414,7 +415,6 @@ export const getModelsWithImagesAndModelVersions = async ({
           version,
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
-          tags: model.tags.map((x) => x.tagId),
         };
       })
       .filter(isDefined),
