@@ -13,6 +13,7 @@ async function applyUpvotes() {
   // Get the last sent time
   // --------------------------------------------
   const [lastApplied, setLastApplied] = await getJobDate('last-tags-applied');
+  const now = new Date();
 
   // Apply tags over the threshold
   // --------------------------------------------
@@ -55,11 +56,19 @@ async function applyUpvotes() {
         AND applied.disabled
         AND vote.vote > 5
     )
-    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = NOW()
+    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = ${now}
     WHERE ("tagId", "imageId") IN (
       SELECT "tagId", "imageId" FROM affected
     );
   `;
+
+  // Get affected images to update search index
+  // --------------------------------------------
+  const affectedImageResults = await dbWrite.$queryRaw<{ imageId: number }[]>`
+    SELECT DISTINCT "imageId" FROM "TagsOnImage"
+    WHERE "createdAt" = ${now}
+  `;
+  // TODO.luis - queue search index update
 
   // Update NSFW baseline
   // --------------------------------------------
@@ -91,6 +100,7 @@ async function applyDownvotes() {
   // Get the last sent time
   // --------------------------------------------
   const [lastApplied, setLastApplied] = await getJobDate('last-tags-disabled');
+  const now = new Date();
 
   // Delete tags under the threshold (not moderation)
   // --------------------------------------------
@@ -148,7 +158,7 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= 0
     )
-    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false, "disabledAt" = NOW()
+    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false, "disabledAt" = ${now}
     WHERE ("tagId", "imageId") IN (
       SELECT
         "tagId",
@@ -190,6 +200,14 @@ async function applyDownvotes() {
       WHERE t.type = 'Moderation'
     );
   `;
+
+  // Get affected images to update search index
+  // --------------------------------------------
+  const affectedImageResults = await dbWrite.$queryRaw<{ imageId: number }[]>`
+    SELECT DISTINCT "imageId" FROM "TagsOnImage"
+    WHERE "disabledAt" = ${now}
+  `;
+  // TODO.luis - queue search index update
 
   // Update NSFW baseline
   // --------------------------------------------
