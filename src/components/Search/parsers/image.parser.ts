@@ -17,6 +17,9 @@ const imageSearchParamsSchema = searchParamsSchema
     tags: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
+    users: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
   })
   .partial();
 
@@ -34,6 +37,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const images: ImageSearchParams = (routeState.images || {}) as ImageSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'tags.name': images.tags,
+      'user.username': images.users,
     });
 
     const { query, sortBy } = images;
@@ -48,6 +52,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   },
   stateToRoute: (uiState: UiState) => {
     const tags = uiState.images.refinementList?.['tags.name'];
+    const users = uiState.images.refinementList?.['user.username'];
     const sortBy =
       (uiState.images.sortBy as ImageSearchParams['sortBy']) ||
       'images:rank.reactionCountAllTimeRank:asc';
@@ -56,6 +61,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     const state: ImageSearchParams = {
       tags,
+      users,
       sortBy,
       query,
     };

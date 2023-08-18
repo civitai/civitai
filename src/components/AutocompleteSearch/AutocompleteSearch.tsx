@@ -1,8 +1,6 @@
 import {
-  Anchor,
   AutocompleteItem,
   AutocompleteProps,
-  Center,
   Code,
   HoverCard,
   Text,

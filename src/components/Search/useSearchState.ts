@@ -126,14 +126,11 @@ export const routing: InstantSearchProps['routing'] = {
 
         if (routeState.models) {
           query = QS.stringify(routeState.models);
-        }
-        if (routeState.articles) {
+        } else if (routeState.articles) {
           query = QS.stringify(routeState.articles);
-        }
-        if (routeState.images) {
+        } else if (routeState.images) {
           query = QS.stringify(routeState.images);
-        }
-        if (routeState.users) {
+        } else if (routeState.users) {
           query = QS.stringify(routeState.users);
         }
 
@@ -146,7 +143,6 @@ export const routing: InstantSearchProps['routing'] = {
 
         if (match) {
           const index = match[1] as SearchIndex;
-
           return getRoutingForIndex(index).parseURL({ location });
         }
 

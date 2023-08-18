@@ -56,7 +56,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'rank.commentCountAllTimeRank',
     'rank.reactionCountAllTimeRank',
   ];
-  const filterableAttributes: FilterableAttributes = ['tags.name'];
+  const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(

@@ -60,6 +60,12 @@ const RenderFilters = () => {
         attribute="checkpointType"
       />
       <SearchableMultiSelectRefinementList
+        title="Users"
+        attribute="user.username"
+        sortBy={['count:desc']}
+        searchable={true}
+      />
+      <SearchableMultiSelectRefinementList
         title="Tags"
         attribute="tags.name"
         operator="and"

@@ -94,7 +94,7 @@ export function SearchableMultiSelectRefinementList({
   ...props
 }: RefinementListProps & { title: string }) {
   const { classes } = useStyles();
-  const { items, refine, searchForItems, isFromSearch } = useRefinementList({ ...props });
+  const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
   // We need to keep the state of the select here because the items may dissapear while searching.

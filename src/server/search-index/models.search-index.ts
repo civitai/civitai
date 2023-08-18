@@ -100,6 +100,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'tags.name',
     'user.username',
     'version.baseModel',
+    'user.username',
     'status',
   ];
 

@@ -29,6 +29,9 @@ const modelSearchParamsSchema = searchParamsSchema
     tags: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
+    users: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
   })
   .partial();
 
@@ -50,6 +53,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       type: models.modelType,
       checkpointType: models.checkpointType,
       'tags.name': models.tags,
+      'user.username': models.users,
     });
 
     const { query, sortBy } = models;
@@ -67,6 +71,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const modelType = uiState.models.refinementList?.['type'];
     const checkpointType = uiState.models.refinementList?.['checkpointType'];
     const tags = uiState.models.refinementList?.['tags.name'];
+    const users = uiState.models.refinementList?.['user.username'];
     const sortBy = (uiState.models.sortBy as ModelSearchParams['sortBy']) || ModelDefaultSortBy;
     const { query } = uiState.models;
 
@@ -74,6 +79,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
       baseModel,
       modelType,
       checkpointType,
+      users,
       tags,
       sortBy,
       query,

@@ -58,6 +58,12 @@ const RenderFilters = () => {
           { label: 'Most Discussed', value: 'articles:stats.commentCount:desc' },
           { label: 'Newest', value: 'articles:createdAt:desc' },
         ]}
+      />{' '}
+      <SearchableMultiSelectRefinementList
+        title="Users"
+        attribute="user.username"
+        sortBy={['count:desc']}
+        searchable={true}
       />
       <SearchableMultiSelectRefinementList
         title="Tags"

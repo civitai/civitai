@@ -20,6 +20,9 @@ const articleSearchParamsSchema = searchParamsSchema
     tags: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
+    users: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
   })
   .partial();
 
@@ -37,6 +40,7 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const articles: ArticleSearchParams = (routeState.articles || {}) as ArticleSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'tags.name': articles.tags,
+      'user.username': articles.users,
     });
 
     const { query, sortBy } = articles;
@@ -51,6 +55,7 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   },
   stateToRoute: (uiState: UiState) => {
     const tags = uiState.articles.refinementList?.['tags.name'];
+    const users = uiState.articles.refinementList?.['user.username'];
 
     const sortBy = (uiState.articles.sortBy as ArticleSearchParams['sortBy']) || defaultSortBy;
 
@@ -58,6 +63,7 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     const state: ArticleSearchParams = {
       tags,
+      users,
       sortBy,
       query,
     };

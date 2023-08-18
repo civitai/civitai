@@ -52,7 +52,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
-  const filterableAttributes = ['tags.name'];
+  const filterableAttributes = ['tags.name', 'user.username'];
 
   if (
     // Meilisearch stores sorted.
