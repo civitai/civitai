@@ -18,6 +18,8 @@ import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesImages } from '~/components/Search/search.utils';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 
 export default function ImageSearch() {
   return (
@@ -39,9 +41,9 @@ function RenderFilters() {
       <SortBy
         title="Sort images by"
         items={[
-          { label: 'Most Reactions', value: 'images:rank.reactionCountAllTimeRank:asc' },
-          { label: 'Most Discussed', value: 'images:rank.commentCountAllTimeRank:asc' },
-          { label: 'Newest', value: 'images:createdAt:desc' },
+          { label: 'Most Reactions', value: ImagesSearchIndexSortBy[0] as string },
+          { label: 'Most Discussed', value: ImagesSearchIndexSortBy[1] as string },
+          { label: 'Newest', value: ImagesSearchIndexSortBy[2] as string },
         ]}
       />
       <SearchableMultiSelectRefinementList
@@ -169,5 +171,5 @@ function ImagesHitList() {
 }
 
 ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName="images">{page}</SearchLayout>;
+  return <SearchLayout indexName={IMAGES_SEARCH_INDEX}>{page}</SearchLayout>;
 };

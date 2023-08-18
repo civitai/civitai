@@ -1,4 +1,4 @@
-import { useSearchStore } from '~/components/Search/useSearchState';
+import { IndexToLabel, useSearchStore } from '~/components/Search/useSearchState';
 import {
   useInfiniteHits,
   useInstantSearch,
@@ -30,6 +30,12 @@ import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useSearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { numberWithCommas } from '~/utils/number-helpers';
+import {
+  ARTICLES_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 
 const useStyles = createStyles((theme) => ({
   wrapper: {
@@ -118,7 +124,7 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === 'models' ? theme.colors.dark[7] : 'transparent'}
+            color={index === MODELS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
             p={6}
             radius="xl"
           >
@@ -136,7 +142,7 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === 'images' ? theme.colors.dark[7] : 'transparent'}
+            color={index === IMAGES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
             p={6}
             radius="xl"
           >
@@ -154,7 +160,7 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === 'articles' ? theme.colors.dark[7] : 'transparent'}
+            color={index === ARTICLES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
             p={6}
             radius="xl"
           >
@@ -172,7 +178,7 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === 'users' ? theme.colors.dark[7] : 'transparent'}
+            color={index === USERS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
             p={6}
             radius="xl"
           >
@@ -189,7 +195,7 @@ export const SearchHeader = () => {
 
   const titleString: React.ReactElement | string = (() => {
     if (!query) {
-      return `Searching for ${index}`;
+      return `Searching for ${IndexToLabel[index as keyof typeof IndexToLabel]}`;
     }
 
     const hitsString =

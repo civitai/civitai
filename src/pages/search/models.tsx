@@ -20,6 +20,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import trieMemoize from 'trie-memoize';
 import OneKeyMap from '@essentials/one-key-map';
 import { applyUserPreferencesModels } from '~/components/Search/search.utils';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 
 export default function ModelsSearch() {
   return (
@@ -41,11 +43,11 @@ const RenderFilters = () => {
       <SortBy
         title="Sort models by"
         items={[
-          { label: 'Highest Rated', value: 'models:metrics.weightedRating:desc' },
-          { label: 'Most Downloaded', value: 'models:metrics.downloadCount:desc' },
-          { label: 'Most Liked', value: 'models:metrics.favoriteCount:desc' },
-          { label: 'Most Discussed', value: 'models:metrics.commentCount:desc' },
-          { label: 'Newest', value: 'models:createdAt:desc' },
+          { label: 'Highest Rated', value: ModelSearchIndexSortBy[0] as string },
+          { label: 'Most Downloaded', value: ModelSearchIndexSortBy[1] as string },
+          { label: 'Most Liked', value: ModelSearchIndexSortBy[2] as string },
+          { label: 'Most Discussed', value: ModelSearchIndexSortBy[3] as string },
+          { label: 'Newest', value: ModelSearchIndexSortBy[4] as string },
         ]}
       />
       <ChipRefinementList
@@ -175,7 +177,7 @@ export function ModelsHitList() {
 }
 
 ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName="models">{page}</SearchLayout>;
+  return <SearchLayout indexName={MODELS_SEARCH_INDEX}>{page}</SearchLayout>;
 };
 
 const createRenderElement = trieMemoize(

@@ -40,6 +40,8 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { applyUserPreferencesUsers } from '~/components/Search/search.utils';
+import { USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
 
 export default function UserSearch() {
   return (
@@ -61,10 +63,10 @@ const RenderFilters = () => {
       <SortBy
         title="Sort users by"
         items={[
-          { label: 'Highest Rated', value: 'users:stats.weightedRating:desc' },
-          { label: 'Most Followed', value: 'users:stats.followerCountAllTime:desc' },
-          { label: 'Most Uploads', value: 'users:stats.uploadCountAllTime:desc' },
-          { label: 'Newest', value: 'users:createdAt:desc' },
+          { label: 'Most Followed', value: UsersSearchIndexSortBy[0] as string },
+          { label: 'Highest Rated', value: UsersSearchIndexSortBy[1] as string },
+          { label: 'Most Uploads', value: UsersSearchIndexSortBy[2] as string },
+          { label: 'Newest', value: UsersSearchIndexSortBy[3] as string },
         ]}
       />
     </>
@@ -308,5 +310,5 @@ export function CreatorCard({ data }: { data: UserSearchIndexRecord }) {
 }
 
 UserSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName="users">{page}</SearchLayout>;
+  return <SearchLayout indexName={USERS_SEARCH_INDEX}>{page}</SearchLayout>;
 };

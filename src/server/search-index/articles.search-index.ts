@@ -11,10 +11,11 @@ import {
 } from '~/server/search-index/base.search-index';
 import { MetricTimeframe, Prisma, PrismaClient } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 25;
-const INDEX_ID = 'articles';
+const INDEX_ID = ARTICLES_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {

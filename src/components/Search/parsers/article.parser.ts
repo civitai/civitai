@@ -3,15 +3,16 @@ import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
 import { UiState } from 'instantsearch.js';
+import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ArticlesSearchIndexSortBy = [
-  'articles:stats.favoriteCount:desc',
-  'articles:stats.viewCount:desc',
-  'articles:stats.commentCount:desc',
-  'articles:createdAt:desc',
+  `${ARTICLES_SEARCH_INDEX}:stats.favoriteCount:desc`,
+  `${ARTICLES_SEARCH_INDEX}:stats.viewCount:desc`,
+  `${ARTICLES_SEARCH_INDEX}:stats.commentCount:desc`,
+  `${ARTICLES_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 
-const defaultSortBy = 'articles:stats.favoriteCount:desc';
+const defaultSortBy = ArticlesSearchIndexSortBy[0];
 
 const articleSearchParamsSchema = searchParamsSchema
   .extend({
@@ -34,10 +35,11 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const articleSearchIndexData: ArticleSearchParams | Record<string, string[]> =
       articleSearchIndexResult.success ? articleSearchIndexResult.data : {};
 
-    return { articles: removeEmpty(articleSearchIndexData) };
+    return { [ARTICLES_SEARCH_INDEX]: removeEmpty(articleSearchIndexData) };
   },
   routeToState: (routeState: UiState) => {
-    const articles: ArticleSearchParams = (routeState.articles || {}) as ArticleSearchParams;
+    const articles: ArticleSearchParams = (routeState[ARTICLES_SEARCH_INDEX] ||
+      {}) as ArticleSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'tags.name': articles.tags,
       'user.username': articles.users,
@@ -46,7 +48,7 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const { query, sortBy } = articles;
 
     return {
-      articles: {
+      [ARTICLES_SEARCH_INDEX]: {
         sortBy: sortBy ?? defaultSortBy,
         refinementList,
         query,
@@ -54,12 +56,13 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     };
   },
   stateToRoute: (uiState: UiState) => {
-    const tags = uiState.articles.refinementList?.['tags.name'];
-    const users = uiState.articles.refinementList?.['user.username'];
+    const tags = uiState[ARTICLES_SEARCH_INDEX].refinementList?.['tags.name'];
+    const users = uiState[ARTICLES_SEARCH_INDEX].refinementList?.['user.username'];
 
-    const sortBy = (uiState.articles.sortBy as ArticleSearchParams['sortBy']) || defaultSortBy;
+    const sortBy =
+      (uiState[ARTICLES_SEARCH_INDEX].sortBy as ArticleSearchParams['sortBy']) || defaultSortBy;
 
-    const { query } = uiState.articles;
+    const { query } = uiState[ARTICLES_SEARCH_INDEX];
 
     const state: ArticleSearchParams = {
       tags,
@@ -69,7 +72,7 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     };
 
     return {
-      articles: state,
+      [ARTICLES_SEARCH_INDEX]: state,
     };
   },
 };

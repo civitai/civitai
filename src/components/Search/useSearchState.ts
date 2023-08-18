@@ -6,11 +6,11 @@ import { immer } from 'zustand/middleware/immer';
 import singletonRouter from 'next/router';
 import { InstantSearchProps } from 'react-instantsearch';
 import { createInstantSearchRouterNext } from 'react-instantsearch-router-nextjs';
-import { SearchIndex, InstantSearchRoutingParser } from './parsers/base';
+import { InstantSearchRoutingParser, SearchIndex } from './parsers/base';
 import { ImageSearchParams, imagesInstantSearchRoutingParser } from './parsers/image.parser';
 import {
-  ModelSearchParams,
   modelInstantSearchRoutingParser,
+  ModelSearchParams,
 } from '~/components/Search/parsers/model.parser';
 import {
   ArticleSearchParams,
@@ -20,6 +20,12 @@ import {
   UserSearchParams,
   usersInstantSearchRoutingParser,
 } from '~/components/Search/parsers/user.parser';
+import {
+  ARTICLES_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 
 type StoreState = {
   models: ModelSearchParams;
@@ -33,15 +39,29 @@ type StoreState = {
   setUserSearchParams: (filters: Partial<UserSearchParams>) => void;
 };
 
+export const SearchPathToIndexMap = {
+  ['models']: MODELS_SEARCH_INDEX,
+  ['images']: IMAGES_SEARCH_INDEX,
+  ['articles']: ARTICLES_SEARCH_INDEX,
+  ['users']: USERS_SEARCH_INDEX,
+};
+
+export const IndexToLabel = {
+  [MODELS_SEARCH_INDEX]: 'Models',
+  [IMAGES_SEARCH_INDEX]: 'Images',
+  [ARTICLES_SEARCH_INDEX]: 'Articles',
+  [USERS_SEARCH_INDEX]: 'Users',
+};
+
 export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingParser => {
   switch (index) {
-    case 'models':
+    case MODELS_SEARCH_INDEX:
       return modelInstantSearchRoutingParser;
-    case 'images':
+    case IMAGES_SEARCH_INDEX:
       return imagesInstantSearchRoutingParser;
-    case 'articles':
+    case ARTICLES_SEARCH_INDEX:
       return articlesInstantSearchRoutingParser;
-    case 'users':
+    case USERS_SEARCH_INDEX:
       return usersInstantSearchRoutingParser;
   }
 };
@@ -124,14 +144,14 @@ export const routing: InstantSearchProps['routing'] = {
 
         let query = '';
 
-        if (routeState.models) {
-          query = QS.stringify(routeState.models);
-        } else if (routeState.articles) {
-          query = QS.stringify(routeState.articles);
-        } else if (routeState.images) {
-          query = QS.stringify(routeState.images);
-        } else if (routeState.users) {
-          query = QS.stringify(routeState.users);
+        if (routeState[MODELS_SEARCH_INDEX]) {
+          query = QS.stringify(routeState[MODELS_SEARCH_INDEX]);
+        } else if (routeState[ARTICLES_SEARCH_INDEX]) {
+          query = QS.stringify(routeState[ARTICLES_SEARCH_INDEX]);
+        } else if (routeState[IMAGES_SEARCH_INDEX]) {
+          query = QS.stringify(routeState[IMAGES_SEARCH_INDEX]);
+        } else if (routeState[USERS_SEARCH_INDEX]) {
+          query = QS.stringify(routeState[USERS_SEARCH_INDEX]);
         }
 
         // Needs to be absolute url, otherwise instantsearch complains
@@ -142,8 +162,13 @@ export const routing: InstantSearchProps['routing'] = {
         const match = location.pathname.match(pattern);
 
         if (match) {
-          const index = match[1] as SearchIndex;
-          return getRoutingForIndex(index).parseURL({ location });
+          const key = match[1] as keyof typeof SearchPathToIndexMap;
+
+          if (SearchPathToIndexMap.hasOwnProperty(key)) {
+            const index = SearchPathToIndexMap[key] as SearchIndex;
+
+            return getRoutingForIndex(index).parseURL({ location });
+          }
         }
 
         // If no index can be matched from the URL, a default empty state will be returned to
@@ -154,24 +179,24 @@ export const routing: InstantSearchProps['routing'] = {
   }),
   stateMapping: {
     routeToState(routeState) {
-      if (routeState.models) {
-        return getRoutingForIndex('models').routeToState(routeState);
+      if (routeState[MODELS_SEARCH_INDEX]) {
+        return getRoutingForIndex(MODELS_SEARCH_INDEX).routeToState(routeState);
       }
-      if (routeState.images) {
-        return getRoutingForIndex('images').routeToState(routeState);
+      if (routeState[IMAGES_SEARCH_INDEX]) {
+        return getRoutingForIndex(IMAGES_SEARCH_INDEX).routeToState(routeState);
       }
-      if (routeState.articles) {
-        return getRoutingForIndex('articles').routeToState(routeState);
+      if (routeState[ARTICLES_SEARCH_INDEX]) {
+        return getRoutingForIndex(ARTICLES_SEARCH_INDEX).routeToState(routeState);
       }
-      if (routeState.users) {
-        return getRoutingForIndex('users').routeToState(routeState);
+      if (routeState[USERS_SEARCH_INDEX]) {
+        return getRoutingForIndex(USERS_SEARCH_INDEX).routeToState(routeState);
       }
 
       return routeState;
     },
     stateToRoute(uiState) {
       const [index] = Object.keys(uiState);
-      const routing = getRoutingForIndex(index ? (index as SearchIndex) : 'models');
+      const routing = getRoutingForIndex(index ? (index as SearchIndex) : MODELS_SEARCH_INDEX);
       return routing.stateToRoute(uiState);
     },
   },
