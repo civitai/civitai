@@ -159,9 +159,19 @@ export default RateLimitedEndpoint(
     if (!file) return errorResponse(404, 'Model file not found');
 
     // Track download
-    if (userId) {
-      try {
-        const now = new Date();
+    try {
+      const now = new Date();
+
+      const tracker = new Tracker(req, res);
+      await tracker.modelVersionEvent({
+        type: 'Download',
+        modelId: modelVersion.model.id,
+        modelVersionId: modelVersion.id,
+        nsfw: modelVersion.model.nsfw,
+        time: now,
+      });
+
+      if (userId) {
         await dbWrite.downloadHistory.upsert({
           where: {
             userId_modelVersionId: {
@@ -180,25 +190,15 @@ export default RateLimitedEndpoint(
           },
         });
 
-        const tracker = new Tracker(req, res);
-        await tracker.modelVersionEvent({
-          type: 'Download',
+        await playfab.trackEvent(userId, {
+          eventName: 'user_download_model',
           modelId: modelVersion.model.id,
           modelVersionId: modelVersion.id,
-          nsfw: modelVersion.model.nsfw,
-          time: now,
         });
-
-        if (userId)
-          await playfab.trackEvent(userId, {
-            eventName: 'user_download_model',
-            modelId: modelVersion.model.id,
-            modelVersionId: modelVersion.id,
-          });
-      } catch (error) {
-        console.error(error);
-        return errorResponse(500, 'Invalid database operation');
       }
+    } catch (error) {
+      console.error(error);
+      return errorResponse(500, 'Invalid database operation');
     }
 
     const fileName = getDownloadFilename({ model: modelVersion.model, modelVersion, file });
