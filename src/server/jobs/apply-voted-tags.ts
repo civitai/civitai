@@ -1,6 +1,8 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
+import { imagesSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '@prisma/client';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -68,7 +70,13 @@ async function applyUpvotes() {
     SELECT DISTINCT "imageId" FROM "TagsOnImage"
     WHERE "createdAt" = ${now}
   `;
-  // TODO.luis - queue search index update
+
+  await imagesSearchIndex.queueUpdate(
+    affectedImageResults.map(({ imageId }) => ({
+      id: imageId,
+      action: SearchIndexUpdateQueueAction.Update,
+    }))
+  );
 
   // Update NSFW baseline
   // --------------------------------------------
@@ -207,7 +215,13 @@ async function applyDownvotes() {
     SELECT DISTINCT "imageId" FROM "TagsOnImage"
     WHERE "disabledAt" = ${now}
   `;
-  // TODO.luis - queue search index update
+
+  await imagesSearchIndex.queueUpdate(
+    affectedImageResults.map(({ imageId }) => ({
+      id: imageId,
+      action: SearchIndexUpdateQueueAction.Update,
+    }))
+  );
 
   // Update NSFW baseline
   // --------------------------------------------
