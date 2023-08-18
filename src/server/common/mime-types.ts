@@ -25,6 +25,6 @@ export const MEDIA_TYPE: Record<string, MediaType> = {
   [MIME_TYPES.wav]: MediaType.audio,
 } as const;
 
-export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.webp];
+export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg];
 export const VIDEO_MIME_TYPE = [MIME_TYPES.mp4, MIME_TYPES.webm];
 export const AUDIO_MIME_TYPE = [MIME_TYPES.mp3, MIME_TYPES.wav];

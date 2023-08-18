@@ -18,6 +18,9 @@ export function ImageDropzone({
 
   const canAddFiles = max - count > 0;
   const disabled = !canAddFiles || initialDisabled;
+  // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
+  const fileExtensions = accept.map((type) => type.replace(/.*\//, '.'));
+
   const handleDrop = (files: File[]) => {
     onDrop?.(files.slice(0, max - count));
   };
@@ -58,6 +61,7 @@ export function ImageDropzone({
           </Text>
           <Text size="sm" color="dimmed" inline mt={7}>
             {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+            {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
           </Text>
         </div>
       </Group>

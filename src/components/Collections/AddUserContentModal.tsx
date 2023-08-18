@@ -41,6 +41,7 @@ import {
 import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
@@ -156,6 +157,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
               label="Drop or click to select your images to add to this collection"
               onDrop={handleDropImages}
               count={files.length}
+              accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
             />
             {files.length > 0 ? (
               <SimpleGrid
