@@ -76,7 +76,7 @@ function ImagesHitList() {
       hiddenImages,
       hiddenTags,
       hiddenUsers,
-      currentUserId: currentUser.id,
+      currentUserId: currentUser?.id,
     });
   }, [hits, hiddenImages, hiddenTags, hiddenUsers, currentUser]);
 

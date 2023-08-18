@@ -16,7 +16,6 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
-import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import trieMemoize from 'trie-memoize';
 import OneKeyMap from '@essentials/one-key-map';

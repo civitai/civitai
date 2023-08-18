@@ -32,22 +32,14 @@ import {
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
-  AutocompleteItem & { hit: Hit<ModelSearchIndexRecord> }
+  AutocompleteItem & { hit: Hit<ModelSearchIndexRecord & { image: any }> }
 >(({ value, hit, ...props }, ref) => {
   const features = useFeatureFlags();
   const { classes, theme } = useSearchItemStyles();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { images, user, nsfw, type, category, metrics, version } = hit;
-  let coverImage = images[0];
-  for (const image of images) {
-    if (coverImage.nsfw === 'None') break;
-    if (image.nsfw === 'None') {
-      coverImage = image;
-      break;
-    }
-  }
+  const { image: coverImage, user, nsfw, type, category, metrics, version } = hit;
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>

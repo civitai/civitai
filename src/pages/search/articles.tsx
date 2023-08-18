@@ -88,7 +88,7 @@ export function ArticlesHitList() {
       items: hits,
       hiddenTags,
       hiddenUsers,
-      currentUserId: currentUser.id,
+      currentUserId: currentUser?.id,
     });
   }, [hits, hiddenTags, hiddenUsers, currentUser]);
 
