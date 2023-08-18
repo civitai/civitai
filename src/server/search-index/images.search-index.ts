@@ -100,6 +100,7 @@ const onFetchItemsToIndex = async ({
   db,
   whereOr,
   indexName,
+  isIndexUpdate,
   ...queryProps
 }: {
   db: PrismaClient;
@@ -107,6 +108,7 @@ const onFetchItemsToIndex = async ({
   whereOr?: Prisma.Enumerable<Prisma.ImageWhereInput>;
   skip?: number;
   take?: number;
+  isIndexUpdate?: boolean;
 }) => {
   const offset = queryProps.skip || 0;
   console.log(
@@ -159,8 +161,10 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  // Determine if we need to update the model index based on any of these images
-  const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
+  // No need for this to ever happen during reset or re-index.
+  if (isIndexUpdate) {
+    // Determine if we need to update the model index based on any of these images
+    const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
     SELECT
       m.id "modelId"
     FROM "Image" i
@@ -169,14 +173,16 @@ const onFetchItemsToIndex = async ({
     JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
     WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
   `;
-  const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
 
-  await modelsSearchIndex.queueUpdate(
-    affectedModelIds.map((id) => ({
-      id: id,
-      action: SearchIndexUpdateQueueAction.Update,
-    }))
-  );
+    const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
+
+    await modelsSearchIndex.queueUpdate(
+      affectedModelIds.map((id) => ({
+        id: id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
+    );
+  }
 
   const indexReadyRecords = images.map(({ tags, meta, ...imageRecord }) => {
     return {
@@ -224,6 +230,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
           in: itemIds,
         },
       },
+      isIndexUpdate: true,
     });
 
     itemsToIndex.push(...newItems);
@@ -284,6 +291,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
             },
           ]
         : undefined,
+      isIndexUpdate: !!lastUpdatedAt,
     });
 
     // Avoids hitting the DB without data.
