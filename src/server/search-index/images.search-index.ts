@@ -16,15 +16,14 @@ import {
 } from '~/server/search-index/base.search-index';
 import {
   ImageIngestionStatus,
-  MetricTimeframe,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { imageSelect } from '~/server/selectors/image.selector';
 import { getImageV2Select } from '../selectors/imagev2.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
@@ -170,8 +169,14 @@ const onFetchItemsToIndex = async ({
     JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
     WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
   `;
-  const affectedModelIds = new Set(affectedModels.map(({ modelId }) => modelId));
-  // TODO.luis - queue model index update
+  const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
+
+  await modelsSearchIndex.queueUpdate(
+    affectedModelIds.map((id) => ({
+      id: id,
+      action: SearchIndexUpdateQueueAction.Update,
+    }))
+  );
 
   const indexReadyRecords = images.map(({ tags, meta, ...imageRecord }) => {
     return {
