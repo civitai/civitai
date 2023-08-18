@@ -20,6 +20,8 @@ import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvid
 import { applyUserPreferencesImages } from '~/components/Search/search.utils';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { CollectionContributorPermission } from '@prisma/client';
 
 export default function ImageSearch() {
   return (
@@ -173,3 +175,10 @@ function ImagesHitList() {
 ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
   return <SearchLayout indexName={IMAGES_SEARCH_INDEX}>{page}</SearchLayout>;
 };
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    console.log(features);
+    if (!features?.imageSearch) return { notFound: true };
+  },
+});
