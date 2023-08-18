@@ -9,7 +9,7 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { ModelFileType } from '~/server/common/constants';
+import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
@@ -29,7 +29,7 @@ const RATING_BAYESIAN_C = 10;
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 50;
-const INDEX_ID = 'models';
+const INDEX_ID = MODELS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {

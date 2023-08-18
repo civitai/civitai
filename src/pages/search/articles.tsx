@@ -32,6 +32,8 @@ import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchL
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesArticles } from '~/components/Search/search.utils';
+import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
+import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
 
 export default function ArticlesSearch() {
   return (
@@ -53,10 +55,10 @@ const RenderFilters = () => {
       <SortBy
         title="Sort articles by"
         items={[
-          { label: 'Most Bookmarked', value: 'articles:stats.favoriteCount:desc' },
-          { label: 'Most Viewed', value: 'articles:stats.viewCount:desc' },
-          { label: 'Most Discussed', value: 'articles:stats.commentCount:desc' },
-          { label: 'Newest', value: 'articles:createdAt:desc' },
+          { label: 'Most Bookmarked', value: ArticlesSearchIndexSortBy[0] as string },
+          { label: 'Most Viewed', value: ArticlesSearchIndexSortBy[1] as string },
+          { label: 'Most Discussed', value: ArticlesSearchIndexSortBy[2] as string },
+          { label: 'Newest', value: ArticlesSearchIndexSortBy[3] as string },
         ]}
       />{' '}
       <SearchableMultiSelectRefinementList
@@ -183,5 +185,5 @@ export function ArticlesHitList() {
 }
 
 ArticlesSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName="articles">{page}</SearchLayout>;
+  return <SearchLayout indexName={ARTICLES_SEARCH_INDEX}>{page}</SearchLayout>;
 };

@@ -47,6 +47,7 @@ import {
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
+import { SearchPathToIndexMap } from '~/components/Search/useSearchState';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -119,7 +120,10 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   }
 
   return (
-    <InstantSearch searchClient={searchClient} indexName={indexName}>
+    <InstantSearch
+      searchClient={searchClient}
+      indexName={SearchPathToIndexMap[indexName as keyof typeof SearchPathToIndexMap]}
+    >
       <AutocompleteSearchContent indexName={indexName} {...props} ref={ref} />
     </InstantSearch>
   );

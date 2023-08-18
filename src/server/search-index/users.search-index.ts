@@ -16,10 +16,11 @@ import {
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
-const INDEX_ID = 'users';
+const INDEX_ID = USERS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const RATING_BAYESIAN_M = 3.5;

@@ -3,13 +3,16 @@ import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
 import { UiState } from 'instantsearch.js';
+import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const UsersSearchIndexSortBy = [
-  'users:stats.followerCountAllTime:desc',
-  'users:stats.weightedRating:desc',
-  'users:stats.uploadCountAllTime:desc',
-  'users:createdAt:desc',
+  `${USERS_SEARCH_INDEX}:stats.followerCountAllTime:desc`,
+  `${USERS_SEARCH_INDEX}:stats.weightedRating:desc`,
+  `${USERS_SEARCH_INDEX}:stats.uploadCountAllTime:desc`,
+  `${USERS_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
+
+const defaultSortBy = UsersSearchIndexSortBy[0];
 
 const userSearchParamsSchema = searchParamsSchema
   .extend({
@@ -26,25 +29,24 @@ export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const userSearchIndexData: UserSearchParams | Record<string, string[]> =
       userSearchIndexResult.success ? userSearchIndexResult.data : {};
 
-    return { users: removeEmpty(userSearchIndexData) };
+    return { [USERS_SEARCH_INDEX]: removeEmpty(userSearchIndexData) };
   },
   routeToState: (routeState: UiState) => {
-    const users: UserSearchParams = (routeState.users || {}) as UserSearchParams;
+    const users: UserSearchParams = (routeState[USERS_SEARCH_INDEX] || {}) as UserSearchParams;
     const { query, sortBy } = users;
 
     return {
-      users: {
-        sortBy: sortBy ?? 'users:stats.followerCountAllTime:desc',
+      [USERS_SEARCH_INDEX]: {
+        sortBy: sortBy ?? defaultSortBy,
         query,
       },
     };
   },
   stateToRoute: (uiState: UiState) => {
     const sortBy =
-      (uiState.users.sortBy as UserSearchParams['sortBy']) ||
-      'users:stats.followerCountAllTime:desc';
+      (uiState[USERS_SEARCH_INDEX].sortBy as UserSearchParams['sortBy']) || defaultSortBy;
 
-    const { query } = uiState.users;
+    const { query } = uiState[USERS_SEARCH_INDEX];
 
     const state: UserSearchParams = {
       sortBy,
@@ -52,7 +54,7 @@ export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
     };
 
     return {
-      users: state,
+      [USERS_SEARCH_INDEX]: state,
     };
   },
 };

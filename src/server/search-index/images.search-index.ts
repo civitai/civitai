@@ -24,10 +24,11 @@ import {
 import { imageSelect } from '~/server/selectors/image.selector';
 import { getImageV2Select } from '../selectors/imagev2.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
-const INDEX_ID = 'images';
+const INDEX_ID = IMAGES_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {

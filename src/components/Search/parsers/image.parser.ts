@@ -3,12 +3,15 @@ import { z } from 'zod';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { InstantSearchRoutingParser, searchParamsSchema } from './base';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ImagesSearchIndexSortBy = [
-  'images:rank.reactionCountAllTimeRank:asc',
-  'images:rank.commentCountAllTimeRank:asc',
-  'images:createdAt:desc',
+  `${IMAGES_SEARCH_INDEX}:rank.reactionCountAllTimeRank:asc`,
+  `${IMAGES_SEARCH_INDEX}:rank.commentCountAllTimeRank:asc`,
+  `${IMAGES_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
+
+const defaultSortBy = ImagesSearchIndexSortBy[0];
 
 const imageSearchParamsSchema = searchParamsSchema
   .extend({
@@ -31,10 +34,10 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const imageSearchIndexData: ImageSearchParams | Record<string, string[]> =
       imageSearchIndexResult.success ? imageSearchIndexResult.data : {};
 
-    return { images: removeEmpty(imageSearchIndexData) };
+    return { [IMAGES_SEARCH_INDEX]: removeEmpty(imageSearchIndexData) };
   },
   routeToState: (routeState: UiState) => {
-    const images: ImageSearchParams = (routeState.images || {}) as ImageSearchParams;
+    const images: ImageSearchParams = (routeState[IMAGES_SEARCH_INDEX] || {}) as ImageSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'tags.name': images.tags,
       'user.username': images.users,
@@ -43,21 +46,20 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const { query, sortBy } = images;
 
     return {
-      images: {
-        sortBy: sortBy ?? 'images:rank.reactionCountAllTimeRank:asc',
+      [IMAGES_SEARCH_INDEX]: {
+        sortBy: sortBy ?? defaultSortBy,
         refinementList,
         query,
       },
     };
   },
   stateToRoute: (uiState: UiState) => {
-    const tags = uiState.images.refinementList?.['tags.name'];
-    const users = uiState.images.refinementList?.['user.username'];
+    const tags = uiState[IMAGES_SEARCH_INDEX].refinementList?.['tags.name'];
+    const users = uiState[IMAGES_SEARCH_INDEX].refinementList?.['user.username'];
     const sortBy =
-      (uiState.images.sortBy as ImageSearchParams['sortBy']) ||
-      'images:rank.reactionCountAllTimeRank:asc';
+      (uiState[IMAGES_SEARCH_INDEX].sortBy as ImageSearchParams['sortBy']) || defaultSortBy;
 
-    const { query } = uiState.images;
+    const { query } = uiState[IMAGES_SEARCH_INDEX];
 
     const state: ImageSearchParams = {
       tags,
@@ -66,6 +68,6 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       query,
     };
 
-    return { images: state };
+    return { [IMAGES_SEARCH_INDEX]: state };
   },
 };

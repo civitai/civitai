@@ -3,13 +3,14 @@ import { z } from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
 import { UiState } from 'instantsearch.js';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ModelSearchIndexSortBy = [
-  'models:metrics.weightedRating:desc',
-  'models:metrics.downloadCount:desc',
-  'models:metrics.favoriteCount:desc',
-  'models:metrics.commentCount:desc',
-  'models:createdAt:desc',
+  `${MODELS_SEARCH_INDEX}:metrics.weightedRating:desc`,
+  `${MODELS_SEARCH_INDEX}:metrics.downloadCount:desc`,
+  `${MODELS_SEARCH_INDEX}:metrics.favoriteCount:desc`,
+  `${MODELS_SEARCH_INDEX}:metrics.commentCount:desc`,
+  `${MODELS_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 
 const ModelDefaultSortBy = ModelSearchIndexSortBy[0];
@@ -44,10 +45,10 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const modelSearchIndexData: ModelSearchParams | Record<string, string[]> =
       modelSearchIndexResult.success ? modelSearchIndexResult.data : {};
 
-    return { models: removeEmpty(modelSearchIndexData) };
+    return { [MODELS_SEARCH_INDEX]: removeEmpty(modelSearchIndexData) };
   },
   routeToState: (routeState: UiState) => {
-    const models: ModelSearchParams = routeState.models as ModelSearchParams;
+    const models: ModelSearchParams = routeState[MODELS_SEARCH_INDEX] as ModelSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'version.baseModel': models.baseModel,
       type: models.modelType,
@@ -59,7 +60,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const { query, sortBy } = models;
 
     return {
-      models: {
+      [MODELS_SEARCH_INDEX]: {
         sortBy: sortBy ?? ModelDefaultSortBy,
         refinementList,
         query,
@@ -67,13 +68,14 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     };
   },
   stateToRoute: (uiState: UiState) => {
-    const baseModel = uiState.models.refinementList?.['version.baseModel'];
-    const modelType = uiState.models.refinementList?.['type'];
-    const checkpointType = uiState.models.refinementList?.['checkpointType'];
-    const tags = uiState.models.refinementList?.['tags.name'];
-    const users = uiState.models.refinementList?.['user.username'];
-    const sortBy = (uiState.models.sortBy as ModelSearchParams['sortBy']) || ModelDefaultSortBy;
-    const { query } = uiState.models;
+    const baseModel = uiState[MODELS_SEARCH_INDEX].refinementList?.['version.baseModel'];
+    const modelType = uiState[MODELS_SEARCH_INDEX].refinementList?.['type'];
+    const checkpointType = uiState[MODELS_SEARCH_INDEX].refinementList?.['checkpointType'];
+    const tags = uiState[MODELS_SEARCH_INDEX].refinementList?.['tags.name'];
+    const users = uiState[MODELS_SEARCH_INDEX].refinementList?.['user.username'];
+    const sortBy =
+      (uiState[MODELS_SEARCH_INDEX].sortBy as ModelSearchParams['sortBy']) || ModelDefaultSortBy;
+    const { query } = uiState[MODELS_SEARCH_INDEX];
 
     const state: ModelSearchParams = {
       baseModel,
@@ -86,7 +88,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     };
 
     return {
-      models: state,
+      [MODELS_SEARCH_INDEX]: state,
     };
   },
 };
