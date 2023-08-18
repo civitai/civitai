@@ -44,9 +44,11 @@ import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
 import { postImageTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function EditPostImages({ max }: { max?: number }) {
   max ??= POST_IMAGE_LIMIT;
+  const currentUser = useCurrentUser();
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
@@ -56,7 +58,10 @@ export function EditPostImages({ max }: { max?: number }) {
     .map((x) => (x.discriminator === 'image' ? x.data.id : undefined))
     .filter(isDefined);
 
-  const handleDrop = async (files: File[]) => upload({ postId, modelVersionId }, files);
+  const handleDrop = async (files: File[]) => {
+    if (currentUser?.muted) return;
+    upload({ postId, modelVersionId }, files);
+  };
 
   useEffect(() => {
     const files = postImageTransmitter.getData();
