@@ -210,7 +210,7 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
         items.push({ key: 'view-more', value: query, hit: null });
 
       return items;
-    }, [hits, query, results]);
+    }, [hits, query, results, hiddenModels, hiddenImages, hiddenTags, hiddenUsers]);
 
     const focusInput = () => inputRef.current?.focus();
     const blurInput = () => inputRef.current?.blur();
