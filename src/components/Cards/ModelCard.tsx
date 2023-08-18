@@ -38,7 +38,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ModelGetAll } from '~/types/router';
 import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
@@ -47,6 +46,9 @@ import { CollectionType } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { InView } from 'react-intersection-observer';
+import { UseQueryModelReturn } from '~/components/Model/model.utils';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -70,22 +72,16 @@ export function ModelCard({ data }: Props) {
   const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
   const modelId = queryResult.success ? queryResult.data.model : undefined;
 
-  const {
-    data: { Favorite: favoriteModels = [], Hide: hiddenModels = [] } = { Favorite: [], Hide: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
   const isFavorite = favoriteModels.find((modelId) => modelId === data.id);
-  const { data: hiddenUsers = [] } = trpc.user.getHiddenUsers.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
-  const isHidden =
-    hiddenUsers.find(({ id }) => id === data.user.id) ||
-    hiddenModels.find((modelId) => modelId === data.id);
+
+  // const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
+  // const isHidden = hiddenUsers.get(data.user.id) || hiddenModels.get(data.id);
 
   const reportOption = (
     <ReportMenuItem
@@ -162,228 +158,258 @@ export function ModelCard({ data }: Props) {
     <FeedCard
       className={!data.image ? classes.noImage : undefined}
       href={`/models/${data.id}/${slugit(data.name)}`}
+      // sx={{ opacity: isHidden ? 0.1 : undefined }}
     >
-      <div className={classes.root}>
-        {data.image && (
-          <ImageGuard
-            images={[data.image]}
-            connect={{ entityId: data.id, entityType: 'model' }}
-            render={(image) => (
-              <ImageGuard.Content>
-                {({ safe }) => {
-                  // Small hack to prevent blurry landscape images
-                  const originalAspectRatio =
-                    image.width && image.height ? image.width / image.height : 1;
+      <InView rootMargin="600px">
+        {({ ref, inView }) => (
+          <div className={classes.root} ref={ref}>
+            {inView && (
+              <>
+                {data.image && (
+                  <ImageGuard
+                    images={[data.image]}
+                    connect={{ entityId: data.id, entityType: 'model' }}
+                    render={(image) => (
+                      <ImageGuard.Content>
+                        {({ safe }) => {
+                          // Small hack to prevent blurry landscape images
+                          const originalAspectRatio =
+                            image.width && image.height ? image.width / image.height : 1;
 
-                  return (
-                    <>
-                      <Group
-                        spacing={4}
-                        position="apart"
-                        align="start"
-                        className={cx(classes.contentOverlay, classes.top)}
-                        noWrap
-                      >
-                        <Group spacing={4}>
-                          <ImageGuard.ToggleConnect className={classes.chip} position="static" />
-                          <Badge
-                            className={cx(classes.infoChip, classes.chip)}
-                            variant="light"
-                            radius="xl"
-                          >
-                            <Text color="white" size="xs" transform="capitalize">
-                              {getDisplayName(data.type)}
-                            </Text>
-                            {isSDXL && (
-                              <>
-                                <Divider orientation="vertical" />
-                                <Text color="white" size="xs">
-                                  XL
-                                </Text>
-                              </>
-                            )}
-                          </Badge>
-
-                          {(isNew || isUpdated) && (
-                            <Badge
-                              className={classes.chip}
-                              variant="filled"
-                              radius="xl"
-                              sx={(theme) => ({
-                                backgroundColor: isUpdated
-                                  ? '#1EBD8E'
-                                  : theme.colors.blue[theme.fn.primaryShade()],
-                              })}
-                            >
-                              <Text color="white" size="xs" transform="capitalize">
-                                {isUpdated ? 'Updated' : 'New'}
-                              </Text>
-                            </Badge>
-                          )}
-                        </Group>
-
-                        <Stack spacing="xs">
-                          {contextMenuItems.length > 0 && (
-                            <Menu position="left-start" withArrow offset={-5}>
-                              <Menu.Target>
-                                <ActionIcon
-                                  variant="transparent"
-                                  p={0}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                  }}
-                                >
-                                  <IconDotsVertical
-                                    size={24}
-                                    color="#fff"
-                                    style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                                  />
-                                </ActionIcon>
-                              </Menu.Target>
-                              <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                            </Menu>
-                          )}
-                          {features.imageGeneration && data.canGenerate && data.version?.id && (
-                            <HoverActionButton
-                              label="Create"
-                              size={30}
-                              color="white"
-                              variant="filled"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                generationPanel.open({ type: 'model', id: data.version.id });
-                              }}
-                            >
-                              <IconBrush stroke={2.5} size={16} />
-                            </HoverActionButton>
-                          )}
-                          <CivitiaLinkManageButton
-                            modelId={data.id}
-                            modelName={data.name}
-                            modelType={data.type}
-                            hashes={data.hashes}
-                            noTooltip
-                            iconSize={16}
-                          >
-                            {({ color, onClick, icon, label }) => (
-                              <HoverActionButton
-                                onClick={onClick}
-                                label={label}
-                                size={30}
-                                color={color}
-                                variant="filled"
-                                keepIconOnHover
+                          return (
+                            <>
+                              <Group
+                                spacing={4}
+                                position="apart"
+                                align="start"
+                                className={cx(classes.contentOverlay, classes.top)}
+                                noWrap
                               >
-                                {icon}
-                              </HoverActionButton>
-                            )}
-                          </CivitiaLinkManageButton>
-                        </Stack>
-                      </Group>
-                      {image ? (
-                        <>
-                          {safe ? (
-                            <EdgeMedia
-                              src={image.url}
-                              name={image.name ?? image.id.toString()}
-                              alt={image.name ?? undefined}
-                              type={image.type}
-                              width={
-                                originalAspectRatio > 1
-                                  ? IMAGE_CARD_WIDTH * originalAspectRatio
-                                  : IMAGE_CARD_WIDTH
-                              }
-                              placeholder="empty"
-                              className={classes.image}
-                              loading="lazy"
-                            />
-                          ) : (
-                            <MediaHash {...data.image} />
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <Text color="dimmed">This model has no images</Text>
-                        </>
-                      )}
-                    </>
-                  );
-                }}
-              </ImageGuard.Content>
-            )}
-          />
-        )}
-        <Stack
-          className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
-          spacing="xs"
-        >
-          {data.user.id !== -1 && (
-            <UnstyledButton
-              sx={{ color: 'white' }}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
+                                <Group spacing={4}>
+                                  <ImageGuard.ToggleConnect
+                                    className={classes.chip}
+                                    position="static"
+                                  />
+                                  <Badge
+                                    className={cx(classes.infoChip, classes.chip)}
+                                    variant="light"
+                                    radius="xl"
+                                  >
+                                    <Text color="white" size="xs" transform="capitalize">
+                                      {getDisplayName(data.type)}
+                                    </Text>
+                                    {isSDXL && (
+                                      <>
+                                        <Divider orientation="vertical" />
+                                        <Text color="white" size="xs">
+                                          XL
+                                        </Text>
+                                      </>
+                                    )}
+                                  </Badge>
 
-                router.push(`/user/${data.user.username}`);
-              }}
-            >
-              <UserAvatar user={data.user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
-            </UnstyledButton>
-          )}
-          <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
-            {data.name}
-          </Text>
-          <Group spacing={4} position="apart">
-            {!data.locked && (
-              <IconBadge
-                className={classes.iconBadge}
-                sx={{ userSelect: 'none' }}
-                icon={
-                  <Rating
-                    size="xs"
-                    value={data.rank.rating}
-                    fractions={4}
-                    emptySymbol={
-                      theme.colorScheme === 'dark' ? (
-                        <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                      ) : undefined
-                    }
-                    readOnly
+                                  {(isNew || isUpdated) && (
+                                    <Badge
+                                      className={classes.chip}
+                                      variant="filled"
+                                      radius="xl"
+                                      sx={(theme) => ({
+                                        backgroundColor: isUpdated
+                                          ? '#1EBD8E'
+                                          : theme.colors.blue[theme.fn.primaryShade()],
+                                      })}
+                                    >
+                                      <Text color="white" size="xs" transform="capitalize">
+                                        {isUpdated ? 'Updated' : 'New'}
+                                      </Text>
+                                    </Badge>
+                                  )}
+                                </Group>
+
+                                <Stack spacing="xs">
+                                  {contextMenuItems.length > 0 && (
+                                    <Menu position="left-start" withArrow offset={-5}>
+                                      <Menu.Target>
+                                        <ActionIcon
+                                          variant="transparent"
+                                          p={0}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                          }}
+                                        >
+                                          <IconDotsVertical
+                                            size={24}
+                                            color="#fff"
+                                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                          />
+                                        </ActionIcon>
+                                      </Menu.Target>
+                                      <Menu.Dropdown>
+                                        {contextMenuItems.map((el) => el)}
+                                      </Menu.Dropdown>
+                                    </Menu>
+                                  )}
+                                  {features.imageGeneration &&
+                                    data.canGenerate &&
+                                    data.version?.id && (
+                                      <HoverActionButton
+                                        label="Create"
+                                        size={30}
+                                        color="white"
+                                        variant="filled"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          generationPanel.open({
+                                            type: 'model',
+                                            id: data.version.id,
+                                          });
+                                        }}
+                                      >
+                                        <IconBrush stroke={2.5} size={16} />
+                                      </HoverActionButton>
+                                    )}
+                                  <CivitiaLinkManageButton
+                                    modelId={data.id}
+                                    modelName={data.name}
+                                    modelType={data.type}
+                                    hashes={data.hashes}
+                                    noTooltip
+                                    iconSize={16}
+                                  >
+                                    {({ color, onClick, icon, label }) => (
+                                      <HoverActionButton
+                                        onClick={onClick}
+                                        label={label}
+                                        size={30}
+                                        color={color}
+                                        variant="filled"
+                                        keepIconOnHover
+                                      >
+                                        {icon}
+                                      </HoverActionButton>
+                                    )}
+                                  </CivitiaLinkManageButton>
+                                </Stack>
+                              </Group>
+                              {image ? (
+                                <>
+                                  {safe ? (
+                                    <EdgeMedia
+                                      src={image.url}
+                                      name={image.name ?? image.id.toString()}
+                                      alt={image.name ?? undefined}
+                                      type={image.type}
+                                      width={
+                                        originalAspectRatio > 1
+                                          ? IMAGE_CARD_WIDTH * originalAspectRatio
+                                          : IMAGE_CARD_WIDTH
+                                      }
+                                      placeholder="empty"
+                                      className={classes.image}
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <MediaHash {...data.image} />
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <Text color="dimmed">This model has no images</Text>
+                                </>
+                              )}
+                            </>
+                          );
+                        }}
+                      </ImageGuard.Content>
+                    )}
                   />
-                }
-              >
-                <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
-                  {abbreviateNumber(data.rank.ratingCount)}
-                </Text>
-              </IconBadge>
+                )}
+                <Stack
+                  className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
+                  spacing="xs"
+                >
+                  {data.user.id !== -1 && (
+                    <UnstyledButton
+                      sx={{ color: 'white' }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        router.push(`/user/${data.user.username}`);
+                      }}
+                    >
+                      <UserAvatar
+                        user={data.user}
+                        avatarProps={{ radius: 'md', size: 32 }}
+                        withUsername
+                      />
+                    </UnstyledButton>
+                  )}
+                  <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
+                    {data.name}
+                  </Text>
+                  <Group spacing={4} position="apart">
+                    {!data.locked && (
+                      <IconBadge
+                        className={classes.iconBadge}
+                        sx={{ userSelect: 'none' }}
+                        icon={
+                          <Rating
+                            size="xs"
+                            value={data.rank.rating}
+                            fractions={4}
+                            emptySymbol={
+                              theme.colorScheme === 'dark' ? (
+                                <IconStar
+                                  size={14}
+                                  fill="rgba(255,255,255,.3)"
+                                  color="transparent"
+                                />
+                              ) : undefined
+                            }
+                            readOnly
+                          />
+                        }
+                      >
+                        <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
+                          {abbreviateNumber(data.rank.ratingCount)}
+                        </Text>
+                      </IconBadge>
+                    )}
+                    <Group spacing={4} noWrap>
+                      <IconBadge
+                        className={classes.iconBadge}
+                        icon={
+                          <IconHeart
+                            size={14}
+                            style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                            color={isFavorite ? theme.colors.red[6] : undefined}
+                          />
+                        }
+                      >
+                        <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
+                      </IconBadge>
+                      <IconBadge
+                        className={classes.iconBadge}
+                        icon={<IconMessageCircle2 size={14} />}
+                      >
+                        <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                      </IconBadge>
+                      <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
+                        <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                      </IconBadge>
+                    </Group>
+                  </Group>
+                </Stack>
+              </>
             )}
-            <Group spacing={4} noWrap>
-              <IconBadge
-                className={classes.iconBadge}
-                icon={
-                  <IconHeart
-                    size={14}
-                    style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                    color={isFavorite ? theme.colors.red[6] : undefined}
-                  />
-                }
-              >
-                <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
-              </IconBadge>
-              <IconBadge className={classes.iconBadge} icon={<IconMessageCircle2 size={14} />}>
-                <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-              </IconBadge>
-              <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
-                <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-              </IconBadge>
-            </Group>
-          </Group>
-        </Stack>
-      </div>
+          </div>
+        )}
+      </InView>
     </FeedCard>
   );
 }
 
-type Props = { data: ModelGetAll['items'][number] };
+type Props = { data: UseQueryModelReturn[number] };

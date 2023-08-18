@@ -1,42 +1,42 @@
 import { Button, Center, Chip, Group, Loader, Stack, Text } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
-
-import { showErrorNotification } from '~/utils/notifications';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
+import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { trpc } from '~/utils/trpc';
 
 const { openModal, Modal } = createContextModal<{ modelId: number }>({
   name: 'blockModelTags',
   title: 'Hide Tags',
   Element: ({ context, props: { modelId } }) => {
-    const queryUtils = trpc.useContext();
-
-    const { data: blockedTags = [] } = trpc.user.getTags.useQuery({ type: 'Hide' });
+    const tags = useHiddenPreferencesData().tag;
+    const allHiddenTags = useMemo(() => tags.filter((x) => x.type === 'hidden'), [tags]);
     const { data, isLoading } = trpc.tag.getAll.useQuery({
       limit: 200,
       entityType: ['Model'],
       modelId,
     });
-    const modelTags = data?.items ?? [];
+    const modelTags = useMemo(() => data?.items ?? [], [data?.items]);
+    const blockedTags = useMemo(
+      () => modelTags.filter((x) => allHiddenTags.some((y) => y.id === x.id)),
+      [modelTags, allHiddenTags]
+    );
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
     useEffect(() => {
-      if (blockedTags.length) setSelectedTags(blockedTags.map(({ id }) => String(id)));
+      if (blockedTags.length) setSelectedTags(blockedTags.map((x) => String(x.id)));
     }, [blockedTags]);
 
-    const { mutate, isLoading: mutatingBlockedTags } = trpc.user.batchBlockTags.useMutation({
-      async onSuccess() {
-        context.close();
+    const toggleHiddenMutation = useToggleHiddenPreferences();
 
-        await invalidateModeratedContent(queryUtils);
-      },
-      onError(error) {
-        showErrorNotification({ error: new Error(error.message) });
-      },
-    });
-
-    const handleBlockTags = () => mutate({ tagIds: selectedTags.map(Number) });
+    // const handleBlockTags = () => mutate({ tagIds: selectedTags.map(Number) });
+    const handleBlockTags = async () => {
+      const selectedTagIds = selectedTags.map(Number);
+      const tags = modelTags
+        .filter((x) => selectedTagIds.includes(x.id))
+        .map(({ id, name }) => ({ id, name }));
+      await toggleHiddenMutation.mutateAsync({ kind: 'tag', data: tags, hidden: true });
+      context.close();
+    };
 
     return isLoading ? (
       <Center p="lg">
@@ -75,7 +75,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
               <Button variant="default" onClick={context.close}>
                 Cancel
               </Button>
-              <Button onClick={handleBlockTags} loading={mutatingBlockedTags}>
+              <Button onClick={handleBlockTags} loading={toggleHiddenMutation.isLoading}>
                 Save
               </Button>
             </Group>

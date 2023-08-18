@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { periodModeSchema } from '~/server/schema/base.schema';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
@@ -233,7 +234,12 @@ export const FiltersProvider = ({
   value: CookiesState;
 }) => {
   const storeRef = useRef<FilterStore>();
-  if (!storeRef.current) storeRef.current = createFilterStore(value);
+  const currentUser = useCurrentUser();
+  if (!storeRef.current)
+    storeRef.current = createFilterStore({
+      ...value,
+      browsingMode: !currentUser || !currentUser.showNsfw ? BrowsingMode.SFW : value.browsingMode,
+    });
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
 };

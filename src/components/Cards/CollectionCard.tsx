@@ -41,6 +41,7 @@ export function CollectionCard({ data }: Props) {
       .map((item) => {
         switch (item.type) {
           case 'model':
+            return item.data.images[0];
           case 'post':
             return item.data.image;
           case 'image':

@@ -29,6 +29,7 @@ import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -45,6 +46,10 @@ export default function Home() {
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();
   const user = useCurrentUser();
+
+  const moderatedTagIds = useHiddenPreferencesData()
+    .tag.filter((x) => x.type === 'moderated' || x.type === 'always')
+    .map((x) => x.id);
 
   useEffect(() => {
     if (inView && !displayModelsInfiniteFeed) {
@@ -83,7 +88,7 @@ export default function Home() {
 
         <Box
           sx={(theme) => ({
-            '& > *:nth-child(even)': {
+            '& > *:nth-of-type(even)': {
               background:
                 theme.colorScheme === 'dark'
                   ? theme.colors.dark[8]
@@ -152,10 +157,13 @@ export default function Home() {
 
                   <ModelsInfinite
                     filters={{
-                      excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                      excludedImageTagIds: [
+                        ...homeExcludedTags.map((tag) => tag.id),
+                        ...moderatedTagIds,
+                      ],
                       excludedTagIds: homeExcludedTags.map((tag) => tag.id),
                       // Required to override localStorage filters
-                      period: MetricTimeframe.Week,
+                      period: MetricTimeframe.AllTime,
                       sort: ModelSort.HighestRated,
                       browsingMode: BrowsingMode.SFW,
                       types: undefined,

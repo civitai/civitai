@@ -19,10 +19,7 @@ Portraying real people in any mature or suggestive context is strictly prohibite
 **A:** If you come across content that you believe doesn't adhere to our community guidelines, please don't hesitate to report it. A "Report" button is generally available in content menus on most images and models through-out the site. If you don't see it, you can always reach out to the moderators on our Discord server. We appreciate your vigilance in keeping our community safe and respectful.
 
 ### Q: Why are you so strict about this?
-**A:** Good question! There are two main reasons:
-
-1. **Legal:** As a US entity, we have certain legal obligations we must abide by.
-2. **Moral:** We believe that everyone has the right to their own likeness. Unless people have explicitly given consent to be depicted in a certain way, we don't condone it. We're all about fostering a respectful community, and we want to lay down clear expectations now, to protect all our users in the future.
+**A:** Good question! We believe that everyone has the right to their own likeness. Unless people have explicitly given consent to be depicted in a certain way, we don't condone it. We're all about fostering a respectful community, and we want to lay down clear expectations now, to protect all our users in the future.
 
 ### Q: I've used a person's name in my prompt, but the image doesn't resemble them. Is that okay?
 **A:** Absolutely. As long as the intent wasn't to depict *that* person in a way that goes against our guidelines, you're good to go.
