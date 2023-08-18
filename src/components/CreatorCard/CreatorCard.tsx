@@ -21,6 +21,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
+import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 
 const iconBadgeSize: MantineSize = 'sm';
 
@@ -65,6 +66,7 @@ export function CreatorCard({ user }: Props) {
             />
             <Group spacing="xs">
               <RankBadge size="md" rank={creator.rank} />
+              <TipBuzzButton toUserId={creator.id} size="xs" iconSize={16} compact />
               <FollowUserButton userId={creator.id} size="xs" compact />
             </Group>
           </Group>

@@ -11,6 +11,7 @@ import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsMod
 import { openAddToCollectionModal } from '~/components/Collections/AddToCollectionModal';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
+import { openSendTipModal } from '~/components/Modals/SendTipModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -43,6 +44,7 @@ const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 
 const registry = {
   blockModelTags: {
@@ -84,6 +86,10 @@ const registry = {
   buyBuzz: {
     Component: BuyBuzzModal,
     fn: openBuyBuzzModal,
+  },
+  sendTip: {
+    Component: SendTipModal,
+    fn: openSendTipModal,
   },
 };
 

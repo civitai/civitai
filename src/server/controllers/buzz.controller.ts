@@ -9,6 +9,7 @@ import {
   getUserBuzzAccount,
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
+import { throwBadRequestError } from '../utils/errorHandling';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -40,6 +41,10 @@ export function createTransactionHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
+    const { id: fromAccountId } = ctx.user;
+    if (fromAccountId === input.toAccountId)
+      throw throwBadRequestError('You cannot send buzz to the same account');
+
     return createBuzzTransaction({ ...input, fromAccountId: ctx.user.id });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);

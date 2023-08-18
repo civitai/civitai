@@ -424,7 +424,7 @@ export function AppHeader() {
         >
           <Group spacing={4} noWrap>
             <Text weight={600}>Buzz</Text>
-            <UserBuzzBadge user={currentUser} size={badgeSize} p={4} iconSize={12} />
+            <UserBuzzBadge user={currentUser} size={badgeSize} p={4} iconSize={12} withTooltip />
           </Group>
           <Button
             variant="outline"

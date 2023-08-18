@@ -11,7 +11,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { Price } from '@prisma/client';
-import { IconBolt } from '@tabler/icons-react';
+import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 
@@ -20,10 +20,16 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 
 const useStyles = createStyles((theme) => ({
   buzzPreset: {
+    ...theme.fn.focusStyles(),
     cursor: 'pointer',
+
+    '&:hover': {
+      borderColor: theme.colors.blue[6],
+    },
   },
 
   selected: {
@@ -37,18 +43,17 @@ const useStyles = createStyles((theme) => ({
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount' | 'description'>;
 
-const { openModal, Modal } = createContextModal({
+const { openModal, Modal } = createContextModal<{ message?: string }>({
   name: 'buyBuzz',
   title: 'Buy Buzz',
   size: 'lg',
-  Element: ({ context }) => {
+  Element: ({ context, props: { message } }) => {
     const currentUser = useCurrentUser();
-    const queryUtils = trpc.useContext();
     const { classes, cx } = useStyles();
     const router = useRouter();
 
     const [selectedPackage, setSelectedPackage] = useState<SelectablePackage | null>(null);
-    const [customMessage, setCustomMessage] = useState<string>('');
+    const [customMessage, setCustomMessage] = useState<string>(message ?? '');
 
     const { data = [], isLoading } = trpc.stripe.getBuzzPackages.useQuery();
     const createBuzzSessionMutation = trpc.stripe.createBuzzSession.useMutation();
@@ -79,6 +84,11 @@ const { openModal, Modal } = createContextModal({
 
     return (
       <Stack spacing="xl">
+        {customMessage && (
+          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
+            {customMessage}
+          </AlertWithIcon>
+        )}
         <SimpleGrid
           breakpoints={[
             { minWidth: 'xs', cols: 1 },

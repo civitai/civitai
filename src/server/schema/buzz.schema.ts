@@ -52,17 +52,11 @@ export const getUserBuzzTransactionsResponse = z
   .nullish();
 
 export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInput>;
-export const createBuzzTransactionInput = z
-  .object({
-    // From user id
-    fromAccountId: z.number().min(0),
-    // To user id (0 is central bank)
-    toAccountId: z.number().min(0),
-    type: z.nativeEnum(TransactionType),
-    amount: z.number().min(1),
-    description: z.string().trim().nonempty().nullish(),
-    details: z.object({}).passthrough().nullish(),
-  })
-  .refine((data) => data.fromAccountId !== data.toAccountId, {
-    message: 'You cannot send buzz to the same account',
-  });
+export const createBuzzTransactionInput = z.object({
+  // To user id (0 is central bank)
+  toAccountId: z.number().min(0),
+  type: z.nativeEnum(TransactionType),
+  amount: z.number().min(1),
+  description: z.string().trim().nonempty().nullish(),
+  details: z.object({}).passthrough().nullish(),
+});

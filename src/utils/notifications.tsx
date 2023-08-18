@@ -40,9 +40,10 @@ export function showBuzzNotification({
   showNotification({
     color: 'yellow.4',
     message: (
-      <Group>
-        <ThemeIcon color="yellow.4">
-          <IconBolt size={18} />
+      <Group spacing={4}>
+        {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
+        <ThemeIcon color="yellow.4" variant="transparent">
+          <IconBolt size={18} fill="currentColor" />
         </ThemeIcon>
         {message}
       </Group>

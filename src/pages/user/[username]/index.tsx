@@ -47,6 +47,7 @@ import { useEffect } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -434,6 +435,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                             <Username {...user} inherit />
                           </Title>
                           <Group spacing={4} noWrap>
+                            <TipBuzzButton toUserId={user.id} size="md" compact />
                             <FollowUserButton userId={user.id} size="md" compact />
 
                             <Menu position="left" withinPortal>
