@@ -212,7 +212,7 @@ function InnerSearch({ children, ...props }: SearchBoxProps & { children: React.
         onQueryChange={handleQueryChange}
         cleanQueryOnClose={false}
         filter={(_, actions) => actions}
-        shortcut={['mod + p', 'mod + k', '/']}
+        shortcut={['mod + k', '/']}
         limit={20}
         styles={(theme) => ({
           inner: { paddingTop: 'var(--mantine-header-height,50px)' },
