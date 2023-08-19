@@ -6,6 +6,7 @@ export const reviewNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
         let message = `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`;
+        if (details.imageCount) message += ` with ${details.imageCount} images`;
         if (details.rating) message += ` (${details.rating}/5)`;
         return {
           message,
@@ -28,7 +29,13 @@ export const reviewNotifications = createNotificationProcessor({
             'modelName', m.name,
             'modelVersionName', mv.name,
             'username', u.username,
-            'rating', r.rating
+            'rating', r.rating,
+            'imageCount', (
+                SELECT COUNT(*)
+                FROM "Image" i
+                JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+                WHERE i."userId" = r."userId"
+            )
           ) "details"
         FROM "ResourceReview" r
         JOIN "User" u ON r."userId" = u.id
