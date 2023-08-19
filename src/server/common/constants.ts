@@ -65,7 +65,7 @@ export const constants = {
     'Archive',
   ],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
-  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Other'],
+  modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp32', 'bf16'],
   imageFormats: ['optimized', 'metadata'],

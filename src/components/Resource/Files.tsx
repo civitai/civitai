@@ -417,7 +417,7 @@ function FileEditForm({
       case 'pt':
         return ['Model', 'Negative', 'VAE'].includes(value);
       case 'zip':
-        return ['Training Data', 'Archive'].includes(value);
+        return ['Training Data', 'Archive', 'Model'].includes(value);
       case 'yml':
       case 'yaml':
         return ['Config', 'Text Encoder'].includes(value);
