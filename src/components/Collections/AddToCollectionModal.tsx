@@ -133,10 +133,10 @@ function CollectionListForm({
               : type === CollectionType.Image
               ? queryUtils.image.getInfinite
               : null;
-          await Promise.all([
-            queryUtils.collection.getUserCollectionItemsByItem.invalidate(),
-            endpointTarget?.invalidate(),
-          ]);
+
+          // TODO.optimization: Invalidate only the collection that was updated
+          await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
+          // await endpointTarget?.invalidate();
         },
         onError(error) {
           showErrorNotification({
