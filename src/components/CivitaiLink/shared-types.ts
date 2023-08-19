@@ -50,7 +50,8 @@ export type ResourceType =
   | 'Controlnet'
   | 'Poses'
   | 'Other'
-  | 'Wildcards';
+  | 'Wildcards'
+  | 'Workflows';
 
 type CommandBase = {
   id: string;
