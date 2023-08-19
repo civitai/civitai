@@ -474,12 +474,12 @@ function FileEditForm({
           />
 
           <Select
-            label="Floating Point"
-            placeholder="fp16 or fp32"
+            label="Precision"
+            placeholder="fp16, fp32, bf16"
             data={constants.modelFileFp}
             error={error?.fp?._errors[0]}
             value={versionFile.fp ?? null}
-            onChange={(value: 'fp16' | 'fp32' | null) => {
+            onChange={(value: 'fp16' | 'fp32' | 'bf16' | null) => {
               updateFile(versionFile.uuid, { fp: value });
             }}
             withAsterisk

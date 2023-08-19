@@ -67,7 +67,7 @@ export const constants = {
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Other'],
   modelFileSizes: ['full', 'pruned'],
-  modelFileFp: ['fp16', 'fp32'],
+  modelFileFp: ['fp16', 'fp32', 'bf16'],
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
