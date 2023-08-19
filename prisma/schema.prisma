@@ -259,6 +259,7 @@ enum ModelType {
   VAE
   Poses
   Wildcards
+  Workflows
   Other
 }
 
