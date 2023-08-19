@@ -19,6 +19,7 @@ import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/L
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
+import { NextLink } from '@mantine/next';
 
 type Props = { homeBlockId: number };
 
@@ -151,16 +152,16 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId }: Props) => {
               <Card key={leaderboard.id} radius="md" w="100%" h="100%">
                 <Group position="apart" align="center">
                   <Text size="lg">{leaderboard.title}</Text>
-                  <Link href={`/leaderboard/${leaderboard.id}`} passHref>
-                    <Button
-                      rightIcon={<IconArrowRight size={16} />}
-                      variant="subtle"
-                      size="xs"
-                      compact
-                    >
-                      More
-                    </Button>
-                  </Link>
+                  <Button
+                    component={NextLink}
+                    href={`/leaderboard/${leaderboard.id}`}
+                    rightIcon={<IconArrowRight size={16} />}
+                    variant="subtle"
+                    size="xs"
+                    compact
+                  >
+                    More
+                  </Button>
                 </Group>
                 <Stack mt="md">
                   {displayedResults.length === 0 && (
