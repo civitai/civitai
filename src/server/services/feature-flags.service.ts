@@ -18,6 +18,7 @@ const featureFlags = createFeatureFlags({
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'founder'],
   stripe: ['mod'],
+  imageTraining: ['dev', 'mod', 'founder'],
   imageGeneration: {
     toggleable: true,
     default: true,
@@ -76,7 +77,9 @@ export const hasFeature = (key: FeatureFlagKey, user?: SessionUser) => {
     else if (user.tier && roles.includes(user.tier as FeatureAvailability)) roleAccess = true;
   }
 
-  return devRequirement && (grantedAccess || roleAccess);
+  return (
+    (availability.includes('dev') && isDev) || (devRequirement && (grantedAccess || roleAccess))
+  );
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;

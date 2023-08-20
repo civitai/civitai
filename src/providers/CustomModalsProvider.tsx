@@ -1,5 +1,4 @@
-import { useWindowEvent } from '@mantine/hooks';
-import { closeAllModals, ContextModalProps, ModalsProvider } from '@mantine/modals';
+import { ContextModalProps, ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
 import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';

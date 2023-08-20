@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { openSpotlight } from '@mantine/spotlight';
 import {
   IconBarbell,
   IconBookmark,
@@ -54,15 +55,14 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
-import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { QuickSearch } from '~/components/QuickSearch/QuickSearch';
+import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { LoginRedirectReason } from '~/utils/login-helpers';
-import { openSpotlight } from '@mantine/spotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LoginRedirectReason } from '~/utils/login-helpers';
 
 const HEADER_HEIGHT = 70;
 
@@ -211,7 +211,7 @@ export function AppHeader() {
       },
       {
         href: '/models/train',
-        visible: !isMuted,
+        visible: !isMuted && features.imageTraining,
         redirectReason: 'train-model',
         label: (
           <Group align="center" spacing="xs">

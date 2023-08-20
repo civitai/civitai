@@ -1,6 +1,6 @@
-import { Group, useMantineTheme, createStyles, Text } from '@mantine/core';
+import { createStyles, Group, Text, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
-import { IconUpload, IconX, IconPhoto } from '@tabler/icons-react';
+import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
 export function ImageDropzone({
@@ -10,6 +10,7 @@ export function ImageDropzone({
   onDrop,
   count,
   label,
+  description,
   accept = IMAGE_MIME_TYPE,
   ...props
 }: Props) {
@@ -59,6 +60,7 @@ export function ImageDropzone({
           <Text size="xl" inline>
             {label ?? 'Drag images here or click to select files'}
           </Text>
+          {description}
           <Text size="sm" color="dimmed" inline mt={7}>
             {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
             {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
@@ -90,5 +92,6 @@ type Props = Omit<DropzoneProps, 'children'> & {
   max?: number;
   hasError?: boolean;
   label?: string;
+  description?: React.ReactNode;
   accept?: string[];
 };

@@ -9,7 +9,7 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { Context } from '~/server/createContext';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -18,6 +18,7 @@ import {
   DeleteModelSchema,
   FindResourcesToAssociateSchema,
   GetAllModelsOutput,
+  getAllModelsSchema,
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
@@ -28,7 +29,6 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
   UserPreferencesForModelsInput,
-  getAllModelsSchema,
 } from '~/server/schema/model.schema';
 import {
   associatedResourceSelect,
@@ -43,6 +43,7 @@ import {
   getModels,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
   publishModelById,
@@ -746,6 +747,41 @@ export const getMyDraftModelsHandler = async ({
   }
 };
 
+export const getMyTrainingModelsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    return await getTrainingModelsByUserId({
+      ...input,
+      userId,
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        createdAt: true,
+        status: true,
+        updatedAt: true,
+        // TODO [bw] need to include training stuff in here
+        modelVersions: {
+          select: {
+            _count: {
+              select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
+            },
+          },
+        },
+        _count: { select: { modelVersions: true } },
+      },
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
 export const reorderModelVersionsHandler = async ({
   input,
 }: {
@@ -790,7 +826,15 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { id: true, name: true, status: true, type: true, meta: true, userId: true },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        type: true,
+        uploadType: true,
+        meta: true,
+        userId: true,
+      },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status !== ModelStatus.UnpublishedViolation)
@@ -823,7 +867,15 @@ export const declineReviewHandler = async ({
 
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { id: true, name: true, status: true, type: true, meta: true, userId: true },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        type: true,
+        uploadType: true,
+        meta: true,
+        userId: true,
+      },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 

@@ -1,6 +1,6 @@
 import { Image, ImageGenerationProcess, NsfwLevel, Prisma } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
-import { MyDraftModelGetAll } from '~/types/router';
+import { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 
 export const createModelFileDownloadUrl = ({
@@ -47,6 +47,15 @@ export function getModelWizardUrl(model: MyDraftModelGetAll['items'][number]) {
   if (hasVersion && hasFiles && !hasPosts) return `/models/${model.id}/wizard?step=4`;
 
   return `/models/${model.id}`;
+}
+
+export function getModelTrainingWizardUrl(model: MyTrainingModelGetAll['items'][number]) {
+  // TODO [bw] if (model.status === draft && model.trainingstatus is complete) do the normal getModelWizardUrl
+
+  const hasFiles = model.modelVersions.some((version) => version._count.files > 0);
+
+  if (!hasFiles) return `/models/train?modelId=${model.id}&step=2`;
+  return `/models/train?modelId=${model.id}&step=3`;
 }
 
 export function isNsfwImage(image: Pick<Image, 'nsfw'>) {

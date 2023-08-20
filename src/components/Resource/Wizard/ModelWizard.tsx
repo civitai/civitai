@@ -8,12 +8,11 @@ import {
   Stepper,
   Title,
 } from '@mantine/core';
+import { ModelUploadType } from '@prisma/client';
 import { IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-
-import { ModelUploadType } from '@prisma/client';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files, UploadStepActions } from '~/components/Resource/Files';
 import { FilesProvider } from '~/components/Resource/FilesProvider';
@@ -58,6 +57,7 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
   const [state, setState] = useState<WizardState>({ step: 1 });
 
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
+  console.log(model);
 
   let uploadType = type;
   if (!uploadType) {

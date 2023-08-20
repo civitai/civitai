@@ -1,0 +1,326 @@
+import {
+  ActionIcon,
+  Button,
+  Checkbox,
+  createStyles,
+  Group,
+  Image,
+  Pagination,
+  Paper,
+  SimpleGrid,
+  Stack,
+  Text,
+  Textarea,
+  Title,
+  useMantineTheme,
+} from '@mantine/core';
+import { FileWithPath } from '@mantine/dropzone';
+import { IconTrash } from '@tabler/icons-react';
+// import { saveAs } from 'file-saver';
+import JSZip from 'jszip';
+import { useState } from 'react';
+import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { useS3UploadStore } from '~/store/s3-upload.store';
+import { ModelById } from '~/types/router';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+
+// zustand
+
+interface imageDataType {
+  name: string;
+  type: string;
+  url: string;
+  caption: string;
+}
+
+const useStyles = createStyles(() => ({
+  imgOverlay: {
+    position: 'relative',
+    '&:hover .trashIcon': {
+      display: 'initial',
+    },
+  },
+  trash: {
+    display: 'none',
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    zIndex: 10,
+    margin: 4,
+  },
+}));
+
+// TODO [bw] is this enough?
+const imageExts: { [key: string]: string } = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+};
+
+export const TrainingFormImages = ({ model }: { model: ModelById }) => {
+  const [imageList, setImageList] = useState<imageDataType[]>([]);
+  const [page, setPage] = useState(1);
+  const [ownRights, setOwnRights] = useState<boolean>(false);
+  const [shareDataset, setShareDataset] = useState<boolean>(false);
+  const theme = useMantineTheme();
+  const { classes, cx } = useStyles();
+
+  const { getStatus: getUploadStatus } = useS3UploadStore();
+  const { uploading, error } = getUploadStatus(
+    (file) => file.meta?.versionId === model.modelVersions[0].id
+  );
+
+  const thisStep = 2;
+  const maxImgPerPage = 9;
+
+  const handleZip = async (f: FileWithPath) => {
+    const parsedFiles: imageDataType[] = [];
+    const zipReader = new JSZip();
+    // zipReader.loadAsync(f).then((zData) => {
+    const zData = await zipReader.loadAsync(f);
+    await Promise.all(
+      Object.entries(zData.files).map(async ([zname, zf]) => {
+        // - we could read the type here with some crazy blob/hex inspecting
+        const fileSplit = zname.split('.');
+        const fileExt = fileSplit.pop() || '';
+        const baseFileName = fileSplit.join('.');
+        if (fileExt in imageExts) {
+          const imgBlob = await zf.async('blob');
+          const czFile = zipReader.file(`${baseFileName}.txt`);
+          let captionStr = '';
+          if (czFile) captionStr = await czFile.async('string');
+          parsedFiles.push({
+            name: zname,
+            type: imageExts[fileExt],
+            url: URL.createObjectURL(imgBlob),
+            caption: captionStr,
+          });
+        }
+      })
+    );
+
+    if (parsedFiles.length > 0) {
+      showSuccessNotification({
+        title: 'Zip parsed successfully!',
+        message: `Found ${parsedFiles.length} images.`,
+        autoClose: 3000,
+      });
+    } else {
+      showErrorNotification({
+        error: new Error('Could not find any valid files in zip.'),
+      });
+    }
+
+    return parsedFiles;
+  };
+
+  const handleDrop = async (fileList: FileWithPath[]) => {
+    // blob:http://localhost:3000/3949be19-8afa-41ee-9cc6-4773e6a0ab73
+    console.log(fileList);
+
+    const newFiles = await Promise.all(
+      fileList.map(async (f) => {
+        if (f.type === 'application/zip') {
+          return await handleZip(f);
+        } else {
+          return { name: f.name, type: f.type, url: URL.createObjectURL(f), caption: '' };
+        }
+      })
+    );
+    setImageList(imageList.concat(newFiles.flat()));
+  };
+
+  const handleNext = async () => {
+    if (imageList.length) {
+      const zip = new JSZip();
+
+      await Promise.all(
+        imageList.map(async (imgData, idx) => {
+          const filenameBase = String(idx).padStart(3, '0');
+          // TODO [bw] create empty file?
+          // imgData.caption.length > 0 &&
+          zip.file(`${filenameBase}.txt`, imgData.caption);
+
+          const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+
+          // TODO [bw] unregister here
+
+          zip.file(`${filenameBase}.${imgData.type.split('/').pop()}`, imgBlob);
+        })
+      );
+      // TODO [bw] handle error
+      zip.generateAsync({ type: 'blob' }).then(function (content) {
+        // saveAs(content, 'example.zip');
+        // Save on model file
+        // uses3upload
+        // save to ModelFile with type training data
+      });
+    }
+    // goNext(model?.id, thisStep);
+  };
+
+  const totalCaptioned = imageList.filter((i) => i.caption && i.caption.length > 0).length;
+
+  return (
+    <>
+      <Stack>
+        <div>
+          <Text>You can upload your images and caption them here.</Text>
+          {/* TODO [bw] add links */}
+          {/* <Text variant="link" component={NextLink} href="/models/create" inline> */}
+          <Text>Or, you can *upload an existing dataset*. See our *training guidelines*.</Text>
+        </div>
+        <div>
+          <ImageDropzone
+            mt="md"
+            onDrop={handleDrop}
+            label="Drag images (or a zip file) here or click to select files"
+            description={
+              <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
+                Images added here are not saved until you hit &quot;Next&quot;
+              </Text>
+            }
+            max={1000}
+            // loading={isLoading}
+            count={100}
+            accept={[...IMAGE_MIME_TYPE, 'application/zip']}
+          />
+        </div>
+
+        {imageList.length > 0 && (
+          <Group mt="md" position="apart">
+            <Group>
+              {/*perhaps open a modal here to confirm*/}
+              <Button compact color="red" onClick={() => setImageList([])}>
+                <IconTrash size={16} />
+                <Text inline ml={4}>
+                  Clear All
+                </Text>
+              </Button>
+              <Text
+                color={
+                  totalCaptioned === 0
+                    ? theme.colors.red[5]
+                    : totalCaptioned < imageList.length
+                    ? theme.colors.orange[5]
+                    : theme.colors.green[5]
+                }
+              >
+                {`${totalCaptioned} / ${imageList.length} captioned`}
+              </Text>
+            </Group>
+
+            {imageList.length > maxImgPerPage && (
+              <Pagination
+                page={page}
+                onChange={setPage}
+                total={Math.ceil(imageList.length / maxImgPerPage)}
+              />
+            )}
+          </Group>
+        )}
+
+        {/* nb: if we want to break out of container, add margin: 0 calc(50% - 45vw); */}
+        <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
+          {imageList
+            .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
+            .map((imgData, index) => {
+              console.log(imgData);
+              return (
+                <Stack
+                  key={index}
+                  // style={{ justifyContent: 'center', alignItems: 'center', position: 'relative' }}
+                  style={{ justifyContent: 'flex-start' }}
+                >
+                  {/* TODO [bw] probably lightbox here or something similar */}
+                  <div className={classes.imgOverlay}>
+                    <ActionIcon
+                      color="red"
+                      variant="filled"
+                      size="md"
+                      onClick={() => {
+                        const newLen = imageList.length - 1;
+                        setImageList(imageList.filter((i) => i.url !== imgData.url));
+                        if (
+                          page === Math.ceil(imageList.length / maxImgPerPage) &&
+                          newLen % maxImgPerPage === 0
+                        )
+                          setPage(page - 1);
+                      }}
+                      className={cx(classes.trash, 'trashIcon')}
+                    >
+                      <IconTrash />
+                    </ActionIcon>
+                    <Image
+                      alt={imgData.name}
+                      src={imgData.url}
+                      imageProps={{
+                        style: {
+                          height: '250px',
+                          // if we want to show full image, change objectFit to contain
+                          objectFit: 'cover',
+                          // object-position: top;
+                          width: '100%',
+                        },
+                        // onLoad: () => URL.revokeObjectURL(imageUrl)
+                      }}
+                    />
+                  </div>
+                  <Textarea
+                    placeholder="Enter caption data..."
+                    autosize
+                    minRows={1}
+                    maxRows={4}
+                    value={imgData.caption}
+                    // onChange={(event) => setImageList(imageList.map((i) => i.url === imgData.url ? {...i, caption: event.currentTarget.value} : i))}
+                    onChange={(event) => {
+                      imgData.caption = event.currentTarget.value;
+                      setImageList([...imageList]);
+                    }}
+                  />
+                </Stack>
+              );
+            })}
+        </SimpleGrid>
+
+        {imageList.length > 0 && (
+          <Paper mt="xl" mb="md" radius="md" p="xl" withBorder>
+            <Stack>
+              <Title order={4}>Data Ownership and Sharing</Title>
+              {/* TODO [bw] link for storage policy */}
+              <Text fz="sm">
+                Your dataset is temporarily stored for the purposes of training. After training is
+                complete, the dataset is removed. By default, it is not public. Read our dataset
+                storage policy *here*.
+              </Text>
+              <Checkbox
+                label="I own the rights to all these images"
+                checked={ownRights}
+                onChange={(event) => {
+                  setOwnRights(event.currentTarget.checked);
+                  !event.currentTarget.checked && setShareDataset(false);
+                }}
+              />
+              <Checkbox
+                label="I want to share my dataset"
+                disabled={!ownRights}
+                checked={shareDataset}
+                onChange={(event) => setShareDataset(event.currentTarget.checked)}
+              />
+            </Stack>
+          </Paper>
+        )}
+      </Stack>
+      {/* TODO [bw] add a warning here, because state will disappear. optionally use a context manager to preserve this, and extra optionally use webdb or the like */}
+      <Group position="right">
+        <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
+          Back
+        </Button>
+        <Button onClick={handleNext}>Next</Button>
+      </Group>
+    </>
+  );
+};

@@ -1,4 +1,4 @@
-import { inferRouterOutputs, inferRouterInputs } from '@trpc/server';
+import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '~/server/routers';
 
 export type RouterOutput = inferRouterOutputs<AppRouter>;
@@ -9,6 +9,7 @@ export type ModelById = ModelRouter['getById'];
 export type ModelGetAll = ModelRouter['getAll'];
 export type ModelGetVersions = ModelRouter['getVersions'];
 export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
+export type MyTrainingModelGetAll = ModelRouter['getMyTrainingModels'];
 export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 export type ModelGetByCategory = ModelRouter['getByCategory']['items'][number];
 export type ModelGetByCategoryModel = ModelGetByCategory['items'][number];

@@ -19,6 +19,9 @@ import { UserProfileLayout } from './';
 import { useState } from 'react';
 import { UserDraftModels } from '~/components/User/UserDraftModels';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import UserTrainingModels from '~/components/User/UserTrainingModels';
+
+type SectionTypes = 'published' | 'draft' | 'training';
 
 export default function UserModelsPage() {
   const currentUser = useCurrentUser();
@@ -29,10 +32,11 @@ export default function UserModelsPage() {
   const selfView =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
 
-  const [section, setSection] = useState<'published' | 'draft'>(
+  const [section, setSection] = useState<SectionTypes>(
     selfView ? querySection ?? 'published' : 'published'
   );
   const viewingPublished = section === 'published';
+  const viewingDraft = section === 'draft';
 
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
@@ -96,8 +100,11 @@ export default function UserModelsPage() {
                   }}
                 />
               </>
-            ) : (
+            ) : viewingDraft ? (
               <UserDraftModels />
+            ) : (
+              // TODO [bw]: hide via feature flags? or supporter?
+              <UserTrainingModels />
             )}
           </Stack>
         </MasonryContainer>
@@ -111,8 +118,8 @@ function ContentToggle({
   onChange,
   ...props
 }: Omit<SegmentedControlProps, 'value' | 'onChange' | 'data'> & {
-  value: 'published' | 'draft';
-  onChange: (value: 'published' | 'draft') => void;
+  value: SectionTypes;
+  onChange: (value: SectionTypes) => void;
 }) {
   return (
     <SegmentedControl
@@ -122,6 +129,7 @@ function ContentToggle({
       data={[
         { label: 'Published', value: 'published' },
         { label: 'Draft', value: 'draft' },
+        { label: 'Training', value: 'training' },
       ]}
       sx={(theme) => ({
         [theme.fn.smallerThan('sm')]: {

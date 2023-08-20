@@ -1,4 +1,7 @@
-import TrainWizard from '~/components/Resource/Wizard/TrainWizard'
+import { Center } from '@mantine/core';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import TrainWizard from '~/components/Resource/Wizard/TrainWizard';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -23,7 +26,14 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ModelTrainingNew() {
-  return <TrainWizard />;
+  const features = useFeatureFlags();
+  return features.imageTraining ? (
+    <TrainWizard />
+  ) : (
+    <Center style={{ height: '100vh' }}>
+      <NotFound />
+    </Center>
+  );
 }
 
 ModelTrainingNew.getLayout = (page: React.ReactElement) => <>{page}</>;

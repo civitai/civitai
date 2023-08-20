@@ -10,7 +10,7 @@ import {
   ModelHashType,
   ModelModifier,
   ModelStatus,
-  ModelType,
+  ModelUploadType,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -754,6 +754,35 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const where: Prisma.ModelFindManyArgs['where'] = {
     userId,
     status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
+    uploadType: { equals: ModelUploadType.Created },
+  };
+
+  const items = await dbRead.model.findMany({
+    select,
+    skip,
+    take,
+    where,
+    orderBy: { updatedAt: 'desc' },
+  });
+  const count = await dbRead.model.count({ where });
+
+  return getPagingData({ items, count }, take, page);
+};
+
+export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelSelect>({
+  userId,
+  select,
+  page,
+  limit = DEFAULT_PAGE_SIZE,
+}: GetAllSchema & {
+  userId: number;
+  select: TSelect;
+}) => {
+  const { take, skip } = getPagination(limit, page);
+  const where: Prisma.ModelFindManyArgs['where'] = {
+    userId,
+    status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
+    uploadType: { equals: ModelUploadType.Trained },
   };
 
   const items = await dbRead.model.findMany({
@@ -962,6 +991,7 @@ export const getAllModelsWithCategories = async ({
 }: GetModelsWithCategoriesSchema) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
+    // TODO [bw]: do we need ModelStatus.Training in here too?
     status: { in: [ModelStatus.Published, ModelStatus.Draft] },
     deletedAt: null,
     userId,
