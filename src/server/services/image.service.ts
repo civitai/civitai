@@ -995,7 +995,7 @@ export const getImagesForModelVersion = async ({
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
-    ORDER BY i."index"
+    ORDER BY i."postId", i."index"
   `;
 
   if (include.includes('tags')) {
