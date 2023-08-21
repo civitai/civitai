@@ -1,12 +1,12 @@
+import { ModelStatus, ModelType, TrainingStatus } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { v4 as uuidv4 } from 'uuid';
 
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { ModelStatus, ModelType, TrainingStatus } from '@prisma/client';
 import { ModelMeta } from '~/server/schema/model.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -26,17 +26,15 @@ export const recipeSchema = z.object({
 });
 
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;
-const trainingDetailsObj = z
-  .object({
-    baseModel: z.string().optional(), // 'civitai:123123@123123', nb: this is not optional at the end
-    triggerWord: z.string().optional(),
-    type: z.enum(constants.trainingModelTypes),
-    // samplePrompts
-    // params: z.object({}),
-    // TODO [bw] what are we putting here?
-    params: z.record(z.string().min(1)).optional(),
-  })
-  .optional();
+export const trainingDetailsObj = z.object({
+  baseModel: z.string().optional(), // 'civitai:123123@123123', nb: this is not optional at the end
+  triggerWord: z.string().optional(),
+  type: z.enum(constants.trainingModelTypes),
+  // samplePrompts
+  // params: z.object({}),
+  // TODO [bw] what are we putting here?
+  params: z.record(z.string().min(1)).optional(),
+});
 
 export const modelVersionUpsertSchema = z.object({
   id: z.number().optional(),
@@ -55,7 +53,7 @@ export const modelVersionUpsertSchema = z.object({
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
   trainingStatus: z.nativeEnum(TrainingStatus).optional(),
-  trainingDetails: trainingDetailsObj,
+  trainingDetails: trainingDetailsObj.optional(),
   files: z.array(modelFileSchema),
   earlyAccessTimeFrame: z.number().min(0).max(5).optional(),
   // recipe: z.array(recipeSchema).optional(),
@@ -78,7 +76,7 @@ export const modelVersionUpsertSchema2 = z.object({
   vaeId: z.number().nullish(),
   trainedWords: z.array(z.string()).default([]),
   trainingStatus: z.nativeEnum(TrainingStatus).optional(),
-  trainingDetails: trainingDetailsObj,
+  trainingDetails: trainingDetailsObj.optional(),
   earlyAccessTimeFrame: z.preprocess(
     (value) => (value ? Number(value) : 0),
     z.number().min(0).max(5).optional()

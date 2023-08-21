@@ -1,4 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+import { FileWithPath } from '@mantine/dropzone';
+import { ImageAnalysisInput } from '~/server/schema/image.schema';
+
 export {};
 
 declare global {
@@ -76,6 +80,10 @@ declare global {
     format?: ModelFileFormat;
     size?: ModelFileSize;
     fp?: ModelFileFp;
+    ownRights?: boolean;
+    shareDataset?: boolean;
+    numImages?: number;
+    numCaptions?: number;
   };
 
   type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };

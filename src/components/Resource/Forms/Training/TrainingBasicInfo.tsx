@@ -43,7 +43,7 @@ const RadioImg = ({
   />
 );
 
-export function TrainingFormBasic({ model }: { model: ModelById }) {
+export function TrainingFormBasic({ model }: { model?: ModelById }) {
   const queryUtils = trpc.useContext();
   const [trainingModelType, setTrainingModelType] = useState<tmTypes | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
@@ -89,13 +89,13 @@ export function TrainingFormBasic({ model }: { model: ModelById }) {
   });
 
   console.log(model);
-  console.log(model.modelVersions[0]);
+  console.log(model?.modelVersions[0]);
 
   const defaultValues: z.infer<typeof schema> = {
     ...model,
-    name: model.name ?? '',
+    name: model?.name ?? '',
     // trainingModelType: model?.modelVersions[0]['trainingDetails' as JSONObject]?.type ?? undefined, // TODO [bw] fix
-    trainingModelType: model.modelVersions[0].trainingDetails?.type ?? undefined, // TODO [bw] fix
+    trainingModelType: model?.modelVersions[0].trainingDetails?.type ?? undefined, // TODO [bw] fix
   };
   console.log(defaultValues);
   const form = useForm({
@@ -130,7 +130,7 @@ export function TrainingFormBasic({ model }: { model: ModelById }) {
 
       const modelId = data.id;
       const modelName = payload.name;
-      const versionId = model.modelVersions[0].id;
+      const versionId = model?.modelVersions[0].id;
 
       console.log(modelId, modelName);
       console.log('version, are we editing: ', editing);
@@ -177,7 +177,7 @@ export function TrainingFormBasic({ model }: { model: ModelById }) {
         uploadType: ModelUploadType.Trained,
       });
     } else {
-      goNext(model.id, thisStep);
+      goNext(model?.id, thisStep);
     }
   };
 

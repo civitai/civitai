@@ -519,9 +519,9 @@ enum ScanResultCode {
 }
 
 enum ModelFileVisibility {
-  Sensitive
-  Private
-  Public
+  Sensitive // Choosing not to share
+  Private   // Hidden
+  Public    // Available to all
 }
 
 model ModelFile {

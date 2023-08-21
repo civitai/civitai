@@ -115,7 +115,8 @@ export default function TrainWizard() {
       {/*<LoadingOverlay visible={modelLoading} overlayBlur={2} />*/}
       {modelLoading ? (
         <PageLoader text="Loading model..." />
-      ) : modelError || !model ? (
+      ) : //   todo move this !model check to the other components
+      modelError || (editing && !model) ? (
         <NotFound />
       ) : (
         <Stack py="xl">
