@@ -115,6 +115,7 @@
     "nodemailer": "^6.8.0",
     "path-to-regexp": "^6.2.1",
     "playfab-sdk": "^2.122.230320",
+    "posthog-js": "^1.77.0",
     "prom-client": "^14.2.0",
     "query-string": "^7.1.1",
     "rate-limiter-flexible": "^2.4.1",
