@@ -22,6 +22,7 @@ import OneKeyMap from '@essentials/one-key-map';
 import { applyUserPreferencesModels } from '~/components/Search/search.utils';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
+import { useRouter } from 'next/router';
 
 export default function ModelsSearch() {
   return (
@@ -85,6 +86,9 @@ export function ModelsHitList() {
   const { ref, inView } = useInView();
   const { classes } = useSearchLayoutStyles();
   const currentUser = useCurrentUser();
+  const router = useRouter();
+  const modelId = router.query.model ? Number(router.query.model) : undefined;
+
   const {
     models: hiddenModels,
     images: hiddenImages,
@@ -106,12 +110,24 @@ export function ModelsHitList() {
 
   const hiddenItems = hits.length - models.length;
 
+  console.log(router.query);
+
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && status === 'idle' && !isLastPage) {
       showMore?.();
     }
   }, [status, inView, showMore, isLastPage]);
+
+  useEffect(() => {
+    if (!modelId) {
+      return;
+    }
+
+    if (modelId && !hits.find((item) => item.id === modelId) && status === 'idle') {
+      showMore?.();
+    }
+  }, [modelId, status, showMore, isLastPage, hits]);
 
   if (hits.length === 0) {
     const NotFound = (

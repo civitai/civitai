@@ -389,31 +389,36 @@ export default function ModelDetailsV2({
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
-    router.beforePopState(({ as, url }) => {
-      const modelsPath = features.alternateHome ? '/models' : '/';
-      if (
-        as === modelsPath ||
-        as.startsWith(modelsPath + '?') ||
-        as.startsWith('/user/') ||
-        as.startsWith('/tag/')
-      ) {
-        const [route, queryString] = as.split('?');
-        const [, otherQueryString] = url.split('?');
-        const queryParams = QS.parse(queryString);
-        const otherParams = QS.parse(otherQueryString);
-        router.replace(
-          { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
-          as
-        );
+    if (router && id) {
+      console.log('Adding beforePopState');
+      router.beforePopState(({ as, url }) => {
+        console.log('models :: beforePopState');
+        const modelsPath = features.alternateHome ? '/models' : '/';
 
-        return false;
-      }
+        if (
+          as === modelsPath ||
+          as.startsWith(modelsPath + '?') ||
+          as.startsWith('/user/') ||
+          as.startsWith('/tag/') ||
+          as.startsWith('/search/models')
+        ) {
+          const [route, queryString] = as.split('?');
+          const [, otherQueryString] = url.split('?');
+          const queryParams = QS.parse(queryString);
+          const otherParams = QS.parse(otherQueryString);
+          router.replace(
+            { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
+            as
+          );
 
-      return true;
-    });
+          return false;
+        }
 
+        return true;
+      });
+    }
     return () => router.beforePopState(() => true);
-  }, [id, features.alternateHome]); // Add any state variables to dependencies array if needed.
+  }, [router]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
 
