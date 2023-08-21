@@ -106,7 +106,7 @@ export const getUsers = ({ limit, query, email, ids }: GetAllUsersInput) => {
     SELECT id, username
     FROM "User"
     WHERE
-      ${ids && ids.length > 0 ? Prisma.sql`id IN ${Prisma.join(ids)}` : Prisma.sql`TRUE`}
+      ${ids && ids.length > 0 ? Prisma.sql`id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
       AND "deletedAt" IS NULL

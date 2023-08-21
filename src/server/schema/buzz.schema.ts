@@ -28,28 +28,28 @@ export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactio
 export const getUserBuzzTransactionsSchema = z.object({
   // accountId: z.number(),
   type: z.nativeEnum(TransactionType).optional(),
-  start: z.date().optional(),
-  end: z.date().optional(),
+  cursor: z.date().optional(),
+  start: z.date().nullish(),
+  end: z.date().nullish(),
   limit: z.number().min(1).max(200).optional(),
   descending: z.boolean().optional(),
 });
 
 export type GetUserBuzzTransactionsResponse = z.infer<typeof getUserBuzzTransactionsResponse>;
-export const getUserBuzzTransactionsResponse = z
-  .object({
-    cursor: z.date().nullish(),
-    transactions: z.object({
-      date: z.date(),
-      type: z.nativeEnum(TransactionType),
-      fromAccountId: z.number(),
-      toAccountId: z.number(),
-      amount: z.number(),
-      description: z.string().nullish(),
+export const getUserBuzzTransactionsResponse = z.object({
+  cursor: z.coerce.date().nullish(),
+  transactions: z
+    .object({
+      date: z.coerce.date(),
+      type: z.string().transform((value) => TransactionType[value as keyof typeof TransactionType]),
+      fromAccountId: z.coerce.number(),
+      toAccountId: z.coerce.number(),
+      amount: z.coerce.number(),
+      description: z.coerce.string().nullish(),
       details: z.object({}).passthrough().nullish(),
-    }),
-  })
-  .array()
-  .nullish();
+    })
+    .array(),
+});
 
 export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInput>;
 export const createBuzzTransactionInput = z.object({

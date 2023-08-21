@@ -6,9 +6,11 @@ import {
   GetUserBuzzTransactionsSchema,
   GetUserBuzzTransactionsResponse,
   CreateBuzzTransactionInput,
+  getUserBuzzTransactionsResponse,
 } from '~/server/schema/buzz.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
+import { getUsers } from './user.service';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
@@ -34,7 +36,14 @@ export async function getUserBuzzTransactions({
   accountId,
   ...query
 }: GetUserBuzzTransactionsSchema & { accountId: number }) {
-  const queryString = QS.stringify(query);
+  const queryString = QS.stringify({
+    ...query,
+    start: query.start?.toISOString(),
+    end: query.end?.toISOString(),
+    cursor: query.cursor?.toISOString(),
+    descending: false,
+  });
+
   const response = await fetch(
     `${env.BUZZ_ENDPOINT}/account/${accountId}/transactions?${queryString}`
   );
@@ -53,8 +62,35 @@ export async function getUserBuzzTransactions({
     }
   }
 
+  // Parse incoming data
   const data: GetUserBuzzTransactionsResponse = await response.json();
-  return data;
+  const { cursor, transactions } = getUserBuzzTransactionsResponse.parse(data);
+
+  // Return early if no transactions
+  if (transactions.length === 0) return { cursor, transactions: [] };
+
+  // Remove duplicate user ids
+  const toUserIds = new Set(transactions.map((t) => t.toAccountId));
+  const fromUserIds = new Set(transactions.map((t) => t.fromAccountId));
+  // Remove account 0 (central bank)
+  toUserIds.delete(0);
+  fromUserIds.delete(0);
+
+  // Get user data
+  const [toUsers, fromUsers] = await Promise.all([
+    getUsers({ ids: [...toUserIds] }),
+    getUsers({ ids: [...fromUserIds] }),
+  ]);
+
+  return {
+    cursor,
+    transactions: transactions.map((t) => ({
+      ...t,
+      // Assign each user to their corresponding transaction
+      toUser: toUsers.find((u) => u.id === t.toAccountId),
+      fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
+    })),
+  };
 }
 
 export async function createBuzzTransaction(
