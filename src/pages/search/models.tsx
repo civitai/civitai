@@ -110,8 +110,6 @@ export function ModelsHitList() {
 
   const hiddenItems = hits.length - models.length;
 
-  console.log(router.query);
-
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && status === 'idle' && !isLastPage) {
@@ -125,6 +123,7 @@ export function ModelsHitList() {
     }
 
     if (modelId && !hits.find((item) => item.id === modelId) && status === 'idle') {
+      // Forcefully loads more until the item is found
       showMore?.();
     }
   }, [modelId, status, showMore, isLastPage, hits]);
@@ -180,7 +179,11 @@ export function ModelsHitList() {
       )}
       <Box className={classes.grid}>
         {models.map((model, index) => {
-          return <div key={index}>{createRenderElement(ModelCard, index, model)}</div>;
+          return (
+            <div key={index} id={model.id.toString()}>
+              {createRenderElement(ModelCard, index, model)}
+            </div>
+          );
         })}
       </Box>
       {hits.length > 0 && (

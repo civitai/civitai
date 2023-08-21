@@ -389,10 +389,8 @@ export default function ModelDetailsV2({
 
   // when a user navigates back in their browser, set the previous url with the query string model={id}
   useEffect(() => {
-    if (router && id) {
-      console.log('Adding beforePopState');
+    if (router) {
       router.beforePopState(({ as, url }) => {
-        console.log('models :: beforePopState');
         const modelsPath = features.alternateHome ? '/models' : '/';
 
         if (
@@ -406,6 +404,7 @@ export default function ModelDetailsV2({
           const [, otherQueryString] = url.split('?');
           const queryParams = QS.parse(queryString);
           const otherParams = QS.parse(otherQueryString);
+
           router.replace(
             { pathname: route, query: { ...queryParams, ...otherParams, model: id } },
             as
@@ -417,8 +416,10 @@ export default function ModelDetailsV2({
         return true;
       });
     }
-    return () => router.beforePopState(() => true);
-  }, [router]); // Add any state variables to dependencies array if needed.
+    // Below was commented out as it's not used on the docs when using `useRouter`.
+    // It seems to have been used before when `Router` was used instead of `useRouter`.
+    // return () => router.beforePopState(() => true);
+  }, [router, id, features]); // Add any state variables to dependencies array if needed.
 
   if (loadingModel) return <PageLoader />;
 
