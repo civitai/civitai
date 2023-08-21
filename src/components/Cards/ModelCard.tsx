@@ -352,33 +352,33 @@ export function ModelCard({ data }: Props) {
                     {data.name}
                   </Text>
                   <Group spacing={4} position="apart">
-                    {/*{!data.locked && (*/}
-                    {/*  <IconBadge*/}
-                    {/*    className={classes.iconBadge}*/}
-                    {/*    sx={{ userSelect: 'none' }}*/}
-                    {/*    icon={*/}
-                    {/*      <Rating*/}
-                    {/*        size="xs"*/}
-                    {/*        value={data.rank.rating}*/}
-                    {/*        fractions={4}*/}
-                    {/*        emptySymbol={*/}
-                    {/*          theme.colorScheme === 'dark' ? (*/}
-                    {/*            <IconStar*/}
-                    {/*              size={14}*/}
-                    {/*              fill="rgba(255,255,255,.3)"*/}
-                    {/*              color="transparent"*/}
-                    {/*            />*/}
-                    {/*          ) : undefined*/}
-                    {/*        }*/}
-                    {/*        readOnly*/}
-                    {/*      />*/}
-                    {/*    }*/}
-                    {/*  >*/}
-                    {/*    <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>*/}
-                    {/*      {abbreviateNumber(data.rank.ratingCount)}*/}
-                    {/*    </Text>*/}
-                    {/*  </IconBadge>*/}
-                    {/*)}*/}
+                    {!data.locked && (
+                      <IconBadge
+                        className={classes.iconBadge}
+                        sx={{ userSelect: 'none' }}
+                        icon={
+                          <Rating
+                            size="xs"
+                            value={data.rank.rating}
+                            fractions={4}
+                            emptySymbol={
+                              theme.colorScheme === 'dark' ? (
+                                <IconStar
+                                  size={14}
+                                  fill="rgba(255,255,255,.3)"
+                                  color="transparent"
+                                />
+                              ) : undefined
+                            }
+                            readOnly
+                          />
+                        }
+                      >
+                        <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
+                          {abbreviateNumber(data.rank.ratingCount)}
+                        </Text>
+                      </IconBadge>
+                    )}
                     <Group spacing={4} noWrap>
                       <IconBadge
                         className={classes.iconBadge}
