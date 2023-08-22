@@ -170,14 +170,14 @@ export const getArticles = async ({
       })),
       stats: stats
         ? {
-            favoriteCount: stats[`favoriteCount${period}`],
-            commentCount: stats[`commentCount${period}`],
-            likeCount: stats[`likeCount${period}`],
-            dislikeCount: stats[`dislikeCount${period}`],
-            heartCount: stats[`heartCount${period}`],
-            laughCount: stats[`laughCount${period}`],
-            cryCount: stats[`cryCount${period}`],
-            viewCount: stats[`viewCount${period}`],
+            favoriteCount: stats[`favoriteCount${period}`] as number,
+            commentCount: stats[`commentCount${period}`] as number,
+            likeCount: stats[`likeCount${period}`] as number,
+            dislikeCount: stats[`dislikeCount${period}`] as number,
+            heartCount: stats[`heartCount${period}`] as number,
+            laughCount: stats[`laughCount${period}`] as number,
+            cryCount: stats[`cryCount${period}`] as number,
+            viewCount: stats[`viewCount${period}`] as number,
           }
         : undefined,
     }));

@@ -22,7 +22,7 @@ import {
   SearchBoxProps,
   useInstantSearch,
   useSearchBox,
-} from 'react-instantsearch-hooks-web';
+} from 'react-instantsearch';
 
 import { useSearchStore } from '~/components/QuickSearch/search.store';
 import {
