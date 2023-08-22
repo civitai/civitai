@@ -130,13 +130,11 @@ type UserForSearchIndex = {
     leaderboardCosmetic: string | null;
   } | null;
   cosmetics: {
-    cosmetic: {
-      id: number;
-      data: Prisma.JsonValue;
-      type: CosmeticType;
-      name: string;
-      source: CosmeticSource;
-    };
+    id: number;
+    data: Prisma.JsonValue;
+    type: CosmeticType;
+    name: string;
+    source: CosmeticSource;
   }[];
 };
 
@@ -269,6 +267,7 @@ const onFetchItemsToIndex = async ({
 
   const indexReadyRecords = users.map((userRecord) => {
     const stats = userRecord.stats;
+    const cosmetics = userRecord.cosmetics ?? [];
 
     const weightedRating = !stats
       ? 0
@@ -287,6 +286,7 @@ const onFetchItemsToIndex = async ({
         // Flattens metric array
         ...(userRecord.metrics?.[0] || {}),
       },
+      cosmetics: cosmetics.map((cosmetic) => ({ cosmetic })),
     };
   });
 
