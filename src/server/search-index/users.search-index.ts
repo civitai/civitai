@@ -1,4 +1,4 @@
-import { client } from '~/server/meilisearch/client';
+import { updateDocs } from '~/server/meilisearch/client';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
@@ -16,17 +16,17 @@ import {
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
-const INDEX_ID = 'users';
+const INDEX_ID = USERS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
-const onIndexSetup = async ({ indexName }: { indexName: string }) => {
-  if (!client) {
-    return;
-  }
+const RATING_BAYESIAN_M = 3.5;
+const RATING_BAYESIAN_C = 10;
 
+const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
@@ -34,52 +34,63 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const updateSearchableAttributesTask = await index.updateSearchableAttributes(['username']);
+  const settings = await index.getSettings();
 
-  console.log(
-    'onIndexSetup :: updateSearchableAttributesTask created',
-    updateSearchableAttributesTask
-  );
+  const searchableAttributes = ['username'];
 
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes([
-    'stats.ratingAllTime',
-    'stats.ratingCountAllTime',
+  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+    const updateSearchableAttributesTask = await index.updateSearchableAttributes(
+      searchableAttributes
+    );
+    console.log(
+      'onIndexSetup :: updateSearchableAttributesTask created',
+      updateSearchableAttributesTask
+    );
+  }
+
+  const sortableAttributes = [
     'createdAt',
-    'stats.downloadCountAllTime',
-    'stats.favoriteCountAllTime',
+    'stats.weightedRating',
     'stats.followerCountAllTime',
-    'stats.answerAcceptCountAllTime',
-    'stats.answerCountAllTime',
-    'stats.followingCountAllTime',
-    'stats.hiddenCountAllTime',
-    'stats.reviewCountAllTime',
     'stats.uploadCountAllTime',
-    'metrics.followerCount',
-    'metrics.uploadCount',
-    'metrics.followingCount',
-    'metrics.reviewCount',
-    'metrics.answerAcceptCount',
-    'metrics.hiddenCount',
-  ]);
+  ];
 
-  console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+  if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
+    const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
+    console.log(
+      'onIndexSetup :: sortableFieldsAttributesTask created',
+      sortableFieldsAttributesTask
+    );
+  }
 
-  const updateRankingRulesTask = await index.updateRankingRules([
-    'attribute',
-    'metrics.followerCount:desc',
-    'stats.ratingAllTime:desc',
-    'stats.ratingCountAllTime:desc',
-    'words',
-    'typo',
-    'proximity',
-    'sort',
-    'exactness',
-  ]);
+  const rankingRules = ['sort', 'attribute', 'words', 'typo', 'proximity', 'exactness'];
 
-  console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+    console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  }
+
+  // Uncomment & Add if we want to filter by some attribute at some point.
+  // const filterableAttributes = [];
+  //
+  // if (
+  //   // Meilisearch stores sorted.
+  //   JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  // ) {
+  //   const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+  //     filterableAttributes
+  //   );
+  //
+  //   console.log(
+  //     'onIndexSetup :: updateFilterableAttributesTask created',
+  //     updateFilterableAttributesTask
+  //   );
+  // }
 
   console.log('onIndexSetup :: all tasks completed');
 };
+
+export type UserSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
 
 const onFetchItemsToIndex = async ({
   db,
@@ -107,6 +118,21 @@ const onFetchItemsToIndex = async ({
     take: READ_BATCH_SIZE,
     select: {
       ...userWithCosmeticsSelect,
+      createdAt: true,
+      rank: {
+        select: {
+          leaderboardRank: true,
+          leaderboardId: true,
+          leaderboardTitle: true,
+          leaderboardCosmetic: true,
+        },
+      },
+      links: {
+        select: {
+          url: true,
+          type: true,
+        },
+      },
       stats: {
         select: {
           ratingAllTime: true,
@@ -159,12 +185,25 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const indexReadyRecords = users.map((tagRecord) => {
+  const indexReadyRecords = users.map((userRecord) => {
+    const stats = userRecord.stats;
+
+    const weightedRating = !stats
+      ? 0
+      : (stats.ratingAllTime * stats.ratingCountAllTime + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
+        (stats.ratingCountAllTime + RATING_BAYESIAN_C);
+
     return {
-      ...tagRecord,
+      ...userRecord,
+      stats: stats
+        ? {
+            ...stats,
+            weightedRating,
+          }
+        : null,
       metrics: {
         // Flattens metric array
-        ...(tagRecord.metrics[0] || {}),
+        ...(userRecord.metrics[0] || {}),
       },
     };
   });
@@ -188,7 +227,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
 
   const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
 
-  const itemsToIndex: Awaited<ReturnType<typeof onFetchItemsToIndex>> = [];
+  const itemsToIndex: UserSearchIndexRecord[] = [];
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
     const batch = queuedItems.slice(
@@ -214,8 +253,6 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
   return itemsToIndex;
 };
 const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
-  if (!client) return;
-
   // Confirm index setup & working:
   await onIndexSetup({ indexName });
   // Cleanup documents that require deletion:
@@ -237,9 +274,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     if (updateTasks.length > 0) {
-      const updateBaseTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateTasks, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateBaseTasks = await updateDocs({
+        indexName,
+        documents: updateTasks,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
       userTasks.push(...updateBaseTasks);
@@ -270,9 +309,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     if (indexReadyRecords.length === 0) break;
 
-    const tasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const tasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     userTasks.push(...tasks);
 
