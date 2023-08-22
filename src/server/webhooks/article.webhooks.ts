@@ -10,13 +10,12 @@ export const articleWebhooks = createWebhookProcessor({
     displayName: 'New Articles',
     getData: async ({ lastSent, prisma }) => {
       const now = new Date();
-      const articles = await prisma.model.findMany({
+      const articles = await prisma.article.findMany({
         where: {
           publishedAt: {
-            gt: lastSent,
+            gt: new Date('2023-08-01'),
             lte: now,
           },
-          deletedAt: null,
         },
         select: articleDetailSelect,
       });
