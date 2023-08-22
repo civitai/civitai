@@ -35,7 +35,7 @@ export default function Downloads() {
   const downloads = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
 
   const hideDownloadMutation = trpc.download.hide.useMutation({
-    async onMutate({ id, all }) {
+    async onMutate({ modelVersionId, all }) {
       queryUtils.download.getAllByUser.setInfiniteData({}, (data) => {
         if (!data || all) {
           return {
@@ -48,14 +48,19 @@ export default function Downloads() {
           ...data,
           pages: data.pages.map((page) => ({
             ...page,
-            items: page.items.filter((item) => item.id !== id),
+            items: page.items.filter((item) => item.modelVersion.id !== modelVersionId),
           })),
         };
       });
     },
   });
-  const handleHide = ({ id, all }: { id?: number; all?: boolean }) => {
-    if (currentUser) hideDownloadMutation.mutate({ id, all, userId: currentUser.id });
+  const handleHide = ({ modelVersion, all }: { modelVersion?: { id: number }; all?: boolean }) => {
+    if (currentUser)
+      hideDownloadMutation.mutate({
+        modelVersionId: modelVersion?.id,
+        all,
+        userId: currentUser.id,
+      });
   };
 
   useEffect(() => {

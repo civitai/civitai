@@ -86,12 +86,14 @@ const MyCollectionsDrawer = () => {
         classNames={{ header: classes.drawerHeader }}
       >
         <MyCollections onSelect={() => close()}>
-          {({ FilterBox, Collections, isLoading }) => {
+          {({ FilterBox, Collections }) => {
             return (
               <Stack spacing={4}>
                 {FilterBox}
                 <Divider />
-                <ScrollArea px="sm">{Collections}</ScrollArea>
+                <ScrollArea.Autosize maxHeight="calc(100vh - 93px)" px="sm">
+                  {Collections}
+                </ScrollArea.Autosize>
               </Stack>
             );
           }}
@@ -107,14 +109,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
 
   return (
     <Container fluid className={classes.container}>
-      <Card
-        className={classes.sidebar}
-        withBorder
-        w={220}
-        mr="md"
-        p="xs"
-        mah="calc(80vh - var(--mantine-header-height,0))"
-      >
+      <Card className={classes.sidebar} withBorder w={220} mr="md" p="xs">
         <Card.Section py={4} inheritPadding>
           <Text weight={500}>My Collections</Text>
         </Card.Section>
@@ -131,7 +126,11 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                       <Loader variant="bars" />
                     </Center>
                   )}
-                  {Collections}
+                  <Card.Section ml={0}>
+                    <ScrollArea.Autosize maxHeight="calc(80vh - var(--mantine-header-height,0))">
+                      {Collections}
+                    </ScrollArea.Autosize>
+                  </Card.Section>
                 </>
               );
             }}

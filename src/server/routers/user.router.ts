@@ -58,7 +58,7 @@ export const userRouter = router({
   getEngagedModels: protectedProcedure.query(getUserEngagedModelsHandler),
   getEngagedModelVersions: protectedProcedure.query(getUserEngagedModelVersionsHandler),
   getFollowingUsers: protectedProcedure.query(getUserFollowingListHandler),
-  getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
+  // getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getTags: protectedProcedure.input(getUserTagsSchema.optional()).query(getUserTagsHandler),
   getCreators: publicProcedure.input(getAllQuerySchema.partial()).query(getCreatorsHandler),
   getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
@@ -73,17 +73,17 @@ export const userRouter = router({
   toggleFavoriteModel: protectedProcedure
     .input(toggleModelEngagementInput)
     .mutation(toggleFavoriteModelHandler),
-  toggleHideModel: protectedProcedure
-    .input(toggleModelEngagementInput)
-    .mutation(toggleHideModelHandler),
+  // toggleHideModel: protectedProcedure
+  //   .input(toggleModelEngagementInput)
+  //   .mutation(toggleHideModelHandler),
   acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
   completeOnboarding: protectedProcedure.mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
-  toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
-  toggleBlockedTag: protectedProcedure
-    .input(toggleBlockedTagSchema)
-    .mutation(toggleBlockedTagHandler),
-  batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
+  // toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
+  // toggleBlockedTag: protectedProcedure
+  //   .input(toggleBlockedTagSchema)
+  //   .mutation(toggleBlockedTagHandler),
+  // batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(getByIdSchema).mutation(toggleBanHandler),
   removeAllContent: moderatorProcedure

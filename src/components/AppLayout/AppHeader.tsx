@@ -6,7 +6,6 @@ import {
   Burger,
   Button,
   createStyles,
-  Divider,
   Grid,
   Group,
   GroupProps,
@@ -48,7 +47,7 @@ import {
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { IconPhotoUp } from '@tabler/icons-react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
@@ -60,14 +59,13 @@ import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { QuickSearch } from '~/components/QuickSearch/QuickSearch';
 import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
-import { openSpotlight } from '@mantine/spotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { UserBuzzBadge } from '../User/UserBuzzBadge';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
@@ -182,6 +180,14 @@ const useStyles = createStyles((theme) => ({
   userActive: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
   },
+
+  mobileSearchWrapper: {
+    height: '100%',
+  },
+
+  dNone: {
+    display: 'none',
+  },
 }));
 
 type MenuLink = {
@@ -191,7 +197,23 @@ type MenuLink = {
   visible?: boolean;
 };
 
-export function AppHeader() {
+function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSearchComponentProps) {
+  if (isMobile) {
+    return (
+      <AutocompleteSearch
+        variant="filled"
+        onClear={onSearchDone}
+        onSubmit={onSearchDone}
+        rightSection={null}
+        ref={ref}
+      />
+    );
+  }
+
+  return <AutocompleteSearch />;
+}
+
+export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent }: Props) {
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -201,6 +223,7 @@ export function AppHeader() {
   const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const ref = useClickOutside(() => closeBurger());
+  const searchRef = useRef<HTMLInputElement>(null);
   const { url: homeUrl } = useHomeSelection();
 
   const isMuted = currentUser?.muted ?? false;
@@ -352,7 +375,7 @@ export function AppHeader() {
         ),
       },
     ],
-    [currentUser, features.alternateHome, router.asPath, theme]
+    [currentUser, router.asPath, theme, features.alternateHome]
   );
 
   const burgerMenuItems = useMemo(
@@ -400,6 +423,14 @@ export function AppHeader() {
         ),
     [links]
   );
+  const [showSearch, setShowSearch] = useState(false);
+  const onSearchDone = () => setShowSearch(false);
+
+  useEffect(() => {
+    if (showSearch && searchRef.current) {
+      searchRef.current.focus(); // Automatically focus input on mount
+    }
+  }, [showSearch]);
 
   const BuzzMenuItem = useCallback(
     ({
@@ -443,7 +474,16 @@ export function AppHeader() {
 
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
-      <Grid className={classes.header} m={0} gutter="xs" align="center">
+      <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
+        {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
+      </Box>
+
+      <Grid
+        className={cx(classes.header, { [classes.dNone]: showSearch })}
+        m={0}
+        gutter="xs"
+        align="center"
+      >
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
             <Link href={homeUrl ?? '/'} passHref>
@@ -508,10 +548,10 @@ export function AppHeader() {
           md={5}
           className={features.enhancedSearch ? classes.searchArea : undefined}
         >
-          {!features.enhancedSearch ? (
-            <ListSearch onSearch={() => closeBurger()} />
+          {features.enhancedSearch ? (
+            <>{renderSearchComponent({ onSearchDone, isMobile: false })}</>
           ) : (
-            <QuickSearch className={classes.search} />
+            <ListSearch onSearch={() => closeBurger()} />
           )}
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
@@ -598,7 +638,7 @@ export function AppHeader() {
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
             {features.enhancedSearch && (
-              <ActionIcon onClick={() => openSpotlight()}>
+              <ActionIcon onClick={() => setShowSearch(true)}>
                 <IconSearch />
               </ActionIcon>
             )}
@@ -682,3 +722,10 @@ export function AppHeader() {
     </Header>
   );
 }
+
+type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement };
+export type RenderSearchComponentProps = {
+  onSearchDone: () => void;
+  isMobile: boolean;
+  ref?: RefObject<HTMLInputElement>;
+};

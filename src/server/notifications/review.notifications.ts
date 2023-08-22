@@ -6,6 +6,7 @@ export const reviewNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
         let message = `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`;
+        if (details.imageCount) message += ` with ${details.imageCount} images`;
         if (details.rating) message += ` (${details.rating}/5)`;
         return {
           message,
@@ -28,7 +29,13 @@ export const reviewNotifications = createNotificationProcessor({
             'modelName', m.name,
             'modelVersionName', mv.name,
             'username', u.username,
-            'rating', r.rating
+            'rating', r.rating,
+            'imageCount', (
+                SELECT COUNT(*)
+                FROM "Image" i
+                JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+                WHERE i."userId" = r."userId"
+            )
           ) "details"
         FROM "ResourceReview" r
         JOIN "User" u ON r."userId" = u.id
@@ -58,20 +65,20 @@ export const reviewNotifications = createNotificationProcessor({
       WITH pending_reviews AS (
         SELECT DISTINCT
           ua."userId" "ownerId",
-          m.id "modelId",
-          mv.id "modelVersionId",
+          m.id as "modelId",
+          mv.id as "modelVersionId",
           JSONB_BUILD_OBJECT(
             'modelId', m.id,
             'modelName', m.name,
             'modelVersionId', mv.id,
             'modelVersionName', mv.name
           ) "details"
-        FROM "UserActivity" ua
-        JOIN "ModelVersion" mv ON mv.id = CAST(details->'modelVersionId' AS int) AND mv.status = 'Published'
+        FROM "DownloadHistoryNew" ua
+        JOIN "ModelVersion" mv ON mv.id = ua."modelVersionId" AND mv.status = 'Published'
         JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
         WHERE ua."userId" IS NOT NULL
-          AND ua."createdAt" >= CURRENT_DATE-INTERVAL '72 hour'
-          AND ua."createdAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
+          AND ua."downloadAt" >= CURRENT_DATE-INTERVAL '72 hour'
+          AND ua."downloadAt" <= CURRENT_DATE-INTERVAL '71.75 hour'
           AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")

@@ -60,9 +60,9 @@ declare global {
     id?: number;
   };
 
-  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Other';
+  type ModelFileFormat = 'SafeTensor' | 'PickleTensor' | 'Diffusers' | 'Other';
   type ModelFileSize = 'full' | 'pruned';
-  type ModelFileFp = 'fp32' | 'fp16';
+  type ModelFileFp = 'fp32' | 'fp16' | 'bf16';
   type ImageFormat = 'optimized' | 'metadata';
 
   type UserFilePreferences = {

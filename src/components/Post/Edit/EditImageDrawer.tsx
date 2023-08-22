@@ -35,6 +35,8 @@ import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
+import { auditImageMeta } from '~/utils/media-preprocessors';
+import { useState } from 'react';
 
 const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
@@ -82,6 +84,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
   const image = images.find((x) => x.discriminator === 'image' && x.data.id === imageId)?.data as
     | PostEditImage
     | undefined;
+  const [blockedFor, setBlockedFor] = useState<string[]>();
 
   const meta: Record<string, unknown> = (image?.meta as Record<string, unknown>) ?? {};
   const defaultValues: z.infer<typeof schema> = {
@@ -99,17 +102,20 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
   const form = useForm({ schema, defaultValues, mode: 'onChange' });
   const { mutate, isLoading } = trpc.post.updateImage.useMutation();
 
-  const handleSubmit = (data: z.infer<typeof schema>) => {
+  const handleSubmit = async (data: z.infer<typeof schema>) => {
     if (!image) return;
     const meta = removeEmpty({ ...(image.meta as z.infer<typeof imageMetaSchema>), ...data.meta });
     const payload = { ...image, ...data, meta };
-    mutate(payload, {
-      onSuccess: (response) => {
-        showSuccessNotification({ message: 'Image details saved successfully' });
-        setImage(response.id, () => response);
-        onClose();
-      },
-    });
+    const { blockedFor } = await auditImageMeta(meta, image.nsfw !== 'None');
+    setBlockedFor(blockedFor);
+    if (!blockedFor)
+      mutate(payload, {
+        onSuccess: (response) => {
+          showSuccessNotification({ message: 'Image details saved successfully' });
+          setImage(response.id, () => response);
+          onClose();
+        },
+      });
   };
 
   if (!image) return <NotFound />;
@@ -257,7 +263,13 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
             </Input.Wrapper>
             <Grid gutter="xs">
               <Grid.Col span={12}>
-                <InputTextArea name="meta.prompt" label="Prompt" autosize maxRows={3} />
+                <InputTextArea
+                  name="meta.prompt"
+                  label="Prompt"
+                  autosize
+                  maxRows={3}
+                  error={!!blockedFor?.length ? `blocked for: ${blockedFor.join(', ')}` : undefined}
+                />
               </Grid.Col>
               <Grid.Col span={12}>
                 <InputTextArea

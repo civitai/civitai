@@ -31,7 +31,7 @@ export type FileFromContextProps = {
   type?: ModelFileType | null;
   sizeKB?: number;
   size?: 'full' | 'pruned' | null;
-  fp?: 'fp16' | 'fp32' | null;
+  fp?: 'fp16' | 'fp32' | 'bf16' | null;
   versionId?: number;
   file?: File;
   uuid: string;
@@ -493,5 +493,6 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   },
   Poses: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Wildcards: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
+  Workflows: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
   Other: { acceptedFileTypes: ['.zip'], acceptedModelFiles: ['Archive'], maxFiles: 1 },
 };

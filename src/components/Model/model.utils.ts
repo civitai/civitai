@@ -1,6 +1,6 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useDeferredValue, useMemo } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -13,6 +13,9 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 const modelQueryParamSchema = z
   .object({
@@ -70,13 +73,14 @@ export const useModelFilters = () => {
   return removeEmpty(storeFilters);
 };
 
+export type UseQueryModelReturn = ReturnType<typeof useQueryModels>['models'];
 export const useQueryModels = (
   filters?: Partial<Omit<GetAllModelsInput, 'page'>>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
   const queryUtils = trpc.useContext();
-  const { data, ...rest } = trpc.model.getAll.useInfiniteQuery(filters, {
+  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
     trpc: { context: { skipBatch: true } },
@@ -92,9 +96,56 @@ export const useQueryModels = (
     ...options,
   });
 
-  const models = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const currentUser = useCurrentUser();
+  const {
+    models: hiddenModels,
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+  const models = useMemo(() => {
+    if (isLoadingHidden) return [];
+    const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
+    const filtered = arr
+      .filter((x) => {
+        if (x.user.id === currentUser?.id) return true;
+        if (hiddenUsers.get(x.user.id)) return false;
+        if (hiddenModels.get(x.id) && !filters?.hidden) return false;
+        for (const tag of x.tags) if (hiddenTags.get(tag)) return false;
+        return true;
+      })
+      .map(({ images, ...x }) => {
+        const filteredImages = images?.filter((i) => {
+          if (hiddenImages.get(i.id)) return false;
+          for (const tag of i.tags ?? []) {
+            if (hiddenTags.get(tag)) return false;
+          }
+          return true;
+        });
 
-  return { data, models, ...rest };
+        if (!filteredImages?.length) return null;
+
+        return {
+          ...x,
+          image: filteredImages[0],
+        };
+      })
+      .filter(isDefined);
+
+    return filtered;
+  }, [
+    data,
+    hiddenModels,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    currentUser,
+    isLoadingHidden,
+    filters?.hidden,
+  ]);
+
+  return { data, models, isLoading: isLoading || isLoadingHidden, ...rest };
 };
 
 export const useQueryModelCategories = (

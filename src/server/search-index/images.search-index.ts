@@ -1,26 +1,33 @@
-import { client } from '~/server/meilisearch/client';
+import { client, updateDocs } from '~/server/meilisearch/client';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
   waitForTasksWithRetries,
 } from '~/server/meilisearch/util';
-import { EnqueuedTask } from 'meilisearch';
+import {
+  EnqueuedTask,
+  FilterableAttributes,
+  SearchableAttributes,
+  SortableAttributes,
+} from 'meilisearch';
 import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import {
   ImageIngestionStatus,
-  MetricTimeframe,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { getImageV2Select } from '../selectors/imagev2.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
-const INDEX_ID = 'images';
+const INDEX_ID = IMAGES_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -35,36 +42,65 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const updateSearchableAttributesTask = await index.updateSearchableAttributes([
+  const settings = await index.getSettings();
+
+  const searchableAttributes: SearchableAttributes = [
     'meta.prompt',
-    'tags',
+    'generationProcess',
+    'tags.name',
     'user.username',
-  ]);
-
-  console.log(
-    'onIndexSetup :: updateSearchableAttributesTask created',
-    updateSearchableAttributesTask
-  );
-
-  const sortableFieldsAttributesTask = await index.updateSortableAttributes([
+  ];
+  const sortableAttributes: SortableAttributes = [
     'createdAt',
-    'metric.commentCount',
-    'metric.laughCount',
-    'metric.heartCount',
-    'metric.dislikeCount',
-    'metric.likeCount',
-    'metric.cryCount',
-  ]);
+    'publishedAt',
+    'rank.commentCountAllTimeRank',
+    'rank.reactionCountAllTimeRank',
+  ];
+  const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
 
-  console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
+  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+    const updateSearchableAttributesTask = await index.updateSearchableAttributes(
+      searchableAttributes
+    );
+
+    console.log(
+      'onIndexSetup :: updateSearchableAttributesTask created',
+      updateSearchableAttributesTask
+    );
+  }
+
+  if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
+    const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
+
+    console.log(
+      'onIndexSetup :: sortableFieldsAttributesTask created',
+      sortableFieldsAttributesTask
+    );
+  }
+
+  if (
+    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+  ) {
+    const updateFilterableAttributesTask = await index.updateFilterableAttributes(
+      filterableAttributes
+    );
+
+    console.log(
+      'onIndexSetup :: updateFilterableAttributesTask created',
+      updateFilterableAttributesTask
+    );
+  }
 
   console.log('onIndexSetup :: all tasks completed');
 };
+
+export type ImageSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
 
 const onFetchItemsToIndex = async ({
   db,
   whereOr,
   indexName,
+  isIndexUpdate,
   ...queryProps
 }: {
   db: PrismaClient;
@@ -72,6 +108,7 @@ const onFetchItemsToIndex = async ({
   whereOr?: Prisma.Enumerable<Prisma.ImageWhereInput>;
   skip?: number;
   take?: number;
+  isIndexUpdate?: boolean;
 }) => {
   const offset = queryProps.skip || 0;
   console.log(
@@ -86,33 +123,27 @@ const onFetchItemsToIndex = async ({
     skip: offset,
     take: READ_BATCH_SIZE,
     select: {
-      ...imageSelect,
-      user: {
+      ...getImageV2Select({}),
+      stats: {
         select: {
-          id: true,
-          username: true,
+          commentCountAllTime: true,
+          laughCountAllTime: true,
+          heartCountAllTime: true,
+          dislikeCountAllTime: true,
+          likeCountAllTime: true,
+          cryCountAllTime: true,
         },
       },
-      metrics: {
-        select: {
-          commentCount: true,
-          laughCount: true,
-          heartCount: true,
-          dislikeCount: true,
-          likeCount: true,
-          cryCount: true,
-        },
-        where: {
-          timeframe: MetricTimeframe.AllTime,
-        },
+      rank: {
+        select: { commentCountAllTimeRank: true, reactionCountAllTimeRank: true },
       },
+      tags: { select: { tag: { select: { id: true, name: true } } } },
     },
     where: {
       ingestion: ImageIngestionStatus.Scanned,
       tosViolation: false,
-      scannedAt: {
-        not: null,
-      },
+      type: 'image',
+      scannedAt: { not: null },
       OR: whereOr,
     },
   });
@@ -130,15 +161,35 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const indexReadyRecords = images.map(({ tags, ...imageRecord }) => {
+  // No need for this to ever happen during reset or re-index.
+  if (isIndexUpdate) {
+    // Determine if we need to update the model index based on any of these images
+    const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
+    SELECT
+      m.id "modelId"
+    FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
+    WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
+  `;
+
+    const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
+
+    await modelsSearchIndex.queueUpdate(
+      affectedModelIds.map((id) => ({
+        id: id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
+    );
+  }
+
+  const indexReadyRecords = images.map(({ tags, meta, ...imageRecord }) => {
     return {
       ...imageRecord,
-      metrics: {
-        // Flattens metric array
-        ...(imageRecord.metrics[0] || {}),
-      },
       // Flatten tags:
-      tags: tags.map((imageTag) => imageTag.tag.name),
+      meta: meta as ImageMetaProps,
+      tags: tags.map((imageTag) => imageTag.tag),
     };
   });
 
@@ -161,7 +212,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
 
   const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
 
-  const itemsToIndex: Awaited<ReturnType<typeof onFetchItemsToIndex>> = [];
+  const itemsToIndex: ImageSearchIndexRecord[] = [];
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
     const batch = queuedItems.slice(
@@ -179,6 +230,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
           in: itemIds,
         },
       },
+      isIndexUpdate: true,
     });
 
     itemsToIndex.push(...newItems);
@@ -188,8 +240,6 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
 };
 
 const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
-  if (!client) return;
-
   // Confirm index setup & working:
   await onIndexSetup({ indexName });
   // Cleanup documents that require deletion:
@@ -211,9 +261,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     if (updateTasks.length > 0) {
-      const updateBaseTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateTasks, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateBaseTasks = await updateDocs({
+        indexName,
+        documents: updateTasks,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
       imageTasks.push(...updateBaseTasks);
@@ -239,14 +291,17 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
             },
           ]
         : undefined,
+      isIndexUpdate: !!lastUpdatedAt,
     });
 
     // Avoids hitting the DB without data.
     if (indexReadyRecords.length === 0) break;
 
-    const tasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const tasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     imageTasks.push(...tasks);
 

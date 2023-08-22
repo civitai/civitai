@@ -12,6 +12,7 @@ import { auditMetaData } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
 import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import { logToDb } from '~/utils/logging';
 
 const tagCache: Record<string, number> = {};
 
@@ -69,6 +70,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
         await handleSuccess(data);
         break;
       default: {
+        await logScanResultError({ id: data.id, message: 'unhandled data type' });
         throw new Error('unhandled data type');
       }
     }
@@ -179,7 +181,10 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
     },
   });
 
-  if (!image) throw new Error('Image not found');
+  if (!image) {
+    await logScanResultError({ id, message: 'Image not found' });
+    throw new Error('Image not found');
+  }
 
   try {
     await dbWrite.$executeRawUnsafe(`
@@ -191,6 +196,7 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
     `);
   } catch (e: any) {
+    await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
   }
 
@@ -245,13 +251,14 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
       }
     }
 
+    // Set nsfw level
+    // do this before updating the image with the new ingestion status
+    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
+
     await dbWrite.image.updateMany({
       where: { id },
       data,
     });
-
-    // Set nsfw level
-    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
 
     // add model to searchIndex queue since new image has been scanned
     // if (image.imagesOnModels && data.ingestion === ImageIngestionStatus.Scanned) {
@@ -261,6 +268,24 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
     //   ]);
     // }
   } catch (e: any) {
+    await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
   }
+}
+
+async function logScanResultError({
+  id,
+  error,
+  message,
+}: {
+  id: number;
+  error?: any;
+  message?: any;
+}) {
+  await logToDb('image-scan-result', {
+    type: 'error',
+    imageId: id,
+    message,
+    error,
+  });
 }

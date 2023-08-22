@@ -113,6 +113,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
   NEXT_PUBLIC_SEARCH_HOST: z.string().url().optional(),
   NEXT_PUBLIC_SEARCH_CLIENT_KEY: z.string().optional(),
+  NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
+  NEXT_PUBLIC_POSTHOG_HOST: z.string().optional(),
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
 });
 
@@ -136,5 +138,7 @@ export const clientEnv = {
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,
   NEXT_PUBLIC_SEARCH_HOST: process.env.NEXT_PUBLIC_SEARCH_HOST,
   NEXT_PUBLIC_SEARCH_CLIENT_KEY: process.env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
+  NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
+  NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
 };

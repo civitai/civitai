@@ -11,15 +11,15 @@ import {
   Badge,
 } from '@mantine/core';
 import { IconRating18Plus } from '@tabler/icons-react';
-import { debounce } from 'lodash-es';
 import React from 'react';
 import { useState, useMemo } from 'react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { HiddenUsersSection } from '~/components/Account/HiddenUsersSection';
+import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { moderationCategories, ModerationCategory } from '~/libs/moderation';
-import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export function ModerationCard({
   cardless = false,
@@ -31,55 +31,48 @@ export function ModerationCard({
   instantRefresh?: boolean;
 }) {
   const user = useCurrentUser();
-  const utils = trpc.useContext();
   const [showNsfw, setShowNsfw] = useState(user?.showNsfw ?? false);
-  const [preferences, setPreferences] = useState<Record<string, boolean>>({});
-  const { isLoading: preferencesLoading } = trpc.moderation.getPreferences.useQuery(undefined, {
-    onSuccess: setPreferences,
-    cacheTime: 0, // So that if they navigate away we refetch...
-  });
 
-  const { mutate } = trpc.moderation.updatePreferences.useMutation({
-    async onSuccess() {
-      if (!instantRefresh) return;
-      invalidateModeratedContentDebounced(utils, ['tag']);
-    },
-  });
-  const mutateDebounced = useMemo(() => debounce(mutate, 500), [mutate]);
+  const tags = useHiddenPreferencesData().tag;
+  const hiddenTags = tags.filter((x) => x.type === 'hidden').map((x) => x.id);
+  const moderationTags = tags.filter((x) => x.type === 'moderated');
 
-  const changePreference = (name: string, value: boolean, children?: ModerationCategory[]) => {
-    const changes = { [name]: value };
-    if (children) for (const child of children) changes[child.value] = value;
+  const preferences = useMemo(
+    () =>
+      moderationTags?.reduce<Record<string, boolean>>(
+        (acc, value) => ({ ...acc, [value.name]: !hiddenTags.includes(value.id) }),
+        {}
+      ) ?? {},
+    [moderationTags, hiddenTags]
+  );
 
-    const values = { ...preferences, ...changes };
-    setPreferences(values);
-    mutateDebounced(values);
+  const { mutate, isLoading } = useToggleHiddenPreferences();
+
+  const handleCategoryToggle = async (
+    name: string,
+    value: boolean,
+    children?: ModerationCategory[]
+  ) => {
+    if (!children) return;
+    const childValues = children.map((x) => x.value);
+    const valueTag = moderationTags.find((x) => x.name === name);
+    const data = [valueTag, ...moderationTags.filter((x) => childValues.includes(x.name))].filter(
+      isDefined
+    );
+    mutate({ kind: 'tag', data, hidden: !value });
+  };
+
+  const handleChipToggle = (name: string, value: boolean) => {
+    const tag = moderationTags.find((x) => x.name === name);
+    if (!!tag) mutate({ kind: 'tag', data: [{ ...tag }], hidden: !value });
   };
 
   const { mutate: updateUser } = trpc.user.update.useMutation({
     async onMutate(changes) {
-      // If all preferences are false, set them all to true
-      if (changes.showNsfw) {
-        const isEmpty = !moderationCategories.some((x) => preferences[x.value] && !x.hidden);
-        if (isEmpty) {
-          const values = { ...preferences };
-          for (const category of moderationCategories) {
-            if (category.hidden) continue;
-            values[category.value] = true;
-            for (const child of category.children ?? []) {
-              if (child.hidden) continue;
-              values[child.value] = true;
-            }
-          }
-          setPreferences(values);
-          mutateDebounced(values);
-        }
-      }
       setShowNsfw(changes.showNsfw ?? false);
     },
     async onSuccess() {
       if (!instantRefresh) return;
-      invalidateModeratedContentDebounced(utils, ['tag']);
       user?.refresh();
     },
   });
@@ -98,7 +91,7 @@ export function ModerationCard({
     </Stack>
   );
 
-  const tags = (
+  const tagSection = (
     <Card key="tags" withBorder>
       <Card.Section withBorder inheritPadding py="xs">
         <Text weight={500}>Hidden Tags</Text>
@@ -107,7 +100,7 @@ export function ModerationCard({
     </Card>
   );
 
-  const users = (
+  const userSection = (
     <Card key="users" withBorder>
       <Card.Section withBorder inheritPadding py="xs">
         <Text weight={500}>Hidden Users</Text>
@@ -116,7 +109,7 @@ export function ModerationCard({
     </Card>
   );
 
-  const nsfw = (
+  const nsfwSection = (
     <Card key="nsfw" withBorder pb={0}>
       <Card.Section withBorder inheritPadding py="xs">
         <Group position="apart">
@@ -139,50 +132,53 @@ export function ModerationCard({
         <>
           {moderationCategories
             .filter((x) => !x.hidden)
-            .map((category) => (
-              <React.Fragment key={category.value}>
-                <Card.Section withBorder inheritPadding py="xs">
-                  <Group position="apart">
-                    <Text weight={500}>{category.label}</Text>
-                    <SkeletonSwitch
-                      loading={preferencesLoading}
-                      checked={preferences?.[category.value] ?? false}
-                      onChange={(e) =>
-                        changePreference(category.value, e.target.checked, category.children)
-                      }
-                    />
-                  </Group>
-                </Card.Section>
-                {preferences && preferences[category.value] && !!category.children?.length && (
-                  <Card.Section inheritPadding py="md">
-                    <Text size="xs" weight={500} mb="xs" mt={-8} color="dimmed">
-                      Toggle all that you are comfortable seeing
-                    </Text>
-                    <Group spacing={5}>
-                      {category.children
-                        .filter((x) => !x.hidden)
-                        .map((child) => (
-                          <Chip
-                            variant="filled"
-                            radius="xs"
-                            size="xs"
-                            key={child.value}
-                            onChange={(checked) => changePreference(child.value, checked)}
-                            checked={preferences?.[child.value] ?? false}
-                          >
-                            {child.label}
-                          </Chip>
-                        ))}
+            .map((category) => {
+              const categoryChecked = category.children?.some((x) => preferences[x.value]);
+              return (
+                <React.Fragment key={category.value}>
+                  <Card.Section withBorder inheritPadding py="xs">
+                    <Group position="apart">
+                      <Text weight={500}>{category.label}</Text>
+                      <SkeletonSwitch
+                        loading={isLoading}
+                        checked={categoryChecked}
+                        onChange={(e) =>
+                          handleCategoryToggle(category.value, e.target.checked, category.children)
+                        }
+                      />
                     </Group>
                   </Card.Section>
-                )}
-              </React.Fragment>
-            ))}
+                  {preferences && categoryChecked && !!category.children?.length && (
+                    <Card.Section inheritPadding py="md">
+                      <Text size="xs" weight={500} mb="xs" mt={-8} color="dimmed">
+                        Toggle all that you are comfortable seeing
+                      </Text>
+                      <Group spacing={5}>
+                        {category.children
+                          .filter((x) => !x.hidden)
+                          .map((child) => (
+                            <Chip
+                              variant="filled"
+                              radius="xs"
+                              size="xs"
+                              key={child.value}
+                              onChange={(checked) => handleChipToggle(child.value, checked)}
+                              checked={preferences?.[child.value] ?? false}
+                            >
+                              {child.label}
+                            </Chip>
+                          ))}
+                      </Group>
+                    </Card.Section>
+                  )}
+                </React.Fragment>
+              );
+            })}
         </>
       )}
     </Card>
   );
-  const contentSections = { title, tags, users, nsfw };
+  const contentSections = { title, tags: tagSection, users: userSection, nsfw: nsfwSection };
 
   const content = <Stack>{sections.map((x) => contentSections[x])}</Stack>;
   if (cardless) return content;

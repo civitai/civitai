@@ -1,4 +1,4 @@
-import { ModelModifier, ModelStatus, ModelType, Prisma, UserActivityType } from '@prisma/client';
+import { ModelModifier, ModelStatus, ModelType, Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
@@ -161,25 +161,6 @@ export default RateLimitedEndpoint(
     // Track download
     try {
       const now = new Date();
-      await dbWrite.userActivity.create({
-        data: {
-          userId,
-          activity: UserActivityType.ModelDownload,
-          createdAt: now,
-          details: {
-            modelId: modelVersion.model.id,
-            modelVersionId: modelVersion.id,
-            fileId: file.id,
-            // Just so we can catch exploits
-            ...(!userId
-              ? {
-                  ip,
-                  userAgent: req.headers['user-agent'],
-                }
-              : {}), // You'll notice we don't include this for authed users...
-          },
-        },
-      });
 
       const tracker = new Tracker(req, res);
       await tracker.modelVersionEvent({
@@ -190,12 +171,31 @@ export default RateLimitedEndpoint(
         time: now,
       });
 
-      if (userId)
+      if (userId) {
+        await dbWrite.downloadHistory.upsert({
+          where: {
+            userId_modelVersionId: {
+              userId: userId,
+              modelVersionId: modelVersion.id,
+            },
+          },
+          create: {
+            userId,
+            modelVersionId: modelVersion.id,
+            downloadAt: now,
+            hidden: false,
+          },
+          update: {
+            downloadAt: now,
+          },
+        });
+
         await playfab.trackEvent(userId, {
           eventName: 'user_download_model',
           modelId: modelVersion.model.id,
           modelVersionId: modelVersion.id,
         });
+      }
     } catch (error) {
       console.error(error);
       return errorResponse(500, 'Invalid database operation');

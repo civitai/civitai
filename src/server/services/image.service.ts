@@ -537,7 +537,7 @@ export const getAllImages = async ({
         ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
         : ''
     )}
-    
+
     ${Prisma.raw(
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
@@ -705,10 +705,10 @@ export const getAllImages = async ({
 
   const images: Array<
     ImageV2Model & {
-      tags: VotableTagModel[] | undefined;
-      report: (typeof reportVar)[number] | undefined;
-      publishedAt: Date | null;
-      modelVersionId: number | null;
+      tags?: VotableTagModel[] | undefined;
+      report?: (typeof reportVar)[number] | undefined;
+      publishedAt?: Date | null;
+      modelVersionId?: number | null;
       baseModel?: string | null;
     }
   > = rawImages.map(
@@ -909,6 +909,7 @@ type ImagesForModelVersions = {
   meta?: Prisma.JsonValue;
   type: MediaType;
   metadata: Prisma.JsonValue;
+  tags?: number[];
 };
 export const getImagesForModelVersion = async ({
   modelVersionIds,
@@ -925,7 +926,7 @@ export const getImagesForModelVersion = async ({
   excludedUserIds?: number[];
   currentUserId?: number;
   imagesPerVersion?: number;
-  include?: Array<'meta'>;
+  include?: Array<'meta' | 'tags'>;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
@@ -994,8 +995,18 @@ export const getImagesForModelVersion = async ({
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
-    ORDER BY i."index"
+    ORDER BY i."postId", i."index"
   `;
+
+  if (include.includes('tags')) {
+    const tags = await dbRead.tagsOnImage.findMany({
+      where: { imageId: { in: images.map((i) => i.id) }, disabled: false },
+      select: { imageId: true, tagId: true },
+    });
+    for (const image of images) {
+      image.tags = tags.filter((t) => t.imageId === image.id).map((t) => t.tagId);
+    }
+  }
 
   return images;
 };

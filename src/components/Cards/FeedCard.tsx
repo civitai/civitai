@@ -17,7 +17,7 @@ const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number }> 
   },
 };
 
-const useStyles = createStyles<string, { height: number }>((theme, { height }) => ({
+const useStyles = createStyles<string>((theme) => ({
   root: {
     padding: '0 !important',
     color: 'white',
@@ -30,8 +30,8 @@ const useStyles = createStyles<string, { height: number }>((theme, { height }) =
 }));
 
 export function FeedCard({ href, children, aspectRatio = 'portrait', className, ...props }: Props) {
-  const { ratio, height } = aspectRatioValues[aspectRatio];
-  const { classes, cx } = useStyles({ height });
+  const { ratio } = aspectRatioValues[aspectRatio];
+  const { classes, cx } = useStyles();
 
   const card = (
     <Card<'a'>
@@ -39,11 +39,7 @@ export function FeedCard({ href, children, aspectRatio = 'portrait', className, 
       {...props}
       component={href ? 'a' : undefined}
     >
-      <AspectRatio
-        // h={height}
-        ratio={ratio}
-        w="100%"
-      >
+      <AspectRatio ratio={ratio} w="100%">
         {children}
       </AspectRatio>
     </Card>

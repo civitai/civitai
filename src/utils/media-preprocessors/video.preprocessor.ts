@@ -10,11 +10,12 @@ const getVideoData = async (src: string) =>
     video.onseeked = function () {
       const width = video.videoWidth;
       const height = video.videoHeight;
+      console.log({ video });
       resolve({
         width,
         height,
         hash: createBlurHash(video, width, height),
-        duration: Math.round(video.duration / 1000) * 1000,
+        duration: Math.round(video.duration * 1000) / 1000,
       });
     };
     video.onerror = (...args) => reject(args);

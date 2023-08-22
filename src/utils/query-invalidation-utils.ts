@@ -10,7 +10,7 @@ export async function invalidateModeratedContent(
   const changedTag = changes.includes('tag');
   const changedUser = changes.includes('user');
 
-  await queryUtils.model.invalidate();
+  // await queryUtils.model.invalidate();
   if (changedTag) await queryUtils.tag.invalidate();
   await queryUtils.post.invalidate();
   await queryUtils.image.invalidate();

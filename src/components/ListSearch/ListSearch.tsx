@@ -164,7 +164,7 @@ export function ListSearch({ onSearch }: Props) {
 
           return true;
         }}
-        clearable
+        clearable={value.length > 0}
       />
     </form>
   );

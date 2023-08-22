@@ -4,6 +4,7 @@ import { ModelFileInput } from '~/server/schema/model-file.schema';
 export function getModelFileFormat(filename: string): ModelFileFormat {
   if (filename.endsWith('.safetensors')) return 'SafeTensor';
   else if (filename.endsWith('.pt') || filename.endsWith('.ckpt')) return 'PickleTensor';
+  else if (filename.endsWith('.zip')) return 'Diffusers';
 
   return 'Other';
 }

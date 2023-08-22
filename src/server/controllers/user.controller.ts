@@ -21,6 +21,7 @@ import {
   isUsernamePermitted,
   toggleUserArticleEngagement,
   updateLeaderboardRank,
+  toggleBan,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -722,28 +723,11 @@ export const toggleBanHandler = async ({
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
-  const { id } = input;
-  const user = await getUserById({ id, select: { bannedAt: true } });
-  if (!user) throw throwNotFoundError(`No user with id ${id}`);
-
-  const updatedUser = await updateUserById({
-    id,
-    data: { bannedAt: user.bannedAt ? null : new Date() },
-  });
-  await invalidateSession(id);
-
-  // Unpublish their models
-  await dbWrite.model.updateMany({
-    where: { userId: id },
-    data: { publishedAt: null, status: 'Unpublished' },
-  });
-
-  // Cancel their subscription
-  await cancelSubscription({ userId: id });
+  const updatedUser = await toggleBan(input);
 
   await ctx.track.userActivity({
-    type: user.bannedAt ? 'Unbanned' : 'Banned',
-    targetUserId: id,
+    type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',
+    targetUserId: updatedUser.id,
   });
 
   return updatedUser;

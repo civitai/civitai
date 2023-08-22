@@ -87,7 +87,7 @@ export function SettingsCard() {
             disabled={isLoading}
           />
           <Select
-            label="Preferred FP"
+            label="Preferred Precision"
             name="fp"
             data={constants.modelFileFp.map((value) => ({
               value,

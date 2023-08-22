@@ -417,7 +417,7 @@ function FileEditForm({
       case 'pt':
         return ['Model', 'Negative', 'VAE'].includes(value);
       case 'zip':
-        return ['Training Data', 'Archive'].includes(value);
+        return ['Training Data', 'Archive', 'Model'].includes(value);
       case 'yml':
       case 'yaml':
         return ['Config', 'Text Encoder'].includes(value);
@@ -474,12 +474,12 @@ function FileEditForm({
           />
 
           <Select
-            label="Floating Point"
-            placeholder="fp16 or fp32"
+            label="Precision"
+            placeholder="fp16, fp32, bf16"
             data={constants.modelFileFp}
             error={error?.fp?._errors[0]}
             value={versionFile.fp ?? null}
-            onChange={(value: 'fp16' | 'fp32' | null) => {
+            onChange={(value: 'fp16' | 'fp32' | 'bf16' | null) => {
               updateFile(versionFile.uuid, { fp: value });
             }}
             withAsterisk
