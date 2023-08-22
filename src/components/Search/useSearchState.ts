@@ -86,24 +86,30 @@ export const useSearchStore = create<StoreState>()(
           const routing = getRoutingForIndex(index as SearchIndex);
 
           switch (index) {
-            case 'articles':
+            case ARTICLES_SEARCH_INDEX:
               set((state) => {
-                state.articles = routing.stateToRoute(uiState).articles as ArticleSearchParams;
+                state.articles = routing.stateToRoute(uiState)[
+                  ARTICLES_SEARCH_INDEX
+                ] as ArticleSearchParams;
               });
               break;
-            case 'models':
+            case MODELS_SEARCH_INDEX:
               set((state) => {
-                state.models = routing.stateToRoute(uiState).models as ModelSearchParams;
+                state.models = routing.stateToRoute(uiState)[
+                  MODELS_SEARCH_INDEX
+                ] as ModelSearchParams;
               });
               break;
-            case 'images':
+            case IMAGES_SEARCH_INDEX:
               set((state) => {
-                state.images = routing.stateToRoute(uiState).images as ImageSearchParams;
+                state.images = routing.stateToRoute(uiState)[
+                  IMAGES_SEARCH_INDEX
+                ] as ImageSearchParams;
               });
               break;
-            case 'users':
+            case USERS_SEARCH_INDEX:
               set((state) => {
-                state.users = routing.stateToRoute(uiState).users as UserSearchParams;
+                state.users = routing.stateToRoute(uiState)[USERS_SEARCH_INDEX] as UserSearchParams;
               });
               break;
           }

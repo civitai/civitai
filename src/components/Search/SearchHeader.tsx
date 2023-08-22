@@ -1,4 +1,8 @@
-import { IndexToLabel, useSearchStore } from '~/components/Search/useSearchState';
+import {
+  IndexToLabel,
+  SearchPathToIndexMap,
+  useSearchStore,
+} from '~/components/Search/useSearchState';
 import {
   useInfiniteHits,
   useInstantSearch,
@@ -99,14 +103,19 @@ export const SearchHeader = () => {
 
   const onChangeIndex = (value: string) => {
     setSearchParamsByUiState(uiState);
+    const keyPath = Object.keys(SearchPathToIndexMap).find(
+      (key) => SearchPathToIndexMap[key as keyof typeof SearchPathToIndexMap] === value
+    );
 
-    if (states.hasOwnProperty(value)) {
+    console.log(states);
+
+    if (keyPath && states.hasOwnProperty(keyPath)) {
       // Redirect to the route with the relevant state:
       router.replace(
         {
-          pathname: `/search/${value}`,
+          pathname: `/search/${keyPath}`,
           query: removeEmpty({
-            ...states[value as keyof typeof states],
+            ...states[keyPath as keyof typeof states],
             query: query || null, // Remove empty string from URL
             page: null, // restart the active page. TODO: We need to consider whether or not it makes sense to store the page in the URL.
           }),
@@ -115,7 +124,7 @@ export const SearchHeader = () => {
         { shallow: true }
       );
     } else {
-      router.replace(`/search/${value}${query ? `?query=${query}` : ''}`, undefined, {
+      router.replace(`/search/${keyPath}${query ? `?query=${query}` : ''}`, undefined, {
         shallow: true,
       });
     }
