@@ -1,5 +1,6 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { getCategoryTags } from '~/server/services/system-cache';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 
@@ -21,8 +22,13 @@ export const articleWebhooks = createWebhookProcessor({
       });
       if (!articles.length) return [];
 
-      return articles.map(({ cover, user, ...article }) => ({
+      const articleCategories = await getCategoryTags('article');
+      return articles.map(({ cover, user, tags, ...article }) => ({
         ...article,
+        tags: tags.map(({ tag }) => ({
+          ...tag,
+          isCategory: articleCategories.some((c) => c.id === tag.id),
+        })),
         cover: cover ? getEdgeUrl(cover, { width: 450 }) : null,
         creator: {
           username: user.username,
