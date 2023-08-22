@@ -107,8 +107,6 @@ export const SearchHeader = () => {
       (key) => SearchPathToIndexMap[key as keyof typeof SearchPathToIndexMap] === value
     );
 
-    console.log(states);
-
     if (keyPath && states.hasOwnProperty(keyPath)) {
       // Redirect to the route with the relevant state:
       router.replace(
@@ -129,8 +127,6 @@ export const SearchHeader = () => {
       });
     }
   };
-
-  console.log(index, MODELS_SEARCH_INDEX);
 
   const data: SegmentedControlItem[] = [
     {
