@@ -86,9 +86,13 @@ export const userRouter = router({
   // batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(getByIdSchema).mutation(toggleBanHandler),
-  removeAllContent: moderatorProcedure
-    .input(getByIdSchema)
-    .mutation(({ input }) => removeAllContent(input)),
+  removeAllContent: moderatorProcedure.input(getByIdSchema).mutation(async ({ input, ctx }) => {
+    await removeAllContent(input);
+    ctx.track.userActivity({
+      type: 'RemoveContent',
+      targetUserId: input.id,
+    });
+  }),
   getArticleEngagement: protectedProcedure.query(({ ctx }) =>
     getUserArticleEngagements({ userId: ctx.user.id })
   ),
