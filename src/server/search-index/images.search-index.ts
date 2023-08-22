@@ -15,9 +15,13 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import {
+  ImageGenerationProcess,
   ImageIngestionStatus,
+  MediaType,
+  NsfwLevel,
   Prisma,
   PrismaClient,
+  ReviewReactions,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { getImageV2Select } from '../selectors/imagev2.selector';
@@ -119,6 +123,100 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
+  const WHERE = [
+    Prisma.sql`i."postId" IS NOT NULL`,
+    Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus`,
+    Prisma.sql`i."tosViolation" = false`,
+    Prisma.sql`i."type" = 'image'`,
+    Prisma.sql`i."scannedAt" IS NOT NULL`,
+  ];
+
+  const imageQuery = await db.$queryRaw<ImageMetaProps[]>`
+  WITH target AS MATERIALIZED (
+    SELECT
+    i."id",
+    i."index",
+    i."postId",
+    i."name",
+    i."url",
+    i."nsfw",
+    i."width",
+    i."height",
+    i."hash",
+    i."meta",
+    i."hideMeta",
+    i."generationProcess",
+    i."createdAt",
+    i."mimeType",
+    i."scannedAt",
+    i."type",
+    i."metadata",
+    i."userId",
+      FROM "Image" i
+      WHERE ${Prisma.join(WHERE, ' AND ')}
+    OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
+  ), ranks AS MATERIALIZED (
+    SELECT
+      ir."imageId",
+      jsonb_build_object(
+        'commentCountAllTimeRank', ir."commentCountAllTimeRank",
+        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank", 
+      ) rank
+    FROM "ImageRank" ir
+    WHERE ir."imageId" IN (SELECT id FROM target)
+    GROUP BY ir."imageId"
+  ), stats AS MATERIALIZED (
+      SELECT
+        im."imageId",
+        jsonb_build_object(
+          'commentCountAllTime', SUM("commentCount"),
+          'laughCountAllTime', SUM("laughCount"),
+          'heartCountAllTime', SUM("heartCount"),
+          'dislikeCountAllTime', SUM("dislikeCount"),
+          'likeCountAllTime', SUM("likeCount"),
+          'cryCountAllTime', SUM("cryCount")
+        ) stats
+      FROM "ImageMetric" im 
+      WHERE im."imageId" IN (SELECT id FROM target) 
+      GROUP BY im."imageId"
+  ), users AS MATERIALIZED (
+    SELECT
+      u.id,
+      jsonb_agg(jsonb_build_object(
+        'id', u.id,
+        'username', u.username,
+        'deletedAt', u."deletedAt",
+        'image', u.image
+      )) user
+    FROM "User" u
+    WHERE u."userId" IN (SELECT "userId" FROM target)
+    GROUP BY u.id
+  ), cosmetics AS MATERIALIZED (
+    SELECT
+      uc."userId",
+      jsonb_agg(jsonb_build_object(
+        'id', c.id,
+        'data', c.data,
+        'type', c.type,
+        'source', c.source,
+        'name', c.name,
+        'leaderboardId', c."leaderboardId",
+        'leaderboardPosition', c."leaderboardPosition"
+      )) cosmetics
+    FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    AND "equippedAt" IS NOT NULL
+    WHERE uc."userId" IN (SELECT "userId" FROM target)
+    GROUP BY uc."userId"
+  )
+  SELECT
+    t.*,
+    (SELECT rank FROM ranks r WHERE r."imageId" = t.id), 
+    (SELECT stats FROM stats s WHERE s."imageId" = t.id)
+    (SELECT users FROM users u WHERE u.id = t."userId"),
+    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
+  FROM target t`;
+
   const images = await db.image.findMany({
     skip: offset,
     take: READ_BATCH_SIZE,
@@ -137,7 +235,11 @@ const onFetchItemsToIndex = async ({
       rank: {
         select: { commentCountAllTimeRank: true, reactionCountAllTimeRank: true },
       },
-      tags: { select: { tag: { select: { id: true, name: true } } } },
+      tags: {
+        select: {
+          tag: { select: { id: true, name: true } },
+        },
+      },
     },
     where: {
       ingestion: ImageIngestionStatus.Scanned,

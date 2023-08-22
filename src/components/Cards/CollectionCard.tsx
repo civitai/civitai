@@ -231,7 +231,7 @@ function ImageSrcCover({ data, coverSrcs }: Props & { coverSrcs: string[] }) {
       {coverSrcs.map((src) => (
         <EdgeMedia
           src={src}
-          width={450}
+          width={DEFAULT_EDGE_IMAGE_WIDTH}
           placeholder="empty"
           className={classes.image}
           loading="lazy"
