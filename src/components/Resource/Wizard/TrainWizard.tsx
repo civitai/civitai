@@ -50,9 +50,7 @@ export default function TrainWizard() {
   } = trpc.model.getById.useQuery({ id: Number(modelId) }, { enabled: !!modelId });
 
   const editing = !!model;
-  console.log('editing', editing);
-  const hasVersions = model && model.modelVersions.length > 0;
-  const hasFiles = model && model.modelVersions.some((version) => version.files.length > 0);
+  const hasFiles = model && model.modelVersions[0].files.length > 0;
 
   useEffect(() => {
     if (!isNew) {
@@ -60,7 +58,7 @@ export default function TrainWizard() {
       else router.replace(`${pathWithId}&step=3`, undefined, { shallow: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, hasVersions, modelId, isNew]);
+  }, [hasFiles, pathWithId, isNew]);
 
   useEffect(() => {
     // set current step based on query param

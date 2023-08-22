@@ -1,30 +1,32 @@
 import { Center, Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
+import { useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import { UserDraftModels } from '~/components/User/UserDraftModels';
+import UserTrainingModels from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 
 import { UserProfileLayout } from './';
-import { useState } from 'react';
-import { UserDraftModels } from '~/components/User/UserDraftModels';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import UserTrainingModels from '~/components/User/UserTrainingModels';
 
 type SectionTypes = 'published' | 'draft' | 'training';
 
 export default function UserModelsPage() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { set, section: querySection, ...queryFilters } = useModelQueryParams();
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
   const sort = queryFilters.sort ?? ModelSort.Newest;
@@ -37,6 +39,7 @@ export default function UserModelsPage() {
   );
   const viewingPublished = section === 'published';
   const viewingDraft = section === 'draft';
+  const viewingTraining = section === 'training' && features.imageTraining;
 
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
@@ -102,9 +105,10 @@ export default function UserModelsPage() {
               </>
             ) : viewingDraft ? (
               <UserDraftModels />
-            ) : (
-              // TODO [bw]: hide via feature flags? or supporter?
+            ) : viewingTraining ? (
               <UserTrainingModels />
+            ) : (
+              <NotFound />
             )}
           </Stack>
         </MasonryContainer>
@@ -121,16 +125,18 @@ function ContentToggle({
   value: SectionTypes;
   onChange: (value: SectionTypes) => void;
 }) {
+  const features = useFeatureFlags();
+  const tabs = [
+    { label: 'Published', value: 'published' },
+    { label: 'Draft', value: 'draft' },
+  ];
+  if (features.imageTraining) tabs.push({ label: 'Training', value: 'training' });
   return (
     <SegmentedControl
       {...props}
       value={value}
       onChange={onChange}
-      data={[
-        { label: 'Published', value: 'published' },
-        { label: 'Draft', value: 'draft' },
-        { label: 'Training', value: 'training' },
-      ]}
+      data={tabs}
       sx={(theme) => ({
         [theme.fn.smallerThan('sm')]: {
           // flex: 1,

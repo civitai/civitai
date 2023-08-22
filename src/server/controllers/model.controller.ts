@@ -1,17 +1,22 @@
-import { modelHashSelect } from './../selectors/modelHash.selector';
 import {
-  ModelStatus,
-  ModelHashType,
-  Prisma,
-  ModelModifier,
   MetricTimeframe,
+  ModelHashType,
+  ModelModifier,
+  ModelStatus,
+  Prisma,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
+import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
+import { ModelSort } from '~/server/common/enums';
+import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { Context } from '~/server/createContext';
+import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   ChangeModelModifierSchema,
   DeclineReviewSchema,
@@ -30,12 +35,16 @@ import {
   UnpublishModelSchema,
   UserPreferencesForModelsInput,
 } from '~/server/schema/model.schema';
+import { modelsSearchIndex } from '~/server/search-index';
 import {
   associatedResourceSelect,
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getArticles } from '~/server/services/article.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   deleteModelById,
   getDraftModelsByUserId,
@@ -54,30 +63,21 @@ import {
   updateModelEarlyAccessDeadline,
   upsertModel,
 } from '~/server/services/model.service';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { getCategoryTags } from '~/server/services/system-cache';
+import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
+import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
-import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
-import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { isDefined } from '~/utils/type-guards';
-import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
-import { getImagesForModelVersion } from '~/server/services/image.service';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getDownloadUrl } from '~/utils/delivery-worker';
-import { ModelSort } from '~/server/common/enums';
-import { getCategoryTags } from '~/server/services/system-cache';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
-import { getArticles } from '~/server/services/article.service';
-import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
-import { modelsSearchIndex } from '~/server/search-index';
+import { isDefined } from '~/utils/type-guards';
+import { modelHashSelect } from './../selectors/modelHash.selector';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -766,9 +766,20 @@ export const getMyTrainingModelsHandler = async ({
         createdAt: true,
         status: true,
         updatedAt: true,
-        // TODO [bw] need to include training stuff in here
         modelVersions: {
           select: {
+            id: true,
+            trainingDetails: true,
+            trainingStatus: true,
+            files: {
+              select: {
+                url: true,
+                type: true,
+                metadata: true,
+                sizeKB: true,
+              },
+              where: { type: { equals: 'Training Data' } },
+            },
             _count: {
               select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
             },

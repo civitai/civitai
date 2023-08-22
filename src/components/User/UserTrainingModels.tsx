@@ -2,24 +2,35 @@ import {
   ActionIcon,
   Anchor,
   Badge,
+  Button,
   Center,
   createStyles,
   Group,
   LoadingOverlay,
+  Modal,
   Pagination,
   ScrollArea,
   Stack,
   Table,
   Text,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons-react';
+import { TrainingStatus } from '@prisma/client';
+import { IconAlertCircle, IconCircleCheck, IconExternalLink, IconTrash } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import React, { useState } from 'react';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 
 import { NoContent } from '~/components/NoContent/NoContent';
-import { getModelTrainingWizardUrl } from '~/server/common/model-helpers';
+import {
+  createModelFileDownloadUrl,
+  getModelTrainingWizardUrl,
+} from '~/server/common/model-helpers';
+import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { formatDate } from '~/utils/date-helpers';
+import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -48,12 +59,26 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+type TrainingFileData = {
+  type: string;
+  metadata: FileMetadata;
+  url: string;
+  sizeKB: number;
+};
+
+type ModalData = {
+  id?: number;
+  file?: TrainingFileData;
+};
+
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
+  const [opened, { open, close }] = useDisclosure(false);
+  const [modalData, setModalData] = useState<ModalData>({});
 
   const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: 10 });
   const { items, ...pagination } = data || {
@@ -87,6 +112,15 @@ export default function UserTrainingModels() {
 
   const hasTraining = items.length > 0;
 
+  const trainingStatusColors = {
+    [TrainingStatus.Pending]: 'yellow',
+    [TrainingStatus.Submitted]: 'blue',
+    [TrainingStatus.Processing]: 'teal',
+    [TrainingStatus.InReview]: 'green',
+    [TrainingStatus.Approved]: 'green',
+    [TrainingStatus.Failed]: 'red',
+  };
+
   console.log(items);
 
   return (
@@ -96,6 +130,7 @@ export default function UserTrainingModels() {
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
               <th>Name</th>
+              <th>Actions</th>
               <th>Type</th>
               <th>Training Status</th>
               <th>Created</th>
@@ -114,9 +149,16 @@ export default function UserTrainingModels() {
             )}
             {hasTraining ? (
               items.map((model) => {
+                const thisModelVersion = model.modelVersions[0];
+                // TODO why do I have to do this?
+                const thisTrainingDetails = thisModelVersion.trainingDetails as
+                  | TrainingDetailsObj
+                  | undefined;
+                const thisFile = thisModelVersion.files[0];
+
                 const hasVersion = model._count.modelVersions > 0;
-                const hasFiles = model.modelVersions.some((version) => version._count.files > 0);
-                const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
+                const hasFiles = !!thisFile;
+                const hasTrainingParams = !!thisTrainingDetails?.params;
 
                 return (
                   <tr key={model.id}>
@@ -128,23 +170,101 @@ export default function UserTrainingModels() {
                       </Link>
                     </td>
                     <td>
-                      <Badge>{splitUppercase(model.type)}</Badge>
+                      <>
+                        <Modal
+                          opened={opened}
+                          title="Training Details"
+                          overflow="inside"
+                          onClose={close}
+                          size="lg"
+                          centered
+                        >
+                          <DescriptionTable
+                            labelWidth="150px"
+                            items={[
+                              { label: 'Training Start', value: 'Unknown' }, // TODO [bw] check this later
+                              {
+                                label: 'Images',
+                                value: modalData.file?.metadata?.numImages || 0,
+                              },
+                              {
+                                label: 'Captions',
+                                value: modalData.file?.metadata?.numCaptions || 0,
+                              },
+                              {
+                                label: 'Dataset',
+                                value: modalData.file?.url ? (
+                                  // TODO [bw] wtf is happening when i click this? a subscribe button?
+                                  <DownloadButton
+                                    component="a"
+                                    href={createModelFileDownloadUrl({
+                                      versionId: modalData.id as number,
+                                      type: 'Training Data',
+                                    })}
+                                    sx={{ flex: 1 }}
+                                  >
+                                    <Text align="center">
+                                      {`Download (${formatKBytes(modalData.file?.sizeKB)})`}
+                                    </Text>
+                                  </DownloadButton>
+                                ) : (
+                                  'None'
+                                ),
+                              },
+                            ]}
+                          />
+                        </Modal>
+                        <Button
+                          variant="default"
+                          onClick={() => {
+                            setModalData({
+                              id: thisModelVersion.id,
+                              file: thisFile as TrainingFileData,
+                            });
+                            open();
+                          }}
+                        >
+                          View Details
+                        </Button>
+                      </>
                     </td>
                     <td>
-                      <Badge color="yellow">{splitUppercase(model.status)}</Badge>
+                      <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>
+                    </td>
+                    <td>
+                      <Badge
+                        color={
+                          thisModelVersion.trainingStatus
+                            ? trainingStatusColors[thisModelVersion.trainingStatus] || 'gray'
+                            : 'gray'
+                        }
+                      >
+                        {splitUppercase(
+                          thisModelVersion.trainingStatus === TrainingStatus.InReview
+                            ? 'Ready'
+                            : thisModelVersion.trainingStatus || 'N/A'
+                        )}
+                      </Badge>
                     </td>
                     <td>{formatDate(model.createdAt)}</td>
                     <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
                     <td>
                       <Group>
-                        {(!hasVersion || !hasFiles || !hasPosts) && (
+                        {!hasVersion || !hasFiles || !hasTrainingParams ? (
                           <IconAlertCircle size={16} color="orange" />
+                        ) : (
+                          <IconCircleCheck size={16} color="green" />
                         )}
-                        {/* TODO fix this */}
                         <Stack spacing={4}>
-                          {!hasVersion && <Text inherit>Needs model version</Text>}
-                          {!hasFiles && <Text inherit>Needs model files</Text>}
-                          {!hasPosts && <Text inherit>Needs model post</Text>}
+                          {/* technically this step 1 alert should never happen */}
+                          {!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}
+                          {!hasFiles && <Text inherit>Needs training files (Step 2)</Text>}
+                          {!hasTrainingParams && (
+                            <Text inherit>Needs training parameters (Step 3)</Text>
+                          )}
+                          {hasVersion && hasFiles && hasTrainingParams && (
+                            <Text inherit>All good!</Text>
+                          )}
                         </Stack>
                       </Group>
                     </td>

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';
+import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -80,6 +81,9 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
 
   const thisStep = 1;
 
+  console.log(model);
+  console.log(model?.modelVersions[0]);
+
   const schema = z.object({
     id: z.number().optional(),
     name: z.string().min(1, 'Name cannot be empty.'),
@@ -88,14 +92,14 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
     }),
   });
 
-  console.log(model);
-  console.log(model?.modelVersions[0]);
+  const thisTrainingDetails = model?.modelVersions[0].trainingDetails as
+    | TrainingDetailsObj
+    | undefined;
 
   const defaultValues: z.infer<typeof schema> = {
     ...model,
     name: model?.name ?? '',
-    // trainingModelType: model?.modelVersions[0]['trainingDetails' as JSONObject]?.type ?? undefined, // TODO [bw] fix
-    trainingModelType: model?.modelVersions[0].trainingDetails?.type ?? undefined, // TODO [bw] fix
+    trainingModelType: thisTrainingDetails?.type ?? undefined,
   };
   console.log(defaultValues);
   const form = useForm({
@@ -146,16 +150,24 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
       };
 
       upsertVersionMutation.mutate(versionMutateData, {
-        onSuccess: async () => {
+        onSuccess: async (vData) => {
           // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
-          await queryUtils.modelVersion.getById.invalidate(); // do we need an id here?
+          await queryUtils.modelVersion.getById.invalidate({ id: vData.id });
           await queryUtils.model.getById.invalidate({ id: data.id });
           setAwaitInvalidate(false);
           goNext(modelId, thisStep);
         },
+        onError: (error) => {
+          setAwaitInvalidate(false);
+          showErrorNotification({
+            error: new Error(error.message),
+            title: 'Failed to save model version',
+          });
+        },
       });
     },
     onError: (error) => {
+      setAwaitInvalidate(false);
       showErrorNotification({
         error: new Error(error.message),
         title: 'Failed to save model',

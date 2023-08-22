@@ -1,9 +1,11 @@
 import { Accordion, Button, Group, Input, Stack, Title } from '@mantine/core';
-// import { IconMinus, IconPlus } from '@tabler/icons-react';
+import { TrainingStatus } from '@prisma/client';
+import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputCheckbox,
@@ -13,8 +15,15 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-// import { NumberSlider } from '~/libs/form/components/NumberSlider';
+import {
+  TrainingDetailsBaseModel,
+  trainingDetailsBaseModels,
+  TrainingDetailsObj,
+  trainingDetailsParams,
+} from '~/server/schema/model-version.schema';
 import { ModelById } from '~/types/router';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 // const useStyles = createStyles((theme) => ({
 //   reviewData: {
@@ -25,26 +34,28 @@ import { ModelById } from '~/types/router';
 //   },
 // }));
 
-const baseModelDescriptions: { [key: string]: string } = {
-  sd_1_5: 'Useful for all purposes.',
-  sdxl: 'Useful for all purposes.',
-  anime: 'Results will have an anime aesthetic',
-  semi: 'Results will be a blend of anime and realism',
-  realistic: 'Results will be extremely realistic.',
+const baseModelDescriptions: {
+  [key in TrainingDetailsBaseModel]: { label: string; description: string };
+} = {
+  sd_1_5: { label: 'SD 1.5', description: 'Useful for all purposes.' },
+  sdxl: { label: 'SDXL', description: 'Useful for all purposes.' },
+  anime: { label: 'Anime', description: 'Results will have an anime aesthetic' },
+  semi: { label: 'Semi-realistic', description: 'Results will be a blend of anime and realism' },
+  realistic: { label: 'Realistic', description: 'Results will be extremely realistic.' },
 };
 
 type TrainingSettingsType<T extends string> = {
   name: string;
   label: string;
   type: string;
-  default: string | number | boolean | ((...args: any[]) => string | number);
+  default: string | number | boolean | ((...args: never[]) => string | number);
   options?: string[];
   min?: number;
   max?: number;
   disabled?: boolean;
   overrides?: {
     [override in T]: {
-      default?: string | number | boolean | ((...args: any[]) => string | number);
+      default?: string | number | boolean | ((...args: never[]) => string | number);
       min?: number;
       max?: number;
     };
@@ -135,48 +146,31 @@ const trainingSettings: TrainingSettingsType<string>[] = [
 ];
 
 export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
-  // const { classes } = useStyles();
-  const [formBaseModel, setDisplayBaseModel] = useState<string>('');
-  // const [settingsCollapsed, setSettingsCollapsed] = useState<boolean>(true);
+  const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>();
+  const router = useRouter();
+  const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+  const queryUtils = trpc.useContext();
+  const currentUser = useCurrentUser();
 
   const thisStep = 3;
 
   const thisModelVersion = model.modelVersions[0];
+  const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
 
-  const schema = z.object({
-    id: z.number().optional(),
-    name: z.string().min(1, 'Name cannot be empty.'),
-    baseModel: z.string(), // enum?
-    // params
-    epochs: z.number(),
-    num_repeats: z.number(),
-    resolution: z.number(),
-    lora_type: z.string(),
-    enable_bucket: z.boolean(),
-    keep_tokens: z.number(),
-    train_batch_size: z.number(),
-    unet_lr: z.number(),
-    text_encoder_lr: z.number(),
-    lr_scheduler: z.string(),
-    lr_scheduler_number: z.number(),
-    min_snr_gamma: z.number(),
-    network_dim: z.number(),
-    network_alpha: z.number(),
-    optimizer: z.string(),
-    optimizer_args: z.string(),
-    shuffle_tags: z.boolean(),
-    steps: z.number(),
+  const schema = trainingDetailsParams.extend({
+    baseModel: z.enum(trainingDetailsBaseModels, {
+      errorMap: () => ({ message: 'A base model must be chosen.' }),
+    }),
   });
 
   const defaultValues: z.infer<typeof schema> = {
-    ...model,
-    baseModel: thisModelVersion.trainingDetails?.baseModel ?? undefined, // TODO [bw] fix
-    ...(thisModelVersion.trainingDetails?.params
-      ? thisModelVersion.trainingDetails.params
-      : trainingSettings.reduce((a, v) => ({ ...a, [v.name]: v.default }), {})), // TODO [bw] fix
+    baseModel: thisTrainingDetails?.baseModel ?? undefined,
+    ...(thisTrainingDetails?.params
+      ? thisTrainingDetails.params
+      : trainingSettings.reduce((a, v) => ({ ...a, [v.name]: v.default }), {})),
   };
 
-  if (!thisModelVersion.trainingDetails?.params) {
+  if (!thisTrainingDetails?.params) {
     defaultValues.num_repeats = defaultValues.num_repeats(
       thisModelVersion.files.find((f) => f.type === 'Training Data')?.metadata['numImages'] || 1
     );
@@ -196,13 +190,73 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     shouldUnregister: false,
   });
 
+  // TODO [bw]
   // useEffect(() => {
   //   // change the defaults? but what if already modified?
   // }, [formBaseModel])
 
   const { isDirty, errors } = form.formState;
 
-  const handleSubmit = () => {};
+  const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Failed to saved model version',
+      });
+    },
+  });
+
+  const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
+    console.log('dirty', isDirty);
+    console.log(rest);
+    const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
+    if (isDirty) {
+      console.log('running model mutation');
+      setAwaitInvalidate(true);
+
+      const { baseModel, ...paramData } = rest;
+
+      const versionMutateData = {
+        // these 4 appear to be required for upsert, but aren't actually being updated.
+        // only ID should technically be necessary
+        id: thisModelVersion.id,
+        name: thisModelVersion.name,
+        modelId: model.id,
+        baseModel: thisModelVersion.baseModel,
+        trainingStatus: TrainingStatus.Submitted,
+        trainingDetails: {
+          ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
+          baseModel: baseModel,
+          params: paramData,
+        },
+      };
+
+      upsertVersionMutation.mutate(versionMutateData, {
+        onSuccess: async () => {
+          // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
+          await queryUtils.modelVersion.getById.invalidate({ id: thisModelVersion.id });
+          await queryUtils.model.getById.invalidate({ id: model.id });
+          setAwaitInvalidate(false);
+          showSuccessNotification({
+            title: 'Successfully submitted for training!',
+            message: 'You will be notified when training is complete.',
+            autoClose: 3000,
+          });
+          await router.replace(userTrainingDashboardURL);
+        },
+        onError: (error) => {
+          setAwaitInvalidate(false);
+          showErrorNotification({
+            error: new Error(error.message),
+            title: 'Failed to submit.',
+          });
+        },
+      });
+    } else {
+      // TODO [bw] this won't do anything since there are no changes, change verbiage?
+      router.replace(userTrainingDashboardURL);
+    }
+  };
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -235,7 +289,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                 labelWidth="150px"
                 items={[
                   { label: 'Name', value: model.name },
-                  { label: 'Type', value: thisModelVersion.trainingDetails?.type },
+                  { label: 'Type', value: thisTrainingDetails?.type },
                   {
                     label: 'Images',
                     value:
@@ -255,7 +309,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
             </Accordion.Panel>
           </Accordion.Item>
         </Accordion>
-        {/* TODO [bw]  sample images here */}
+        {/* TODO [bw] sample images here */}
 
         <Title mt="md" order={5}>
           Base Model for Training
@@ -263,18 +317,17 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
         <Input.Wrapper
           label="Select a base model to train your model on"
           withAsterisk
-          // error={form.formState.errors.earlyAccessTimeFrame?.message}
+          error={errors.baseModel?.message}
         >
           <InputSegmentedControl
             name="baseModel"
-            data={[
-              { label: 'SD 1.5', value: 'sd_1_5' },
-              { label: 'SDXL', value: 'sdxl' },
-              { label: 'Anime', value: 'anime' },
-              { label: 'Semi-realistic', value: 'semi' },
-              { label: 'Realistic', value: 'realistic' },
-            ]}
-            onChange={setDisplayBaseModel}
+            data={Object.entries(baseModelDescriptions).map(([k, v]) => {
+              return {
+                label: v.label,
+                value: k,
+              };
+            })}
+            onChange={(value) => setDisplayBaseModel(value as TrainingDetailsBaseModel)}
             color="blue"
             size="xs"
             styles={(theme) => ({
@@ -289,7 +342,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
             fullWidth
           />
         </Input.Wrapper>
-        {baseModelDescriptions[formBaseModel] || ''}
+        {formBaseModel && (baseModelDescriptions[formBaseModel]?.description || '')}
 
         {/*<Title mt="md" order={5}>*/}
         {/*  <Group align="center">*/}
@@ -339,7 +392,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                 labelWidth="200px"
                 items={trainingSettings.map((ts) => {
                   let inp: React.ReactNode;
-                  console.log(ts.name);
+                  // console.log(ts.name);
                   if (['int', 'number'].includes(ts.type)) {
                     inp = (
                       <InputNumber
@@ -383,8 +436,8 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>
-        <Button type="submit" loading={false}>
-          Next
+        <Button type="submit" loading={awaitInvalidate}>
+          Submit
         </Button>
       </Group>
     </Form>

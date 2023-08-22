@@ -25,15 +25,37 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
+export const trainingDetailsBaseModels = ['sd_1_5', 'sdxl', 'anime', 'semi', 'realistic'] as const;
+export type TrainingDetailsBaseModel = (typeof trainingDetailsBaseModels)[number];
+
+export const trainingDetailsParams = z.object({
+  epochs: z.number(),
+  num_repeats: z.number(),
+  resolution: z.number(),
+  lora_type: z.string(),
+  enable_bucket: z.boolean(),
+  keep_tokens: z.number(),
+  train_batch_size: z.number(),
+  unet_lr: z.number(),
+  text_encoder_lr: z.number(),
+  lr_scheduler: z.string(),
+  lr_scheduler_number: z.number(),
+  min_snr_gamma: z.number(),
+  network_dim: z.number(),
+  network_alpha: z.number(),
+  optimizer: z.string(),
+  optimizer_args: z.string(),
+  shuffle_tags: z.boolean(),
+  steps: z.number(),
+});
+
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;
 export const trainingDetailsObj = z.object({
-  baseModel: z.string().optional(), // 'civitai:123123@123123', nb: this is not optional at the end
-  triggerWord: z.string().optional(),
+  baseModel: z.enum(trainingDetailsBaseModels).optional(), // nb: this is not optional when submitting
   type: z.enum(constants.trainingModelTypes),
+  // triggerWord: z.string().optional(),
   // samplePrompts
-  // params: z.object({}),
-  // TODO [bw] what are we putting here?
-  params: z.record(z.string().min(1)).optional(),
+  params: trainingDetailsParams.optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({
