@@ -23,19 +23,26 @@ export const articleWebhooks = createWebhookProcessor({
       if (!articles.length) return [];
 
       const articleCategories = await getCategoryTags('article');
-      return articles.map(({ cover, user, tags, ...article }) => ({
-        ...article,
-        tags: tags.map(({ tag }) => ({
-          ...tag,
-          isCategory: articleCategories.some((c) => c.id === tag.id),
-        })),
-        cover: cover ? getEdgeUrl(cover, { width: 450 }) : null,
-        creator: {
-          username: user.username,
-          image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
-        },
-        link: `${baseUrl}/articles/${article.id}`,
-      }));
+      return articles.map(({ cover, user, tags: allTags, ...article }) => {
+        const categories: string[] = [];
+        const tags: string[] = [];
+        for (const { tag } of allTags) {
+          if (articleCategories.some((c) => c.id === tag.id)) categories.push(tag.name);
+          else tags.push(tag.name);
+        }
+
+        return {
+          ...article,
+          type: categories[0] ?? 'article',
+          tags,
+          cover: cover ? getEdgeUrl(cover, { width: 450 }) : null,
+          creator: {
+            username: user.username,
+            image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
+          },
+          link: `${baseUrl}/articles/${article.id}`,
+        };
+      });
     },
   },
 });
