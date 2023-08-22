@@ -6,6 +6,7 @@ import {
   Burger,
   Button,
   createStyles,
+  Divider,
   Grid,
   Group,
   GroupProps,
@@ -23,7 +24,6 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
-  IconBolt,
   IconBookmark,
   IconCircleDashed,
   IconCrown,
@@ -66,8 +66,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { UserBuzzBadge } from '../User/UserBuzzBadge';
+import { UserBuzz } from '../User/UserBuzz';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 
 const HEADER_HEIGHT = 70;
@@ -164,9 +163,9 @@ const useStyles = createStyles((theme) => ({
 
   user: {
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black,
-    borderRadius: theme.radius.sm,
+    borderRadius: theme.radius.xl,
     transition: 'background-color 100ms ease',
-    paddingRight: '5px',
+    paddingRight: theme.spacing.sm,
 
     '&:hover': {
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
@@ -434,10 +433,13 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
 
   const BuzzMenuItem = useCallback(
     ({
-      badgeSize = 'xs',
-      buttonSize = 'xs',
+      textSize = 'xs',
+      withAbbreviation = true,
       ...groupProps
-    }: GroupProps & { badgeSize?: MantineSize; buttonSize?: MantineSize }) => {
+    }: GroupProps & {
+      textSize?: MantineSize;
+      withAbbreviation?: boolean;
+    }) => {
       if (!currentUser) return null;
 
       return (
@@ -454,18 +456,31 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           {...groupProps}
         >
           <Group spacing={4} noWrap>
-            <Text weight={600}>Buzz</Text>
-            <UserBuzzBadge user={currentUser} size={badgeSize} p={4} iconSize={12} withTooltip />
+            <UserBuzz
+              iconSize={16}
+              user={currentUser}
+              textSize={textSize}
+              withAbbreviation={withAbbreviation}
+              withTooltip
+            />
           </Group>
-          <Button
-            variant="outline"
+          {/* TODO.buzz: Replace this with button below when buying is available */}
+          <Paper radius="xl" py={4} px={12}>
+            <Text size="xs" weight={600}>
+              Available Buzz
+            </Text>
+          </Paper>
+          {/* TODO.buzz: Once buying is available, uncomment this block */}
+          {/* <Button
+            variant="white"
+            radius="xl"
             size={buttonSize}
             px={12}
             onClick={() => openBuyBuzzModal({})}
             compact
           >
-            Buy more
-          </Button>
+            Buy More Buzz
+          </Button> */}
         </Group>
       );
     },
@@ -557,15 +572,6 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="md" align="center" noWrap>
             <Group spacing="sm" noWrap>
-              {!currentUser ? (
-                <Button
-                  component={NextLink}
-                  href={`/login?returnUrl=${router.asPath}`}
-                  variant="default"
-                >
-                  Sign In
-                </Button>
-              ) : null}
               {currentUser && (
                 <>
                   <UploadTracker />
@@ -576,7 +582,17 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               {currentUser && <NotificationBell />}
               {currentUser?.isModerator && <ModerationNav />}
             </Group>
-            <Divider orientation="vertical" />
+            {!currentUser ? (
+              <Button
+                component={NextLink}
+                href={`/login?returnUrl=${router.asPath}`}
+                variant="default"
+              >
+                Sign In
+              </Button>
+            ) : (
+              <Divider orientation="vertical" />
+            )}
             <Menu
               width={260}
               opened={userMenuOpened}
@@ -590,8 +606,8 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                   onClick={() => setUserMenuOpened(true)}
                 >
                   <Group spacing={8} noWrap>
-                    <UserAvatar user={currentUser} avatarProps={{ size: 36, radius: 'sm' }} />
-                    <UserBuzzBadge user={currentUser} />
+                    <UserAvatar user={currentUser} size="md" />
+                    <UserBuzz user={currentUser} />
                   </Group>
                 </UnstyledButton>
               </Menu.Target>
@@ -660,7 +676,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 >
                   {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
                   <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
-                    <BuzzMenuItem mx={0} mt={0} badgeSize="sm" buttonSize="sm" />
+                    <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
                     {burgerMenuItems}
                   </ScrollArea.Autosize>
                   {currentUser && (

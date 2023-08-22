@@ -435,7 +435,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                             <Username {...user} inherit />
                           </Title>
                           <Group spacing={4} noWrap>
-                            <TipBuzzButton toUserId={user.id} size="md" compact />
+                            <TipBuzzButton toUserId={user.id} size="md" iconSize={18} compact />
                             <FollowUserButton userId={user.id} size="md" compact />
 
                             <Menu position="left" withinPortal>

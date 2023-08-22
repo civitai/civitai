@@ -230,6 +230,20 @@ function MyApp(props: CustomAppProps) {
                 },
               },
             },
+            colors: {
+              accent: [
+                '#F4F0EA',
+                '#E8DBCA',
+                '#E2C8A9',
+                '#E3B785',
+                '#EBA95C',
+                '#FC9C2D',
+                '#E48C27',
+                '#C37E2D',
+                '#A27036',
+                '#88643B',
+              ],
+            },
           }}
           withGlobalStyles
           withNormalizeCSS
