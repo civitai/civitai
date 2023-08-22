@@ -37,7 +37,6 @@ export function ModelsInfinite({
   const modelFilters = useModelFilters();
 
   const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
-  showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters] = useDebouncedValue(filters, 500);
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =

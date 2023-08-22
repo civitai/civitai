@@ -49,6 +49,9 @@ import { RouterTransition } from '~/components/RouterTransition/RouterTransition
 import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
+import { env } from '~/env/client.mjs';
+import posthog from 'posthog-js';
+import { PostHogProvider } from 'posthog-js/react';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -70,6 +73,18 @@ type CustomAppProps = {
   flags: FeatureAccess;
   isMaintenanceMode: boolean | undefined;
 }>;
+
+if (typeof window !== 'undefined' && env.NEXT_PUBLIC_POSTHOG_KEY) {
+  posthog.init(env.NEXT_PUBLIC_POSTHOG_KEY, {
+    api_host: env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://app.posthog.com',
+    autocapture: false,
+    capture_pageview: false,
+    capture_pageleave: false,
+    loaded: () => {
+      isDev && posthog.debug();
+    },
+  });
+}
 
 function MyApp(props: CustomAppProps) {
   const {
@@ -144,25 +159,27 @@ function MyApp(props: CustomAppProps) {
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
         <CivitaiSessionProvider>
-          <CookiesProvider value={cookies}>
-            <FiltersProvider value={filters}>
-              <HiddenPreferencesProvider>
-                <FeatureFlagsProvider flags={flags}>
-                  <CivitaiLinkProvider>
-                    <CustomModalsProvider>
-                      <NotificationsProvider>
-                        <FreezeProvider>
-                          <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                        </FreezeProvider>
-                        <GenerationPanel />
-                        <RoutedContextProvider2 />
-                      </NotificationsProvider>
-                    </CustomModalsProvider>
-                  </CivitaiLinkProvider>
-                </FeatureFlagsProvider>
-              </HiddenPreferencesProvider>
-            </FiltersProvider>
-          </CookiesProvider>
+          <PostHogProvider client={posthog}>
+            <CookiesProvider value={cookies}>
+              <FiltersProvider value={filters}>
+                <HiddenPreferencesProvider>
+                  <FeatureFlagsProvider flags={flags}>
+                    <CivitaiLinkProvider>
+                      <CustomModalsProvider>
+                        <NotificationsProvider>
+                          <FreezeProvider>
+                            <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                          </FreezeProvider>
+                          <GenerationPanel />
+                          <RoutedContextProvider2 />
+                        </NotificationsProvider>
+                      </CustomModalsProvider>
+                    </CivitaiLinkProvider>
+                  </FeatureFlagsProvider>
+                </HiddenPreferencesProvider>
+              </FiltersProvider>
+            </CookiesProvider>
+          </PostHogProvider>
         </CivitaiSessionProvider>
       </SessionProvider>
     </>

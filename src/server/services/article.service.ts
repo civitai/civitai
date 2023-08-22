@@ -8,7 +8,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 
-import { ArticleSort } from '~/server/common/enums';
+import { ArticleSort, BrowsingMode } from '~/server/common/enums';
 import {
   GetArticlesByCategorySchema,
   GetInfiniteArticlesSchema,
@@ -52,6 +52,7 @@ export const getArticles = async ({
   includeDrafts,
   ids,
   collectionId,
+  browsingMode,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
@@ -63,6 +64,7 @@ export const getArticles = async ({
     if (!!tags?.length) AND.push({ tags: { some: { tagId: { in: tags } } } });
     if (!!userIds?.length) AND.push({ userId: { in: userIds } });
     if (!!ids?.length) AND.push({ id: { in: ids } });
+    if (browsingMode === BrowsingMode.SFW) AND.push({ nsfw: false });
     if (username) AND.push({ user: { username } });
     if (collectionId) {
       const permissions = await getUserCollectionPermissionsById({
