@@ -10,6 +10,9 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import {
+  CosmeticSource,
+  CosmeticType,
+  LinkType,
   MetricTimeframe,
   Prisma,
   PrismaClient,
@@ -91,6 +94,51 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 };
 
 export type UserSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
+type UserForSearchIndex = {
+  id: number;
+  username: string | null;
+  createdAt: Date;
+  image: string | null;
+  deletedAt: Date | null;
+  links: { type: LinkType; url: string }[];
+  metrics: {
+    followerCount: number;
+    uploadCount: number;
+    followingCount: number;
+    reviewCount: number;
+    answerAcceptCount: number;
+    hiddenCount: number;
+    answerCount: number;
+  }[];
+  stats: {
+    ratingAllTime: number;
+    ratingCountAllTime: number;
+    downloadCountAllTime: number;
+    favoriteCountAllTime: number;
+    followerCountAllTime: number;
+    answerAcceptCountAllTime: number;
+    answerCountAllTime: number;
+    followingCountAllTime: number;
+    hiddenCountAllTime: number;
+    reviewCountAllTime: number;
+    uploadCountAllTime: number;
+  } | null;
+  rank: {
+    leaderboardId: string | null;
+    leaderboardRank: number | null;
+    leaderboardTitle: string | null;
+    leaderboardCosmetic: string | null;
+  } | null;
+  cosmetics: {
+    cosmetic: {
+      id: number;
+      data: Prisma.JsonValue;
+      type: CosmeticType;
+      name: string;
+      source: CosmeticSource;
+    };
+  }[];
+};
 
 const onFetchItemsToIndex = async ({
   db,
@@ -100,9 +148,8 @@ const onFetchItemsToIndex = async ({
 }: {
   db: PrismaClient;
   indexName: string;
-  whereOr?: Prisma.Enumerable<Prisma.UserWhereInput>;
+  whereOr?: Prisma.Sql[];
   skip?: number;
-  take?: number;
 }) => {
   const offset = queryProps.skip || 0;
   console.log(
@@ -113,64 +160,99 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
-  const users = await db.user.findMany({
-    skip: offset,
-    take: READ_BATCH_SIZE,
-    select: {
-      ...userWithCosmeticsSelect,
-      createdAt: true,
-      rank: {
-        select: {
-          leaderboardRank: true,
-          leaderboardId: true,
-          leaderboardTitle: true,
-          leaderboardCosmetic: true,
-        },
-      },
-      links: {
-        select: {
-          url: true,
-          type: true,
-        },
-      },
-      stats: {
-        select: {
-          ratingAllTime: true,
-          ratingCountAllTime: true,
-          downloadCountAllTime: true,
-          favoriteCountAllTime: true,
-          followerCountAllTime: true,
-          answerAcceptCountAllTime: true,
-          answerCountAllTime: true,
-          followingCountAllTime: true,
-          hiddenCountAllTime: true,
-          reviewCountAllTime: true,
-          uploadCountAllTime: true,
-        },
-      },
-      metrics: {
-        select: {
-          followerCount: true,
-          uploadCount: true,
-          followingCount: true,
-          reviewCount: true,
-          answerAcceptCount: true,
-          hiddenCount: true,
-          answerCount: true,
-        },
-        where: {
-          timeframe: MetricTimeframe.AllTime,
-        },
-      },
-    },
-    where: {
-      id: {
-        not: -1,
-      },
-      deletedAt: null,
-      OR: whereOr,
-    },
-  });
+  const WHERE = [Prisma.sql`u.id != -1`, Prisma.sql`u."deletedAt" IS NULL`];
+
+  if (whereOr) {
+    WHERE.push(Prisma.sql`(${Prisma.join(whereOr, ' OR ')})`);
+  }
+
+  const users = await db.$queryRaw<UserForSearchIndex[]>`
+  WITH target AS MATERIALIZED (
+    SELECT
+    u.id,
+      u.username,
+    u."deletedAt",
+    u.image
+      FROM "User" u
+      WHERE ${Prisma.join(WHERE, ' AND ')}
+    OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
+  ), cosmetics AS MATERIALIZED (
+    SELECT
+      uc."userId",
+      jsonb_agg(jsonb_build_object(
+        'id', c.id,
+        'data', c.data,
+        'type', c.type,
+        'source', c.source,
+        'name', c.name,
+        'leaderboardId', c."leaderboardId",
+        'leaderboardPosition', c."leaderboardPosition"
+      )) cosmetics
+    FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    AND "equippedAt" IS NOT NULL
+    WHERE uc."userId" IN (SELECT id FROM target)
+    GROUP BY uc."userId"
+  ), ranks AS MATERIALIZED (
+    SELECT
+      ur."userId",
+      jsonb_build_object(
+        'leaderboardRank', ur."leaderboardRank",
+        'leaderboardId', ur."leaderboardId",
+        'leaderboardTitle', ur."leaderboardTitle",
+        'leaderboardCosmetic', ur."leaderboardCosmetic"
+      ) rank
+    FROM "UserRank" ur
+    WHERE ur."leaderboardRank" IS NOT NULL
+      AND ur."userId" IN (SELECT id FROM target)
+  ), links as MATERIALIZED (
+    SELECT
+      ul."userId",
+      jsonb_agg(jsonb_build_object(
+        'type', ul.type,
+        'url', ul.url
+      )) links
+    FROM "UserLink" ul
+    WHERE ul."userId" IN (SELECT id FROM target)
+    GROUP BY ul."userId"
+  ), stats AS MATERIALIZED (
+      SELECT
+        m."userId",
+        jsonb_build_object(
+          'ratingAllTime', IIF(sum("ratingCount") IS NULL OR sum("ratingCount") < 1, 0::double precision, sum("rating" * "ratingCount")/sum("ratingCount")),
+              'ratingCountAllTime', SUM("ratingCount"),
+              'downloadCountAllTime', SUM("downloadCount"),
+              'favoriteCountAllTime', SUM("favoriteCount")
+        ) stats
+      FROM "ModelMetric" mm
+      JOIN "Model" m ON mm."modelId" = m.id AND timeframe = 'AllTime'
+      WHERE m."userId" IN (SELECT id FROM target)
+      GROUP BY m."userId"
+  ), metrics as MATERIALIZED (
+    SELECT
+      um."userId",
+      jsonb_build_object(
+        'followerCount', um."followerCount",
+              'uploadCount', um."uploadCount",
+              'followingCount', um."followingCount",
+              'reviewCount', um."reviewCount",
+              'answerAcceptCount', um."answerAcceptCount",
+              'hiddenCount', um."hiddenCount",
+              'answerCount', um."answerCount"
+      ) metrics
+    FROM "UserMetric" um
+    WHERE um.timeframe = 'AllTime'
+      AND um."userId" IN (SELECT id FROM target)
+  )
+  SELECT
+    t.*,
+    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t.id),
+    (SELECT rank FROM ranks r WHERE r."userId" = t.id),
+    (SELECT links FROM links l WHERE l."userId" = t.id),
+    (SELECT metrics FROM metrics m WHERE m."userId" = t.id),
+    (SELECT stats FROM stats s WHERE s."userId" = t.id)
+  FROM target t
+  `;
 
   console.log(
     `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
@@ -203,7 +285,7 @@ const onFetchItemsToIndex = async ({
         : null,
       metrics: {
         // Flattens metric array
-        ...(userRecord.metrics[0] || {}),
+        ...(userRecord.metrics?.[0] || {}),
       },
     };
   });
@@ -240,11 +322,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: {
-        id: {
-          in: itemIds,
-        },
-      },
+      whereOr: [Prisma.sql`u.id IN ${Prisma.join(itemIds)}`],
     });
 
     itemsToIndex.push(...newItems);
@@ -296,15 +374,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       db,
       indexName,
       skip: offset,
-      whereOr: !lastUpdatedAt
-        ? undefined
-        : [
-            {
-              createdAt: {
-                gt: lastUpdatedAt,
-              },
-            },
-          ],
+      whereOr: !lastUpdatedAt ? undefined : [Prisma.sql`u."createdAt" > ${lastUpdatedAt}`],
     });
 
     if (indexReadyRecords.length === 0) break;
