@@ -121,6 +121,8 @@ export const SearchHeader = () => {
     }
   };
 
+  console.log(index, MODELS_SEARCH_INDEX);
+
   const data: SegmentedControlItem[] = [
     {
       label: (
@@ -138,7 +140,7 @@ export const SearchHeader = () => {
           </Text>
         </Group>
       ),
-      value: 'models',
+      value: MODELS_SEARCH_INDEX,
     },
     features.imageSearch
       ? {
@@ -157,7 +159,7 @@ export const SearchHeader = () => {
               </Text>
             </Group>
           ),
-          value: 'images',
+          value: IMAGES_SEARCH_INDEX,
         }
       : undefined,
     {
@@ -176,7 +178,7 @@ export const SearchHeader = () => {
           </Text>
         </Group>
       ),
-      value: 'articles',
+      value: ARTICLES_SEARCH_INDEX,
     },
     {
       label: (
@@ -194,7 +196,7 @@ export const SearchHeader = () => {
           </Text>
         </Group>
       ),
-      value: 'users',
+      value: USERS_SEARCH_INDEX,
     },
   ].filter(isDefined);
 
