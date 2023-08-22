@@ -600,6 +600,28 @@ export const updateLeaderboardRank = async (userId?: number) => {
   ]);
 };
 
+export const toggleBan = async ({ id }: { id: number }) => {
+  const user = await getUserById({ id, select: { bannedAt: true } });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const updatedUser = await updateUserById({
+    id,
+    data: { bannedAt: user.bannedAt ? null : new Date() },
+  });
+  await invalidateSession(id);
+
+  // Unpublish their models
+  await dbWrite.model.updateMany({
+    where: { userId: id },
+    data: { publishedAt: null, status: 'Unpublished' },
+  });
+
+  // Cancel their subscription
+  await cancelSubscription({ userId: id });
+
+  return updatedUser;
+};
+
 export const toggleUserArticleEngagement = async ({
   type,
   articleId,
