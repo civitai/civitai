@@ -15,22 +15,23 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import {
+  CosmeticSource,
+  CosmeticType,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
   NsfwLevel,
   Prisma,
   PrismaClient,
-  ReviewReactions,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { getImageV2Select } from '../selectors/imagev2.selector';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { imageMetaSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
+// import fs from 'fs';
 
-const READ_BATCH_SIZE = 1000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
+const READ_BATCH_SIZE = 5000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -54,12 +55,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'tags.name',
     'user.username',
   ];
+
   const sortableAttributes: SortableAttributes = [
     'createdAt',
     'publishedAt',
     'rank.commentCountAllTimeRank',
     'rank.reactionCountAllTimeRank',
   ];
+
   const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -100,6 +103,50 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
 
+type ImageForSearchIndex = {
+  type: MediaType;
+  id: number;
+  generationProcess: ImageGenerationProcess | null;
+  createdAt: Date;
+  name: string | null;
+  url: string;
+  meta: Prisma.JsonValue;
+  hash: string | null;
+  height: number | null;
+  width: number | null;
+  metadata: Prisma.JsonValue;
+  nsfw: NsfwLevel;
+  postId: number | null;
+  needsReview: string | null;
+  hideMeta: boolean;
+  index: number | null;
+  scannedAt: Date | null;
+  mimeType: string | null;
+  user: {
+    id: number;
+    image: string | null;
+    username: string | null;
+    deletedAt: Date | null;
+  };
+  cosmetics: {
+    data: Prisma.JsonValue;
+    type: CosmeticType;
+    id: number;
+    name: string;
+    source: CosmeticSource;
+  }[];
+  tags: { tag: { id: number; name: string } }[];
+  stats: {
+    cryCountAllTime: number;
+    dislikeCountAllTime: number;
+    heartCountAllTime: number;
+    laughCountAllTime: number;
+    likeCountAllTime: number;
+    commentCountAllTime: number;
+  } | null;
+  rank: { commentCountAllTimeRank: number; reactionCountAllTimeRank: number } | null;
+};
+
 const onFetchItemsToIndex = async ({
   db,
   whereOr,
@@ -109,7 +156,7 @@ const onFetchItemsToIndex = async ({
 }: {
   db: PrismaClient;
   indexName: string;
-  whereOr?: Prisma.Enumerable<Prisma.ImageWhereInput>;
+  whereOr?: Prisma.Sql[];
   skip?: number;
   take?: number;
   isIndexUpdate?: boolean;
@@ -125,13 +172,17 @@ const onFetchItemsToIndex = async ({
 
   const WHERE = [
     Prisma.sql`i."postId" IS NOT NULL`,
-    Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus`,
+    Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
     Prisma.sql`i."tosViolation" = false`,
     Prisma.sql`i."type" = 'image'`,
     Prisma.sql`i."scannedAt" IS NOT NULL`,
   ];
 
-  const imageQuery = await db.$queryRaw<ImageMetaProps[]>`
+  if (whereOr) {
+    WHERE.push(Prisma.sql`(${Prisma.join(whereOr, ' OR ')})`);
+  }
+
+  const images = await db.$queryRaw<ImageForSearchIndex[]>`
   WITH target AS MATERIALIZED (
     SELECT
     i."id",
@@ -151,7 +202,7 @@ const onFetchItemsToIndex = async ({
     i."scannedAt",
     i."type",
     i."metadata",
-    i."userId",
+    i."userId"
       FROM "Image" i
       WHERE ${Prisma.join(WHERE, ' AND ')}
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
@@ -160,7 +211,7 @@ const onFetchItemsToIndex = async ({
       ir."imageId",
       jsonb_build_object(
         'commentCountAllTimeRank', ir."commentCountAllTimeRank",
-        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank", 
+        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank"
       ) rank
     FROM "ImageRank" ir
     WHERE ir."imageId" IN (SELECT id FROM target)
@@ -189,7 +240,7 @@ const onFetchItemsToIndex = async ({
         'image', u.image
       )) user
     FROM "User" u
-    WHERE u."userId" IN (SELECT "userId" FROM target)
+    WHERE u.id IN (SELECT "userId" FROM target)
     GROUP BY u.id
   ), cosmetics AS MATERIALIZED (
     SELECT
@@ -212,43 +263,10 @@ const onFetchItemsToIndex = async ({
   SELECT
     t.*,
     (SELECT rank FROM ranks r WHERE r."imageId" = t.id), 
-    (SELECT stats FROM stats s WHERE s."imageId" = t.id)
-    (SELECT users FROM users u WHERE u.id = t."userId"),
+    (SELECT stats FROM stats s WHERE s."imageId" = t.id),
+    (SELECT user FROM users u WHERE u.id = t."userId"),
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t`;
-
-  const images = await db.image.findMany({
-    skip: offset,
-    take: READ_BATCH_SIZE,
-    select: {
-      ...getImageV2Select({}),
-      stats: {
-        select: {
-          commentCountAllTime: true,
-          laughCountAllTime: true,
-          heartCountAllTime: true,
-          dislikeCountAllTime: true,
-          likeCountAllTime: true,
-          cryCountAllTime: true,
-        },
-      },
-      rank: {
-        select: { commentCountAllTimeRank: true, reactionCountAllTimeRank: true },
-      },
-      tags: {
-        select: {
-          tag: { select: { id: true, name: true } },
-        },
-      },
-    },
-    where: {
-      ingestion: ImageIngestionStatus.Scanned,
-      tosViolation: false,
-      type: 'image',
-      scannedAt: { not: null },
-      OR: whereOr,
-    },
-  });
 
   console.log(
     `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
@@ -262,6 +280,15 @@ const onFetchItemsToIndex = async ({
   if (images.length === 0) {
     return [];
   }
+
+  const rawTags = await db.imageTag.findMany({
+    where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
+    select: {
+      imageId: true,
+      tagId: true,
+      tagName: true,
+    },
+  });
 
   // No need for this to ever happen during reset or re-index.
   if (isIndexUpdate) {
@@ -286,14 +313,28 @@ const onFetchItemsToIndex = async ({
     );
   }
 
-  const indexReadyRecords = images.map(({ tags, meta, ...imageRecord }) => {
+  const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
+    const parsed = imageMetaSchema.safeParse(meta);
+
     return {
       ...imageRecord,
       // Flatten tags:
-      meta: meta as ImageMetaProps,
-      tags: tags.map((imageTag) => imageTag.tag),
+      meta: parsed.success ? parsed.data : {},
+      user: {
+        ...user,
+        cosmetics: (cosmetics || []).map((cosmetic) => ({ cosmetic })),
+      },
+      tags: rawTags
+        .filter((rt) => rt.imageId === imageRecord.id)
+        .map((rt) => ({ id: rt.tagId, name: rt.tagName })),
+      reactions: [],
     };
   });
+
+  // write to file
+  // const file = fs.createWriteStream(`./images-${offset}-${offset + READ_BATCH_SIZE}.json`);
+  // file.write(JSON.stringify(indexReadyRecords));
+  // file.end();
 
   return indexReadyRecords;
 };
@@ -327,11 +368,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: {
-        id: {
-          in: itemIds,
-        },
-      },
+      whereOr: [Prisma.sql`i.id IN ${Prisma.join(itemIds)}`],
       isIndexUpdate: true,
     });
 
@@ -381,16 +418,8 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       skip: offset,
       whereOr: lastUpdatedAt
         ? [
-            {
-              createdAt: {
-                gt: lastUpdatedAt,
-              },
-            },
-            {
-              updatedAt: {
-                gt: lastUpdatedAt,
-              },
-            },
+            Prisma.sql`i."createdAt" > ${lastUpdatedAt}`,
+            Prisma.sql`i."updatedAt" > ${lastUpdatedAt}`,
           ]
         : undefined,
       isIndexUpdate: !!lastUpdatedAt,
