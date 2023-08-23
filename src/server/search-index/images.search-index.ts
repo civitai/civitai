@@ -269,14 +269,6 @@ const onFetchItemsToIndex = async ({
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t`;
 
-  console.log(
-    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
-    offset,
-    offset + READ_BATCH_SIZE - 1,
-    'filters:',
-    whereOr
-  );
-
   // Avoids hitting the DB without data.
   if (images.length === 0) {
     return [];
@@ -290,6 +282,14 @@ const onFetchItemsToIndex = async ({
       tagName: true,
     },
   });
+
+  console.log(
+    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
+    offset,
+    offset + READ_BATCH_SIZE - 1,
+    'filters:',
+    whereOr
+  );
 
   // No need for this to ever happen during reset or re-index.
   if (isIndexUpdate) {
@@ -319,7 +319,6 @@ const onFetchItemsToIndex = async ({
 
     return {
       ...imageRecord,
-      // Flatten tags:
       meta: parsed.success ? parsed.data : {},
       user: {
         ...user,
