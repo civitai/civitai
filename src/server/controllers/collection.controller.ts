@@ -15,6 +15,7 @@ import {
   UpsertCollectionInput,
   AddSimpleImagePostInput,
   GetAllCollectionsInfiniteSchema,
+  UpdateCollectionCoverImageInput,
 } from '~/server/schema/collection.schema';
 import {
   saveItemInCollections,
@@ -31,6 +32,7 @@ import {
   bulkSaveItems,
   getAllCollections,
   CollectionItemExpanded,
+  updateCollectionCoverImage,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -224,6 +226,27 @@ export const upsertCollectionHandler = async ({
 
   try {
     const collection = await upsertCollection({ input: { ...input, userId: user.id } });
+
+    return collection;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const updateCollectionCoverImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateCollectionCoverImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+
+  try {
+    const collection = await updateCollectionCoverImage({
+      input: { ...input, userId: user.id, isModerator: user.isModerator },
+    });
 
     return collection;
   } catch (error) {

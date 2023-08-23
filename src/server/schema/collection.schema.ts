@@ -91,12 +91,19 @@ export const upsertCollectionInput = z
     name: z.string().max(30).nonempty(),
     description: z.string().max(300).nullish(),
     image: imageSchema.nullish(),
+    imageId: z.number().optional(),
     nsfw: z.boolean().optional(),
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
   })
   .merge(collectionItemSchema);
+
+export type UpdateCollectionCoverImageInput = z.infer<typeof updateCollectionCoverImageInput>;
+export const updateCollectionCoverImageInput = z.object({
+  id: z.number(),
+  imageId: z.number(),
+});
 
 export type GetUserCollectionItemsByItemSchema = z.infer<typeof getUserCollectionItemsByItemSchema>;
 export const getUserCollectionItemsByItemSchema = collectionItemSchema
