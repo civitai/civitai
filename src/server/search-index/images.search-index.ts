@@ -30,8 +30,8 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 // import fs from 'fs';
 
-const READ_BATCH_SIZE = 5000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
+const READ_BATCH_SIZE = 10000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 5000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -157,13 +157,13 @@ const onFetchItemsToIndex = async ({
   db: PrismaClient;
   indexName: string;
   whereOr?: Prisma.Sql[];
-  skip?: number;
+  cursor?: number;
   take?: number;
   isIndexUpdate?: boolean;
 }) => {
-  const offset = queryProps.skip || 0;
+  const offset = queryProps.cursor || -1;
   console.log(
-    `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
+    `onFetchItemsToIndex :: fetching starting for ${indexName} range (Ids):`,
     offset,
     offset + READ_BATCH_SIZE - 1,
     ' filters:',
@@ -171,6 +171,7 @@ const onFetchItemsToIndex = async ({
   );
 
   const WHERE = [
+    Prisma.sql`i."id" > ${offset}`,
     Prisma.sql`i."postId" IS NOT NULL`,
     Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
     Prisma.sql`i."tosViolation" = false`,
@@ -205,7 +206,8 @@ const onFetchItemsToIndex = async ({
     i."userId"
       FROM "Image" i
       WHERE ${Prisma.join(WHERE, ' AND ')}
-    OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
+    ORDER BY i."id"  
+    LIMIT ${READ_BATCH_SIZE}
   ), ranks AS MATERIALIZED (
     SELECT
       ir."imageId",
@@ -386,7 +388,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   // always use this name.
   await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
 
-  let offset = 0;
+  let offset = -1; // such that it starts on 0.
   const imageTasks: EnqueuedTask[] = [];
 
   if (lastUpdatedAt) {
@@ -415,7 +417,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     const indexReadyRecords = await onFetchItemsToIndex({
       db,
       indexName,
-      skip: offset,
+      cursor: offset,
       whereOr: lastUpdatedAt
         ? [
             Prisma.sql`i."createdAt" > ${lastUpdatedAt}`,
@@ -436,7 +438,8 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     imageTasks.push(...tasks);
 
-    offset += indexReadyRecords.length;
+    // Update offset to last index recorded.
+    offset = indexReadyRecords[indexReadyRecords.length - 1].id;
   }
 
   console.log('onIndexUpdate :: start waitForTasks');
