@@ -31,7 +31,7 @@ import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 // import fs from 'fs';
 
 const READ_BATCH_SIZE = 10000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 5000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
