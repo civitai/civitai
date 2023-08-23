@@ -76,6 +76,19 @@ declare global {
     imageFormat: ImageFormat;
   };
 
+  type TrainingResults = {
+    start_time: date;
+    end_time: date;
+    epochs: Array<{
+      epoch_number: number;
+      model_url: string;
+      sample_images?: Array<{
+        image_url: string;
+        prompt: string;
+      }>;
+    }>;
+  };
+
   type FileMetadata = {
     format?: ModelFileFormat;
     size?: ModelFileSize;
@@ -84,6 +97,7 @@ declare global {
     shareDataset?: boolean;
     numImages?: number;
     numCaptions?: number;
+    trainingResults?: TrainingResults;
   };
 
   type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };
