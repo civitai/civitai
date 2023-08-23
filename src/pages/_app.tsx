@@ -159,13 +159,13 @@ function MyApp(props: CustomAppProps) {
       <RegisterCatchNavigation />
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
-        <SignalProvider>
-          <CivitaiSessionProvider>
-            <PostHogProvider client={posthog}>
-              <CookiesProvider value={cookies}>
-                <FiltersProvider value={filters}>
-                  <HiddenPreferencesProvider>
-                    <FeatureFlagsProvider flags={flags}>
+        <FeatureFlagsProvider flags={flags}>
+          <SignalProvider>
+            <CivitaiSessionProvider>
+              <PostHogProvider client={posthog}>
+                <CookiesProvider value={cookies}>
+                  <FiltersProvider value={filters}>
+                    <HiddenPreferencesProvider>
                       <CivitaiLinkProvider>
                         <CustomModalsProvider>
                           <NotificationsProvider>
@@ -177,13 +177,13 @@ function MyApp(props: CustomAppProps) {
                           </NotificationsProvider>
                         </CustomModalsProvider>
                       </CivitaiLinkProvider>
-                    </FeatureFlagsProvider>
-                  </HiddenPreferencesProvider>
-                </FiltersProvider>
-              </CookiesProvider>
-            </PostHogProvider>
-          </CivitaiSessionProvider>
-        </SignalProvider>
+                    </HiddenPreferencesProvider>
+                  </FiltersProvider>
+                </CookiesProvider>
+              </PostHogProvider>
+            </CivitaiSessionProvider>
+          </SignalProvider>
+        </FeatureFlagsProvider>
       </SessionProvider>
     </>
   );

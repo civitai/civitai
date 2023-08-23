@@ -6,6 +6,7 @@ import { trpc } from '~/utils/trpc';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type CivitaiSessionState = SessionUser & {
   isMember: boolean;
@@ -19,7 +20,8 @@ export let isAuthed = false;
 // export let isIdentified = false;
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
-  const { balance = 0 } = useQueryBuzzAccount({ enabled: !!data?.user });
+  const features = useFeatureFlags();
+  const { balance = 0 } = useQueryBuzzAccount({ enabled: !!data?.user && features.buzz });
 
   const value = useMemo(() => {
     if (!data?.user) return null;

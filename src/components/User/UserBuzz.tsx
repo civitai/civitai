@@ -15,7 +15,7 @@ export function UserBuzz({ user, iconSize = 20, withTooltip, withAbbreviation = 
   if (!user) return null;
 
   const content = (
-    <Text color="accent.5" transform="uppercase">
+    <Text color="accent.5" pr="sm" transform="uppercase">
       <Group spacing={4} noWrap>
         <IconBolt size={iconSize} color="currentColor" fill="currentColor" />
         <Text size="md" weight={600} lh={1.2}>

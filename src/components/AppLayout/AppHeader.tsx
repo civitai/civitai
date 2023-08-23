@@ -26,6 +26,7 @@ import { NextLink } from '@mantine/next';
 import {
   IconBookmark,
   IconCircleDashed,
+  IconClockBolt,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -165,7 +166,6 @@ const useStyles = createStyles((theme) => ({
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black,
     borderRadius: theme.radius.xl,
     transition: 'background-color 100ms ease',
-    paddingRight: theme.spacing.sm,
 
     '&:hover': {
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
@@ -347,6 +347,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconHistory stroke={1.5} />
             Download history
+          </Group>
+        ),
+      },
+      {
+        href: '/user/transactions',
+        visible: !!features.buzz,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClockBolt stroke={1.5} />
+            Buzz transactions
           </Group>
         ),
       },

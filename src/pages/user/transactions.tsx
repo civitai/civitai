@@ -19,21 +19,32 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetUserBuzzTransactionsSchema, TransactionType } from '~/server/schema/buzz.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 const transactionTypes = [
-  TransactionType[TransactionType.Purchase],
   TransactionType[TransactionType.Tip],
-  TransactionType[TransactionType.Refund],
   TransactionType[TransactionType.Reward],
+  TransactionType[TransactionType.Purchase],
 ];
 
 const defaultFilters = {
-  type: TransactionType.Purchase,
+  type: TransactionType.Tip,
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
 };
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    const features = getFeatureFlags({ user: session?.user });
+    if (!features.buzz) {
+      return { notFound: true };
+    }
+  },
+});
 
 export default function UserTransactions() {
   const currentUser = useCurrentUser();
@@ -82,10 +93,10 @@ export default function UserTransactions() {
             label="Type"
             name="type"
             placeholder="Select a type"
-            value={filters.type ? TransactionType[filters.type] : undefined}
+            value={filters.type != null ? TransactionType[filters.type] : undefined}
             data={transactionTypes}
             onChange={(value) =>
-              value
+              value != null
                 ? setFilters((current) => ({
                     ...current,
                     type: TransactionType[value as keyof typeof TransactionType],
@@ -102,6 +113,7 @@ export default function UserTransactions() {
           <Stack spacing="md">
             {transactions.map((transaction) => {
               const { amount, date, fromUser, toUser, description } = transaction;
+              const isDebit = amount < 0;
 
               return (
                 <Card key={date.toISOString()} withBorder>
@@ -111,7 +123,7 @@ export default function UserTransactions() {
                         <Text weight="500">{formatDate(date)}</Text>
                         <Badge>{TransactionType[transaction.type]}</Badge>
                       </Group>
-                      <Text color={amount > 0 ? 'green' : 'red'}>
+                      <Text color={isDebit ? 'red' : 'green'}>
                         <Group spacing={4}>
                           <IconBolt size={16} fill="currentColor" />
                           <Text sx={{ fontVariantNumeric: 'tabular-nums' }} span>
@@ -123,7 +135,7 @@ export default function UserTransactions() {
                     {fromUser && fromUser.id !== currentUser?.id && (
                       <Text color="dimmed">
                         <Group spacing={4}>
-                          From:
+                          {isDebit ? 'To: ' : 'From: '}
                           <Text weight="500" span>
                             {fromUser.username}
                           </Text>
@@ -133,7 +145,7 @@ export default function UserTransactions() {
                     {toUser && toUser.id !== currentUser?.id && (
                       <Text color="dimmed">
                         <Group spacing={4}>
-                          To:
+                          {isDebit ? 'From: ' : 'To: '}
                           <Text weight="500" span>
                             {toUser.username}
                           </Text>

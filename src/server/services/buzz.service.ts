@@ -41,7 +41,7 @@ export async function getUserBuzzTransactions({
     start: query.start?.toISOString(),
     end: query.end?.toISOString(),
     cursor: query.cursor?.toISOString(),
-    descending: false,
+    descending: true,
   });
 
   const response = await fetch(
