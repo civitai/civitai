@@ -10,7 +10,14 @@ export const trainingResultsSchema = z.object({
       z.object({
         epoch_number: z.number(),
         model_url: z.string(),
-        sample_images: z.array(z.string()).optional(),
+        sample_images: z
+          .array(
+            z.object({
+              image_url: z.string(),
+              prompt: z.string(),
+            })
+          )
+          .optional(),
       })
     )
     .nullish(),

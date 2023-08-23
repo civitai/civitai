@@ -82,7 +82,10 @@ declare global {
     epochs: Array<{
       epoch_number: number;
       model_url: string;
-      sample_images?: string[];
+      sample_images?: Array<{
+        image_url: string;
+        prompt: string;
+      }>;
     }>;
   };
 

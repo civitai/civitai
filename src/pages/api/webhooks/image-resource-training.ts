@@ -8,7 +8,14 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 const epoch_schema = z.object({
   epoch_number: z.number(),
   model_url: z.string(),
-  sample_images: z.array(z.string()).optional(),
+  sample_images: z
+    .array(
+      z.object({
+        image_url: z.string(),
+        prompt: z.string(),
+      })
+    )
+    .optional(),
 });
 
 type ContextProps = z.infer<typeof context>;
