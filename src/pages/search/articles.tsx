@@ -55,10 +55,11 @@ const RenderFilters = () => {
       <SortBy
         title="Sort articles by"
         items={[
-          { label: 'Most Bookmarked', value: ArticlesSearchIndexSortBy[0] as string },
-          { label: 'Most Viewed', value: ArticlesSearchIndexSortBy[1] as string },
-          { label: 'Most Discussed', value: ArticlesSearchIndexSortBy[2] as string },
-          { label: 'Newest', value: ArticlesSearchIndexSortBy[3] as string },
+          { label: 'Relevancy', value: ArticlesSearchIndexSortBy[0] as string },
+          { label: 'Most Bookmarked', value: ArticlesSearchIndexSortBy[1] as string },
+          { label: 'Most Viewed', value: ArticlesSearchIndexSortBy[2] as string },
+          { label: 'Most Discussed', value: ArticlesSearchIndexSortBy[3] as string },
+          { label: 'Newest', value: ArticlesSearchIndexSortBy[4] as string },
         ]}
       />{' '}
       <SearchableMultiSelectRefinementList

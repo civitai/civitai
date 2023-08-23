@@ -63,10 +63,11 @@ const RenderFilters = () => {
       <SortBy
         title="Sort users by"
         items={[
-          { label: 'Most Followed', value: UsersSearchIndexSortBy[0] as string },
-          { label: 'Highest Rated', value: UsersSearchIndexSortBy[1] as string },
-          { label: 'Most Uploads', value: UsersSearchIndexSortBy[2] as string },
-          { label: 'Newest', value: UsersSearchIndexSortBy[3] as string },
+          { label: 'Relevancy', value: UsersSearchIndexSortBy[0] as string },
+          { label: 'Most Followed', value: UsersSearchIndexSortBy[1] as string },
+          { label: 'Highest Rated', value: UsersSearchIndexSortBy[2] as string },
+          { label: 'Most Uploads', value: UsersSearchIndexSortBy[3] as string },
+          { label: 'Newest', value: UsersSearchIndexSortBy[4] as string },
         ]}
       />
     </>

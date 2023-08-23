@@ -44,11 +44,12 @@ const RenderFilters = () => {
       <SortBy
         title="Sort models by"
         items={[
-          { label: 'Highest Rated', value: ModelSearchIndexSortBy[0] as string },
-          { label: 'Most Downloaded', value: ModelSearchIndexSortBy[1] as string },
-          { label: 'Most Liked', value: ModelSearchIndexSortBy[2] as string },
-          { label: 'Most Discussed', value: ModelSearchIndexSortBy[3] as string },
-          { label: 'Newest', value: ModelSearchIndexSortBy[4] as string },
+          { label: 'Relevancy', value: ModelSearchIndexSortBy[0] as string },
+          { label: 'Highest Rated', value: ModelSearchIndexSortBy[1] as string },
+          { label: 'Most Downloaded', value: ModelSearchIndexSortBy[2] as string },
+          { label: 'Most Liked', value: ModelSearchIndexSortBy[3] as string },
+          { label: 'Most Discussed', value: ModelSearchIndexSortBy[4] as string },
+          { label: 'Newest', value: ModelSearchIndexSortBy[5] as string },
         ]}
       />
       <ChipRefinementList

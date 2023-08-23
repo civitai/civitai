@@ -43,9 +43,10 @@ function RenderFilters() {
       <SortBy
         title="Sort images by"
         items={[
-          { label: 'Most Reactions', value: ImagesSearchIndexSortBy[0] as string },
-          { label: 'Most Discussed', value: ImagesSearchIndexSortBy[1] as string },
-          { label: 'Newest', value: ImagesSearchIndexSortBy[2] as string },
+          { label: 'Relevancy', value: ImagesSearchIndexSortBy[0] as string },
+          { label: 'Most Reactions', value: ImagesSearchIndexSortBy[1] as string },
+          { label: 'Most Discussed', value: ImagesSearchIndexSortBy[2] as string },
+          { label: 'Newest', value: ImagesSearchIndexSortBy[3] as string },
         ]}
       />
       <SearchableMultiSelectRefinementList
