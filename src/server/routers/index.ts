@@ -1,3 +1,5 @@
+import { collectionRouter } from '~/server/routers/collection.router';
+import { trainingRouter } from '~/server/routers/training.router';
 import { router } from '~/server/trpc';
 
 import { accountRouter } from './account.router';
@@ -6,18 +8,19 @@ import { answerRouter } from './answer.router';
 import { apiKeyRouter } from './apiKey.router';
 import { articleRouter } from './article.router';
 import { authRouter } from './auth.router';
-import { collectionRouter } from '~/server/routers/collection.router';
 import { commentRouter } from './comment.router';
 import { commentv2Router } from './commentv2.router';
 import { contentRouter } from './content.router';
 import { downloadRouter } from './download.router';
+import { generationRouter } from './generation.router';
+import { hiddenPreferencesRouter } from './hidden-preferences.router';
 import { homeBlockRouter } from './home-block.router';
 import { imageRouter } from './image.router';
 import { leaderboardRouter } from './leaderboard.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
 import { modelRouter } from './model.router';
-import { moderationRouter } from './moderation.router';
+import { newsletterRouter } from './newsletter.router';
 import { notificationRouter } from './notification.router';
 import { partnerRouter } from './partner.router';
 import { postRouter } from './post.router';
@@ -26,14 +29,11 @@ import { reactionRouter } from './reaction.router';
 import { reportRouter } from './report.router';
 import { resourceReviewRouter } from './resourceReview.router';
 import { stripeRouter } from './stripe.router';
+import { systemRouter } from './system.router';
 import { tagRouter } from './tag.router';
 import { trackRouter } from './track.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
-import { generationRouter } from './generation.router';
-import { newsletterRouter } from './newsletter.router';
-import { systemRouter } from './system.router';
-import { hiddenPreferencesRouter } from './hidden-preferences.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -62,6 +62,7 @@ export const appRouter = router({
   stripe: stripeRouter,
   tag: tagRouter,
   track: trackRouter,
+  training: trainingRouter,
   user: userRouter,
   userLink: userLinkRouter,
   leaderboard: leaderboardRouter,

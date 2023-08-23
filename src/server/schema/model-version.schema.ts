@@ -28,25 +28,30 @@ export const recipeSchema = z.object({
 export const trainingDetailsBaseModels = ['sd_1_5', 'sdxl', 'anime', 'semi', 'realistic'] as const;
 export type TrainingDetailsBaseModel = (typeof trainingDetailsBaseModels)[number];
 
+export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({
-  epochs: z.number(),
-  num_repeats: z.number(),
+  unetLR: z.number(),
+  textEncoderLR: z.number(),
+  optimizerType: z.string(), // TODO actually an enum
+  networkDim: z.number(),
+  networkAlpha: z.number(),
+  lrScheduler: z.string(), // TODO actually an enum
+  maxTrainEpochs: z.number(),
+  numRepeats: z.number(),
   resolution: z.number(),
-  lora_type: z.string(),
-  enable_bucket: z.boolean(),
-  keep_tokens: z.number(),
-  train_batch_size: z.number(),
-  unet_lr: z.number(),
-  text_encoder_lr: z.number(),
-  lr_scheduler: z.string(),
-  lr_scheduler_number: z.number(),
-  min_snr_gamma: z.number(),
-  network_dim: z.number(),
-  network_alpha: z.number(),
-  optimizer: z.string(),
-  optimizer_args: z.string(),
-  shuffle_tags: z.boolean(),
-  steps: z.number(),
+  loraType: z.string(), // TODO actually an enum
+  enableBucket: z.boolean(),
+  keepTokens: z.number(),
+  lrSchedulerNumCycles: z.number(),
+  trainBatchSize: z.number(),
+  minSnrGamma: z.number(),
+  optimizerArgs: z.string(),
+  shuffleCaption: z.boolean(),
+  targetSteps: z.number(),
+  // lrWarmupSteps: z.number(),
+  // clipSkip: 2,
+  // seed: null,
+  // gradientAccumulationSteps: 1,
 });
 
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;

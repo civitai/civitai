@@ -1,7 +1,16 @@
 import { env } from '~/env/server.mjs';
+import { TrainingDetailsBaseModel } from '~/server/schema/model-version.schema';
 import { CreateTrainingRequestInput } from '~/server/schema/training.schema';
 import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
+
+const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
+  sdxl: 'civitai:101055@128078',
+  sd_1_5: 'SD_1_5',
+  anime: 'anime',
+  realistic: 'civitai:81458@132760',
+  semi: 'civitai:4384@128713',
+};
 
 export const createTrainingRequest = async ({
   userId,
@@ -9,61 +18,31 @@ export const createTrainingRequest = async ({
   trainingData,
   params,
 }: CreateTrainingRequestInput & { userId: number }) => {
-  /*
-    "params": {
-        "modelFileId": 92083,
-        "loraName": "lilith",
-        "unetLR": 0.0005,
-        "textEncoderLR": 0.0001,
-        "optimizerType": "AdamW8bit",
-        "networkDim": 16,
-        "networkAlpha": 8,
-        "lrScheduler": "cosine_with_restarts",
-        "lrWarmupSteps": 40,
-        "maxTrainSteps": 800,
-        "maxTrainEpochs": 10,
-        "saveEveryNEpoochs": 1,
-        "saveLastNEpochs": 10,
-        "sampleEveryNEpochs": 1,
-        "trainBatchSize": 2,
-        "clipSkip": 2,
-        "weightedCaptions": false,
-        "seed": null,
-        "maxTokenLength": 225,
-        "lowram": false,
-        "maxDataLoaderNWorkers": 8,
-        "persistentDataLoaderWorkers": true,
-        "xformers": true,
-        "sdpa": false,
-        "noHalfVae": false,
-        "gradientCheckpointing": false,
-        "gradientAccumulationSteps": 1,
-        "v2": false,
-        "resolution": 512,
-        "shuffleCaption": false,
-        "keepTokens": 1,
-        "targetSteps": 500
-    },
-   */
+  if (!env.GENERATION_ENDPOINT) throw throwBadRequestError('Missing GENERATION_ENDPOINT env');
+  if (!env.ORCHESTRATOR_TOKEN) throw throwBadRequestError('Missing ORCHESTRATOR_TOKEN env');
 
   const { url: trainingUrl } = await getGetUrl(trainingData);
 
   const generationRequest = {
     $type: 'imageResourceTraining',
     // priority: 10,
+    // TODO fix
     callbackUrl:
       'https://c933-135-131-230-67.ngrok-free.app/api/webhooks/image-resource-training?token=mycooltoken',
     properties: { userId },
-    model: model,
+    model: modelMap[model],
     trainingData: trainingUrl,
     params: params,
   };
 
   console.log(JSON.stringify(generationRequest));
 
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
+  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+    },
     body: JSON.stringify(generationRequest),
   });
 

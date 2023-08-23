@@ -1,10 +1,10 @@
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { Prisma, TrainingStatus } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { TrainingStatus } from '@prisma/client';
-import { Prisma } from '@prisma/client';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
+export type EpochSchema = z.infer<typeof epoch_schema>;
 const epoch_schema = z.object({
   epoch_number: z.number(),
   model_url: z.string(),

@@ -19,6 +19,7 @@ import {
   TrainingDetailsBaseModel,
   trainingDetailsBaseModels,
   TrainingDetailsObj,
+  TrainingDetailsParams,
   trainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { ModelById } from '~/types/router';
@@ -36,7 +37,7 @@ const baseModelDescriptions: {
 };
 
 type TrainingSettingsType = {
-  name: string;
+  name: keyof TrainingDetailsParams;
   label: string;
   type: string;
   default: string | number | boolean | ((...args: never[]) => string | number);
@@ -53,25 +54,33 @@ type TrainingSettingsType = {
   };
 };
 
-// could type keys as trainingDetailsParams
+// TODO put hints on these fields
 const trainingSettings: TrainingSettingsType[] = [
-  { name: 'epochs', label: 'Epochs', type: 'int', default: 10, min: 3, max: 16 },
+  { name: 'maxTrainEpochs', label: 'Epochs', type: 'int', default: 10, min: 3, max: 16 },
   {
-    name: 'num_repeats',
+    name: 'numRepeats',
     label: 'Num Repeats',
     type: 'int',
     default: (n: number) => Math.max(1, Math.min(16, Math.ceil(200 / n))),
     min: 1,
     max: 16,
   },
-  { name: 'resolution', label: 'Resolution', type: 'int', default: 512, min: 512, max: 1024 },
-  { name: 'lora_type', label: 'LoRA Type', type: 'select', default: 'lora', options: ['lora'] }, // LoCon Lycoris", "LoHa Lycoris
-  { name: 'enable_bucket', label: 'Enable Bucket', type: 'bool', default: true },
-  { name: 'keep_tokens', label: 'Keep Tokens', type: 'int', default: 1, min: 0, max: 1 },
-  { name: 'train_batch_size', label: 'Train Batch Size', type: 'int', default: 2, min: 1, max: 4 },
-  { name: 'unet_lr', label: 'Unet LR', type: 'number', default: 0.0005, min: 0, max: 1 },
   {
-    name: 'text_encoder_lr',
+    name: 'resolution',
+    label: 'Resolution',
+    type: 'int',
+    default: 512,
+    min: 512,
+    max: 1024,
+    overrides: { sdxl: { min: 1024, default: 1024 } },
+  },
+  { name: 'loraType', label: 'LoRA Type', type: 'select', default: 'lora', options: ['lora'] }, // LoCon Lycoris", "LoHa Lycoris // TODO enum
+  { name: 'enableBucket', label: 'Enable Bucket', type: 'bool', default: true },
+  { name: 'keepTokens', label: 'Keep Tokens', type: 'int', default: 1, min: 0, max: 1 },
+  { name: 'trainBatchSize', label: 'Train Batch Size', type: 'int', default: 2, min: 1, max: 4 },
+  { name: 'unetLR', label: 'Unet LR', type: 'number', default: 0.0005, min: 0, max: 1 },
+  {
+    name: 'textEncoderLR',
     label: 'Text Encoder LR',
     type: 'number',
     default: 0.0001,
@@ -79,30 +88,33 @@ const trainingSettings: TrainingSettingsType[] = [
     max: 1,
   },
   {
-    name: 'lr_scheduler',
+    name: 'lrScheduler',
     label: 'LR Scheduler',
     type: 'select',
     default: 'cosine_with_restarts',
     options: [
+      // TODO enum
       'constant',
       'cosine',
       'cosine_with_restarts',
       'constant_with_warmup',
       'linear',
-      'polynomial',
     ],
   },
+  // TODO add warmup if constant_with_warmup
   {
-    name: 'lr_scheduler_number',
-    label: 'LR Scheduler Number',
+    // TODO [bw] actually conditional on lrScheduler, cosine_with_restarts/polynomial
+    name: 'lrSchedulerNumCycles',
+    label: 'LR Scheduler Cycles',
     type: 'int',
     default: 3,
     min: 1,
     max: 4,
   },
-  { name: 'min_snr_gamma', label: 'Min SNR Gamma', type: 'int', default: 5, min: 0, max: 20 },
+  // TODO maybe float
+  { name: 'minSnrGamma', label: 'Min SNR Gamma', type: 'int', default: 5, min: 0, max: 20 },
   {
-    name: 'network_dim',
+    name: 'networkDim',
     label: 'Network Dim',
     type: 'int',
     default: 32,
@@ -111,7 +123,7 @@ const trainingSettings: TrainingSettingsType[] = [
     overrides: { sdxl: { max: 256 } },
   },
   {
-    name: 'network_alpha',
+    name: 'networkAlpha',
     label: 'Network Alpha',
     type: 'int',
     default: 16,
@@ -120,16 +132,16 @@ const trainingSettings: TrainingSettingsType[] = [
     overrides: { sdxl: { max: 256 } },
   },
   {
-    name: 'optimizer',
+    name: 'optimizerType',
     label: 'Optimizer',
     type: 'select',
     default: 'AdamW8Bit',
-    options: ['AdamW8Bit'],
-  }, // other options...
-  { name: 'optimizer_args', label: 'Optimizer Args', type: 'string', default: 'weight_decay=0.1' },
-  { name: 'shuffle_tags', label: 'Shuffle Tags', type: 'bool', default: true },
+    options: ['AdamW8Bit'], // TODO enum
+  },
+  { name: 'optimizerArgs', label: 'Optimizer Args', type: 'string', default: 'weight_decay=0.1' },
+  { name: 'shuffleCaption', label: 'Shuffle Caption', type: 'bool', default: true },
   {
-    name: 'steps',
+    name: 'targetSteps',
     label: 'Steps',
     type: 'int',
     default: (n: number, r: number, e: number, b: number) => Math.ceil((n * r * e) / b),
@@ -140,6 +152,7 @@ const trainingSettings: TrainingSettingsType[] = [
 export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
+  const thisFile = thisModelVersion.files.find((f) => f.type === 'Training Data');
 
   const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
     thisTrainingDetails?.baseModel ?? undefined
@@ -165,14 +178,12 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
   };
 
   if (!thisTrainingDetails?.params) {
-    defaultValues.num_repeats = defaultValues.num_repeats(
-      thisModelVersion.files.find((f) => f.type === 'Training Data')?.metadata['numImages'] || 1
-    );
-    defaultValues.steps = defaultValues.steps(
-      thisModelVersion.files.find((f) => f.type === 'Training Data')?.metadata['numImages'] || 1,
-      defaultValues.num_repeats,
-      defaultValues.epochs,
-      defaultValues.train_batch_size
+    defaultValues.numRepeats = defaultValues.numRepeats(thisFile?.metadata['numImages'] || 1);
+    defaultValues.targetSteps = defaultValues.targetSteps(
+      thisFile?.metadata['numImages'] || 1,
+      defaultValues.numRepeats,
+      defaultValues.maxTrainEpochs,
+      defaultValues.trainBatchSize
     );
   }
 
@@ -214,15 +225,33 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     },
   });
 
+  const doTraining = trpc.training.createRequest.useMutation({
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to submit for training',
+        error: new Error(error.message),
+        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+      });
+    },
+  });
+
   const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
     console.log('dirty', isDirty);
     console.log(rest);
     const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
     if (isDirty) {
+      if (!thisFile) {
+        showErrorNotification({
+          error: new Error('Missing file data, please reupload your images.'),
+        });
+        return;
+      }
+
       console.log('running model mutation');
       setAwaitInvalidate(true);
 
       const { baseModel, ...paramData } = rest;
+      console.log(paramData);
 
       const versionMutateData = {
         // these 4 appear to be required for upsert, but aren't actually being updated.
@@ -240,17 +269,35 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
       };
 
       upsertVersionMutation.mutate(versionMutateData, {
-        onSuccess: async () => {
-          // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
-          await queryUtils.modelVersion.getById.invalidate({ id: thisModelVersion.id });
-          await queryUtils.model.getById.invalidate({ id: model.id });
-          setAwaitInvalidate(false);
-          showSuccessNotification({
-            title: 'Successfully submitted for training!',
-            message: 'You will be notified when training is complete.',
-            autoClose: 3000,
-          });
-          await router.replace(userTrainingDashboardURL);
+        onSuccess: () => {
+          doTraining.mutate(
+            {
+              model: baseModel,
+              trainingData: thisFile.url,
+              params: {
+                ...paramData,
+                modelFileId: thisFile.id,
+                loraName: model.name,
+              },
+            },
+            {
+              onSuccess: async () => {
+                // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
+                await queryUtils.modelVersion.getById.invalidate({ id: thisModelVersion.id });
+                await queryUtils.model.getById.invalidate({ id: model.id });
+                setAwaitInvalidate(false);
+                showSuccessNotification({
+                  title: 'Successfully submitted for training!',
+                  message: 'You will be notified when training is complete.',
+                  autoClose: 3000,
+                });
+                await router.replace(userTrainingDashboardURL);
+              },
+              onError: () => {
+                setAwaitInvalidate(false);
+              },
+            }
+          );
         },
         onError: (error) => {
           setAwaitInvalidate(false);

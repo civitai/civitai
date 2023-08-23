@@ -228,9 +228,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
       await Promise.all(
         imageList.map(async (imgData, idx) => {
           const filenameBase = String(idx).padStart(3, '0');
-          // TODO [bw] create empty file?
-          // imgData.caption.length > 0 &&
-          zip.file(`${filenameBase}.txt`, imgData.caption);
+          imgData.caption.length > 0 && zip.file(`${filenameBase}.txt`, imgData.caption);
 
           const imgBlob = await fetch(imgData.url).then((res) => res.blob());
 

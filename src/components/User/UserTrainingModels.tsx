@@ -197,6 +197,7 @@ export default function UserTrainingModels() {
                                   // TODO [bw] wtf is happening when i click this? a subscribe button?
                                   <DownloadButton
                                     component="a"
+                                    canDownload
                                     href={createModelFileDownloadUrl({
                                       versionId: modalData.id as number,
                                       type: 'Training Data',

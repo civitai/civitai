@@ -10,12 +10,21 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
+import { showNotification, updateNotification } from '@mantine/notifications';
 import { TrainingStatus } from '@prisma/client';
-import React from 'react';
+import { IconCheck, IconX } from '@tabler/icons-react';
+import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
+import { EpochSchema } from '~/pages/api/webhooks/image-resource-training';
+import { ModelFileType } from '~/server/common/constants';
+import { UploadType } from '~/server/common/enums';
+import { useS3UploadStore } from '~/store/s3-upload.store';
+import { showErrorNotification } from '~/utils/notifications';
+import { bytesToKB } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
   epochRow: {
@@ -26,63 +35,66 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const EpochRow = ({ epoch }) => {
-  console.log(epoch.sample_images);
+const EpochRow = ({
+  epoch,
+  selectedFile,
+  setSelectedFile,
+}: {
+  epoch: EpochSchema;
+  selectedFile: string | undefined;
+  setSelectedFile: React.Dispatch<React.SetStateAction<string | undefined>>;
+}) => {
   const { classes } = useStyles();
+
   return (
-    <Paper radius="md" p="xs" withBorder>
-      <Group position="apart" spacing={4} className={classes.epochRow}>
-        {/* put buttons on top */}
-        <Stack>
-          {/*<div>{`Epoch #${epoch.epoch_number}`}</div>*/}
-          <Button>
-            <Center style={{ flexDirection: 'column' }}>
-              <div>Select</div>
-              <div>Epoch #{epoch.epoch_number}</div>
-            </Center>
+    <Paper
+      shadow="sm"
+      radius="sm"
+      p="xs"
+      withBorder
+      style={selectedFile === epoch.model_url ? { border: '2px solid green' } : {}}
+    >
+      <Stack>
+        <Group position="apart" className={classes.epochRow}>
+          <Button onClick={() => setSelectedFile(epoch.model_url)}>
+            Select Epoch #{epoch.epoch_number}
           </Button>
-          <DownloadButton
-            component="a"
-            // href={createModelFileDownloadUrl({
-            //   versionId: modalData.id as number,
-            //   type: 'Training Data',
-            // })}
-            sx={{ flex: 1 }}
-          >
+          <DownloadButton component="a" canDownload href={epoch.model_url}>
             <Text align="center">
               {/*{`Download (${formatKBytes(modalData.file?.sizeKB)})`}*/}
               Download
             </Text>
           </DownloadButton>
-        </Stack>
-        {epoch.sample_images.map((imgUrl, index) => (
-          <Stack key={index} style={{ justifyContent: 'flex-start' }}>
-            {/*<div className={classes.imgOverlay}>*/}
-            <Image
-              alt={`Sample image #${index}`}
-              src={imgUrl}
-              imageProps={{
-                style: {
-                  height: '180px',
-                  // if we want to show full image, change objectFit to contain
-                  objectFit: 'cover',
-                  // object-position: top;
-                  width: '100%',
-                },
-              }}
-            />
-            {/*</div>*/}
-            <Textarea
-              autosize
-              minRows={1}
-              maxRows={4}
-              // value={imgData.caption}
-              value={'stuff'}
-              readOnly
-            />
-          </Stack>
-        ))}
-      </Group>
+        </Group>
+        <Group className={classes.epochRow} style={{ justifyContent: 'space-evenly' }}>
+          {epoch.sample_images && epoch.sample_images.length > 0 ? (
+            epoch.sample_images.map((imgData, index) => (
+              <Stack key={index} style={{ justifyContent: 'flex-start' }}>
+                {/*<div className={classes.imgOverlay}>*/}
+                <Image
+                  alt={`Sample image #${index}`}
+                  src={imgData.image_url}
+                  imageProps={{
+                    style: {
+                      height: '200px',
+                      // if we want to show full image, change objectFit to contain
+                      objectFit: 'cover',
+                      // object-position: top;
+                      width: '100%',
+                    },
+                  }}
+                />
+                {/*</div>*/}
+                <Textarea autosize minRows={1} maxRows={4} value={imgData.prompt} readOnly />
+              </Stack>
+            ))
+          ) : (
+            <Center>
+              <Text>No images available.</Text>
+            </Center>
+          )}
+        </Group>
+      </Stack>
     </Paper>
   );
 };
@@ -96,6 +108,11 @@ export default function TrainingSelectFile({
   onBackClick: () => void;
   onNextClick: () => void;
 }) {
+  const queryUtils = trpc.useContext();
+  const { upload } = useS3UploadStore();
+  const [selectedFile, setSelectedFile] = useState<string | undefined>();
+  const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+
   console.log(model);
   const modelVersion = model?.modelVersions?.[0];
   console.log(modelVersion);
@@ -103,36 +120,147 @@ export default function TrainingSelectFile({
   const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
   console.log(modelFile);
 
+  const notificationId = `${modelVersion?.id || 1}-uploading-file-notification`;
+
+  const createFileMutation = trpc.modelFile.create.useMutation({
+    async onSuccess() {
+      if (!model || !modelVersion) {
+        showErrorNotification({
+          error: new Error('Missing model data. Please try again.'),
+        });
+        return;
+      }
+
+      const versionMutateData = {
+        id: modelVersion.id,
+        modelId: model.id,
+        name: model.name,
+        baseModel: 'SD 1.5' as const,
+        trainingStatus: TrainingStatus.Approved,
+      };
+
+      upsertVersionMutation.mutate(versionMutateData);
+
+      updateNotification({
+        id: notificationId,
+        icon: <IconCheck size={18} />,
+        color: 'teal',
+        title: 'Selection complete!',
+        message: '',
+        autoClose: 3000,
+        disallowClose: false,
+      });
+    },
+    onError(error) {
+      setAwaitInvalidate(false);
+      updateNotification({
+        id: notificationId,
+        icon: <IconX size={18} />,
+        color: 'red',
+        title: 'Failed to create file.',
+        message: error.message,
+      });
+    },
+  });
+
+  const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
+    onSuccess: async (vData) => {
+      // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
+      await queryUtils.modelVersion.getById.invalidate({ id: vData.id });
+      await queryUtils.model.getById.invalidate({ id: model?.id });
+      await queryUtils.model.getMyTrainingModels.invalidate();
+      setAwaitInvalidate(false);
+      onNextClick();
+    },
+    onError: (error) => {
+      setAwaitInvalidate(false);
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Failed to save model version',
+      });
+    },
+  });
+
+  const handleSubmit = async () => {
+    if (!model || !modelVersion) {
+      showErrorNotification({
+        error: new Error('Missing model data. Please try again.'),
+      });
+      return;
+    }
+    if (!selectedFile || !selectedFile.length) {
+      showErrorNotification({
+        error: new Error('Please select a file to be used.'),
+      });
+      return;
+    }
+
+    setAwaitInvalidate(true);
+
+    showNotification({
+      id: notificationId,
+      loading: true,
+      autoClose: false,
+      disallowClose: true,
+      title: 'Applying selected model file...',
+      message: '',
+    });
+
+    // TODO this is broken
+    const result = await fetch(selectedFile, { mode: 'no-cors' });
+    if (!result.ok) {
+      updateNotification({
+        id: notificationId,
+        icon: <IconX size={18} />,
+        color: 'red',
+        title: 'Failed to create file.',
+        message: 'Please try again.',
+      });
+      console.log(result);
+      return;
+    }
+    const blob = await result.blob();
+    const blobFile = new File([blob], `${selectedFile.split('/').pop()}`, {
+      type: blob.type,
+    });
+
+    await upload(
+      {
+        file: blobFile,
+        type: UploadType.Model,
+        meta: {
+          versionId: modelVersion.id,
+          // TODO more
+        },
+      },
+      async ({ meta, size, ...result }) => {
+        const { versionId, type, uuid, ...metadata } = meta as {
+          versionId: number;
+          type: ModelFileType;
+          uuid: string;
+        };
+        console.log(type);
+        createFileMutation.mutate({
+          ...result,
+          sizeKB: bytesToKB(size),
+          modelVersionId: versionId,
+          type,
+          metadata,
+        });
+      }
+    );
+  };
+
   // you should only be able to get to this screen after having created a model, version, and uploading a training set
   if (!model || !modelVersion || !modelFile) {
     return <NotFound />;
   }
 
-  /*
-  {
-  "trainingResults": {
-    "epochs": [
-      {
-        "model_url": "https://localhost:7233/v1/consumer/jobs/ec2692d1-6c23-468a-8c42-58ff8066e0e5/assets/FoodPets_AdamW_20230818003523_e000010_01.png",
-        "epoch_number": 1,
-        "sample_images": [
-          "/workspace/training/FoodPets_AdamW/model/sample/FoodPets_AdamW_20230818003523_e000010_00.png",
-          "/workspace/training/FoodPets_AdamW/model/sample/FoodPets_AdamW_20230818003523_e000010_01.png",
-          "/workspace/training/FoodPets_AdamW/model/sample/FoodPets_AdamW_20230818003525_e000010_02.png"
-        ]
-      }
-    ],
-    "end_time": "2023-08-22T23:59:02.123Z",
-    "start_time": "2023-08-22T23:58:02.123Z"
-  }
-}
-   */
-
   // TODO flip order on epoch_number
   const epochs = modelFile.metadata.trainingResults?.epochs.sort(function (a, b) {
     const x = a.epoch_number;
     const y = b.epoch_number;
-    return x < y ? -1 : x > y ? 1 : 0;
+    return x > y ? -1 : x < y ? 1 : 0;
   });
 
   return (
@@ -146,15 +274,24 @@ export default function TrainingSelectFile({
           <Center>
             <Title order={4}>Recommended</Title>
           </Center>
-          <EpochRow epoch={epochs[0]} />
+          <EpochRow
+            epoch={epochs[0]}
+            selectedFile={selectedFile}
+            setSelectedFile={setSelectedFile}
+          />
           {epochs.length > 1 && (
             <>
               <Center>
                 <Title order={4}>Other Results</Title>
               </Center>
-              {epochs.slice(1).map((e) => {
-                <EpochRow epoch={e} />;
-              })}
+              {epochs.slice(1).map((e, idx) => (
+                <EpochRow
+                  key={idx}
+                  epoch={e}
+                  selectedFile={selectedFile}
+                  setSelectedFile={setSelectedFile}
+                />
+              ))}
             </>
           )}
         </>
@@ -164,7 +301,9 @@ export default function TrainingSelectFile({
         <Button variant="default" onClick={onBackClick}>
           Back
         </Button>
-        <Button>Next</Button>
+        <Button onClick={handleSubmit} loading={awaitInvalidate}>
+          Next
+        </Button>
       </Group>
     </Stack>
   );

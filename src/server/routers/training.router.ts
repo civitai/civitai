@@ -1,10 +1,10 @@
-import { createGenerationRequestSchema } from '~/server/schema/generation.schema';
-import { createGenerationRequest } from '~/server/services/generation/generation.service';
+import { createTrainingRequestSchema } from '~/server/schema/training.schema';
+import { createTrainingRequest } from '~/server/services/training.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const trainingRouter = router({
   createRequest: protectedProcedure
-    .input(createGenerationRequestSchema)
+    .input(createTrainingRequestSchema)
     .use(isFlagProtected('imageTraining'))
-    .mutation(({ input, ctx }) => createGenerationRequest({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) => createTrainingRequest({ ...input, userId: ctx.user.id })),
 });

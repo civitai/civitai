@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { trainingDetailsBaseModels } from '~/server/schema/model-version.schema';
+import {
+  trainingDetailsBaseModels,
+  trainingDetailsParams,
+} from '~/server/schema/model-version.schema';
 
 export type CreateTrainingRequestInput = z.infer<typeof createTrainingRequestSchema>;
 export const createTrainingRequestSchema = z.object({
@@ -7,38 +10,8 @@ export const createTrainingRequestSchema = z.object({
   trainingData: z.string().url(),
   // callbackUrl: z.string(),
   // properties: z.object({}),
-  params: z.object({
+  params: trainingDetailsParams.extend({
     modelFileId: z.number(),
-    // loraName: 'lilith',
-    // unetLR: 0.0005,
-    // textEncoderLR: 0.0001,
-    // optimizerType: 'AdamW8bit',
-    // networkDim: 16,
-    // networkAlpha: 8,
-    // lrScheduler: 'cosine_with_restarts',
-    // lrWarmupSteps: 40,
-    // maxTrainSteps: 800,
-    // maxTrainEpochs: 10,
-    // saveEveryNEpoochs: 1,
-    // saveLastNEpochs: 10,
-    // sampleEveryNEpochs: 1,
-    // trainBatchSize: 2,
-    // clipSkip: 2,
-    // weightedCaptions: false,
-    // seed: null,
-    // maxTokenLength: 225,
-    // lowram: false,
-    // maxDataLoaderNWorkers: 8,
-    // persistentDataLoaderWorkers: true,
-    // xformers: true,
-    // sdpa: false,
-    // noHalfVae: false,
-    // gradientCheckpointing: false,
-    // gradientAccumulationSteps: 1,
-    // v2: false,
-    // resolution: 512,
-    // shuffleCaption: false,
-    // keepTokens: 1,
-    // targetSteps: 500,
+    loraName: z.string(),
   }),
 });
