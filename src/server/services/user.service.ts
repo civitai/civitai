@@ -165,16 +165,16 @@ export const completeOnboarding = ({ id }: { id: number }) => {
 };
 
 export const getUserEngagedModels = ({ id }: { id: number }) => {
-  return dbRead.user.findUnique({
-    where: { id },
-    select: { engagedModels: { select: { modelId: true, type: true } } },
+  return dbRead.modelEngagement.findMany({
+    where: { userId: id },
+    select: { modelId: true, type: true },
   });
 };
 
 export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
-  return dbRead.user.findUnique({
-    where: { id },
-    select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
+  return dbRead.modelVersionEngagement.findMany({
+    where: { userId: id },
+    select: { modelVersionId: true, type: true },
   });
 };
 
