@@ -364,7 +364,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [Prisma.sql`i.id IN ${Prisma.join(itemIds)}`],
+      whereOr: [Prisma.sql`i.id IN (${Prisma.join(itemIds)})`],
       isIndexUpdate: true,
     });
 
