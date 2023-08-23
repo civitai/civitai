@@ -1,4 +1,3 @@
-import { get } from 'idb-keyval';
 import { NsfwLevel, TagEngagementType, UserEngagementType } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 
@@ -259,15 +258,6 @@ export type HiddenPreferenceTypes = {
   image: HiddenImage[];
 };
 
-const hidden = [
-  HiddenTags,
-  HiddenImages,
-  HiddenModels,
-  HiddenUsers,
-  ImplicitHiddenImages,
-  ImplicitHiddenModels,
-];
-
 const getAllHiddenForUsersCached = async ({
   userId = -1, // Default to civitai account
 }: {
@@ -290,15 +280,15 @@ const getAllHiddenForUsersCached = async ({
     ImplicitHiddenImages.getKey({ userId }),
     ImplicitHiddenModels.getKey({ userId }),
   ]);
-  console.log({
-    cachedSystemHiddenTags,
-    cachedHiddenTags,
-    cachedHiddenImages,
-    cachedHiddenModels,
-    cachedHiddenUsers,
-    cachedImplicitHiddenImages,
-    cachedImplicitHiddenModels,
-  });
+  // console.log({
+  //   cachedSystemHiddenTags,
+  //   cachedHiddenTags,
+  //   cachedHiddenImages,
+  //   cachedHiddenModels,
+  //   cachedHiddenUsers,
+  //   cachedImplicitHiddenImages,
+  //   cachedImplicitHiddenModels,
+  // });
 
   const getModeratedTags = async () =>
     cachedSystemHiddenTags
@@ -394,38 +384,12 @@ export async function getAllHiddenForUser({
   userId?: number;
   refreshCache?: boolean;
 }): Promise<HiddenPreferenceTypes> {
-  // cached.map((value) => value ? JSON.parse(value) : )
-
-  // console.log({ hiddenTagsCached, hiddenImagesCached });
-
-  console.time(!refreshCache ? 'get cached' : 'get fresh');
+  // console.time(!refreshCache ? 'get cached' : 'get fresh');
   const { moderatedTags, hiddenTags, images, models, users, implicitImages, implicitModels } =
     refreshCache
       ? await getAllHiddenForUserFresh({ userId })
       : await getAllHiddenForUsersCached({ userId });
-  console.timeEnd(!refreshCache ? 'get cached' : 'get fresh');
-
-  // const [moderatedTags, hiddenTags, images, models, users] = await Promise.all([
-  //   getSystemHiddenTags(),
-  //   HiddenTags.getCached({ userId, refreshCache }),
-  //   HiddenImages.getCached({ userId, refreshCache }),
-  //   HiddenModels.getCached({ userId, refreshCache }),
-  //   HiddenUsers.getCached({ userId, refreshCache }),
-  // ]);
-
-  // // these two are dependent on the values from HiddenTags
-  // const [implicitImages, implicitModels] = await Promise.all([
-  //   ImplicitHiddenImages.getCached({
-  //     userId,
-  //     refreshCache,
-  //     hiddenTagIds: hiddenTags.map((x) => x.id),
-  //   }),
-  //   ImplicitHiddenModels.getCached({
-  //     userId,
-  //     refreshCache,
-  //     hiddenTagIds: hiddenTags.map((x) => x.id),
-  //   }),
-  // ]);
+  // console.timeEnd(!refreshCache ? 'get cached' : 'get fresh');
 
   const moderated = moderatedTags
     .filter((x) => x.nsfw !== NsfwLevel.Blocked)
