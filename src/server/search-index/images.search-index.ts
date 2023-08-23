@@ -28,7 +28,6 @@ import {
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
-// import fs from 'fs';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -332,11 +331,6 @@ const onFetchItemsToIndex = async ({
       reactions: [],
     };
   });
-
-  // write to file
-  // const file = fs.createWriteStream(`./images-${offset}-${offset + READ_BATCH_SIZE}.json`);
-  // file.write(JSON.stringify(indexReadyRecords));
-  // file.end();
 
   return indexReadyRecords;
 };
