@@ -1,4 +1,4 @@
-import { Container, createStyles, Group, Stack, Title } from '@mantine/core';
+import { Container, createStyles, Group, Loader, Stack, Title, Center } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -86,6 +86,12 @@ export default function QuestionPage(
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
 
+  if (questionsLoading)
+    return (
+      <Center>
+        <Loader />
+      </Center>
+    );
   if (!question) return <NotFound />;
   // TODO - inline this with question content instead of displaying as a separate page
   if (editing && question && (isOwner || isModerator)) return <QuestionForm question={question} />;
