@@ -2,6 +2,20 @@ import { ModelFileVisibility } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
+export const trainingResultsSchema = z.object({
+  start_time: z.string().nullish(),
+  end_time: z.string().nullish(),
+  epochs: z
+    .array(
+      z.object({
+        epoch_number: z.number(),
+        model_url: z.string(),
+        sample_images: z.array(z.string()).optional(),
+      })
+    )
+    .nullish(),
+});
+
 export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),
@@ -10,6 +24,7 @@ export const modelFileMetadataSchema = z.object({
   shareDataset: z.boolean().nullish(),
   numImages: z.number().nullish(),
   numCaptions: z.number().nullish(),
+  trainingResults: trainingResultsSchema.nullish(),
 });
 
 export const modelFileSchema = z.object({
