@@ -440,6 +440,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       textSize?: MantineSize;
       withAbbreviation?: boolean;
     }) => {
+      if (!features.buzz) return null;
       if (!currentUser) return null;
 
       return (
@@ -484,7 +485,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         </Group>
       );
     },
-    [currentUser]
+    [currentUser, features.buzz]
   );
 
   return (
@@ -607,7 +608,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 >
                   <Group spacing={8} noWrap>
                     <UserAvatar user={currentUser} size="md" />
-                    <UserBuzz user={currentUser} />
+                    {features.buzz && <UserBuzz user={currentUser} />}
                   </Group>
                 </UnstyledButton>
               </Menu.Target>

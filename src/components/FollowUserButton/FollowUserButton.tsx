@@ -64,6 +64,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
   return (
     <LoginRedirect reason="follow-user">
       <Button
+        radius="xl"
         variant={alreadyFollowing ? 'outline' : 'filled'}
         onClick={handleFollowClick}
         loading={toggleFollowMutation.isLoading}

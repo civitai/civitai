@@ -1,6 +1,6 @@
 import {
+  Badge,
   Button,
-  Card,
   Chip,
   CloseButton,
   Divider,
@@ -55,6 +55,10 @@ const useStyles = createStyles((theme) => ({
     '&[data-checked]': {
       border: `2px solid ${theme.colors.accent[5]}`,
       color: theme.colors.accent[5],
+
+      '&[data-variant="filled"], &[data-variant="filled"]:hover': {
+        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
+      },
     },
   },
 
@@ -154,8 +158,22 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
     });
 
     const handleClose = () => context.close();
-    const handleSubmit = ({ amount, customAmount, description }: z.infer<typeof schema>) => {
-      if (amount === '-1' && customAmount) {
+    const handleSubmit = (data: z.infer<typeof schema>) => {
+      const { customAmount, description } = data;
+      const amount = Number(data.amount);
+
+      if (amount === -1 && customAmount) {
+        if (customAmount > (currentUser?.balance ?? 0)) {
+          return form.setError(
+            'customAmount',
+            {
+              message: 'You have insufficient funds to tip',
+              type: 'value',
+            },
+            { shouldFocus: true }
+          );
+        }
+
         if (customAmount === currentUser?.balance) {
           return openConfirmModal({
             centered: true,
@@ -172,10 +190,21 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
             },
           });
         } else {
+          if (amount > (currentUser?.balance ?? 0)) {
+            return form.setError(
+              'amount',
+              {
+                message: 'You have insufficient funds to tip',
+                type: 'value',
+              },
+              { shouldFocus: true }
+            );
+          }
+
           return createBuzzTransactionMutation.mutate({
             toAccountId: toUserId,
             type: TransactionType.Tip,
-            amount: customAmount,
+            amount,
             description,
           });
         }
@@ -200,11 +229,11 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
           </Text>
           <Group spacing="sm" noWrap>
             <UserBuzz user={currentUser} withTooltip />
-            <Card radius="xl" py={4} px={12}>
-              <Text size="xs" weight={600}>
+            <Badge radius="xl" color="gray.9" variant="filled" px={12}>
+              <Text size="xs" transform="capitalize" weight={600}>
                 Available Buzz
               </Text>
-            </Card>
+            </Badge>
             <CloseButton iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
@@ -254,7 +283,7 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
             )}
             <InputTextArea
               name="description"
-              label="Note"
+              inputWrapperOrder={['input', 'description']}
               placeholder="Leave a note"
               variant="filled"
               minRows={2}
@@ -262,7 +291,12 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
               description={`${description?.length ?? 0}/100 characters`}
             />
             <Group className={classes.actions} position="right" mt="xl">
-              <Button className={classes.cancelButton} variant="default" onClick={handleClose}>
+              <Button
+                className={classes.cancelButton}
+                variant="light"
+                color="gray"
+                onClick={handleClose}
+              >
                 Cancel
               </Button>
               <Button

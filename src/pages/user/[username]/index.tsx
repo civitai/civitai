@@ -440,7 +440,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
 
                             <Menu position="left" withinPortal>
                               <Menu.Target>
-                                <ActionIcon loading={removeContentMutation.isLoading}>
+                                <ActionIcon loading={removeContentMutation.isLoading} radius="xl">
                                   <IconDotsVertical />
                                 </ActionIcon>
                               </Menu.Target>
@@ -700,6 +700,8 @@ const useStyles = createStyles((theme) => ({
     },
   },
   card: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
+
     [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
       width: '100%',
     },
