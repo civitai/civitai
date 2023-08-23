@@ -23,11 +23,9 @@ const getModerated = async () => {
 };
 
 function createUserCache<T, TArgs extends { userId: number }>({
-  // logLabel,
   key,
   callback,
 }: {
-  // logLabel: string;
   key: string;
   callback: (args: TArgs) => Promise<T>;
 }) {
@@ -38,16 +36,9 @@ function createUserCache<T, TArgs extends { userId: number }>({
   }: TArgs & {
     refreshCache?: boolean;
   }) => {
-    // log(`getting ${logLabel} for user: ${userId}`);
     const cachedTags = await redis.get(`user:${userId}:${key}`);
-    if (cachedTags && !refreshCache) {
-      // log(`got${logLabel} for user: ${userId} (cached)`);
-      return JSON.parse(cachedTags) as T;
-    }
-    if (refreshCache) {
-      // console.log('refreshing: ', `user:${userId}:${key}`);
-      await redis.del(`user:${userId}:${key}`);
-    }
+    if (cachedTags && !refreshCache) return JSON.parse(cachedTags) as T;
+    if (refreshCache) await redis.del(`user:${userId}:${key}`);
 
     return await get({ userId, ...rest } as TArgs);
   };
@@ -71,11 +62,14 @@ function createUserCache<T, TArgs extends { userId: number }>({
 
   const getKey = ({ userId = -1 }: { userId?: number }) => `user:${userId}:${key}`;
 
+  const parseJson = (value: string) => JSON.parse(value) as T;
+
   return {
     get,
     getCached,
     getKey,
     refreshCache,
+    parseJson,
   };
 }
 
@@ -296,23 +290,21 @@ const getAllHiddenForUsersCached = async ({
       : await getSystemHiddenTags();
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
-    cachedHiddenTags
-      ? (JSON.parse(cachedHiddenTags) as AsyncReturnType<typeof HiddenTags.get>)
-      : await HiddenTags.get({ userId });
+    cachedHiddenTags ? HiddenTags.parseJson(cachedHiddenTags) : await HiddenTags.get({ userId });
 
   const getHiddenImages = async ({ userId }: { userId: number }) =>
     cachedHiddenImages
-      ? (JSON.parse(cachedHiddenImages) as AsyncReturnType<typeof HiddenImages.get>)
+      ? HiddenImages.parseJson(cachedHiddenImages)
       : await HiddenImages.get({ userId });
 
   const getHiddenModels = async ({ userId }: { userId: number }) =>
     cachedHiddenModels
-      ? (JSON.parse(cachedHiddenModels) as AsyncReturnType<typeof HiddenModels.get>)
+      ? HiddenModels.parseJson(cachedHiddenModels)
       : await HiddenModels.get({ userId });
 
   const getHiddenUsers = async ({ userId }: { userId: number }) =>
     cachedHiddenUsers
-      ? (JSON.parse(cachedHiddenUsers) as AsyncReturnType<typeof HiddenUsers.get>)
+      ? HiddenUsers.parseJson(cachedHiddenUsers)
       : await HiddenUsers.get({ userId });
 
   const getHiddenImplicitImages = async ({
@@ -323,7 +315,7 @@ const getAllHiddenForUsersCached = async ({
     hiddenTagIds: number[];
   }) =>
     cachedImplicitHiddenImages
-      ? (JSON.parse(cachedImplicitHiddenImages) as AsyncReturnType<typeof ImplicitHiddenImages.get>)
+      ? ImplicitHiddenImages.parseJson(cachedImplicitHiddenImages)
       : await ImplicitHiddenImages.get({ userId, hiddenTagIds });
 
   const getHiddenImplicitModels = async ({
@@ -334,7 +326,7 @@ const getAllHiddenForUsersCached = async ({
     hiddenTagIds: number[];
   }) =>
     cachedImplicitHiddenModels
-      ? (JSON.parse(cachedImplicitHiddenModels) as AsyncReturnType<typeof ImplicitHiddenModels.get>)
+      ? ImplicitHiddenModels.parseJson(cachedImplicitHiddenModels)
       : await ImplicitHiddenModels.get({ userId, hiddenTagIds });
 
   const [moderatedTags, hiddenTags, images, models, users] = await Promise.all([
@@ -384,12 +376,10 @@ export async function getAllHiddenForUser({
   userId?: number;
   refreshCache?: boolean;
 }): Promise<HiddenPreferenceTypes> {
-  // console.time(!refreshCache ? 'get cached' : 'get fresh');
   const { moderatedTags, hiddenTags, images, models, users, implicitImages, implicitModels } =
     refreshCache
       ? await getAllHiddenForUserFresh({ userId })
       : await getAllHiddenForUsersCached({ userId });
-  // console.timeEnd(!refreshCache ? 'get cached' : 'get fresh');
 
   const moderated = moderatedTags
     .filter((x) => x.nsfw !== NsfwLevel.Blocked)

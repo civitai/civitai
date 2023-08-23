@@ -6,7 +6,6 @@ import { env } from '~/env/server.mjs';
 import { redis } from '~/server/redis/client';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { applyAnonymousUserRules } from '~/server/services/image.service';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
@@ -19,9 +18,12 @@ export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
 
     if (browsingMode !== BrowsingMode.All) {
       const { hidden } = userCache(ctx.user?.id);
-      const hiddenTags = await hidden.tags.get();
-      const hiddenUsers = await hidden.users.get();
-      const hiddenImages = await hidden.images.get();
+      const [hiddenTags, hiddenUsers, hiddenImages] = await Promise.all([
+        hidden.tags.get(),
+        hidden.users.get(),
+        hidden.images.get(),
+      ]);
+
       _input.excludedTagIds = [
         ...hiddenTags.hiddenTags,
         ...hiddenTags.moderatedTags,
@@ -38,8 +40,6 @@ export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
           ...(_input.excludedTagIds ?? []),
         ];
       }
-
-      if (!ctx.user) await applyAnonymousUserRules(_input.excludedTagIds);
     }
 
     return next({
