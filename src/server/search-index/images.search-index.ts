@@ -234,12 +234,12 @@ const onFetchItemsToIndex = async ({
   ), users AS MATERIALIZED (
     SELECT
       u.id,
-      jsonb_agg(jsonb_build_object(
+      jsonb_build_object(
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
         'image', u.image
-      )) user
+      ) user
     FROM "User" u
     WHERE u.id IN (SELECT "userId" FROM target)
     GROUP BY u.id
@@ -265,7 +265,7 @@ const onFetchItemsToIndex = async ({
     t.*,
     (SELECT rank FROM ranks r WHERE r."imageId" = t.id), 
     (SELECT stats FROM stats s WHERE s."imageId" = t.id),
-    (SELECT user FROM users u WHERE u.id = t."userId"),
+    (SELECT "user" FROM users u WHERE u.id = t."userId"),
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
   FROM target t`;
 
