@@ -5,7 +5,6 @@ export const maxSteps = 3;
 
 // these could use the current route to determine?
 export const goNext = (modelId: number | undefined, step: number) => {
-  console.log('got to go next');
   if (modelId && step < maxSteps)
     Router.replace(`${basePath}?modelId=${modelId}&step=${step + 1}`, undefined, {
       shallow: true,

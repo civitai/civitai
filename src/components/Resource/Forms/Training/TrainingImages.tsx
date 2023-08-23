@@ -285,7 +285,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
                     sizeKB: bytesToKB(size),
                     modelVersionId: versionId,
                     type: 'Training Data',
-                    // TODO [bw] is sensitive correct here?
                     visibility:
                       ownRights && shareDataset
                         ? ModelFileVisibility.Public

@@ -35,7 +35,7 @@ const baseModelDescriptions: {
   realistic: { label: 'Realistic', description: 'Results will be extremely realistic.' },
 };
 
-type TrainingSettingsType<T extends string> = {
+type TrainingSettingsType = {
   name: string;
   label: string;
   type: string;
@@ -45,7 +45,7 @@ type TrainingSettingsType<T extends string> = {
   max?: number;
   disabled?: boolean;
   overrides?: {
-    [override in T]: {
+    [override in TrainingDetailsBaseModel]?: {
       default?: string | number | boolean | ((...args: never[]) => string | number);
       min?: number;
       max?: number;
@@ -54,7 +54,7 @@ type TrainingSettingsType<T extends string> = {
 };
 
 // could type keys as trainingDetailsParams
-const trainingSettings: TrainingSettingsType<string>[] = [
+const trainingSettings: TrainingSettingsType[] = [
   { name: 'epochs', label: 'Epochs', type: 'int', default: 10, min: 3, max: 16 },
   {
     name: 'num_repeats',

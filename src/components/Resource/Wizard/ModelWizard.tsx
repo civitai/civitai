@@ -25,7 +25,7 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { PostUpsertForm } from '../Forms/PostUpsertForm';
 
-type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
+export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ id: number; name: string }>;
 };
 
@@ -59,6 +59,7 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
 
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
   console.log(model);
+  console.log(model?.modelVersions[0]?.files);
 
   let uploadType = type;
   if (!uploadType) {
@@ -73,6 +74,7 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
 
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
+  // TODO [bw] check if we need to specify 'Model' as type here
   const hasFiles = model && model.modelVersions.some((version) => version.files.length > 0);
 
   const { uploading, error, aborted } = getUploadStatus(
@@ -212,7 +214,11 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
               >
                 <Stack>
                   <Title order={3}>Select Model File</Title>
-                  <TrainingSelectFile />
+                  <TrainingSelectFile
+                    model={state.model}
+                    onBackClick={goBack}
+                    onNextClick={goNext}
+                  />
                 </Stack>
               </Stepper.Step>
             ) : (

@@ -262,6 +262,7 @@ export default function UserTrainingModels() {
                           {!hasTrainingParams && (
                             <Text inherit>Needs training parameters (Step 3)</Text>
                           )}
+                          {/* TODO [bw] we should probably include the model related fields here after training is done */}
                           {hasVersion && hasFiles && hasTrainingParams && (
                             <Text inherit>All good!</Text>
                           )}
