@@ -85,6 +85,8 @@ const onSearchIndexDocumentsCleanup = async ({
     return;
   }
 
+  console.log(`onSearchIndexDocumentsCleanup :: About to delete: ${itemIds.length} items...`);
+
   // Only care for main index ID here. Technically, if this was working as a reset and using a SWAP,
   // we wouldn't encounter delete items.
   const index = await getOrCreateIndex(indexName);
@@ -95,7 +97,7 @@ const onSearchIndexDocumentsCleanup = async ({
   }
 
   const task = await index.deleteDocuments(itemIds);
-  await client.waitForTask(task.taskUid);
+  await waitForTasksWithRetries([task.taskUid]);
 };
 
 const waitForTasksWithRetries = async (

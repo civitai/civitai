@@ -55,17 +55,12 @@ export async function getSystemHiddenTags(): Promise<
 
   const tags = uniqBy([...moderation, ...hiddenTagsOfHiddenTags.map((x) => x.toTag)], 'id');
 
-  await redis.set(`system:hidden-tags`, JSON.stringify(tags), {
+  await redis.set(`system:hidden-tags-2`, JSON.stringify(tags), {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 
   log('got moderation tags');
   return tags;
-}
-
-export async function getAllowedAnonymousTags() {
-  const cachedTags = await redis.get(`system:anonymous-tags`);
-  return JSON.parse(cachedTags ?? '[]') as number[];
 }
 
 export async function getSystemTags() {

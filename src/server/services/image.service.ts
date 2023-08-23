@@ -37,7 +37,7 @@ import { UpdateImageInput } from '~/server/schema/image.schema';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getAllowedAnonymousTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import { getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import {
   throwAuthorizationError,
@@ -1188,12 +1188,6 @@ export function applyModRulesSql(
   if (publishedOr.length > 0) {
     AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
   }
-}
-
-export async function applyAnonymousUserRules(excludedImageTags: number[]) {
-  const allowedTags = await getAllowedAnonymousTags();
-  for (const index in excludedImageTags)
-    if (allowedTags.includes(excludedImageTags[index])) excludedImageTags.splice(Number(index), 1);
 }
 
 type GetImageByCategoryRaw = {
