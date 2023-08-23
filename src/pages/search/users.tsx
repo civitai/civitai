@@ -6,10 +6,8 @@ import {
   Loader,
   Title,
   ThemeIcon,
-  useMantineTheme,
   Card,
   Group,
-  Rating,
   ActionIcon,
 } from '@mantine/core';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
@@ -19,22 +17,12 @@ import { useInView } from 'react-intersection-observer';
 import { useEffect, useMemo } from 'react';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
-import {
-  IconCloudOff,
-  IconDownload,
-  IconHeart,
-  IconStar,
-  IconUpload,
-  IconUsers,
-} from '@tabler/icons-react';
+import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { StatTooltip } from '~/components/Tooltips/StatTooltip';
-import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
@@ -42,6 +30,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { applyUserPreferencesUsers } from '~/components/Search/search.utils';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
+import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 
 export default function UserSearch() {
   return (
@@ -168,114 +157,32 @@ export function UserHitList() {
 }
 
 export function CreatorCard({ data }: { data: UserSearchIndexRecord }) {
-  const theme = useMantineTheme();
-
   if (!data) return null;
 
   const stats = data.stats;
-  const iconBadgeSize = 'sm';
-
   const uploads = stats?.uploadCountAllTime;
 
   return (
     <Card p="xs" withBorder>
       <Card.Section py="xs" inheritPadding>
         <Stack spacing="xs">
-          <Group align="center" position="apart">
-            <UserAvatar
-              size="sm"
-              user={data}
-              subText={`Joined ${formatDate(data.createdAt)}`}
-              withUsername
-              linkToProfile
-            />
-            <Group spacing="xs">
-              <RankBadge size="md" rank={data.rank} />
-            </Group>
-          </Group>
+          <UserAvatar
+            size="sm"
+            user={data}
+            subText={`Joined ${formatDate(data.createdAt)}`}
+            withUsername
+            linkToProfile
+          />
           {stats && (
-            <Group position="apart" spacing={0} noWrap>
-              <IconBadge
-                sx={{ userSelect: 'none' }}
-                size={iconBadgeSize}
-                icon={
-                  <Rating
-                    size="xs"
-                    value={stats.ratingAllTime}
-                    readOnly
-                    emptySymbol={
-                      theme.colorScheme === 'dark' ? (
-                        <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                      ) : undefined
-                    }
-                  />
-                }
-                variant={
-                  theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0 ? 'filled' : 'light'
-                }
-                tooltip={
-                  <StatTooltip
-                    value={`${formatToLeastDecimals(stats.ratingAllTime)} (${
-                      stats.ratingCountAllTime
-                    })`}
-                    label="Average Rating"
-                  />
-                }
-              >
-                <Text size="xs" color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}>
-                  {abbreviateNumber(stats.ratingCountAllTime)}
-                </Text>
-              </IconBadge>
-              <Group spacing={4} noWrap>
-                {!uploads || uploads === 0 ? null : (
-                  <IconBadge
-                    icon={<IconUpload size={14} />}
-                    href={`/user/${data.username}`}
-                    color="gray"
-                    size={iconBadgeSize}
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    tooltip={<StatTooltip value={uploads} label="Uploads" />}
-                    sx={(theme) => ({
-                      [theme.fn.smallerThan('xs')]: {
-                        display: 'none',
-                      },
-                    })}
-                  >
-                    <Text size="xs">{abbreviateNumber(uploads)}</Text>
-                  </IconBadge>
-                )}
-                <IconBadge
-                  icon={<IconUsers size={14} />}
-                  href={`/user/${data.username}/followers`}
-                  color="gray"
-                  size={iconBadgeSize}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  tooltip={<StatTooltip value={stats.followerCountAllTime} label="Followers" />}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.followerCountAllTime)}</Text>
-                </IconBadge>
-                <IconBadge
-                  icon={<IconHeart size={14} />}
-                  color="gray"
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  size={iconBadgeSize}
-                  tooltip={<StatTooltip value={stats.favoriteCountAllTime} label="Favorites" />}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
-                </IconBadge>
-                {uploads === 0 ? null : (
-                  <IconBadge
-                    icon={<IconDownload size={14} />}
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    size={iconBadgeSize}
-                    tooltip={
-                      <StatTooltip value={stats.downloadCountAllTime} label="Total Downloads" />
-                    }
-                  >
-                    <Text size="xs">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
-                  </IconBadge>
-                )}
-              </Group>
+            <Group spacing={8}>
+              <RankBadge size="md" rank={data.rank} />
+              <UserStatBadges
+                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
+                uploads={uploads}
+                followers={stats.followerCountAllTime}
+                favorite={stats.favoriteCountAllTime}
+                downloads={stats.downloadCountAllTime}
+              />
             </Group>
           )}
         </Stack>
