@@ -12,6 +12,7 @@ import {
   useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
@@ -42,11 +43,25 @@ export const ImagesSearchItem = forwardRef<
           borderRadius: '10px',
         }}
       >
-        <EdgeMedia
-          src={hit.url}
-          width={450}
-          style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}
-        />
+        {hit.nsfw !== 'None' ? (
+          <MediaHash {...hit} cropFocus="top" />
+        ) : (
+          <EdgeMedia
+            src={hit.url}
+            name={hit.name ?? hit.id.toString()}
+            type={hit.type}
+            anim={false}
+            width={450}
+            style={{
+              minWidth: '100%',
+              minHeight: '100%',
+              objectFit: 'cover',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+            }}
+          />
+        )}
       </Center>
       <Stack spacing={4} sx={{ flex: '1 !important' }}>
         {hit.meta && (
