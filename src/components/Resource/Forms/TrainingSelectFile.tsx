@@ -207,8 +207,9 @@ export default function TrainingSelectFile({
     });
 
     // TODO this is broken
-    const result = await fetch(selectedFile, { mode: 'no-cors' });
+    const result = await fetch(selectedFile);
     if (!result.ok) {
+      setAwaitInvalidate(false);
       updateNotification({
         id: notificationId,
         icon: <IconX size={18} />,
@@ -244,7 +245,7 @@ export default function TrainingSelectFile({
           ...result,
           sizeKB: bytesToKB(size),
           modelVersionId: versionId,
-          type,
+          type: 'Model',
           metadata,
         });
       }
