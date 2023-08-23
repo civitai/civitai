@@ -388,12 +388,13 @@ export async function getAllHiddenForUser({
     .filter((x) => x.nsfw === NsfwLevel.Blocked)
     .map((tag) => ({ ...tag, type: 'always' }));
 
-  return {
+  const result = {
     image: [...images.map((id) => ({ id, type: 'always' })), ...implicitImages],
     model: [...models.map((id) => ({ id, type: 'always' })), ...implicitModels],
     user: [...users.map((user) => ({ ...user, type: 'always' }))],
     tag: [...hiddenTags.map((tag) => ({ ...tag, type: 'hidden' })), ...moderated, ...blocked],
   } as HiddenPreferenceTypes;
+  return result;
 }
 
 export async function toggleHidden({
