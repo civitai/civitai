@@ -1,7 +1,7 @@
 import { Accordion, Button, Group, Input, Stack, Title } from '@mantine/core';
 import { TrainingStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
@@ -24,15 +24,6 @@ import {
 import { ModelById } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-// const useStyles = createStyles((theme) => ({
-//   reviewData: {
-//     '& > div': {
-//       alignItems: 'center',
-//       gap: theme.spacing.md,
-//     },
-//   },
-// }));
 
 const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
@@ -62,6 +53,7 @@ type TrainingSettingsType<T extends string> = {
   };
 };
 
+// could type keys as trainingDetailsParams
 const trainingSettings: TrainingSettingsType<string>[] = [
   { name: 'epochs', label: 'Epochs', type: 'int', default: 10, min: 3, max: 16 },
   {
@@ -146,16 +138,18 @@ const trainingSettings: TrainingSettingsType<string>[] = [
 ];
 
 export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
-  const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>();
+  const thisModelVersion = model.modelVersions[0];
+  const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
+
+  const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
+    thisTrainingDetails?.baseModel ?? undefined
+  );
   const router = useRouter();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
 
   const thisStep = 3;
-
-  const thisModelVersion = model.modelVersions[0];
-  const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
 
   const schema = trainingDetailsParams.extend({
     baseModel: z.enum(trainingDetailsBaseModels, {
@@ -190,10 +184,24 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     shouldUnregister: false,
   });
 
-  // TODO [bw]
-  // useEffect(() => {
-  //   // change the defaults? but what if already modified?
-  // }, [formBaseModel])
+  // apply default overrides for base model upon selection
+  useEffect(() => {
+    if (!formBaseModel) return;
+    trainingSettings.forEach((s) => {
+      let val = s.default;
+      const overrideObj = s.overrides?.[formBaseModel];
+      if (overrideObj && overrideObj.default !== undefined) {
+        // TODO [bw] should check here for function type
+        //  could also check if it is in dirty state and leave it alone
+        val = overrideObj.default;
+      }
+      if (typeof val !== 'function') form.setValue(s.name, val);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formBaseModel]);
+
+  // TODO [bw] recalc default functions when relevant args change
+  useEffect(() => {}, []);
 
   const { isDirty, errors } = form.formState;
 
@@ -344,93 +352,69 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
         </Input.Wrapper>
         {formBaseModel && (baseModelDescriptions[formBaseModel]?.description || '')}
 
-        {/*<Title mt="md" order={5}>*/}
-        {/*  <Group align="center">*/}
-        {/*    <Text inline>Advanced Training Settings</Text>*/}
-        {/*    <Badge*/}
-        {/*      component="button"*/}
-        {/*      // color="gray"*/}
-        {/*      size="md"*/}
-        {/*      onClick={() => setSettingsCollapsed(!settingsCollapsed)}*/}
-        {/*      sx={{ cursor: 'pointer' }}*/}
-        {/*    >*/}
-        {/*      {settingsCollapsed ? (*/}
-        {/*        <IconPlus style={{ verticalAlign: 'sub' }} size={16} />*/}
-        {/*      ) : (*/}
-        {/*        <IconMinus style={{ verticalAlign: 'sub' }} size={16} />*/}
-        {/*      )}*/}
-        {/*    </Badge>*/}
-        {/*  </Group>*/}
-        {/*</Title>*/}
-        {/*<Collapse in={!settingsCollapsed}>*/}
-
-        <Accordion
-          variant="separated"
-          multiple
-          defaultValue={['training-settings']}
-          mt="md"
-          styles={(theme) => ({
-            content: { padding: 0 },
-            item: {
-              overflow: 'hidden',
-              borderColor:
-                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-              boxShadow: theme.shadows.sm,
-            },
-            control: {
-              padding: theme.spacing.sm,
-            },
-          })}
-        >
-          <Accordion.Item value="training-settings">
-            <Accordion.Control>
-              {/*<Group position="apart">*/}
-              Advanced Training Settings
-            </Accordion.Control>
-            <Accordion.Panel>
-              <DescriptionTable
-                labelWidth="200px"
-                items={trainingSettings.map((ts) => {
-                  let inp: React.ReactNode;
-                  // console.log(ts.name);
-                  if (['int', 'number'].includes(ts.type)) {
-                    inp = (
-                      <InputNumber
-                        name={ts.name}
-                        // label={ts.label}
-                        // placeholder="Training Epochs"
-                        // defaultValue={ts.default as number}
-                        min={ts.min}
-                        max={ts.max}
-                        precision={ts.type === 'number' ? 4 : undefined}
-                        step={ts.type === 'int' ? 1 : 0.0001}
-                        sx={{ flexGrow: 1 }}
-                        disabled={ts.disabled === true}
-                        format="default"
-                      />
-                    );
-                  } else if (ts.type === 'select') {
-                    inp = (
-                      <InputSelect
-                        name={ts.name}
-                        data={ts.options as string[]}
-                        disabled={ts.disabled === true}
-                      />
-                    );
-                  } else if (ts.type === 'bool') {
-                    inp = <InputCheckbox name={ts.name} disabled={ts.disabled === true} />;
-                  } else if (ts.type === 'string') {
-                    inp = <InputText name={ts.name} disabled={ts.disabled === true} />;
-                  }
-                  return {
-                    label: ts.label,
-                    value: inp,
-                  };
-                })}
-              />
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
+        {formBaseModel && (
+          <Accordion
+            variant="separated"
+            // multiple
+            // defaultValue={['training-settings']}
+            mt="md"
+            styles={(theme) => ({
+              content: { padding: 0 },
+              item: {
+                overflow: 'hidden',
+                borderColor:
+                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+                boxShadow: theme.shadows.sm,
+              },
+              control: {
+                padding: theme.spacing.sm,
+              },
+            })}
+          >
+            <Accordion.Item value="training-settings">
+              <Accordion.Control>Advanced Training Settings</Accordion.Control>
+              <Accordion.Panel>
+                <DescriptionTable
+                  labelWidth="200px"
+                  items={trainingSettings.map((ts) => {
+                    let inp: React.ReactNode;
+                    const override = ts.overrides?.[formBaseModel];
+                    if (['int', 'number'].includes(ts.type)) {
+                      inp = (
+                        <InputNumber
+                          name={ts.name}
+                          min={override?.min ?? ts.min}
+                          max={override?.max ?? ts.max}
+                          precision={ts.type === 'number' ? 4 : undefined}
+                          step={ts.type === 'int' ? 1 : 0.0001}
+                          sx={{ flexGrow: 1 }}
+                          disabled={ts.disabled === true}
+                          format="default"
+                        />
+                      );
+                    } else if (ts.type === 'select') {
+                      inp = (
+                        <InputSelect
+                          name={ts.name}
+                          data={ts.options as string[]}
+                          disabled={ts.disabled === true}
+                        />
+                      );
+                    } else if (ts.type === 'bool') {
+                      inp = <InputCheckbox py={8} name={ts.name} disabled={ts.disabled === true} />;
+                    } else if (ts.type === 'string') {
+                      inp = <InputText name={ts.name} disabled={ts.disabled === true} />;
+                    }
+                    return {
+                      label: ts.label,
+                      value: inp,
+                    };
+                  })}
+                />
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        )}
       </Stack>
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>

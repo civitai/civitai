@@ -154,6 +154,7 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
           // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
           await queryUtils.modelVersion.getById.invalidate({ id: vData.id });
           await queryUtils.model.getById.invalidate({ id: data.id });
+          await queryUtils.model.getMyTrainingModels.invalidate();
           setAwaitInvalidate(false);
           goNext(modelId, thisStep);
         },
@@ -187,6 +188,8 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
         status: ModelStatus.Draft,
         type: ModelType.LORA,
         uploadType: ModelUploadType.Trained,
+        // TODO [bw] we can set the tag here based on type so category is filled out
+        // tagsOnModels:
       });
     } else {
       goNext(model?.id, thisStep);

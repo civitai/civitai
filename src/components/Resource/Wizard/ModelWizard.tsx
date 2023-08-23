@@ -8,7 +8,7 @@ import {
   Stepper,
   Title,
 } from '@mantine/core';
-import { ModelUploadType } from '@prisma/client';
+import { ModelUploadType, TrainingStatus } from '@prisma/client';
 import { IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -18,6 +18,7 @@ import { Files, UploadStepActions } from '~/components/Resource/Files';
 import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
+import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -195,17 +196,38 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
                 </ModelVersionUpsertForm>
               </Stack>
             </Stepper.Step>
-            <Stepper.Step
-              label="Upload files"
-              loading={uploading > 0}
-              color={error + aborted > 0 ? 'red' : undefined}
-            >
-              <Stack>
-                <Title order={3}>Upload files</Title>
-                <Files />
-                <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
-              </Stack>
-            </Stepper.Step>
+            {state.model?.uploadType === ModelUploadType.Trained ? (
+              <Stepper.Step
+                label="Select Model File"
+                loading={
+                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Pending ||
+                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Processing ||
+                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Submitted
+                }
+                color={
+                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Failed
+                    ? 'red'
+                    : undefined
+                }
+              >
+                <Stack>
+                  <Title order={3}>Select Model File</Title>
+                  <TrainingSelectFile />
+                </Stack>
+              </Stepper.Step>
+            ) : (
+              <Stepper.Step
+                label="Upload files"
+                loading={uploading > 0}
+                color={error + aborted > 0 ? 'red' : undefined}
+              >
+                <Stack>
+                  <Title order={3}>Upload files</Title>
+                  <Files />
+                  <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
+                </Stack>
+              </Stepper.Step>
+            )}
             <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
               <Stack>
                 <Title order={3}>{postId ? 'Edit post' : 'Create your post'}</Title>
