@@ -110,7 +110,6 @@ export default function TrainingSelectFile({
 }) {
   const queryUtils = trpc.useContext();
   const { upload } = useS3UploadStore();
-  const [selectedFile, setSelectedFile] = useState<string | undefined>();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   console.log(model);
@@ -119,6 +118,9 @@ export default function TrainingSelectFile({
   // TODO [bw] need to worry about multiple files? which one will this grab?
   const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
   console.log(modelFile);
+
+  // TODO [bw] autopopulate based on already selected model. how best to do this?
+  const [selectedFile, setSelectedFile] = useState<string | undefined>();
 
   const notificationId = `${modelVersion?.id || 1}-uploading-file-notification`;
 
@@ -206,7 +208,6 @@ export default function TrainingSelectFile({
       message: '',
     });
 
-    // TODO this is broken
     const result = await fetch(selectedFile);
     if (!result.ok) {
       setAwaitInvalidate(false);
@@ -257,7 +258,6 @@ export default function TrainingSelectFile({
     return <NotFound />;
   }
 
-  // TODO flip order on epoch_number
   const epochs = modelFile.metadata.trainingResults?.epochs.sort(function (a, b) {
     const x = a.epoch_number;
     const y = b.epoch_number;

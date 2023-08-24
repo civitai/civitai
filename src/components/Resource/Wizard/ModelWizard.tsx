@@ -43,11 +43,6 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const maxWizardSteps = {
-  create: 4,
-  train: 4,
-};
-
 export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
   const { classes } = useStyles();
   const router = useRouter();
@@ -70,7 +65,7 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
     }
   }
 
-  const maxSteps = maxWizardSteps[uploadType];
+  const maxSteps = 4;
 
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
