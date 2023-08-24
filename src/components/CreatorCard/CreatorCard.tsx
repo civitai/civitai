@@ -38,7 +38,7 @@ export function CreatorCard({ user }: Props) {
     <Card p="xs" withBorder>
       <Card.Section py="xs" inheritPadding>
         <Stack spacing="xs">
-          <Group align="center" position="apart">
+          <Group align="center" position="apart" noWrap>
             <UserAvatar
               size="sm"
               avatarProps={{ size: 32 }}
@@ -47,8 +47,10 @@ export function CreatorCard({ user }: Props) {
               withUsername
               linkToProfile
             />
-            <TipBuzzButton toUserId={creator.id} size="xs" iconSize={16} compact />
-            <FollowUserButton userId={creator.id} size="xs" compact />
+            <Group spacing={8} noWrap>
+              <TipBuzzButton toUserId={creator.id} size="xs" compact />
+              <FollowUserButton userId={creator.id} size="xs" compact />
+            </Group>
           </Group>
           <Group spacing={8}>
             <RankBadge size="md" rank={creator.rank} />

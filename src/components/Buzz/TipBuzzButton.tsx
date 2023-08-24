@@ -1,18 +1,19 @@
-import { Button, ButtonProps, Group } from '@mantine/core';
+import { Button, ButtonProps, Group, useMantineTheme } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
-import { openSendTipModal } from '../Modals/SendTipModal';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
+import { openSendTipModal } from '../Modals/SendTipModal';
 
-type Props = ButtonProps & { toUserId: number; iconSize?: number };
+type Props = ButtonProps & { toUserId: number };
 
-export function TipBuzzButton({ toUserId, iconSize, ...buttonProps }: Props) {
+export function TipBuzzButton({ toUserId, ...buttonProps }: Props) {
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
+  const theme = useMantineTheme();
 
   const handleClick = () => {
     if (!currentUser?.balance)
@@ -30,22 +31,17 @@ export function TipBuzzButton({ toUserId, iconSize, ...buttonProps }: Props) {
   return (
     <LoginPopover>
       <Button
-        variant="light"
+        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        color="gray"
         radius="xl"
-        pl={5}
+        pl={8}
+        pr={12}
         onClick={handleClick}
-        sx={(theme) => ({
-          backgroundColor: theme.fn.rgba(theme.colors.dark[3], 0.06),
-          color: theme.colors.accent[5],
-
-          '&:hover': {
-            backgroundColor: theme.fn.rgba(theme.colors.dark[3], 0.12),
-          },
-        })}
+        sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
         {...buttonProps}
       >
-        <Group spacing={4}>
-          <IconBolt size={iconSize} fill="currentColor" />
+        <Group spacing={4} noWrap>
+          <IconBolt size={14} fill="currentColor" />
           Tip Buzz
         </Group>
       </Button>

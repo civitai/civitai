@@ -424,7 +424,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                         </div>
                       )}
                       <Stack spacing="xs">
-                        <Group position="apart" align="flex-start">
+                        <Group position="apart" spacing={8} align="flex-start">
                           <Stack spacing={0}>
                             <Title order={2} size={24} weight={600} lh={1.5}>
                               <Username {...user} size="lg" inherit />
@@ -433,8 +433,8 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                               {`Joined ${formatDate(user.createdAt)}`}
                             </Text>
                           </Stack>
-                          <Group spacing={8} noWrap>
-                            <TipBuzzButton toUserId={user.id} size="md" iconSize={18} compact />
+                          <Group className={classes.userActions} spacing={8} noWrap>
+                            <TipBuzzButton toUserId={user.id} size="md" compact />
                             <FollowUserButton userId={user.id} size="md" compact />
                             <Menu position="left" withinPortal>
                               <Menu.Target>
@@ -444,6 +444,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                   radius="xl"
                                   color="gray"
                                   variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                  ml="auto"
                                 >
                                   <IconDotsVertical size={16} />
                                 </ActionIcon>
@@ -620,6 +621,11 @@ const useStyles = createStyles((theme) => ({
 
     [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
       width: '100%',
+    },
+  },
+  userActions: {
+    [theme.fn.smallerThan('sm')]: {
+      flexGrow: 1,
     },
   },
 }));
