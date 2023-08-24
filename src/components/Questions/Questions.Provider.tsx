@@ -17,89 +17,38 @@ import {
   Text,
 } from '@mantine/core';
 import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons-react';
-import { deleteCookie } from 'cookies-next';
 import Link from 'next/link';
 import router, { useRouter } from 'next/router';
-import { z } from 'zod';
-import { create } from 'zustand';
-import createContext from 'zustand/context';
-import { immer } from 'zustand/middleware/immer';
-
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
-import { questionsFilterSchema, useCookies } from '~/providers/CookiesProvider';
 import { constants } from '~/server/common/constants';
 import { QuestionSort, QuestionStatus } from '~/server/common/enums';
 import { QS } from '~/utils/qs';
 import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { setCookie } from '~/utils/cookies-helpers';
-
-type FilterProps = z.input<typeof questionsFilterSchema>;
-type Store = {
-  filters: FilterProps;
-  setSort: (sort?: QuestionSort) => void;
-  setPeriod: (period?: MetricTimeframe) => void;
-  setStatus: (status?: QuestionStatus) => void;
-};
-
-const { Provider, useStore } = createContext<ReturnType<typeof createMyStore>>();
-const createMyStore = (initialState: FilterProps) => {
-  return create<Store>()(
-    immer((set) => {
-      return {
-        filters: { ...initialState },
-        setSort: (sort) => {
-          set((state) => {
-            state.filters.sort = sort;
-            !!sort ? setCookie('q_sort', sort) : deleteCookie('q_sort');
-          });
-        },
-        setPeriod: (period) => {
-          set((state) => {
-            state.filters.period = period;
-            !!period ? setCookie('q_period', period) : deleteCookie('q_period');
-          });
-        },
-        setStatus: (status) => {
-          set((state) => {
-            state.filters.status = status;
-            !!status ? setCookie('q_status', status) : deleteCookie('q_status');
-          });
-        },
-      };
-    })
-  );
-};
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 export function Questions({ children }: { children: React.ReactNode }) {
-  const {
-    sort = constants.questionFilterDefaults.sort,
-    period = constants.questionFilterDefaults.period,
-    status,
-  } = useCookies().questions;
-  return (
-    <Provider createStore={() => createMyStore({ sort, period, status })}>{children}</Provider>
-  );
+  return <>{children}</>;
 }
 
 const useQuestionFilters = () => {
   const router = useRouter();
   const page = router.query.page ? Number(router.query.page) : 1;
   const limit = constants.questionFilterDefaults.limit;
-  const filters = useStore((state) => state.filters);
+  const filters = useFiltersContext((state) => state.questions);
   return { ...filters, page, limit };
 };
 
 const sortOptions = Object.values(QuestionSort);
 function QuestionsSort() {
-  const setSort = useStore((state) => state.setSort);
-  const sort = useStore((state) => state.filters.sort);
+  const setSort = useFiltersContext((state) => state.setQuestionFilters);
+  const sort = useFiltersContext((state) => state.questions.sort);
 
   return (
     <SelectMenu
       label={sort}
       options={sortOptions.map((x) => ({ label: x, value: x }))}
-      onClick={(sort) => setSort(sort)}
+      onClick={(sort) => setSort({ sort })}
       value={sort}
     />
   );
@@ -107,22 +56,22 @@ function QuestionsSort() {
 
 const periodOptions = Object.values(MetricTimeframe);
 function QuestionsPeriod() {
-  const setPeriod = useStore((state) => state.setPeriod);
-  const period = useStore((state) => state.filters.period);
+  const setPeriod = useFiltersContext((state) => state.setQuestionFilters);
+  const period = useFiltersContext((state) => state.questions.period);
 
   return (
     <SelectMenu
       label={period && splitUppercase(period.toString())}
       options={periodOptions.map((option) => ({ label: splitUppercase(option), value: option }))}
-      onClick={(period) => setPeriod(period)}
+      onClick={(period) => setPeriod({ period })}
       value={period}
     />
   );
 }
 
 function QuestionsFilter() {
-  const setStatus = useStore((state) => state.setStatus);
-  const status = useStore((state) => state.filters.status);
+  const setStatus = useFiltersContext((state) => state.setQuestionFilters);
+  const status = useFiltersContext((state) => state.questions.status);
 
   const filterLength = !!status ? 1 : 0;
 
@@ -151,7 +100,7 @@ function QuestionsFilter() {
               value={value}
               styles={{ label: { width: '100%', textAlign: 'center' } }}
               checked={status === value}
-              onChange={(checked) => setStatus(checked ? value : undefined)}
+              onChange={(checked) => setStatus({ status: checked ? value : undefined })}
             >
               {splitUppercase(value)}
             </Chip>
