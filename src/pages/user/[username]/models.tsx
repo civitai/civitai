@@ -39,14 +39,6 @@ export default function UserModelsPage() {
 
   return (
     <Tabs.Panel value="/models">
-      {selfView && (
-        <Center>
-          <AlertWithIcon maw={600} mb="sm" icon={<IconInfoCircle />} title="Metric Period Mode">
-            Since you are viewing your own profile, we show all of your creations and the period
-            filter instead only adjusts the timeframe for the metrics that are displayed.
-          </AlertWithIcon>
-        </Center>
-      )}
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
