@@ -60,8 +60,13 @@ export function ModelWizard() {
 
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
-  // TODO [bw] check if we need to specify 'Model' as type here
-  const hasFiles = model && model.modelVersions.some((version) => version.files.length > 0);
+  const hasFiles =
+    model &&
+    model.modelVersions.some((version) =>
+      model.uploadType === ModelUploadType.Trained
+        ? version.files.filter((f) => f.type === 'Model').length > 0
+        : version.files.length > 0
+    );
 
   const { uploading, error, aborted } = getUploadStatus(
     (file) => file.meta?.versionId === state.modelVersion?.id
