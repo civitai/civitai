@@ -22,7 +22,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 
 const READ_BATCH_SIZE = 10000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
 const INDEX_ID = USERS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -66,7 +66,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  const rankingRules = ['sort', 'attribute', 'words', 'typo', 'proximity', 'exactness'];
+  const rankingRules = ['attribute', 'sort', 'words', 'typo', 'proximity', 'exactness'];
 
   if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
     const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
@@ -130,13 +130,11 @@ type UserForSearchIndex = {
     leaderboardCosmetic: string | null;
   } | null;
   cosmetics: {
-    cosmetic: {
-      id: number;
-      data: Prisma.JsonValue;
-      type: CosmeticType;
-      name: string;
-      source: CosmeticSource;
-    };
+    id: number;
+    data: Prisma.JsonValue;
+    type: CosmeticType;
+    name: string;
+    source: CosmeticSource;
   }[];
 };
 
@@ -269,6 +267,7 @@ const onFetchItemsToIndex = async ({
 
   const indexReadyRecords = users.map((userRecord) => {
     const stats = userRecord.stats;
+    const cosmetics = userRecord.cosmetics ?? [];
 
     const weightedRating = !stats
       ? 0
@@ -287,6 +286,7 @@ const onFetchItemsToIndex = async ({
         // Flattens metric array
         ...(userRecord.metrics?.[0] || {}),
       },
+      cosmetics: cosmetics.map((cosmetic) => ({ cosmetic })),
     };
   });
 
@@ -322,7 +322,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [Prisma.sql`u.id IN ${Prisma.join(itemIds)}`],
+      whereOr: [Prisma.sql`u.id IN (${Prisma.join(itemIds)})`],
     });
 
     itemsToIndex.push(...newItems);

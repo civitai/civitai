@@ -331,7 +331,6 @@ ImageGuard.Report = function ReportImage({
               if (!image.postId) {
                 return;
               }
-
               openContext('addToCollection', { postId: image.postId, type: CollectionType.Post });
               break;
             default: {

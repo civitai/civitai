@@ -62,7 +62,6 @@ export function getS3Client() {
     },
     region: env.S3_UPLOAD_REGION,
     endpoint: env.S3_UPLOAD_ENDPOINT,
-    forcePathStyle: env.S3_FORCE_PATH_STYLE,
   });
 }
 
@@ -162,35 +161,31 @@ type GetObjectOptions = {
   bucket?: string;
 };
 
-const buckets = [env.S3_UPLOAD_BUCKET, env.S3_SETTLED_BUCKET];
-const keyParser = /https:\/\/[A-Za-z0-9]+\.?.*?\/(imported\/.+|\d+\/.+)/i;
-export function parseKey(key: string) {
-  if (env.S3_FORCE_PATH_STYLE) {
-    // e.g. key: https://s3.region.s3originsite.com/bucket/key
-    const url = new URL(key);
-    const [bucket, ...keyParts] = url.pathname.split('/').filter(Boolean);
-    return { key: keyParts.join('/'), bucket };
-  }
-  // e.g. key: https://bucket.s3.region.s3originsite.com/key
-  let bucket = null;
-  if (key.startsWith('http')) [bucket, key] = keyParser.exec(key) ?? [null, key];
-  for (const b of buckets) {
-    if (!key.startsWith(b + '/')) continue;
-    bucket = b;
-    key = key.replace(`${bucket}/`, '');
-    break;
+const s3Host = new URL(env.S3_UPLOAD_ENDPOINT).host;
+export function parseKey(fileUrl: string) {
+  const url = new URL(fileUrl);
+  const bucketInPath = url.hostname === s3Host;
+  if (bucketInPath) {
+    const pathParts = url.pathname.split('/');
+    return {
+      key: pathParts.slice(2).join('/'),
+      bucket: pathParts[1],
+    };
   }
 
-  return { key, bucket };
+  return {
+    key: url.pathname.split('/').slice(1).join('/'),
+    bucket: url.hostname.replace('.' + s3Host, ''),
+  };
 }
 
 export async function getGetUrl(
-  key: string,
+  s3Url: string,
   { s3, expiresIn = DOWNLOAD_EXPIRATION, fileName, bucket }: GetObjectOptions = {}
 ) {
   if (!s3) s3 = getS3Client();
 
-  const { key: parsedKey, bucket: parsedBucket } = parseKey(key);
+  const { key: parsedKey, bucket: parsedBucket } = parseKey(s3Url);
   if (!bucket) bucket = parsedBucket ?? env.S3_UPLOAD_BUCKET;
   const command: GetObjectCommandInput = {
     Bucket: bucket,
@@ -199,7 +194,7 @@ export async function getGetUrl(
   if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
 
   const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
-  return { url, bucket, key };
+  return { url, bucket, key: parsedKey };
 }
 
 export async function checkFileExists(key: string, s3: S3Client | null = null) {

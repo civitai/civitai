@@ -6,6 +6,7 @@ import { UiState } from 'instantsearch.js';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ModelSearchIndexSortBy = [
+  MODELS_SEARCH_INDEX,
   `${MODELS_SEARCH_INDEX}:metrics.weightedRating:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.downloadCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.favoriteCount:desc`,

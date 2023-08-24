@@ -136,7 +136,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   let isPrivate = false;
 
   // If the user is not a moderator, only show published models
-  if (!status?.length) {
+  if (!sessionUser?.isModerator || !status?.length) {
     AND.push({ status: ModelStatus.Published });
   } else if (sessionUser?.isModerator) {
     if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
@@ -355,9 +355,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           createdAt: true,
           generationCoverage: { select: { covered: true } },
         },
-        where: {
-          status: ModelStatus.Published,
-        },
+        where: !user?.isModerator ? { status: ModelStatus.Published } : undefined,
       },
       tagsOnModels: { select: { tagId: true } },
       user: { select: simpleUserSelect },

@@ -9,7 +9,6 @@ import {
   Group,
   Loader,
   Menu,
-  Rating,
   SegmentedControl,
   SegmentedControlItem,
   SegmentedControlProps,
@@ -27,19 +26,14 @@ import {
   IconBan,
   IconCategory,
   IconDotsVertical,
-  IconDownload,
   IconFileText,
   IconFlag,
   IconFolder,
-  IconHeart,
   IconLayoutList,
   IconMicrophone,
   IconMicrophoneOff,
   IconPhoto,
-  IconStar,
   IconTrash,
-  IconUpload,
-  IconUsers,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
@@ -54,7 +48,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
@@ -62,7 +55,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
-import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -75,11 +67,13 @@ import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { showErrorNotification } from '~/utils/notifications';
-import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { formatDate } from '~/utils/date-helpers';
+import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -430,18 +424,28 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                         </div>
                       )}
                       <Stack spacing="xs">
-                        <Group position="apart">
-                          <Title order={2}>
-                            <Username {...user} inherit />
-                          </Title>
-                          <Group spacing={4} noWrap>
+                        <Group position="apart" align="flex-start">
+                          <Stack spacing={0}>
+                            <Title order={2} size={24} weight={600} lh={1.5}>
+                              <Username {...user} size="lg" inherit />
+                            </Title>
+                            <Text size="md" color="dimmed">
+                              {`Joined ${formatDate(user.createdAt)}`}
+                            </Text>
+                          </Stack>
+                          <Group spacing={8} noWrap>
                             <TipBuzzButton toUserId={user.id} size="md" iconSize={18} compact />
                             <FollowUserButton userId={user.id} size="md" compact />
-
                             <Menu position="left" withinPortal>
                               <Menu.Target>
-                                <ActionIcon loading={removeContentMutation.isLoading} radius="xl">
-                                  <IconDotsVertical />
+                                <ActionIcon
+                                  loading={removeContentMutation.isLoading}
+                                  size={30}
+                                  radius="xl"
+                                  color="gray"
+                                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                                >
+                                  <IconDotsVertical size={16} />
                                 </ActionIcon>
                               </Menu.Target>
                               <Menu.Dropdown>
@@ -509,114 +513,24 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                             </Menu>
                           </Group>
                         </Group>
-                        <Group spacing="xs">
+                        <Group spacing={8}>
                           <RankBadge rank={user.rank} size="lg" />
                           {stats && (
-                            <>
-                              <IconBadge
-                                tooltip={
-                                  <StatTooltip
-                                    label="Average Rating"
-                                    value={`${formatToLeastDecimals(stats.ratingAllTime)} (${
-                                      stats.ratingCountAllTime
-                                    })`}
-                                  />
-                                }
-                                sx={{ userSelect: 'none' }}
-                                size="lg"
-                                icon={
-                                  <Rating
-                                    size="sm"
-                                    value={stats.ratingAllTime}
-                                    readOnly
-                                    emptySymbol={
-                                      theme.colorScheme === 'dark' ? (
-                                        <IconStar
-                                          size={18}
-                                          fill="rgba(255,255,255,.3)"
-                                          color="transparent"
-                                        />
-                                      ) : undefined
-                                    }
-                                  />
-                                }
-                                variant={
-                                  theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0
-                                    ? 'filled'
-                                    : 'light'
-                                }
-                              >
-                                <Text
-                                  size="sm"
-                                  color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}
-                                >
-                                  {abbreviateNumber(stats.ratingCountAllTime)}
-                                </Text>
-                              </IconBadge>
-                              {uploads === 0 ? null : (
-                                <IconBadge
-                                  icon={<IconUpload size={16} />}
-                                  color="gray"
-                                  size="lg"
-                                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                                  tooltip={<StatTooltip label="Uploads" value={uploads} />}
-                                >
-                                  <Text size="sm">{abbreviateNumber(uploads)}</Text>
-                                </IconBadge>
-                              )}
-                              <IconBadge
-                                icon={<IconUsers size={16} />}
-                                href={`/user/${user.username}/followers`}
-                                color="gray"
-                                size="lg"
-                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                                tooltip={
-                                  <StatTooltip
-                                    label="Followers"
-                                    value={stats.followerCountAllTime}
-                                  />
-                                }
-                              >
-                                <Text size="sm">
-                                  {abbreviateNumber(stats.followerCountAllTime)}
-                                </Text>
-                              </IconBadge>
-                              <IconBadge
-                                tooltip={
-                                  <StatTooltip
-                                    label="Favorites"
-                                    value={stats.favoriteCountAllTime}
-                                  />
-                                }
-                                icon={<IconHeart size={16} />}
-                                color="gray"
-                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                                size="lg"
-                              >
-                                <Text size="sm">
-                                  {abbreviateNumber(stats.favoriteCountAllTime)}
-                                </Text>
-                              </IconBadge>
-                              <IconBadge
-                                tooltip={
-                                  <StatTooltip
-                                    label="Downloads"
-                                    value={stats.downloadCountAllTime}
-                                  />
-                                }
-                                icon={<IconDownload size={16} />}
-                                variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                                size="lg"
-                              >
-                                <Text size="sm">
-                                  {abbreviateNumber(stats.downloadCountAllTime)}
-                                </Text>
-                              </IconBadge>
-                            </>
+                            <UserStatBadges
+                              rating={{
+                                value: stats.ratingAllTime,
+                                count: stats.ratingCountAllTime,
+                              }}
+                              uploads={uploads}
+                              followers={stats.followerCountAllTime}
+                              favorite={stats.favoriteCountAllTime}
+                              downloads={stats.downloadCountAllTime}
+                              username={user.username}
+                            />
                           )}
                         </Group>
                         {!!user.links?.length && (
-                          <Group spacing={0}>
+                          <Group spacing={4}>
                             {sortDomainLinks(user.links).map((link, index) => (
                               <ActionIcon
                                 key={index}
@@ -624,7 +538,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                 href={link.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                size="md"
+                                size={32}
                               >
                                 <DomainIcon domain={link.domain} size={22} />
                               </ActionIcon>
@@ -691,10 +605,12 @@ const useStyles = createStyles((theme) => ({
   outsideImage: {
     display: 'none',
     [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
+      borderRadius: theme.radius.md,
       display: 'block',
     },
   },
   insideImage: {
+    borderRadius: theme.radius.md,
     [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
       display: 'none',
     },

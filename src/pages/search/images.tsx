@@ -43,9 +43,10 @@ function RenderFilters() {
       <SortBy
         title="Sort images by"
         items={[
-          { label: 'Most Reactions', value: ImagesSearchIndexSortBy[0] as string },
-          { label: 'Most Discussed', value: ImagesSearchIndexSortBy[1] as string },
-          { label: 'Newest', value: ImagesSearchIndexSortBy[2] as string },
+          { label: 'Relevancy', value: ImagesSearchIndexSortBy[0] as string },
+          { label: 'Most Reactions', value: ImagesSearchIndexSortBy[1] as string },
+          { label: 'Most Discussed', value: ImagesSearchIndexSortBy[2] as string },
+          { label: 'Newest', value: ImagesSearchIndexSortBy[3] as string },
         ]}
       />
       <SearchableMultiSelectRefinementList
@@ -148,7 +149,13 @@ function ImagesHitList() {
       {hiddenItems > 0 && (
         <Text color="dimmed">{hiddenItems} models have been hidden due to your settings.</Text>
       )}
-      <div className={classes.grid}>
+      <div
+        className={classes.grid}
+        style={{
+          // Overwrite default sizing here.
+          gridTemplateColumns: `repeat(auto-fill, minmax(290px, 1fr))`,
+        }}
+      >
         {images.map((hit) => (
           <Box
             key={hit.id}
@@ -178,7 +185,6 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
-    console.log(features);
     if (!features?.imageSearch) return { notFound: true };
   },
 });

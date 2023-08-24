@@ -15,18 +15,22 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import {
+  CosmeticSource,
+  CosmeticType,
+  ImageGenerationProcess,
   ImageIngestionStatus,
+  MediaType,
+  NsfwLevel,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { getImageV2Select } from '../selectors/imagev2.selector';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 
-const READ_BATCH_SIZE = 1000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
+const READ_BATCH_SIZE = 10000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -50,12 +54,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'tags.name',
     'user.username',
   ];
+
   const sortableAttributes: SortableAttributes = [
     'createdAt',
     'publishedAt',
     'rank.commentCountAllTimeRank',
     'rank.reactionCountAllTimeRank',
   ];
+
   const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -96,6 +102,50 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
 
+type ImageForSearchIndex = {
+  type: MediaType;
+  id: number;
+  generationProcess: ImageGenerationProcess | null;
+  createdAt: Date;
+  name: string | null;
+  url: string;
+  meta: Prisma.JsonValue;
+  hash: string | null;
+  height: number | null;
+  width: number | null;
+  metadata: Prisma.JsonValue;
+  nsfw: NsfwLevel;
+  postId: number | null;
+  needsReview: string | null;
+  hideMeta: boolean;
+  index: number | null;
+  scannedAt: Date | null;
+  mimeType: string | null;
+  user: {
+    id: number;
+    image: string | null;
+    username: string | null;
+    deletedAt: Date | null;
+  };
+  cosmetics: {
+    data: Prisma.JsonValue;
+    type: CosmeticType;
+    id: number;
+    name: string;
+    source: CosmeticSource;
+  }[];
+  tags: { tag: { id: number; name: string } }[];
+  stats: {
+    cryCountAllTime: number;
+    dislikeCountAllTime: number;
+    heartCountAllTime: number;
+    laughCountAllTime: number;
+    likeCountAllTime: number;
+    commentCountAllTime: number;
+  } | null;
+  rank: { commentCountAllTimeRank: number; reactionCountAllTimeRank: number } | null;
+};
+
 const onFetchItemsToIndex = async ({
   db,
   whereOr,
@@ -105,46 +155,131 @@ const onFetchItemsToIndex = async ({
 }: {
   db: PrismaClient;
   indexName: string;
-  whereOr?: Prisma.Enumerable<Prisma.ImageWhereInput>;
-  skip?: number;
+  whereOr?: Prisma.Sql[];
+  cursor?: number;
   take?: number;
   isIndexUpdate?: boolean;
 }) => {
-  const offset = queryProps.skip || 0;
+  const offset = queryProps.cursor || -1;
   console.log(
-    `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
+    `onFetchItemsToIndex :: fetching starting for ${indexName} range (Ids):`,
     offset,
     offset + READ_BATCH_SIZE - 1,
     ' filters:',
     whereOr
   );
 
-  const images = await db.image.findMany({
-    skip: offset,
-    take: READ_BATCH_SIZE,
+  const WHERE = [
+    Prisma.sql`i."id" > ${offset}`,
+    Prisma.sql`i."postId" IS NOT NULL`,
+    Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+    Prisma.sql`i."tosViolation" = false`,
+    Prisma.sql`i."type" = 'image'`,
+    Prisma.sql`i."scannedAt" IS NOT NULL`,
+  ];
+
+  if (whereOr) {
+    WHERE.push(Prisma.sql`(${Prisma.join(whereOr, ' OR ')})`);
+  }
+
+  const images = await db.$queryRaw<ImageForSearchIndex[]>`
+  WITH target AS MATERIALIZED (
+    SELECT
+    i."id",
+    i."index",
+    i."postId",
+    i."name",
+    i."url",
+    i."nsfw",
+    i."width",
+    i."height",
+    i."hash",
+    i."meta",
+    i."hideMeta",
+    i."generationProcess",
+    i."createdAt",
+    i."mimeType",
+    i."scannedAt",
+    i."type",
+    i."metadata",
+    i."userId"
+      FROM "Image" i
+      WHERE ${Prisma.join(WHERE, ' AND ')}
+    ORDER BY i."id"  
+    LIMIT ${READ_BATCH_SIZE}
+  ), ranks AS MATERIALIZED (
+    SELECT
+      ir."imageId",
+      jsonb_build_object(
+        'commentCountAllTimeRank', ir."commentCountAllTimeRank",
+        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank"
+      ) rank
+    FROM "ImageRank" ir
+    WHERE ir."imageId" IN (SELECT id FROM target)
+    GROUP BY ir."imageId"
+  ), stats AS MATERIALIZED (
+      SELECT
+        im."imageId",
+        jsonb_build_object(
+          'commentCountAllTime', SUM("commentCount"),
+          'laughCountAllTime', SUM("laughCount"),
+          'heartCountAllTime', SUM("heartCount"),
+          'dislikeCountAllTime', SUM("dislikeCount"),
+          'likeCountAllTime', SUM("likeCount"),
+          'cryCountAllTime', SUM("cryCount")
+        ) stats
+      FROM "ImageMetric" im 
+      WHERE im."imageId" IN (SELECT id FROM target) 
+      GROUP BY im."imageId"
+  ), users AS MATERIALIZED (
+    SELECT
+      u.id,
+      jsonb_build_object(
+        'id', u.id,
+        'username', u.username,
+        'deletedAt', u."deletedAt",
+        'image', u.image
+      ) user
+    FROM "User" u
+    WHERE u.id IN (SELECT "userId" FROM target)
+    GROUP BY u.id
+  ), cosmetics AS MATERIALIZED (
+    SELECT
+      uc."userId",
+      jsonb_agg(jsonb_build_object(
+        'id', c.id,
+        'data', c.data,
+        'type', c.type,
+        'source', c.source,
+        'name', c.name,
+        'leaderboardId', c."leaderboardId",
+        'leaderboardPosition', c."leaderboardPosition"
+      )) cosmetics
+    FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    AND "equippedAt" IS NOT NULL
+    WHERE uc."userId" IN (SELECT "userId" FROM target)
+    GROUP BY uc."userId"
+  )
+  SELECT
+    t.*,
+    (SELECT rank FROM ranks r WHERE r."imageId" = t.id), 
+    (SELECT stats FROM stats s WHERE s."imageId" = t.id),
+    (SELECT "user" FROM users u WHERE u.id = t."userId"),
+    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
+  FROM target t`;
+
+  // Avoids hitting the DB without data.
+  if (images.length === 0) {
+    return [];
+  }
+
+  const rawTags = await db.imageTag.findMany({
+    where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
     select: {
-      ...getImageV2Select({}),
-      stats: {
-        select: {
-          commentCountAllTime: true,
-          laughCountAllTime: true,
-          heartCountAllTime: true,
-          dislikeCountAllTime: true,
-          likeCountAllTime: true,
-          cryCountAllTime: true,
-        },
-      },
-      rank: {
-        select: { commentCountAllTimeRank: true, reactionCountAllTimeRank: true },
-      },
-      tags: { select: { tag: { select: { id: true, name: true } } } },
-    },
-    where: {
-      ingestion: ImageIngestionStatus.Scanned,
-      tosViolation: false,
-      type: 'image',
-      scannedAt: { not: null },
-      OR: whereOr,
+      imageId: true,
+      tagId: true,
+      tagName: true,
     },
   });
 
@@ -155,11 +290,6 @@ const onFetchItemsToIndex = async ({
     'filters:',
     whereOr
   );
-
-  // Avoids hitting the DB without data.
-  if (images.length === 0) {
-    return [];
-  }
 
   // No need for this to ever happen during reset or re-index.
   if (isIndexUpdate) {
@@ -184,12 +314,20 @@ const onFetchItemsToIndex = async ({
     );
   }
 
-  const indexReadyRecords = images.map(({ tags, meta, ...imageRecord }) => {
+  const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
+    const parsed = imageGenerationSchema.partial().safeParse(meta);
+
     return {
       ...imageRecord,
-      // Flatten tags:
-      meta: meta as ImageMetaProps,
-      tags: tags.map((imageTag) => imageTag.tag),
+      meta: parsed.success ? parsed.data : {},
+      user: {
+        ...user,
+        cosmetics: (cosmetics || []).map((cosmetic) => ({ cosmetic })),
+      },
+      tags: rawTags
+        .filter((rt) => rt.imageId === imageRecord.id)
+        .map((rt) => ({ id: rt.tagId, name: rt.tagName })),
+      reactions: [],
     };
   });
 
@@ -225,11 +363,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: {
-        id: {
-          in: itemIds,
-        },
-      },
+      whereOr: [Prisma.sql`i.id IN (${Prisma.join(itemIds)})`],
       isIndexUpdate: true,
     });
 
@@ -247,7 +381,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   // always use this name.
   await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
 
-  let offset = 0;
+  let offset = -1; // such that it starts on 0.
   const imageTasks: EnqueuedTask[] = [];
 
   if (lastUpdatedAt) {
@@ -276,19 +410,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     const indexReadyRecords = await onFetchItemsToIndex({
       db,
       indexName,
-      skip: offset,
+      cursor: offset,
       whereOr: lastUpdatedAt
         ? [
-            {
-              createdAt: {
-                gt: lastUpdatedAt,
-              },
-            },
-            {
-              updatedAt: {
-                gt: lastUpdatedAt,
-              },
-            },
+            Prisma.sql`i."createdAt" > ${lastUpdatedAt}`,
+            Prisma.sql`i."updatedAt" > ${lastUpdatedAt}`,
           ]
         : undefined,
       isIndexUpdate: !!lastUpdatedAt,
@@ -305,7 +431,8 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     imageTasks.push(...tasks);
 
-    offset += indexReadyRecords.length;
+    // Update offset to last index recorded.
+    offset = indexReadyRecords[indexReadyRecords.length - 1].id;
   }
 
   console.log('onIndexUpdate :: start waitForTasks');

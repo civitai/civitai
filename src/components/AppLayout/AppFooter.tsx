@@ -95,6 +95,7 @@ export function AppFooter() {
           </Button>
           <Button
             component={NextLink}
+            prefetch={false}
             href="/content/careers"
             {...buttonProps}
             variant="subtle"

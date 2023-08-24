@@ -6,6 +6,7 @@ import { UiState } from 'instantsearch.js';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const UsersSearchIndexSortBy = [
+  USERS_SEARCH_INDEX,
   `${USERS_SEARCH_INDEX}:stats.followerCountAllTime:desc`,
   `${USERS_SEARCH_INDEX}:stats.weightedRating:desc`,
   `${USERS_SEARCH_INDEX}:stats.uploadCountAllTime:desc`,

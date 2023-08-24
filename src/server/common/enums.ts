@@ -1,6 +1,7 @@
 export enum UploadType {
   Image = 'image',
   TrainingImages = 'training-images',
+  TrainingImagesTemp = 'training-images-temp',
   Model = 'model',
   Default = 'default',
 }

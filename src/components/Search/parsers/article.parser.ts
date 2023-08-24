@@ -6,6 +6,7 @@ import { UiState } from 'instantsearch.js';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ArticlesSearchIndexSortBy = [
+  ARTICLES_SEARCH_INDEX,
   `${ARTICLES_SEARCH_INDEX}:stats.favoriteCount:desc`,
   `${ARTICLES_SEARCH_INDEX}:stats.viewCount:desc`,
   `${ARTICLES_SEARCH_INDEX}:stats.commentCount:desc`,
