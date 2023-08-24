@@ -399,8 +399,6 @@ export const getModelsWithImagesAndModelVersions = async ({
 
         const canGenerate = !!version.generationCoverage?.covered;
 
-        if (showImageless) console.log({ modelId: model.id, versionId: version.id });
-
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
