@@ -96,7 +96,7 @@ export function ImageDetail() {
                   linkToProfile
                 />
                 <Group spacing="md">
-                  <FollowUserButton userId={image.user.id} compact />
+                  <FollowUserButton userId={image.user.id} size="md" compact />
                   <CloseButton
                     size="md"
                     radius="xl"
@@ -118,23 +118,24 @@ export function ImageDetail() {
                   {image.postId && (
                     <RoutedContextLink modal="postDetailModal" postId={image.postId}>
                       <Button
-                        size="xs"
+                        size="md"
                         radius="xl"
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        leftIcon={<IconEye size={14} />}
                         compact
                       >
-                        View post
+                        <Group spacing={4}>
+                          <IconEye size={14} />
+                          <Text size="xs">View post</Text>
+                        </Group>
                       </Button>
                     </RoutedContextLink>
                   )}
                   <Button
-                    size="xs"
+                    size="md"
                     radius="xl"
                     color="gray"
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    leftIcon={<IconPlaylistAdd size={14} />}
                     onClick={() =>
                       openContext('addToCollection', {
                         imageId: image.id,
@@ -143,7 +144,10 @@ export function ImageDetail() {
                     }
                     compact
                   >
-                    Add to collection
+                    <Group spacing={4}>
+                      <IconPlaylistAdd size={14} />
+                      <Text size="xs">Save</Text>
+                    </Group>
                   </Button>
                   <ShareButton
                     url={shareUrl}
@@ -151,20 +155,22 @@ export function ImageDetail() {
                     collect={{ type: CollectionType.Image, imageId: image.id }}
                   >
                     <Button
-                      size="xs"
+                      size="md"
                       radius="xl"
                       color="gray"
                       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      leftIcon={<IconShare3 size={14} />}
                       compact
                     >
-                      Share
+                      <Group spacing={4}>
+                        <IconShare3 size={14} />
+                        <Text size="xs">Share</Text>
+                      </Group>
                     </Button>
                   </ShareButton>
                 </Group>
                 <ImageDetailContextMenu>
                   <ActionIcon
-                    size="md"
+                    size={30}
                     variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                     radius="xl"
                   >
