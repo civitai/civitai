@@ -278,7 +278,8 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
 
   try {
     const engagementsCache = await redis.get(`user:${id}:model-engagements`);
-    if (engagementsCache) return JSON.parse(engagementsCache);
+    if (engagementsCache)
+      return JSON.parse(engagementsCache) as Record<ModelEngagementType, number[]>;
 
     const engagements = await getUserEngagedModels({ id });
 
@@ -312,18 +313,18 @@ export const getUserEngagedModelVersionsHandler = async ({
   const { id } = ctx.user;
 
   try {
-    const user = await getUserEngagedModelVersions({ id });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    const engagements = await getUserEngagedModelVersions({ id });
 
     // turn array of user.engagedModelVersions into object with `type` as key and array of modelId as value
-    const engagedModelVersions = user.engagedModelVersions.reduce<
-      Record<ModelVersionEngagementType, number[]>
-    >((acc, engagement) => {
-      const { type, modelVersionId } = engagement;
-      if (!acc[type]) acc[type] = [];
-      acc[type].push(modelVersionId);
-      return acc;
-    }, {} as Record<ModelVersionEngagementType, number[]>);
+    const engagedModelVersions = engagements.reduce<Record<ModelVersionEngagementType, number[]>>(
+      (acc, engagement) => {
+        const { type, modelVersionId } = engagement;
+        if (!acc[type]) acc[type] = [];
+        acc[type].push(modelVersionId);
+        return acc;
+      },
+      {} as Record<ModelVersionEngagementType, number[]>
+    );
 
     return engagedModelVersions;
   } catch (error) {
