@@ -10,7 +10,7 @@ export function AddToCollectionMenuItem({ onClick }: Props) {
       <Menu.Item
         icon={
           <IconPlaylistAdd
-            size={16}
+            size={14}
             stroke={1.5}
             color={theme.colors.pink[theme.fn.primaryShade()]}
           />
@@ -21,7 +21,7 @@ export function AddToCollectionMenuItem({ onClick }: Props) {
           onClick();
         }}
       >
-        Add to collection
+        Save
       </Menu.Item>
     </LoginRedirect>
   );

@@ -34,7 +34,7 @@ export function UnroutedImageCard({ data }: Props) {
 
                 return (
                   <>
-                    <ImageGuard.Report context="image" position="top-right" />
+                    <ImageGuard.Report context="image" position="top-right" withinPortal />
                     <ImageGuard.ToggleImage position="top-left" />
                     {safe ? (
                       <EdgeMedia

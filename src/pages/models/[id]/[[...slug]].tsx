@@ -99,6 +99,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -649,24 +650,14 @@ export default function ModelDetailsV2({
                       </>
                     )}
                     {features.collections && (
-                      <LoginRedirect reason="add-to-collection">
-                        <Menu.Item
-                          icon={
-                            <IconPlaylistAdd
-                              color={theme.colors.pink[theme.fn.primaryShade()]}
-                              size={14}
-                              stroke={1.5}
-                            />
-                          }
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleCollect();
-                          }}
-                        >
-                          Add to Collection
-                        </Menu.Item>
-                      </LoginRedirect>
+                      <AddToCollectionMenuItem
+                        onClick={() =>
+                          openContext('addToCollection', {
+                            modelId: model.id,
+                            type: CollectionType.Model,
+                          })
+                        }
+                      />
                     )}
                     {(!currentUser || !isOwner || isModerator) && (
                       <LoginRedirect reason="report-model">

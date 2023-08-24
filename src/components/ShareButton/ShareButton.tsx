@@ -67,7 +67,7 @@ export function ShareButton({
 
   if (collect && features.collections) {
     shareLinks.unshift({
-      type: 'Collect',
+      type: 'Save',
       onClick: () => requireLogin(() => openContext('addToCollection', collect)),
       render: <SocialIconCollect />,
     });

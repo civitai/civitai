@@ -43,6 +43,7 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -330,24 +331,12 @@ export function AmbientModelCard({ data, height }: Props) {
   let contextMenuItems: React.ReactNode[] = [];
   if (features.collections) {
     contextMenuItems = contextMenuItems.concat([
-      <LoginRedirect key="add-to-collection" reason="add-to-collection">
-        <Menu.Item
-          icon={
-            <IconPlaylistAdd
-              size={16}
-              stroke={1.5}
-              color={theme.colors.pink[theme.fn.primaryShade()]}
-            />
-          }
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openContext('addToCollection', { modelId: data.id, type: CollectionType.Model });
-          }}
-        >
-          Add to Collection
-        </Menu.Item>
-      </LoginRedirect>,
+      <AddToCollectionMenuItem
+        key="add-to-collection"
+        onClick={() =>
+          openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
+        }
+      />,
     ]);
   }
 
