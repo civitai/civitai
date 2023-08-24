@@ -21,6 +21,7 @@ import {
   ImageIngestionStatus,
   MetricTimeframe,
   Prisma,
+  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import {
   throwAuthorizationError,
@@ -54,6 +55,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { collectionsSearchIndex } from '~/server/search-index';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -520,6 +522,13 @@ export const upsertCollection = async ({
       await ingestImage({ image: updated.image });
     }
 
+    await collectionsSearchIndex.queueUpdate([
+      {
+        id,
+        action: SearchIndexUpdateQueueAction.Update,
+      },
+    ]);
+
     return updated;
   }
 
@@ -847,7 +856,16 @@ export const deleteCollectionById = async ({
       return null;
     }
 
-    return await dbWrite.collection.delete({ where: { id } });
+    const res = await dbWrite.collection.delete({ where: { id } });
+
+    await collectionsSearchIndex.queueUpdate([
+      {
+        id,
+        action: SearchIndexUpdateQueueAction.Delete,
+      },
+    ]);
+
+    return res;
   } catch {
     // Ignore errors
   }

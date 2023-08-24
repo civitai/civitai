@@ -1,5 +1,6 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { collectionsSearchIndex } from '~/server/search-index';
 // import { collectionSearchIndex } from '~/server/search-index';
 
 export const collectionMetrics = createMetricProcessor({
@@ -140,10 +141,9 @@ export const collectionMetrics = createMetricProcessor({
       WHERE r.id IS NOT NULL
     `;
 
-    // TODO.luis: Re-enable this when we have a search index
-    // await collectionsSearchIndex.queueUpdate(
-    //   affected.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    // );
+    await collectionsSearchIndex.queueUpdate(
+      affected.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   },
   async clearDay({ db }) {
     await db.$executeRaw`
