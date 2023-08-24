@@ -1,36 +1,18 @@
-import {
-  ActionIcon,
-  Card,
-  Group,
-  MantineSize,
-  Rating,
-  Stack,
-  Text,
-  useMantineTheme,
-} from '@mantine/core';
-import { IconDownload, IconHeart, IconUpload, IconUsers, IconStar } from '@tabler/icons-react';
+import { ActionIcon, Card, Group, Stack } from '@mantine/core';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { formatDate } from '~/utils/date-helpers';
-import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { StatTooltip } from '~/components/Tooltips/StatTooltip';
-
-const iconBadgeSize: MantineSize = 'sm';
+import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
 
 export function CreatorCard({ user }: Props) {
-  const theme = useMantineTheme();
-
   const { data: creator } = trpc.user.getCreator.useQuery(
-    {
-      id: user.id,
-    },
+    { id: user.id },
     {
       placeholderData: {
         ...user,
@@ -58,101 +40,26 @@ export function CreatorCard({ user }: Props) {
           <Group align="center" position="apart">
             <UserAvatar
               size="sm"
+              avatarProps={{ size: 32 }}
               user={creator}
               subText={`Joined ${formatDate(creator.createdAt)}`}
               withUsername
               linkToProfile
             />
-            <Group spacing="xs">
-              <RankBadge size="md" rank={creator.rank} />
-              <FollowUserButton userId={creator.id} size="xs" compact />
-            </Group>
+            <FollowUserButton userId={creator.id} size="xs" compact />
           </Group>
-          {stats && (
-            <Group position="apart" spacing={0} noWrap>
-              <IconBadge
-                sx={{ userSelect: 'none' }}
-                size={iconBadgeSize}
-                icon={
-                  <Rating
-                    size="xs"
-                    value={stats.ratingAllTime}
-                    readOnly
-                    emptySymbol={
-                      theme.colorScheme === 'dark' ? (
-                        <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                      ) : undefined
-                    }
-                  />
-                }
-                variant={
-                  theme.colorScheme === 'dark' && stats.ratingCountAllTime > 0 ? 'filled' : 'light'
-                }
-                tooltip={
-                  <StatTooltip
-                    value={`${formatToLeastDecimals(stats.ratingAllTime)} (${
-                      stats.ratingCountAllTime
-                    })`}
-                    label="Average Rating"
-                  />
-                }
-              >
-                <Text size="xs" color={stats.ratingCountAllTime > 0 ? undefined : 'dimmed'}>
-                  {abbreviateNumber(stats.ratingCountAllTime)}
-                </Text>
-              </IconBadge>
-              <Group spacing={4} noWrap>
-                {uploads === 0 ? null : (
-                  <IconBadge
-                    icon={<IconUpload size={14} />}
-                    href={`/user/${creator.username}`}
-                    color="gray"
-                    size={iconBadgeSize}
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    tooltip={<StatTooltip value={uploads} label="Uploads" />}
-                    sx={(theme) => ({
-                      [theme.fn.smallerThan('xs')]: {
-                        display: 'none',
-                      },
-                    })}
-                  >
-                    <Text size="xs">{abbreviateNumber(uploads)}</Text>
-                  </IconBadge>
-                )}
-                <IconBadge
-                  icon={<IconUsers size={14} />}
-                  href={`/user/${creator.username}/followers`}
-                  color="gray"
-                  size={iconBadgeSize}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  tooltip={<StatTooltip value={stats.followerCountAllTime} label="Followers" />}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.followerCountAllTime)}</Text>
-                </IconBadge>
-                <IconBadge
-                  icon={<IconHeart size={14} />}
-                  color="gray"
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                  size={iconBadgeSize}
-                  tooltip={<StatTooltip value={stats.favoriteCountAllTime} label="Favorites" />}
-                >
-                  <Text size="xs">{abbreviateNumber(stats.favoriteCountAllTime)}</Text>
-                </IconBadge>
-                {uploads === 0 ? null : (
-                  <IconBadge
-                    icon={<IconDownload size={14} />}
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    size={iconBadgeSize}
-                    tooltip={
-                      <StatTooltip value={stats.downloadCountAllTime} label="Total Downloads" />
-                    }
-                  >
-                    <Text size="xs">{abbreviateNumber(stats.downloadCountAllTime)}</Text>
-                  </IconBadge>
-                )}
-              </Group>
-            </Group>
-          )}
+          <Group spacing={8}>
+            <RankBadge size="md" rank={creator.rank} />
+            {stats && (
+              <UserStatBadges
+                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
+                uploads={uploads}
+                followers={stats.followerCountAllTime}
+                favorite={stats.favoriteCountAllTime}
+                downloads={stats.downloadCountAllTime}
+              />
+            )}
+          </Group>
         </Stack>
       </Card.Section>
       {creator.links && creator.links.length > 0 ? (
@@ -172,7 +79,7 @@ export function CreatorCard({ user }: Props) {
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                size="md"
+                size={32}
               >
                 <DomainIcon domain={link.domain} size={20} />
               </ActionIcon>

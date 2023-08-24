@@ -1,6 +1,5 @@
 import { Menu, Loader } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
-import { CollectionType } from '@prisma/client';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -10,9 +9,9 @@ import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProv
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
 import { useRouter } from 'next/router';
 import { NextLink } from '@mantine/next';
-import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
 
 /*
 TODO.gallery
@@ -20,12 +19,11 @@ TODO.gallery
 */
 
 export function ImageDetailContextMenu({ children }: { children: React.ReactElement }) {
-  const { image, isMod } = useImageDetailContext();
+  const { image, isMod, isOwner } = useImageDetailContext();
   const [opened, setOpened] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const queryUtils = trpc.useContext();
-  const features = useFeatureFlags();
 
   const handleClose = () => {
     setLoading(false);
@@ -56,34 +54,31 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
     <Menu opened={opened} onChange={setOpened} closeOnClickOutside={!loading}>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
-        {image.postId && (
-          <Menu.Item
-            component={NextLink}
-            icon={<IconPencil size={14} stroke={1.5} />}
-            href={`/posts/${image.postId}/edit`}
-          >
-            Edit Image Post
-          </Menu.Item>
-        )}
-        <DeleteImage imageId={image.id} onSuccess={handleDeleteSuccess}>
-          {({ onClick, isLoading }) => (
-            <Menu.Item
-              color="red"
-              icon={isLoading ? <Loader size={14} /> : <IconTrash size={14} stroke={1.5} />}
-              onClick={() => handleClick(onClick)}
-              disabled={isLoading}
-              closeMenuOnClick={false}
-            >
-              Delete
-            </Menu.Item>
-          )}
-        </DeleteImage>
-        {features.collections && (
-          <AddToCollectionMenuItem
-            onClick={() =>
-              openContext('addToCollection', { imageId: image.id, type: CollectionType.Image })
-            }
-          />
+        {(isMod || isOwner) && (
+          <>
+            <DeleteImage imageId={image.id} onSuccess={handleDeleteSuccess}>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  color="red"
+                  icon={isLoading ? <Loader size={14} /> : <IconTrash size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Delete
+                </Menu.Item>
+              )}
+            </DeleteImage>
+            {image.postId && (
+              <Menu.Item
+                component={NextLink}
+                icon={<IconPencil size={14} stroke={1.5} />}
+                href={`/posts/${image.postId}/edit`}
+              >
+                Edit Image Post
+              </Menu.Item>
+            )}
+          </>
         )}
         {isMod && (
           <TosViolationButton onSuccess={handleTosViolationSuccess}>
@@ -114,6 +109,18 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
               );
             }}
           </ToggleLockComments>
+        )}
+        {!isOwner && (
+          <ReportMenuItem
+            label="Report Image"
+            loginReason="report-content"
+            onReport={() =>
+              openContext('report', {
+                entityType: ReportEntity.Image,
+                entityId: image.id,
+              })
+            }
+          />
         )}
       </Menu.Dropdown>
     </Menu>

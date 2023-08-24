@@ -14,11 +14,11 @@ import {
   Text,
 } from '@mantine/core';
 import {
-  IconFlag,
   IconInfoCircle,
-  IconShare,
   IconDotsVertical,
   IconAlertTriangle,
+  IconEye,
+  IconPlaylistAdd,
 } from '@tabler/icons-react';
 import { IconShare3 } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -28,13 +28,11 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
-import { ReportImageButton } from '~/components/Gallery/ReportImageButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { Meta } from '~/components/Meta/Meta';
@@ -42,11 +40,12 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { CollectionType } from '@prisma/client';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 export function ImageDetail() {
-  const { classes, cx } = useStyles();
-  const { image, isLoading, active, toggleInfo, close, isOwner, isMod, shareUrl } =
-    useImageDetailContext();
+  const { classes, cx, theme } = useStyles();
+  const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -81,77 +80,105 @@ export function ImageDetail() {
               [classes.active]: active,
             })}
           >
-            <Card.Section withBorder>
-              <Stack p="sm" spacing={8}>
-                <Group noWrap>
-                  <Group position="apart" style={{ flex: 1 }}>
-                    <UserAvatar
-                      user={image.user}
-                      subText={<DaysFromNow date={image.createdAt} />}
-                      subTextForce
-                      withUsername
-                      linkToProfile
-                    />
-                    <Group spacing={4}>
-                      <ShareButton
-                        url={shareUrl}
-                        title={`Image by ${image.user.username}`}
-                        collect={{ type: CollectionType.Image, imageId: image.id }}
-                      >
-                        <ActionIcon size="lg">
-                          <IconShare3 />
-                        </ActionIcon>
-                      </ShareButton>
-                      <ReportImageButton imageId={image.id}>
-                        <ActionIcon size="lg">
-                          <IconFlag />
-                        </ActionIcon>
-                      </ReportImageButton>
-                      {(isMod || isOwner) && (
-                        <ImageDetailContextMenu>
-                          <ActionIcon size="lg">
-                            <IconDotsVertical />
-                          </ActionIcon>
-                        </ImageDetailContextMenu>
-                      )}
-                    </Group>
-                  </Group>
-                  <CloseButton size="lg" variant="default" onClick={close} />
+            <Card.Section py="xs" withBorder inheritPadding>
+              <Group position="apart" spacing={8} noWrap>
+                <UserAvatar
+                  user={image.user}
+                  avatarProps={{ size: 32 }}
+                  size="sm"
+                  subText={
+                    <Text size="xs" color="dimmed">
+                      Uploaded <DaysFromNow date={image.createdAt} />
+                    </Text>
+                  }
+                  subTextForce
+                  withUsername
+                  linkToProfile
+                />
+                <Group spacing="md">
+                  <FollowUserButton userId={image.user.id} size="md" compact />
+                  <CloseButton
+                    size="md"
+                    radius="xl"
+                    variant="transparent"
+                    iconSize={20}
+                    onClick={close}
+                  />
                 </Group>
-              </Stack>
+              </Group>
             </Card.Section>
-            {image.postId && (
-              <Card.Section withBorder>
-                <Stack p="sm" spacing={8}>
-                  {image.postTitle ? (
-                    <Group spacing="xs" noWrap>
-                      <Text size="sm" weight={500} sx={{ whiteSpace: 'nowrap' }}>
-                        Post
-                      </Text>
-                      <RoutedContextLink
-                        modal="postDetailModal"
-                        postId={image.postId}
-                        key="view-post"
+            <Card.Section
+              py="xs"
+              sx={{ backgroundColor: theme.colors.dark[7] }}
+              withBorder
+              inheritPadding
+            >
+              <Group position="apart" spacing={8}>
+                <Group spacing={8}>
+                  {image.postId && (
+                    <RoutedContextLink modal="postDetailModal" postId={image.postId}>
+                      <Button
+                        size="md"
+                        radius="xl"
+                        color="gray"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        compact
                       >
-                        <Text size="sm" variant="link" td="underline" lineClamp={1}>
-                          {image.postTitle ?? 'Untitled'}
-                        </Text>
-                      </RoutedContextLink>
-                    </Group>
-                  ) : (
-                    <RoutedContextLink
-                      modal="postDetailModal"
-                      postId={image.postId}
-                      key="view-post"
-                    >
-                      <Button size="xs" variant="outline" fullWidth>
-                        View Post
+                        <Group spacing={4}>
+                          <IconEye size={14} />
+                          <Text size="xs">View post</Text>
+                        </Group>
                       </Button>
                     </RoutedContextLink>
                   )}
-                </Stack>
-              </Card.Section>
-            )}
+                  <Button
+                    size="md"
+                    radius="xl"
+                    color="gray"
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    onClick={() =>
+                      openContext('addToCollection', {
+                        imageId: image.id,
+                        type: CollectionType.Image,
+                      })
+                    }
+                    compact
+                  >
+                    <Group spacing={4}>
+                      <IconPlaylistAdd size={14} />
+                      <Text size="xs">Save</Text>
+                    </Group>
+                  </Button>
+                  <ShareButton
+                    url={shareUrl}
+                    title={`Image by ${image.user.username}`}
+                    collect={{ type: CollectionType.Image, imageId: image.id }}
+                  >
+                    <Button
+                      size="md"
+                      radius="xl"
+                      color="gray"
+                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      compact
+                    >
+                      <Group spacing={4}>
+                        <IconShare3 size={14} />
+                        <Text size="xs">Share</Text>
+                      </Group>
+                    </Button>
+                  </ShareButton>
+                </Group>
+                <ImageDetailContextMenu>
+                  <ActionIcon
+                    size={30}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                    radius="xl"
+                  >
+                    <IconDotsVertical size={14} />
+                  </ActionIcon>
+                </ImageDetailContextMenu>
+              </Group>
+            </Card.Section>
             <Card.Section
               component={ScrollArea}
               style={{ flex: 1, position: 'relative' }}
@@ -248,7 +275,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
     },
     active: { ref: getRef('active') },
     sidebar: {
-      width: 400,
+      width: 457,
       borderRadius: 0,
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
       display: 'flex',
