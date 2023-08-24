@@ -7,9 +7,8 @@ import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 
 export const CollectionsSearchIndexSortBy = [
   COLLECTIONS_SEARCH_INDEX,
-  // `${COLLECTIONS_SEARCH_INDEX}:metrics.followersCount:desc`,
-  // `${COLLECTIONS_SEARCH_INDEX}:metrics.itemsCount:desc`,
-  // `${COLLECTIONS_SEARCH_INDEX}:metrics.contributorsCount:desc`,
+  `${COLLECTIONS_SEARCH_INDEX}:metrics.followersCount:desc`,
+  `${COLLECTIONS_SEARCH_INDEX}:metrics.itemCount:desc`,
   `${COLLECTIONS_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 

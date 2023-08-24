@@ -55,9 +55,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     'createdAt',
-    // 'metrics.itemCount',
-    // 'metrics.followerCount',
-    // 'metrics.contributorCount',
+    'metrics.itemCount',
+    'metrics.followerCount',
+    'metrics.contributorCount',
   ];
 
   if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
@@ -173,93 +173,6 @@ const onFetchItemsToIndex = async ({
   }
 
   // When metrics are ready use this one :D
-  // const collections = await db.$queryRaw<CollectionForSearchIndex[]>`
-  // WITH target AS MATERIALIZED (
-  //   SELECT
-  //   c.id,
-  //   c.name,
-  //   c."imageId",
-  //   c."createdAt",
-  //   c."updatedAt",
-  //   c."userId"
-  //   FROM "Collection" c
-  //   WHERE ${Prisma.join(WHERE, ' AND ')}
-  //   OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
-  // ), users AS MATERIALIZED (
-  //   SELECT
-  //     u.id,
-  //     jsonb_build_object(
-  //       'id', u.id,
-  //       'username', u.username,
-  //       'deletedAt', u."deletedAt",
-  //       'image', u.image
-  //     ) user
-  //   FROM "User" u
-  //   WHERE u.id IN (SELECT "userId" FROM target)
-  //   GROUP BY u.id
-  // ), cosmetics AS MATERIALIZED (
-  //   SELECT
-  //     uc."userId",
-  //     jsonb_agg(jsonb_build_object(
-  //       'id', c.id,
-  //       'data', c.data,
-  //       'type', c.type,
-  //       'source', c.source,
-  //       'name', c.name,
-  //       'leaderboardId', c."leaderboardId",
-  //       'leaderboardPosition', c."leaderboardPosition"
-  //     )) cosmetics
-  //   FROM "UserCosmetic" uc
-  //   JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-  //   AND "equippedAt" IS NOT NULL
-  //   WHERE uc."userId" IN (SELECT "userId" FROM target)
-  //   GROUP BY uc."userId"
-  // ), images AS MATERIALIZED (
-  //   SELECT
-  //     i.id,
-  //     jsonb_build_object(
-  //       'id', i."id",
-  //       'index', i."index",
-  //       'postId', i."postId",
-  //       'name', i."name",
-  //       'url', i."url",
-  //       'nsfw', i."nsfw",
-  //       'width', i."width",
-  //       'height', i."height",
-  //       'hash', i."hash",
-  //       'meta', i."meta",
-  //       'hideMeta', i."hideMeta",
-  //       'generationProcess', i."generationProcess",
-  //       'createdAt', i."createdAt",
-  //       'mimeType', i."mimeType",
-  //       'scannedAt', i."scannedAt",
-  //       'type', i."type",
-  //       'metadata', i."metadata"
-  //     ) image
-  //   FROM "Image" i
-  //   WHERE i.id IN (SELECT "imageId" FROM target)
-  //   GROUP BY i.id
-  // ), metrics as MATERIALIZED (
-  //   SELECT
-  //     cm."collectionId",
-  //     jsonb_build_object(
-  //       'followerCount', cm."followerCount",
-  //       'itemsCount', cm."itemsCount",
-  //       'contributorCount', cm."contributorCount"
-  //     ) metrics
-  //   FROM "CollectionMetric" cm
-  //   WHERE cm.timeframe = 'AllTime'
-  //     AND cm."userId" IN (SELECT id FROM target)
-  // )
-  // SELECT
-  //   t.*,
-  //   (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
-  //   (SELECT "image" FROM images i WHERE i.id = t."imageId"),
-  //   (SELECT "user" FROM users u WHERE u.id = t."userId"),
-  //   (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
-  // FROM target t
-  // `;
-
   const collections = await db.$queryRaw<CollectionForSearchIndex[]>`
   WITH target AS MATERIALIZED (
     SELECT
@@ -326,9 +239,21 @@ const onFetchItemsToIndex = async ({
     FROM "Image" i
     WHERE i.id IN (SELECT "imageId" FROM target)
     GROUP BY i.id
-  ) 
+  ), metrics as MATERIALIZED (
+    SELECT
+      cm."collectionId",
+      jsonb_build_object(
+        'followerCount', cm."followerCount",
+        'itemCount', cm."itemCount",
+        'contributorCount', cm."contributorCount"
+      ) metrics
+    FROM "CollectionMetric" cm
+    WHERE cm.timeframe = 'AllTime'
+      AND cm."collectionId" IN (SELECT id FROM target)
+  )
   SELECT
     t.*,
+    (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
     (SELECT "image" FROM images i WHERE i.id = t."imageId"),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")

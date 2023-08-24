@@ -64,9 +64,9 @@ const RenderFilters = () => {
         title="Sort collections by"
         items={[
           { label: 'Relevancy', value: CollectionsSearchIndexSortBy[0] as string },
-          // { label: 'Most Followed', value: CollectionsSearchIndexSortBy[1] as string },
-          // { label: 'Item Count', value: CollectionsSearchIndexSortBy[2] as string },
-          { label: 'Newest', value: CollectionsSearchIndexSortBy[1] as string },
+          { label: 'Most Followed', value: CollectionsSearchIndexSortBy[1] as string },
+          { label: 'Item Count', value: CollectionsSearchIndexSortBy[2] as string },
+          { label: 'Newest', value: CollectionsSearchIndexSortBy[3] as string },
         ]}
       />
     </>
