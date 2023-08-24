@@ -23,12 +23,12 @@ export function Username({
 }: Props) {
   if (deletedAt) return <Text size={size}>[deleted]</Text>;
 
-  const nameplate = cosmetics.find(({ cosmetic }) => cosmetic.type === 'NamePlate')
-    ?.cosmetic as Omit<NamePlateCosmetic, 'name' | 'description' | 'obtainedAt'>;
-  const badge = cosmetics.find(({ cosmetic }) => cosmetic.type === 'Badge')?.cosmetic as Omit<
-    BadgeCosmetic,
-    'description' | 'obtainedAt'
-  >;
+  const nameplate = cosmetics?.find(({ cosmetic }) =>
+    cosmetic ? cosmetic.type === 'NamePlate' : undefined
+  )?.cosmetic as Omit<NamePlateCosmetic, 'name' | 'description' | 'obtainedAt'>;
+  const badge = cosmetics?.find(({ cosmetic }) =>
+    cosmetic ? cosmetic.type === 'Badge' : undefined
+  )?.cosmetic as Omit<BadgeCosmetic, 'description' | 'obtainedAt'>;
   const additionalTextProps = nameplate?.data;
   const badgeSize = mapSizeToImageWidth[size];
 
@@ -58,7 +58,7 @@ export function Username({
 type Props = {
   username?: string | null;
   deletedAt?: Date | null;
-  cosmetics?: UserWithCosmetics['cosmetics'];
+  cosmetics?: UserWithCosmetics['cosmetics'] | null;
   size?: MantineSize;
   inherit?: boolean;
 };

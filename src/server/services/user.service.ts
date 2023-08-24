@@ -165,16 +165,16 @@ export const completeOnboarding = ({ id }: { id: number }) => {
 };
 
 export const getUserEngagedModels = ({ id }: { id: number }) => {
-  return dbRead.user.findUnique({
-    where: { id },
-    select: { engagedModels: { select: { modelId: true, type: true } } },
+  return dbRead.modelEngagement.findMany({
+    where: { userId: id },
+    select: { modelId: true, type: true },
   });
 };
 
 export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
-  return dbRead.user.findUnique({
-    where: { id },
-    select: { engagedModelVersions: { select: { modelVersionId: true, type: true } } },
+  return dbRead.modelVersionEngagement.findMany({
+    where: { userId: id },
+    select: { modelVersionId: true, type: true },
   });
 };
 
@@ -598,6 +598,28 @@ export const updateLeaderboardRank = async (userId?: number) => {
         "leaderboardCosmetic" = excluded."leaderboardCosmetic";
     `,
   ]);
+};
+
+export const toggleBan = async ({ id }: { id: number }) => {
+  const user = await getUserById({ id, select: { bannedAt: true } });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const updatedUser = await updateUserById({
+    id,
+    data: { bannedAt: user.bannedAt ? null : new Date() },
+  });
+  await invalidateSession(id);
+
+  // Unpublish their models
+  await dbWrite.model.updateMany({
+    where: { userId: id },
+    data: { publishedAt: null, status: 'Unpublished' },
+  });
+
+  // Cancel their subscription
+  await cancelSubscription({ userId: id });
+
+  return updatedUser;
 };
 
 export const toggleUserArticleEngagement = async ({

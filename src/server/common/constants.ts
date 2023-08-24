@@ -258,3 +258,8 @@ export const generation = {
     negativePrompt: '',
   },
 };
+
+export const MODELS_SEARCH_INDEX = 'models_v2';
+export const IMAGES_SEARCH_INDEX = 'images_v2';
+export const ARTICLES_SEARCH_INDEX = 'articles_v2';
+export const USERS_SEARCH_INDEX = 'users_v2';

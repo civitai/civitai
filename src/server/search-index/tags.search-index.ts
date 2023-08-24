@@ -1,4 +1,4 @@
-import { client } from '~/server/meilisearch/client';
+import { client, updateDocs } from '~/server/meilisearch/client';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
@@ -70,6 +70,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   console.log('onIndexSetup :: all tasks completed');
 };
+
+export type TagSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
 
 const onFetchItemsToIndex = async ({
   db,
@@ -178,7 +180,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
 
   const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
 
-  const itemsToIndex: Awaited<ReturnType<typeof onFetchItemsToIndex>> = [];
+  const itemsToIndex: TagSearchIndexRecord[] = [];
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
     const batch = queuedItems.slice(
@@ -228,9 +230,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     });
 
     if (updateTasks.length > 0) {
-      const updateBaseTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateTasks, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateBaseTasks = await updateDocs({
+        indexName,
+        documents: updateTasks,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
       tagTasks.push(...updateBaseTasks);
@@ -261,9 +265,11 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     // Avoids hitting the DB without data.
     if (indexReadyRecords.length === 0) break;
 
-    const tasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const tasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     tagTasks.push(...tasks);
 

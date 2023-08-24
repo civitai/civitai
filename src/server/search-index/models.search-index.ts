@@ -1,4 +1,4 @@
-import { client } from '~/server/meilisearch/client';
+import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import {
@@ -9,7 +9,7 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { ModelFileType } from '~/server/common/constants';
+import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
@@ -28,8 +28,8 @@ const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
 
 const READ_BATCH_SIZE = 1000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 50;
-const INDEX_ID = 'models';
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
+const INDEX_ID = MODELS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
@@ -45,14 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes = [
-    'name',
-    'user.username',
-    'category.id',
-    'hashes',
-    'tags',
-    'triggerWords',
-  ];
+  const searchableAttributes = ['name', 'user.username', 'hashes', 'tags.name', 'triggerWords'];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
@@ -66,6 +59,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     // sort
+    'metrics.weightedRating',
     'createdAt',
     'metrics.commentCount',
     'metrics.favoriteCount',
@@ -84,11 +78,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const rankingRules = [
+    'sort',
     'attribute',
     'metrics.weightedRating:desc',
     'words',
     'proximity',
-    'sort',
     'exactness',
     'typo',
   ];
@@ -103,8 +97,10 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'nsfw',
     'type',
     'checkpointType',
-    'tags',
-    'modelVersion.baseModel',
+    'tags.name',
+    'user.username',
+    'version.baseModel',
+    'user.username',
     'status',
   ];
 
@@ -115,12 +111,18 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
       filterableAttributes
     );
+
     console.log(
       'onIndexSetup :: updateFilterableAttributesTask created',
       updateFilterableAttributesTask
     );
   }
 };
+
+export type ModelSearchIndexRecord = Awaited<
+  ReturnType<typeof onFetchItemsToIndex>
+>['indexReadyRecords'][number] &
+  Awaited<ReturnType<typeof onFetchItemsToIndex>>['indexRecordsWithImages'][number];
 
 const onFetchItemsToIndex = async ({
   db,
@@ -201,6 +203,15 @@ const onFetchItemsToIndex = async ({
           timeframe: MetricTimeframe.AllTime,
         },
       },
+      rank: {
+        select: {
+          [`downloadCount${MetricTimeframe.AllTime}`]: true,
+          [`favoriteCount${MetricTimeframe.AllTime}`]: true,
+          [`commentCount${MetricTimeframe.AllTime}`]: true,
+          [`ratingCount${MetricTimeframe.AllTime}`]: true,
+          [`rating${MetricTimeframe.AllTime}`]: true,
+        },
+      },
     },
     where: {
       status: ModelStatus.Published,
@@ -257,7 +268,8 @@ const onFetchItemsToIndex = async ({
   const imagesWithTags = images.map((image) => {
     const imageTags = tagsOnImages
       .filter((tagOnImage) => tagOnImage.imageId === image.id)
-      .map((tagOnImage) => tagOnImage.tag.name);
+      .map((tagOnImage) => tagOnImage.tag);
+
     return {
       ...image,
       tags: imageTags,
@@ -266,7 +278,7 @@ const onFetchItemsToIndex = async ({
 
   const indexReadyRecords = models
     .map((modelRecord) => {
-      const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+      const { user, modelVersions, tagsOnModels, hashes, rank, ...model } = modelRecord;
 
       const metrics = modelRecord.metrics[0] || {};
 
@@ -274,11 +286,13 @@ const onFetchItemsToIndex = async ({
         (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
         (metrics.ratingCount + RATING_BAYESIAN_C);
 
-      const [modelVersion] = modelVersions;
+      const [version] = modelVersions;
 
-      if (!modelVersion) {
+      if (!version) {
         return null;
       }
+
+      const canGenerate = !!version.generationCoverage?.covered;
 
       const category = tagsOnModels.find((tagOnModel) =>
         modelCategoriesIds.includes(tagOnModel.tag.id)
@@ -288,16 +302,24 @@ const onFetchItemsToIndex = async ({
         ...model,
         user,
         category,
-        modelVersion,
+        version,
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],
         hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag.name),
+        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag),
         metrics: {
           ...metrics,
           weightedRating,
         },
+        rank: {
+          downloadCount: rank?.[`downloadCount${MetricTimeframe.AllTime}`] ?? 0,
+          favoriteCount: rank?.[`favoriteCount${MetricTimeframe.AllTime}`] ?? 0,
+          commentCount: rank?.[`commentCount${MetricTimeframe.AllTime}`] ?? 0,
+          ratingCount: rank?.[`ratingCount${MetricTimeframe.AllTime}`] ?? 0,
+          rating: rank?.[`rating${MetricTimeframe.AllTime}`] ?? 0,
+        },
+        canGenerate,
       };
     })
     // Removes null models that have no versionIDs
@@ -407,18 +429,22 @@ const onIndexUpdate = async ({
     });
 
     if (updateIndexReadyRecords.length > 0) {
-      const updateBaseTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateIndexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateBaseTasks = await updateDocs({
+        indexName,
+        documents: updateIndexReadyRecords,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
       modelTasks.push(...updateBaseTasks);
     }
 
     if (updateIndexRecordsWithImages.length > 0) {
-      const updateImageTasks = await client
-        .index(indexName)
-        .updateDocumentsInBatches(updateIndexRecordsWithImages, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+      const updateImageTasks = await updateDocs({
+        indexName,
+        documents: updateIndexRecordsWithImages,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      });
 
       console.log('onIndexUpdate :: image tasks for updated items have been added');
 
@@ -453,15 +479,19 @@ const onIndexUpdate = async ({
       break;
     }
 
-    const baseTasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexReadyRecords, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const baseTasks = await updateDocs({
+      indexName,
+      documents: indexReadyRecords,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     console.log('onIndexUpdate :: base tasks have been added');
 
-    const imagesTasks = await client
-      .index(indexName)
-      .updateDocumentsInBatches(indexRecordsWithImages, MEILISEARCH_DOCUMENT_BATCH_SIZE);
+    const imagesTasks = await updateDocs({
+      indexName,
+      documents: indexRecordsWithImages,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
 
     console.log('onIndexUpdate :: image tasks have been added');
 

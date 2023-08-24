@@ -424,16 +424,18 @@ export function ModelVersionDetails({
                 >
                   Publish this version
                 </Button>
-                <Tooltip label="Schedule Publish" withArrow>
-                  <Button
-                    color="green"
-                    variant="outline"
-                    loading={publishing}
-                    onClick={() => setScheduleModalOpened((current) => !current)}
-                  >
-                    <IconClock size={20} />
-                  </Button>
-                </Tooltip>
+                {!scheduledPublishDate && (
+                  <Tooltip label="Schedule Publish" withArrow>
+                    <Button
+                      color="green"
+                      variant="outline"
+                      loading={publishing}
+                      onClick={() => setScheduleModalOpened((current) => !current)}
+                    >
+                      <IconClock size={20} />
+                    </Button>
+                  </Tooltip>
+                )}
               </Button.Group>
               {scheduledPublishDate && isOwnerOrMod && (
                 <Group spacing={4}>

@@ -39,7 +39,8 @@ export type UserActivityType =
   | 'Banned'
   | 'Unbanned'
   | 'Muted'
-  | 'Unmuted';
+  | 'Unmuted'
+  | 'RemoveContent';
 export type ModelVersionActivty = 'Create' | 'Publish' | 'Download' | 'Unpublish';
 export type ModelActivty =
   | 'Create'

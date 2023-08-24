@@ -1,5 +1,5 @@
 import { getJobDate } from '~/server/jobs/job';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { swapIndex } from '~/server/meilisearch/util';
 
@@ -24,7 +24,7 @@ export function createSearchIndexUpdateProcessor({
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${indexName.toLowerCase()}`
       );
-      const ctx = { db: dbWrite, lastUpdatedAt, indexName };
+      const ctx = { db: dbRead, lastUpdatedAt, indexName };
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 

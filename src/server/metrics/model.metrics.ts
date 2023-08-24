@@ -163,21 +163,22 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
 }
 
 async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
-  const clickhouseSince = dayjs(lastUpdate).toISOString();
-  const affectedModelVersionsResponse = await ch.query({
-    query: `
-      SELECT DISTINCT modelVersionId
-      FROM resourceReviews
-      WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-    `,
-    format: 'JSONEachRow',
-  });
+  // Disabled clickhouse as it seems to be missing resource reviews somehow...
+  // const clickhouseSince = dayjs(lastUpdate).toISOString();
+  // const affectedModelVersionsResponse = await ch.query({
+  //   query: `
+  //     SELECT DISTINCT modelVersionId
+  //     FROM resourceReviews
+  //     WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+  //   `,
+  //   format: 'JSONEachRow',
+  // });
 
-  const affectedModelVersions = (await affectedModelVersionsResponse?.json()) as [
-    {
-      modelVersionId: number;
-    }
-  ];
+  const affectedModelVersions = await db.$queryRaw<{ modelVersionId: number }[]>`
+    SELECT DISTINCT "modelVersionId"
+    FROM "ResourceReview"
+    WHERE "createdAt" > ${lastUpdate};
+  `;
 
   const modelVersionIds = affectedModelVersions.map((x) => x.modelVersionId);
   const batches = chunk(modelVersionIds, 500);

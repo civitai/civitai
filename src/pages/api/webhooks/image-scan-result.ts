@@ -182,8 +182,8 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
   });
 
   if (!image) {
-    throw new Error('Image not found');
     await logScanResultError({ id, message: 'Image not found' });
+    throw new Error('Image not found');
   }
 
   try {
@@ -196,7 +196,7 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
     `);
   } catch (e: any) {
-    await logScanResultError({ id, message: e.message });
+    await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
   }
 
@@ -268,15 +268,24 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
     //   ]);
     // }
   } catch (e: any) {
-    await logScanResultError({ id, message: e.message });
+    await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
   }
 }
 
-async function logScanResultError({ id, message }: { id: number; message: any }) {
+async function logScanResultError({
+  id,
+  error,
+  message,
+}: {
+  id: number;
+  error?: any;
+  message?: any;
+}) {
   await logToDb('image-scan-result', {
     type: 'error',
     imageId: id,
     message,
+    error,
   });
 }
