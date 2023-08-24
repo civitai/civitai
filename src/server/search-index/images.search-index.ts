@@ -25,7 +25,7 @@ import {
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { imageMetaSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 
@@ -315,7 +315,7 @@ const onFetchItemsToIndex = async ({
   }
 
   const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
-    const parsed = imageMetaSchema.safeParse(meta);
+    const parsed = imageGenerationSchema.partial().safeParse(meta);
 
     return {
       ...imageRecord,
