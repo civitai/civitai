@@ -78,7 +78,7 @@ export function CollectionHitList() {
       hiddenTags,
       currentUserId: currentUser?.id,
     });
-  }, [hits, hiddenUsers, currentUser]);
+  }, [hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
 
   const hiddenItems = hits.length - collections.length;
 
