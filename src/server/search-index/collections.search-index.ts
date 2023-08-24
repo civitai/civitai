@@ -165,7 +165,7 @@ const onFetchItemsToIndex = async ({
     Prisma.sql`c."userId" != -1`,
     Prisma.sql`c.read = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"`,
     // Don't index empty collections:
-    Prisma.sql`EXIST (SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = c.id)`,
+    Prisma.sql`EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = c.id)`,
   ];
 
   if (whereOr) {
