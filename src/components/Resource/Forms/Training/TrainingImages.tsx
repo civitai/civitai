@@ -173,7 +173,9 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
 
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
-        if (f.type === 'application/zip') {
+        if (
+          ['application/zip', 'application/x-zip-compressed', 'multipart/x-zip'].includes(f.type)
+        ) {
           return await handleZip(f);
         } else {
           return { name: f.name, type: f.type, url: URL.createObjectURL(f), caption: '' };
