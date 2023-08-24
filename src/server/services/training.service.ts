@@ -28,7 +28,8 @@ export const createTrainingRequest = async ({
     // priority: 10,
     // TODO fix
     callbackUrl:
-      'https://c933-135-131-230-67.ngrok-free.app/api/webhooks/image-resource-training?token=mycooltoken',
+      // 'https://c933-135-131-230-67.ngrok-free.app/api/webhooks/image-resource-training?token=mycooltoken',
+      `${env.GENERATION_CALLBACK_HOST}/api/webhooks/image-resource-training?token=${env.WEBHOOK_TOKEN}`,
     properties: { userId },
     model: modelMap[model],
     trainingData: trainingUrl,

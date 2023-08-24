@@ -81,6 +81,7 @@ export const serverSchema = z.object({
   CANNY_SECRET: z.string().optional(),
   SCHEDULER_ENDPOINT: z.string().url().optional(),
   GENERATION_ENDPOINT: z.string().url().optional(),
+  GENERATION_CALLBACK_HOST: z.string().url().optional(),
   ORCHESTRATOR_TOKEN: z.string().optional(),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
