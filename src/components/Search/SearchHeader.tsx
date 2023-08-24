@@ -3,12 +3,7 @@ import {
   SearchPathToIndexMap,
   useSearchStore,
 } from '~/components/Search/useSearchState';
-import {
-  useInfiniteHits,
-  useInstantSearch,
-  usePagination,
-  useSearchBox,
-} from 'react-instantsearch';
+import { useInstantSearch, usePagination, useSearchBox } from 'react-instantsearch';
 import {
   Box,
   createStyles,
@@ -27,8 +22,8 @@ import {
   IconFileText,
   IconPhoto,
   IconFilter,
-  IconUser,
   IconUsers,
+  IconLayoutCollage,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -36,6 +31,7 @@ import { useSearchLayout, useSearchLayoutStyles } from '~/components/Search/Sear
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   ARTICLES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -184,6 +180,24 @@ export const SearchHeader = () => {
         </Group>
       ),
       value: ARTICLES_SEARCH_INDEX,
+    },
+    {
+      label: (
+        <Group align="center" spacing={8} noWrap>
+          <ThemeIcon
+            size={30}
+            color={index === COLLECTIONS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+            radius="xl"
+          >
+            <IconLayoutCollage />
+          </ThemeIcon>
+          <Text size="sm" inline>
+            Collections
+          </Text>
+        </Group>
+      ),
+      value: COLLECTIONS_SEARCH_INDEX,
     },
     {
       label: (
