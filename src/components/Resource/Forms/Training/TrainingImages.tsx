@@ -351,7 +351,12 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
             max={1000}
             // loading={isLoading}
             count={100}
-            accept={[...IMAGE_MIME_TYPE, 'application/zip']}
+            accept={[
+              ...IMAGE_MIME_TYPE,
+              'application/zip',
+              'application/x-zip-compressed',
+              'multipart/x-zip',
+            ]}
           />
         </div>
 

@@ -20,7 +20,10 @@ export function ImageDropzone({
   const canAddFiles = max - count > 0;
   const disabled = !canAddFiles || initialDisabled;
   // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
-  const fileExtensions = accept.map((type) => type.replace(/.*\//, '.'));
+  // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
+  const fileExtensions = accept
+    .filter((t) => t !== 'application/x-zip-compressed' && t !== 'multipart/x-zip')
+    .map((type) => type.replace(/.*\//, '.'));
 
   const handleDrop = (files: File[]) => {
     onDrop?.(files.slice(0, max - count));
