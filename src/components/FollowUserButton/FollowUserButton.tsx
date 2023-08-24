@@ -5,7 +5,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
+export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 
@@ -64,10 +64,12 @@ export function FollowUserButton({ userId, onToggleFollow, ...props }: Props) {
   return (
     <LoginRedirect reason="follow-user">
       <Button
+        radius="xl"
         variant={alreadyFollowing ? 'outline' : 'filled'}
         onClick={handleFollowClick}
         loading={toggleFollowMutation.isLoading}
-        {...props}
+        sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}
+        {...buttonProps}
       >
         {alreadyFollowing ? 'Unfollow' : 'Follow'}
       </Button>
