@@ -337,6 +337,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
         <div>
           <Text>You can upload your images and caption them here.</Text>
           {/* TODO [bw] add links */}
+          {/* http://localhost:3000/content/training/data-policy */}
           {/* <Text variant="link" component={NextLink} href="/models/create" inline> */}
           <Text>Or, you can *upload an existing dataset*. See our *training guidelines*.</Text>
         </div>

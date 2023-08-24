@@ -205,6 +205,11 @@ export function ModelWizard() {
               >
                 <Stack>
                   <Title order={3}>Select Model File</Title>
+                  <Title mb="sm" order={5}>
+                    Choose a model file from the results of your training run.
+                    <br />
+                    Sample images are provided for reference.
+                  </Title>
                   <TrainingSelectFile
                     model={state.model}
                     onBackClick={goBack}

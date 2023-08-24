@@ -1,8 +1,9 @@
-import { Accordion, Button, Group, Input, Stack, Title } from '@mantine/core';
+import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/core';
 import { TrainingStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
+import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -41,6 +42,7 @@ type TrainingSettingsType = {
   label: string;
   type: string;
   default: string | number | boolean | ((...args: never[]) => number);
+  hint?: React.ReactNode;
   options?: string[];
   min?: number;
   max?: number;
@@ -54,12 +56,20 @@ type TrainingSettingsType = {
   };
 };
 
-// TODO put hints on these fields
 const trainingSettings: TrainingSettingsType[] = [
-  { name: 'maxTrainEpochs', label: 'Epochs', type: 'int', default: 10, min: 3, max: 16 },
+  {
+    name: 'maxTrainEpochs',
+    label: 'Epochs',
+    hint: 'An epoch is one set of learning. By default, we save every epoch, and they are all available for download.',
+    type: 'int',
+    default: 10,
+    min: 3,
+    max: 16,
+  },
   {
     name: 'numRepeats',
     label: 'Num Repeats',
+    hint: 'Num Repeats defines how many times each individual image gets put into VRAM. As opposed to batch size, which is how many images you shove into your VRAM at once.',
     type: 'int',
     default: (n: number) => Math.max(1, Math.min(16, Math.ceil(200 / n))),
     min: 1,
@@ -68,20 +78,75 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'resolution',
     label: 'Resolution',
+    hint: 'Specify the maximum resolution of training images in the order of "width, height". If the training images exceed the resolution specified here, they will be scaled down to this resolution.',
     type: 'int',
     default: 512,
     min: 512,
     max: 1024,
     overrides: { sdxl: { min: 1024, default: 1024 } },
   },
-  { name: 'loraType', label: 'LoRA Type', type: 'select', default: 'lora', options: ['lora'] }, // LoCon Lycoris", "LoHa Lycoris // TODO enum
-  { name: 'enableBucket', label: 'Enable Bucket', type: 'bool', default: true },
-  { name: 'keepTokens', label: 'Keep Tokens', type: 'int', default: 1, min: 0, max: 1 },
-  { name: 'trainBatchSize', label: 'Train Batch Size', type: 'int', default: 2, min: 1, max: 4 },
-  { name: 'unetLR', label: 'Unet LR', type: 'number', default: 0.0005, min: 0, max: 1 },
+  {
+    name: 'loraType',
+    label: 'LoRA Type',
+    hint: 'Specifies the type of LoRA learning. Only standard LoRA is currently supported.',
+    type: 'select',
+    default: 'lora',
+    options: ['lora'],
+  }, // LoCon Lycoris", "LoHa Lycoris // TODO enum
+  {
+    name: 'enableBucket',
+    label: 'Enable Bucket',
+    hint: 'Sorts images into buckets by size for the purposes of training. If your training images are all the same size, you can turn this option off, but leaving it on has no effect.',
+    type: 'bool',
+    default: true,
+  },
+  {
+    name: 'shuffleCaption',
+    label: 'Shuffle Caption',
+    hint: 'Shuffling tags randomly changes the order of your caption tags during training. The intent of shuffling is to improve learning. If you have written captions as sentences, this option has no meaning.',
+    type: 'bool',
+    default: false,
+  },
+  {
+    name: 'keepTokens',
+    label: 'Keep Tokens',
+    hint: (
+      <>
+        If your training images have captions, you can randomly shuffle the comma-separated words in
+        the captions (see Shuffle caption option for details). However, if you have words that you
+        want to keep at the beginning, you can use this option to specify &quot;Keep the first 0
+        words at the beginning&quot;.
+        <br />
+        This option does nothing if the shuffle caption option is off.
+      </>
+    ),
+    type: 'int',
+    default: 0,
+    min: 0,
+    max: 1,
+  },
+  {
+    name: 'trainBatchSize',
+    label: 'Train Batch Size',
+    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously.',
+    type: 'int',
+    default: 2,
+    min: 1,
+    max: 4,
+  },
+  {
+    name: 'unetLR',
+    label: 'Unet LR',
+    hint: 'Sets the learning rate for U-Net. This is the learning rate when performing additional learning on each attention block (and other blocks depending on the setting) in U-Net.',
+    type: 'number',
+    default: 0.0005,
+    min: 0,
+    max: 1,
+  },
   {
     name: 'textEncoderLR',
     label: 'Text Encoder LR',
+    hint: 'Sets the learning rate for the text encoder. The effect of additional training on text encoders affects the entire U-Net.',
     type: 'number',
     default: 0.0001,
     min: 0,
@@ -90,6 +155,7 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'lrScheduler',
     label: 'LR Scheduler',
+    hint: 'You can change the learning rate in the middle of learning. A scheduler is a setting for how to change the learning rate.',
     type: 'select',
     default: 'cosine_with_restarts',
     options: [
@@ -106,16 +172,26 @@ const trainingSettings: TrainingSettingsType[] = [
     // TODO [bw] actually conditional on lrScheduler, cosine_with_restarts/polynomial
     name: 'lrSchedulerNumCycles',
     label: 'LR Scheduler Cycles',
+    hint: 'This option specifies how many cycles the scheduler runs during training. It is only used when "cosine_with_restarts" or "polynomial" is used as the scheduler.',
     type: 'int',
     default: 3,
     min: 1,
     max: 4,
   },
   // TODO maybe float
-  { name: 'minSnrGamma', label: 'Min SNR Gamma', type: 'int', default: 5, min: 0, max: 20 },
+  {
+    name: 'minSnrGamma',
+    label: 'Min SNR Gamma',
+    hint: 'In LoRA learning, learning is performed by putting noise of various strengths on the training image (details about this are omitted), but depending on the difference in strength of the noise on which it is placed, learning will be stable by moving closer to or farther from the learning target. not, and the Min SNR gamma was introduced to compensate for that. Especially when learning images with little noise on them, it may deviate greatly from the target, so try to suppress this jump.',
+    type: 'int',
+    default: 5,
+    min: 0,
+    max: 20,
+  },
   {
     name: 'networkDim',
     label: 'Network Dim',
+    hint: 'The larger the Dim setting, the more learning information can be stored, but the possibility of learning unnecessary information other than the learning target increases. A larger Dim also increases LoRA file size.',
     type: 'int',
     default: 32,
     min: 1,
@@ -125,6 +201,16 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'networkAlpha',
     label: 'Network Alpha',
+    hint: (
+      <>
+        The smaller the Network alpha value, the larger the stored LoRA neural net weights. For
+        example, with an Alpha of 16 and a Dim of 32, the strength of the weight used is 16/32 =
+        0.5, meaning that the learning rate is only half as powerful as the Learning Rate setting.
+        <br />
+        If Alpha and Dim are the same number, the strength used will be 1 and will have no effect on
+        the learning rate.
+      </>
+    ),
     type: 'int',
     default: 16,
     min: 1,
@@ -134,15 +220,22 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'optimizerType',
     label: 'Optimizer',
+    hint: 'The optimizer is a setting for "how to update the neural net weights during training". Various methods have been proposed for smart learning, but the most commonly used in LoRA learning is "AdamW (32-bit)" or "AdamW8bit".',
     type: 'select',
     default: 'AdamW8Bit',
     options: ['AdamW8Bit'], // TODO enum
   },
-  { name: 'optimizerArgs', label: 'Optimizer Args', type: 'string', default: 'weight_decay=0.1' },
-  { name: 'shuffleCaption', label: 'Shuffle Caption', type: 'bool', default: true },
+  {
+    name: 'optimizerArgs',
+    label: 'Optimizer Args',
+    hint: 'Additional arguments can be passed to control the behavior of the selected optimizer. Place them here as a string, comma separated.',
+    type: 'string',
+    default: 'weight_decay=0.1',
+  },
   {
     name: 'targetSteps',
     label: 'Steps',
+    hint: 'The total computed number of steps for training. Computed with (# of epochs x # of images x # repeats)',
     type: 'int',
     default: (n: number, r: number, e: number, b: number) => Math.ceil((n * r * e) / b),
     disabled: true,
@@ -437,6 +530,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                   items={trainingSettings.map((ts) => {
                     let inp: React.ReactNode;
                     const override = ts.overrides?.[formBaseModel];
+
                     if (['int', 'number'].includes(ts.type)) {
                       inp = (
                         <InputNumber
@@ -463,8 +557,24 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                     } else if (ts.type === 'string') {
                       inp = <InputText name={ts.name} disabled={ts.disabled === true} />;
                     }
+
                     return {
-                      label: ts.label,
+                      label: ts.hint ? (
+                        <CivitaiTooltip
+                          position="top"
+                          // transition="slide-up"
+                          variant="roundedOpaque"
+                          withArrow
+                          multiline
+                          label={ts.hint}
+                        >
+                          <Text inline style={{ cursor: 'help' }}>
+                            {ts.label}
+                          </Text>
+                        </CivitaiTooltip>
+                      ) : (
+                        ts.label
+                      ),
                       value: inp,
                     };
                   })}

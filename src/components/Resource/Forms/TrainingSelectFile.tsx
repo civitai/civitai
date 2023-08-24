@@ -33,6 +33,12 @@ const useStyles = createStyles((theme) => ({
       gap: theme.spacing.md,
     },
   },
+  selectedRow: {
+    border: `2px solid ${theme.fn.rgba(theme.colors.green[5], 0.7)}`,
+  },
+  paperRow: {
+    cursor: 'pointer',
+  },
 }));
 
 const EpochRow = ({
@@ -44,7 +50,7 @@ const EpochRow = ({
   selectedFile: string | undefined;
   setSelectedFile: React.Dispatch<React.SetStateAction<string | undefined>>;
 }) => {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
 
   return (
     <Paper
@@ -52,14 +58,24 @@ const EpochRow = ({
       radius="sm"
       p="xs"
       withBorder
-      style={selectedFile === epoch.model_url ? { border: '2px solid green' } : {}}
+      className={cx(
+        classes.paperRow,
+        selectedFile === epoch.model_url ? classes.selectedRow : undefined
+      )}
+      onClick={() => setSelectedFile(epoch.model_url)}
     >
       <Stack>
         <Group position="apart" className={classes.epochRow}>
-          <Button onClick={() => setSelectedFile(epoch.model_url)}>
-            Select Epoch #{epoch.epoch_number}
-          </Button>
-          <DownloadButton component="a" canDownload href={epoch.model_url}>
+          <Text fz="md" fw={700}>
+            Epoch #{epoch.epoch_number}
+          </Text>
+          <DownloadButton
+            onClick={(e) => e.stopPropagation()}
+            component="a"
+            canDownload
+            href={epoch.model_url}
+            variant="light"
+          >
             <Text align="center">
               {/*{`Download (${formatKBytes(modalData.file?.sizeKB)})`}*/}
               Download
@@ -74,6 +90,7 @@ const EpochRow = ({
                 <Image
                   alt={`Sample image #${index}`}
                   src={imgData.image_url}
+                  withPlaceholder
                   imageProps={{
                     style: {
                       height: '200px',
@@ -283,7 +300,9 @@ export default function TrainingSelectFile({
           {epochs.length > 1 && (
             <>
               <Center>
-                <Title order={4}>Other Results</Title>
+                <Title mt="sm" order={4}>
+                  Other Results
+                </Title>
               </Center>
               {epochs.slice(1).map((e, idx) => (
                 <EpochRow

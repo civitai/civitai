@@ -1,4 +1,4 @@
-import { Tooltip, TooltipProps, Text } from '@mantine/core';
+import { Text, Tooltip, TooltipProps } from '@mantine/core';
 
 const variants: Record<string, Partial<TooltipProps>> = {
   smallRounded: {
@@ -12,6 +12,19 @@ const variants: Record<string, Partial<TooltipProps>> = {
         maxWidth: 200,
         backgroundColor: 'rgba(0,0,0,.5)',
         padding: '1px 10px 2px',
+        zIndex: 9,
+      },
+    },
+    multiline: true,
+  },
+  roundedOpaque: {
+    // offset: 5,
+    radius: 'lg',
+    transitionDuration: 200,
+    styles: {
+      tooltip: {
+        maxWidth: 500,
+        backgroundColor: 'rgba(0,0,0,1)',
         zIndex: 9,
       },
     },
