@@ -12,15 +12,8 @@ import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
-type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
-  tagsOnModels: Array<{ id: number; name: string }>;
-};
-
-// TODO [bw] change this to just step
 type WizardState = {
   step: number;
-  // model?: ModelWithTags;
-  // modelVersion?: ModelWithTags['modelVersions'][number];
 };
 
 const useStyles = createStyles((theme) => ({
@@ -88,10 +81,7 @@ export default function TrainWizard() {
   //   }
   // }, [model, state.model]);
 
-  // const postId = state.modelVersion?.posts[0]?.id;
-
   return (
-    // <FilesProvider model={state.model} version={state.modelVersion}>
     <Container size="sm">
       <ActionIcon
         className={classes.closeButton}
@@ -113,8 +103,7 @@ export default function TrainWizard() {
       {/*<LoadingOverlay visible={modelLoading} overlayBlur={2} />*/}
       {modelLoading ? (
         <PageLoader text="Loading model..." />
-      ) : //   todo move this !model check to the other components
-      modelError || (editing && !model) ? (
+      ) : modelError ? (
         <NotFound />
       ) : (
         <Stack py="xl">
@@ -144,7 +133,7 @@ export default function TrainWizard() {
             <Stepper.Step label={hasFiles ? 'Edit training data' : 'Add training data'}>
               <Stack>
                 <Title order={3}>{hasFiles ? 'Edit training data' : 'Add training data'}</Title>
-                <TrainingFormImages model={model} />
+                <TrainingFormImages model={model as ModelById} />
               </Stack>
             </Stepper.Step>
 
@@ -152,13 +141,12 @@ export default function TrainWizard() {
             <Stepper.Step label="Review and Submit">
               <Stack>
                 <Title order={3}>Review and Submit</Title>
-                <TrainingFormSubmit model={model} />
+                <TrainingFormSubmit model={model as ModelById} />
               </Stack>
             </Stepper.Step>
           </Stepper>
         </Stack>
       )}
     </Container>
-    // </FilesProvider>
   );
 }

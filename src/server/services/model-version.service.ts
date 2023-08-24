@@ -1,20 +1,20 @@
 import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { SessionUser } from 'next-auth';
+import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { dbWrite, dbRead } from '~/server/db/client';
 import {
   DeleteExplorationPromptInput,
+  GetModelVersionByModelTypeProps,
   ModelVersionMeta,
   ModelVersionUpsertInput,
   PublishVersionInput,
   UpsertExplorationPromptInput,
-  GetModelVersionByModelTypeProps,
 } from '~/server/schema/model-version.schema';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { TRPCError } from '@trpc/server';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import { SessionUser } from 'next-auth';
-import { baseModelSets, BaseModel } from '~/server/common/constants';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,

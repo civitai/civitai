@@ -102,8 +102,8 @@ export const modelVersionUpsertSchema2 = z.object({
   clipSkip: z.number().min(1).max(12).nullish(),
   vaeId: z.number().nullish(),
   trainedWords: z.array(z.string()).default([]),
-  trainingStatus: z.nativeEnum(TrainingStatus).optional(),
-  trainingDetails: trainingDetailsObj.optional(),
+  trainingStatus: z.nativeEnum(TrainingStatus).nullish(),
+  trainingDetails: trainingDetailsObj.nullish(),
   earlyAccessTimeFrame: z.preprocess(
     (value) => (value ? Number(value) : 0),
     z.number().min(0).max(5).optional()

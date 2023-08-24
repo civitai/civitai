@@ -96,7 +96,9 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
     | TrainingDetailsObj
     | undefined;
 
-  const defaultValues: z.infer<typeof schema> = {
+  const defaultValues: Omit<z.infer<typeof schema>, 'trainingModelType'> & {
+    trainingModelType: tmTypes | undefined;
+  } = {
     ...model,
     name: model?.name ?? '',
     trainingModelType: thisTrainingDetails?.type ?? undefined,

@@ -43,7 +43,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
+export function ModelWizard() {
   const { classes } = useStyles();
   const router = useRouter();
   const { getStatus: getUploadStatus } = useS3UploadStore();
@@ -55,15 +55,6 @@ export function ModelWizard({ type }: { type?: 'create' | 'train' }) {
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
   console.log(model);
   console.log(model?.modelVersions[0]?.files);
-
-  let uploadType = type;
-  if (!uploadType) {
-    if (!!model) {
-      uploadType = model.uploadType === ModelUploadType.Trained ? 'train' : 'create';
-    } else {
-      uploadType = 'create';
-    }
-  }
 
   const maxSteps = 4;
 

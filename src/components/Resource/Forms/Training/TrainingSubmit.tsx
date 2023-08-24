@@ -40,14 +40,14 @@ type TrainingSettingsType = {
   name: keyof TrainingDetailsParams;
   label: string;
   type: string;
-  default: string | number | boolean | ((...args: never[]) => string | number);
+  default: string | number | boolean | ((...args: never[]) => number);
   options?: string[];
   min?: number;
   max?: number;
   disabled?: boolean;
   overrides?: {
     [override in TrainingDetailsBaseModel]?: {
-      default?: string | number | boolean | ((...args: never[]) => string | number);
+      default?: string | number | boolean | ((...args: never[]) => number);
       min?: number;
       max?: number;
     };
@@ -170,7 +170,10 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     }),
   });
 
-  const defaultValues: z.infer<typeof schema> = {
+  // @ts-ignore ignoring because the reducer will use default functions in the next step in place of actual values
+  const defaultValues: Omit<z.infer<typeof schema>, 'baseModel'> & {
+    baseModel: TrainingDetailsBaseModel | undefined;
+  } = {
     baseModel: thisTrainingDetails?.baseModel ?? undefined,
     ...(thisTrainingDetails?.params
       ? thisTrainingDetails.params
@@ -178,8 +181,16 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
   };
 
   if (!thisTrainingDetails?.params) {
-    defaultValues.numRepeats = defaultValues.numRepeats(thisFile?.metadata['numImages'] || 1);
-    defaultValues.targetSteps = defaultValues.targetSteps(
+    const numRepeatsFnc = defaultValues.numRepeats as unknown as (n: number) => number;
+    const targetStepsFnc = defaultValues.targetSteps as unknown as (
+      n: number,
+      r: number,
+      e: number,
+      b: number
+    ) => number;
+
+    defaultValues.numRepeats = numRepeatsFnc(thisFile?.metadata['numImages'] || 1);
+    defaultValues.targetSteps = targetStepsFnc(
       thisFile?.metadata['numImages'] || 1,
       defaultValues.numRepeats,
       defaultValues.maxTrainEpochs,
@@ -212,7 +223,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
   }, [formBaseModel]);
 
   // TODO [bw] recalc default functions when relevant args change
-  useEffect(() => {}, []);
+  // useEffect(() => {}, []);
 
   const { isDirty, errors } = form.formState;
 

@@ -79,11 +79,12 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
+  const { upload, getStatus: getUploadStatus } = useS3UploadStore();
 
-  const thisModelVersion = model.modelVersions[0];
+  const thisModelVersion = model?.modelVersions[0];
+
   const notificationId = `${thisModelVersion.id}-uploading-data-notification`;
 
-  const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
 
   useEffect(() => {

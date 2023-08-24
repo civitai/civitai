@@ -17,6 +17,11 @@ const preferenceWeight: Record<FileMetaKey, number> = {
   format: 100,
   size: 10,
   fp: 1,
+  ownRights: 0,
+  shareDataset: 0,
+  numImages: 0,
+  numCaptions: 0,
+  trainingResults: 0,
 };
 
 export function getPrimaryFile<T extends FileFormatType>(
