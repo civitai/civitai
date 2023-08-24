@@ -128,7 +128,7 @@ export const collectionMetrics = createMetricProcessor({
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("collectionId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "itemCount" = EXCLUDED."itemCount", "collaboratorCount" = EXCLUDED."collaboratorCount";
+        SET "followerCount" = EXCLUDED."followerCount", "itemCount" = EXCLUDED."itemCount", "contributorCount" = EXCLUDED."contributorCount";
     `;
 
     const affected = await db.$queryRaw<{ id: number }[]>`
@@ -147,7 +147,7 @@ export const collectionMetrics = createMetricProcessor({
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "CollectionMetric" SET "followerCount" = 0, "itemCount" = 0, "collaboratorCount" = 0 WHERE timeframe = 'Day';
+      UPDATE "CollectionMetric" SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0 WHERE timeframe = 'Day';
     `;
   },
   rank: {

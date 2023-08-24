@@ -12,6 +12,7 @@ import {
 import {
   CollectionReadConfiguration,
   CollectionType,
+  CollectionWriteConfiguration,
   CosmeticSource,
   CosmeticType,
   ImageGenerationProcess,
@@ -25,6 +26,7 @@ import {
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { getCollectionItemsByCollectionId } from '~/server/services/collection.service';
 import { isDefined } from '~/utils/type-guards';
+import { uniqBy } from 'lodash-es';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -101,11 +103,14 @@ type CollectionForSearchIndex = {
   createdAt: Date;
   updatedAt: Date;
   type: CollectionType;
+  read: CollectionReadConfiguration;
+  write: CollectionWriteConfiguration;
+  userId: number;
   metrics: {
     followerCount: number;
     itemCount: number;
     contributorCount: number;
-  }[];
+  };
   user: {
     id: number;
     image: string | null;
@@ -181,7 +186,10 @@ const onFetchItemsToIndex = async ({
     c."imageId",
     c."createdAt",
     c."updatedAt",
-    c."userId"
+    c."userId",
+    c."type",    
+    c."read",    
+    c."write"
     FROM "Collection" c
     WHERE ${Prisma.join(WHERE, ' AND ')}
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
@@ -273,9 +281,10 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const collectionImages = await Promise.all(
+  const collectionItemImages = await Promise.all(
     collections.map(async (c) => {
       const images = [];
+      const srcs = [];
       if (c.image) {
         images.push(c.image);
       } else {
@@ -286,43 +295,64 @@ const onFetchItemsToIndex = async ({
           },
         });
 
-        const itemImages = items
+        const itemImages = uniqBy(
+          items
+            .map((item) => {
+              switch (item.type) {
+                case 'model':
+                  return item.data.images[0];
+                case 'post':
+                  return item.data.image;
+                case 'image':
+                  return item.data;
+                case 'article':
+                default:
+                  return null;
+              }
+            })
+            .filter(isDefined),
+          'id'
+        );
+
+        const itemsSrcs = items
           .map((item) => {
             switch (item.type) {
-              case 'model':
-                return item.data.images[0];
-              case 'post':
-                return item.data.image;
-              case 'image':
-                return item.data;
               case 'article':
+                return item.data.cover;
+              case 'model':
+              case 'post':
+              case 'image':
               default:
                 return null;
             }
           })
-          .filter(isDefined)
-          .slice(0, 4);
+          .filter(isDefined);
 
         images.push(...itemImages);
+        srcs.push(...itemsSrcs);
       }
 
       return {
         id: c.id,
         images,
+        srcs,
       };
     })
   );
 
   const indexReadyRecords = collections.map((collection) => {
     const cosmetics = collection.cosmetics ?? [];
+    const collectionImages = collectionItemImages.find((ci) => ci.id === collection.id);
 
     return {
       ...collection,
+      metrics: collection.metrics || {},
       user: {
         ...collection.user,
         cosmetics: cosmetics.map((cosmetic) => ({ cosmetic })),
       },
-      images: collectionImages.find((c) => c.id === collection.id)?.images ?? [],
+      images: collectionImages?.images ?? [],
+      srcs: collectionImages?.srcs ?? [],
     };
   });
 
