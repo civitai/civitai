@@ -53,6 +53,7 @@ import { isUUID } from '~/utils/string-helpers';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import { dbWrite } from '~/server/db/client';
 import { cancelSubscription } from '~/server/services/stripe.service';
+import { redis } from '~/server/redis/client';
 
 export const getAllUsersHandler = async ({
   input,
@@ -276,11 +277,14 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
   const { id } = ctx.user;
 
   try {
-    const user = await getUserEngagedModels({ id });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    const engagementsCache = await redis.get(`user:${id}:model-engagements`);
+    if (engagementsCache)
+      return JSON.parse(engagementsCache) as Record<ModelEngagementType, number[]>;
+
+    const engagements = await getUserEngagedModels({ id });
 
     // turn array of user.engagedModels into object with `type` as key and array of modelId as value
-    const engagedModels = user.engagedModels.reduce<Record<ModelEngagementType, number[]>>(
+    const engagedModels = engagements.reduce<Record<ModelEngagementType, number[]>>(
       (acc, model) => {
         const { type, modelId } = model;
         if (!acc[type]) acc[type] = [];
@@ -289,6 +293,10 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
       },
       {} as Record<ModelEngagementType, number[]>
     );
+
+    await redis.set(`user:${id}:model-engagements`, JSON.stringify(engagedModels), {
+      EX: 60 * 60 * 24,
+    });
 
     return engagedModels;
   } catch (error) {
@@ -305,18 +313,18 @@ export const getUserEngagedModelVersionsHandler = async ({
   const { id } = ctx.user;
 
   try {
-    const user = await getUserEngagedModelVersions({ id });
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    const engagements = await getUserEngagedModelVersions({ id });
 
     // turn array of user.engagedModelVersions into object with `type` as key and array of modelId as value
-    const engagedModelVersions = user.engagedModelVersions.reduce<
-      Record<ModelVersionEngagementType, number[]>
-    >((acc, engagement) => {
-      const { type, modelVersionId } = engagement;
-      if (!acc[type]) acc[type] = [];
-      acc[type].push(modelVersionId);
-      return acc;
-    }, {} as Record<ModelVersionEngagementType, number[]>);
+    const engagedModelVersions = engagements.reduce<Record<ModelVersionEngagementType, number[]>>(
+      (acc, engagement) => {
+        const { type, modelVersionId } = engagement;
+        if (!acc[type]) acc[type] = [];
+        acc[type].push(modelVersionId);
+        return acc;
+      },
+      {} as Record<ModelVersionEngagementType, number[]>
+    );
 
     return engagedModelVersions;
   } catch (error) {
@@ -521,6 +529,7 @@ export const toggleHideModelHandler = async ({
         modelId: input.modelId,
       });
     }
+    await redis.del(`user:${userId}:model-engagements`);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -547,6 +556,7 @@ export const toggleFavoriteModelHandler = async ({
         modelId: input.modelId,
       });
     }
+    await redis.del(`user:${userId}:model-engagements`);
   } catch (error) {
     throw throwDbError(error);
   }

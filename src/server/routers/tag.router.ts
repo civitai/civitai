@@ -13,7 +13,7 @@ import {
   deleteTagsHandler,
   getHomeExcludedTagsHandler,
 } from '~/server/controllers/tag.controller';
-import { cacheIt } from '~/server/middleware.trpc';
+import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addTagVotesSchema,
@@ -67,7 +67,9 @@ export const tagRouter = router({
     .use(applyUserPreferences)
     .use(cacheIt({ ttl: 60 }))
     .query(getAllTagsHandler),
-  getHomeExcluded: publicProcedure.query(getHomeExcludedTagsHandler),
+  getHomeExcluded: publicProcedure
+    .use(edgeCacheIt({ ttl: 24 * 60 * 60 }))
+    .query(getHomeExcludedTagsHandler),
   getTrending: publicProcedure
     .input(getTrendingTagsSchema)
     .use(applyUserPreferences)
