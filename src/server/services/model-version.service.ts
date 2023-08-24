@@ -97,7 +97,10 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
 };
 
 export const upsertModelVersion = async (
-  data: ModelVersionUpsertInput & { meta?: Prisma.ModelVersionCreateInput['meta'] }
+  data: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
+    meta?: Prisma.ModelVersionCreateInput['meta'];
+    trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
+  }
 ) => {
   if (!data.id) {
     const existingVersions = await dbRead.modelVersion.findMany({

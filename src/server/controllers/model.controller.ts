@@ -16,7 +16,7 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import { ModelVersionMeta, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   ChangeModelModifierSchema,
   DeclineReviewSchema,
@@ -174,6 +174,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           baseModel: version.baseModel as BaseModel,
           baseModelType: version.baseModelType as BaseModelType,
           meta: version.meta as ModelVersionMeta,
+          trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined | null,
         };
       }),
     };

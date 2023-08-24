@@ -134,7 +134,10 @@ export const upsertModelVersionHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const version = await upsertModelVersion({ ...input });
+    const version = await upsertModelVersion({
+      ...input,
+      trainingDetails: input.trainingDetails as any,
+    });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     // Just update early access deadline if updating the model version

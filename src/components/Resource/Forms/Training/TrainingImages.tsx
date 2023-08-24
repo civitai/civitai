@@ -261,7 +261,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
           await upload(
             {
               file: blobFile,
-              type: UploadType.TrainingImages,
+              type: UploadType.TrainingImages, // TODO [bw] maybe use UploadType.TrainingImagesTemp
               meta: {
                 versionId: thisModelVersion.id,
                 ownRights,

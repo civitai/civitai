@@ -1,41 +1,34 @@
 import {
+  closestCenter,
   DndContext,
   DragEndEvent,
   DragOverlay,
   DragStartEvent,
   PointerSensor,
   UniqueIdentifier,
-  closestCenter,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { SortableContext, arrayMove } from '@dnd-kit/sortable';
+import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import {
   ActionIcon,
   Alert,
   Box,
-  Button,
   Center,
-  Grid,
+  createStyles,
   Group,
   HoverCard,
   Input,
   InputWrapperProps,
   Loader,
   LoadingOverlay,
-  NumberInput,
   Overlay,
   Paper,
-  Popover,
-  Select,
   Stack,
   Text,
-  Textarea,
-  Title,
-  createStyles,
 } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
-import { UseListStateHandlers, useDidUpdate, useListState, useLocalStorage } from '@mantine/hooks';
+import { useDidUpdate, useListState, UseListStateHandlers } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconPencil,
@@ -45,7 +38,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import { cloneElement, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
@@ -53,7 +46,6 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { SimpleTag } from '~/server/selectors/tag.selector';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -221,7 +213,7 @@ export function ImageUpload({
                             withBorder
                             style={{ position: 'relative', height: '96px', width: '96px' }}
                           >
-                            <LoadingOverlay visible={showLoading ?? false} />
+                            <LoadingOverlay visible={!!showLoading} />
                           </Paper>
                         </div>
                       );

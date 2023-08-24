@@ -193,12 +193,12 @@ export function ModelWizard() {
               <Stepper.Step
                 label="Select Model File"
                 loading={
-                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Pending ||
-                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Processing ||
-                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Submitted
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Pending ||
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Submitted ||
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Processing
                 }
                 color={
-                  state.model?.modelVersions[0].trainingStatus === TrainingStatus.Failed
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Failed
                     ? 'red'
                     : undefined
                 }
