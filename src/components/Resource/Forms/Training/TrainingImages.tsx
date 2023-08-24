@@ -17,6 +17,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
+import { NextLink } from '@mantine/next';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { ModelFileVisibility } from '@prisma/client';
 import { IconCheck, IconTrash, IconX } from '@tabler/icons-react'; // import { saveAs } from 'file-saver';
@@ -335,11 +336,19 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
     <>
       <Stack>
         <div>
-          <Text>You can upload your images and caption them here.</Text>
-          {/* TODO [bw] add links */}
-          {/* http://localhost:3000/content/training/data-policy */}
-          {/* <Text variant="link" component={NextLink} href="/models/create" inline> */}
-          <Text>Or, you can *upload an existing dataset*. See our *training guidelines*.</Text>
+          <Text>
+            You can add an existing dataset for your model, or create a new one here. Not sure what
+            to do? Read our{' '}
+            <Text
+              component={NextLink}
+              variant="link"
+              target="_blank"
+              href="/content/training/dataset-guidelines"
+            >
+              Dataset and Training Guidelines
+            </Text>{' '}
+            for more info.
+          </Text>
         </div>
         <div>
           <ImageDropzone
@@ -470,11 +479,18 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
           <Paper mt="xl" mb="md" radius="md" p="xl" withBorder>
             <Stack>
               <Title order={4}>Data Ownership and Sharing</Title>
-              {/* TODO [bw] link for storage policy */}
               <Text fz="sm">
                 Your dataset is temporarily stored for the purposes of training. After training is
-                complete, the dataset is removed. By default, it is not public. Read our dataset
-                storage policy *here*.
+                complete, the dataset is removed. By default, it is not public. Read our{' '}
+                <Text
+                  component={NextLink}
+                  variant="link"
+                  href="/content/training/data-policy"
+                  target="_blank"
+                >
+                  dataset storage policy
+                </Text>
+                .
               </Text>
               <Checkbox
                 label="I own the rights to all these images"
