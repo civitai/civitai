@@ -187,6 +187,7 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 };
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ features }) => {
     if (!features?.imageSearch) return { notFound: true };
   },
