@@ -31,6 +31,8 @@ import { applyUserPreferencesUsers } from '~/components/Search/search.utils';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
+import Link from 'next/link';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 export default function UserSearch() {
   return (
@@ -156,7 +158,7 @@ export function UserHitList() {
         }}
       >
         {users.map((hit) => {
-          return <CreatorCard key={hit.id} data={hit} />;
+          return <UserCard key={hit.id} data={hit} />;
         })}
       </Box>
       {hits.length > 0 && (
@@ -168,37 +170,40 @@ export function UserHitList() {
   );
 }
 
-export function CreatorCard({ data }: { data: UserSearchIndexRecord }) {
+export function UserCard({ data }: { data: UserSearchIndexRecord }) {
   if (!data) return null;
 
-  const stats = data.stats;
-  const uploads = stats?.uploadCountAllTime;
+  const { stats } = data;
 
   return (
     <Card p="xs" withBorder>
-      <Card.Section py="xs" inheritPadding>
-        <Stack spacing="xs">
-          <UserAvatar
-            size="sm"
-            user={data}
-            subText={`Joined ${formatDate(data.createdAt)}`}
-            withUsername
-            linkToProfile
-          />
-          {stats && (
-            <Group spacing={8}>
-              <RankBadge size="md" rank={data.rank} />
-              <UserStatBadges
-                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
-                uploads={uploads}
-                followers={stats.followerCountAllTime}
-                favorite={stats.favoriteCountAllTime}
-                downloads={stats.downloadCountAllTime}
+      <Link href={`/user/${data.username}`} passHref>
+        <Card.Section component="a" py="xs" inheritPadding>
+          <Stack spacing="xs">
+            <Group position="apart" spacing={8}>
+              <UserAvatar
+                size="sm"
+                user={data}
+                subText={`Joined ${formatDate(data.createdAt)}`}
+                withUsername
               />
+              <FollowUserButton userId={data.id} size="md" compact />
             </Group>
-          )}
-        </Stack>
-      </Card.Section>
+            {stats && (
+              <Group spacing={8}>
+                <RankBadge size="md" rank={data.rank} />
+                <UserStatBadges
+                  rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
+                  uploads={stats.uploadCountAllTime}
+                  followers={stats.followerCountAllTime}
+                  favorite={stats.favoriteCountAllTime}
+                  downloads={stats.downloadCountAllTime}
+                />
+              </Group>
+            )}
+          </Stack>
+        </Card.Section>
+      </Link>
       {data.links && data.links.length > 0 ? (
         <Card.Section
           withBorder

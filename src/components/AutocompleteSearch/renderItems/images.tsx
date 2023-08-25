@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Badge, Center, Group, Stack, Text } from '@mantine/core';
+import { AutocompleteItem, Badge, BadgeProps, Center, Group, Stack, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
@@ -18,7 +18,7 @@ export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
   AutocompleteItem & { hit: Hit<ImageSearchIndexRecord> }
 >(({ value, hit, ...props }, ref) => {
-  const { classes } = useSearchItemStyles();
+  const { theme } = useSearchItemStyles();
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
@@ -30,7 +30,15 @@ export const ImagesSearchItem = forwardRef<
     likeCountAllTime: 0,
   };
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
-  const tagsMax = tags?.slice(0, 5);
+  const tagsMax = tags?.slice(0, 3);
+  const remainingTagsCount = tags?.slice(3).length;
+
+  const tagBadgeProps: BadgeProps = {
+    radius: 'xl',
+    size: 'xs',
+    color: 'gray',
+    variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+  };
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -63,9 +71,9 @@ export const ImagesSearchItem = forwardRef<
           />
         )}
       </Center>
-      <Stack spacing={4} sx={{ flex: '1 !important' }}>
+      <Stack spacing={8} sx={{ flex: '1 !important' }}>
         {hit.meta && (
-          <Text lineClamp={2} size="sm">
+          <Text lineClamp={2} size="sm" inline>
             <Text weight={600} ml={1} span>
               Positive prompt:{' '}
             </Text>
@@ -73,15 +81,14 @@ export const ImagesSearchItem = forwardRef<
             {hit.meta?.prompt ?? ''}
           </Text>
         )}
-        <Group spacing={4}>
-          <UserAvatar size="xs" user={user} withUsername />
-        </Group>
-        <Group spacing="xs">
+        <UserAvatar size="xs" user={user} withUsername />
+        <Group spacing={8}>
           {tagsMax?.map((tag) => (
-            <Badge key={tag.id} size="xs">
+            <Badge key={tag.id} {...tagBadgeProps}>
               {tag.name}
             </Badge>
           ))}
+          {remainingTagsCount > 0 && <Badge {...tagBadgeProps}>+{remainingTagsCount}</Badge>}
         </Group>
         {stats && (
           <Group spacing={4}>
