@@ -522,13 +522,6 @@ export const upsertCollection = async ({
       await ingestImage({ image: updated.image });
     }
 
-    await collectionsSearchIndex.queueUpdate([
-      {
-        id,
-        action: SearchIndexUpdateQueueAction.Update,
-      },
-    ]);
-
     return updated;
   }
 
