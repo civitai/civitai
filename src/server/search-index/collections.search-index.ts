@@ -420,7 +420,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [Prisma.sql`u.id IN (${Prisma.join(itemIds)})`],
+      whereOr: [Prisma.sql`c.id IN (${Prisma.join(itemIds)})`],
     });
 
     itemsToIndex.push(...newItems);
@@ -472,7 +472,12 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       db,
       indexName,
       skip: offset,
-      whereOr: !lastUpdatedAt ? undefined : [Prisma.sql`u."createdAt" > ${lastUpdatedAt}`],
+      whereOr: !lastUpdatedAt
+        ? undefined
+        : [
+            Prisma.sql`c."createdAt" > ${lastUpdatedAt}`,
+            Prisma.sql`c."updatedAt" > ${lastUpdatedAt}`,
+          ],
     });
 
     if (indexReadyRecords.length === 0) break;
