@@ -138,11 +138,6 @@ export const useSearchStore = create<StoreState>()(
 export const routing: InstantSearchProps['routing'] = {
   router: createInstantSearchRouterNext({
     singletonRouter,
-    beforePopState: ({ state, ownBeforePopState, libraryBeforePopState }) => {
-      console.log('routing :: beforePopState', state);
-
-      return ownBeforePopState(state) && libraryBeforePopState(state);
-    },
     routerOptions: {
       createURL({ routeState, location }) {
         const pattern = /\/search\/([^\/]+)/;

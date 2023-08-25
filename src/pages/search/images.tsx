@@ -1,5 +1,13 @@
 import { Box, Center, Loader, Stack, Text, ThemeIcon, Title, UnstyledButton } from '@mantine/core';
-import { useEffect, useMemo } from 'react';
+import {
+  createContext,
+  Dispatch,
+  SetStateAction,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { useInView } from 'react-intersection-observer';
 import { ImageCard, UnroutedImageCard } from '~/components/Cards/ImageCard';
@@ -22,6 +30,8 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CollectionContributorPermission } from '@prisma/client';
+import { useHotkeys } from '@mantine/hooks';
+import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
 
 export default function ImageSearch() {
   return (
@@ -93,6 +103,8 @@ function ImagesHitList() {
 
   const hiddenItems = hits.length - images.length;
 
+  const { onSetImage } = useImageViewerCtx({ images });
+
   // #region [infinite data fetching]
   useEffect(() => {
     if (inView && status === 'idle' && !isLastPage) {
@@ -162,8 +174,8 @@ function ImagesHitList() {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-
-              router.push(`/images/${hit.id}`);
+              onSetImage(hit.id);
+              // router.push(`/images/${hit.id}`);
             }}
           >
             <UnroutedImageCard data={hit} />
@@ -179,8 +191,101 @@ function ImagesHitList() {
   );
 }
 
+type ImageViewerState = {
+  imageId: number | null;
+  images: { id: number }[];
+  setImages: (images: { id: number }[]) => void;
+  nextImageId: number | null;
+  prevImageId: number | null;
+  onClose: () => void;
+  onSetImage: (imageId: number) => void;
+};
+
+const ImageViewerCtx = createContext<ImageViewerState>({} as any);
+export const useImageViewerCtx = ({ images }: { images: { id: number }[] }) => {
+  const context = useContext(ImageViewerCtx);
+  if (!context) throw new Error('useImageViewerCtx can only be used inside ImageViewerCtx');
+
+  useEffect(() => {
+    context.setImages(images);
+  }, [images]);
+
+  return context;
+};
+
+const ImageViewer = ({ children }: { children: React.ReactElement }) => {
+  const [activeImageId, setActiveImageId] = useState<number | null>(null);
+  const [images, setImages] = useState<{ id: number }[]>([]);
+
+  const nextImageId = useMemo(() => {
+    if (!activeImageId) return null;
+
+    const index = images.findIndex((image) => image.id === activeImageId);
+    if (index === -1) return null;
+    return images[index + 1]?.id ?? null;
+  }, [images, activeImageId]);
+
+  const prevImageId = useMemo(() => {
+    if (!activeImageId) return null;
+
+    const index = images.findIndex((image) => image.id === activeImageId);
+    if (index === -1) return null;
+    return images[index - 1]?.id ?? null;
+  }, [images, activeImageId]);
+
+  useHotkeys([['Escape', close]]);
+
+  const onSetImage = (imageId: number | null) => {
+    if (!imageId) {
+      return;
+    }
+
+    setActiveImageId(imageId);
+  };
+  const onClose = () => {
+    console.log('call me crazy');
+    setActiveImageId(null);
+  };
+
+  return (
+    <ImageViewerCtx.Provider
+      value={{
+        imageId: activeImageId,
+        nextImageId,
+        prevImageId,
+        images,
+        setImages,
+        onSetImage,
+        onClose,
+      }}
+    >
+      {activeImageId && (
+        <div
+          style={{
+            position: 'fixed',
+            zIndex: 99999,
+          }}
+        >
+          <ImageDetailByProps
+            imageId={activeImageId}
+            onClose={onClose}
+            nextImageId={nextImageId}
+            prevImageId={prevImageId}
+            onSetImage={onSetImage}
+          />
+        </div>
+      )}
+      {children}
+    </ImageViewerCtx.Provider>
+  );
+};
+
 ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName={IMAGES_SEARCH_INDEX}>{page}</SearchLayout>;
+  return (
+    <ImageViewer>
+      <SearchLayout indexName={IMAGES_SEARCH_INDEX}>{page}</SearchLayout>
+    </ImageViewer>
+  );
 };
 
 export const getServerSideProps = createServerSideProps({
