@@ -165,7 +165,7 @@ export function AppFooter() {
             pl={4}
             pr="xs"
           >
-            💡 Ideas
+            💡 Feature Requests
           </Button>
         </Group>
       </Group>

@@ -355,7 +355,10 @@ export const getModelsWithImagesAndModelVersions = async ({
           createdAt: true,
           generationCoverage: { select: { covered: true } },
         },
-        where: !user?.isModerator ? { status: ModelStatus.Published } : undefined,
+        where:
+          !user?.isModerator || !input.status?.length
+            ? { status: ModelStatus.Published }
+            : undefined,
       },
       tagsOnModels: { select: { tagId: true } },
       user: { select: simpleUserSelect },

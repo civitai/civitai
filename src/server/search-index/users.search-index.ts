@@ -100,7 +100,6 @@ type UserForSearchIndex = {
   createdAt: Date;
   image: string | null;
   deletedAt: Date | null;
-  links: { type: LinkType; url: string }[];
   metrics: {
     followerCount: number;
     uploadCount: number;
@@ -203,16 +202,6 @@ const onFetchItemsToIndex = async ({
     FROM "UserRank" ur
     WHERE ur."leaderboardRank" IS NOT NULL
       AND ur."userId" IN (SELECT id FROM target)
-  ), links as MATERIALIZED (
-    SELECT
-      ul."userId",
-      jsonb_agg(jsonb_build_object(
-        'type', ul.type,
-        'url', ul.url
-      )) links
-    FROM "UserLink" ul
-    WHERE ul."userId" IN (SELECT id FROM target)
-    GROUP BY ul."userId"
   ), stats AS MATERIALIZED (
       SELECT
         m."userId",
@@ -246,7 +235,6 @@ const onFetchItemsToIndex = async ({
     t.*,
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t.id),
     (SELECT rank FROM ranks r WHERE r."userId" = t.id),
-    (SELECT links FROM links l WHERE l."userId" = t.id),
     (SELECT metrics FROM metrics m WHERE m."userId" = t.id),
     (SELECT stats FROM stats s WHERE s."userId" = t.id)
   FROM target t

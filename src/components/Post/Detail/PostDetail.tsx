@@ -38,6 +38,7 @@ import { CollectionType } from '@prisma/client';
 import { Collection } from '~/components/Collection/Collection';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
@@ -194,7 +195,10 @@ export function PostDetail({ postId }: { postId: number }) {
                 withUsername
                 linkToProfile
               />
-              <FollowUserButton userId={post.user.id} size="md" compact />
+              <Group spacing={8} noWrap>
+                <TipBuzzButton toUserId={post.user.id} size="md" compact />
+                <FollowUserButton userId={post.user.id} size="md" compact />
+              </Group>
             </Group>
           </Stack>
           <Container size="sm">

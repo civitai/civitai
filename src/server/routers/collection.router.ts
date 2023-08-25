@@ -10,6 +10,7 @@ import {
   getUserCollectionItemsByItemHandler,
   saveItemHandler,
   unfollowHandler,
+  updateCollectionCoverImageHandler,
   updateCollectionItemsStatusHandler,
   upsertCollectionHandler,
 } from '~/server/controllers/collection.controller';
@@ -25,6 +26,7 @@ import {
   getAllUserCollectionsInputSchema,
   getUserCollectionItemsByItemSchema,
   saveCollectionItemInputSchema,
+  updateCollectionCoverImageInput,
   updateCollectionItemsStatusInput,
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
@@ -76,6 +78,9 @@ export const collectionRouter = router({
     .use(isFlagProtected('collections'))
     .query(getCollectionByIdHandler),
   upsert: protectedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
+  updateCoverImage: protectedProcedure
+    .input(updateCollectionCoverImageInput)
+    .mutation(updateCollectionCoverImageHandler),
   saveItem: protectedProcedure
     .input(saveCollectionItemInputSchema)
     .use(isFlagProtected('collections'))

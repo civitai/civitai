@@ -11,6 +11,7 @@ const metricSets = {
     metrics.postMetrics,
     metrics.questionMetrics,
     metrics.tagMetrics,
+    metrics.collectionMetrics,
   ],
 };
 

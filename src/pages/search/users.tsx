@@ -31,6 +31,8 @@ import { applyUserPreferencesUsers } from '~/components/Search/search.utils';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
+import Link from 'next/link';
+import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 
 export default function UserSearch() {
   return (
@@ -104,9 +106,7 @@ export function UserHitList() {
         <Center>
           <Stack spacing="md" align="center" maw={800}>
             {hiddenItems > 0 && (
-              <Text color="dimmed">
-                {hiddenItems} articles have been hidden due to your settings.
-              </Text>
+              <Text color="dimmed">{hiddenItems} users have been hidden due to your settings.</Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
@@ -123,10 +123,23 @@ export function UserHitList() {
       </Box>
     );
 
+    const loading = status === 'loading' || status === 'stalled';
+
+    if (loading) {
+      return (
+        <Box>
+          <Center mt="md">
+            <Loader />
+          </Center>
+        </Box>
+      );
+    }
+
     return (
       <Box>
         <Center mt="md">
-          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+          {/* Just enough time to avoid blank random page */}
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
       </Box>
     );
@@ -135,7 +148,7 @@ export function UserHitList() {
   return (
     <Stack>
       {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} articles have been hidden due to your settings.</Text>
+        <Text color="dimmed">{hiddenItems} users have been hidden due to your settings.</Text>
       )}
       <Box
         className={cx(classes.grid)}
@@ -145,41 +158,42 @@ export function UserHitList() {
         }}
       >
         {users.map((hit) => {
-          return <CreatorCard key={hit.id} data={hit} />;
+          return <UserCard key={hit.id} data={hit} />;
         })}
       </Box>
       {hits.length > 0 && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && status === 'idle' && <Loader />}
+          {!isLastPage && <Loader />}
         </Center>
       )}
     </Stack>
   );
 }
 
-export function CreatorCard({ data }: { data: UserSearchIndexRecord }) {
+export function UserCard({ data }: { data: UserSearchIndexRecord }) {
   if (!data) return null;
 
-  const stats = data.stats;
-  const uploads = stats?.uploadCountAllTime;
+  const { stats } = data;
 
   return (
-    <Card p="xs" withBorder>
-      <Card.Section py="xs" inheritPadding>
+    <Link href={`/user/${data.username}`} passHref>
+      <Card component="a" p="xs" withBorder>
         <Stack spacing="xs">
-          <UserAvatar
-            size="sm"
-            user={data}
-            subText={`Joined ${formatDate(data.createdAt)}`}
-            withUsername
-            linkToProfile
-          />
+          <Group position="apart" spacing={8}>
+            <UserAvatar
+              size="sm"
+              user={data}
+              subText={`Joined ${formatDate(data.createdAt)}`}
+              withUsername
+            />
+            <FollowUserButton userId={data.id} size="md" compact />
+          </Group>
           {stats && (
             <Group spacing={8}>
               <RankBadge size="md" rank={data.rank} />
               <UserStatBadges
                 rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
-                uploads={uploads}
+                uploads={stats.uploadCountAllTime}
                 followers={stats.followerCountAllTime}
                 favorite={stats.favoriteCountAllTime}
                 downloads={stats.downloadCountAllTime}
@@ -187,33 +201,8 @@ export function CreatorCard({ data }: { data: UserSearchIndexRecord }) {
             </Group>
           )}
         </Stack>
-      </Card.Section>
-      {data.links && data.links.length > 0 ? (
-        <Card.Section
-          withBorder
-          inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
-          py={5}
-        >
-          <Group spacing={4}>
-            {sortDomainLinks(data.links).map((link, index) => (
-              <ActionIcon
-                key={index}
-                component="a"
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                size="md"
-              >
-                <DomainIcon domain={link.domain} size={20} />
-              </ActionIcon>
-            ))}
-          </Group>
-        </Card.Section>
-      ) : null}
-    </Card>
+      </Card>
+    </Link>
   );
 }
 

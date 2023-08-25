@@ -20,7 +20,10 @@ export function createContextModal<T extends Record<string, unknown>>({
   Element,
   ...modalProps
 }: CreateContextModalProps<T>) {
-  const openModal = (innerProps: T) => {
+  const openModal = (
+    innerProps: T,
+    overrideModalProps?: Omit<ModalProps, 'opened' | 'onClose'>
+  ) => {
     // TODO.briant - fix the scrolling this was causing...
     // if (!location.href.includes('#')) {
     //   const newUrl = ` ${location.href}#`;
@@ -29,6 +32,7 @@ export function createContextModal<T extends Record<string, unknown>>({
     openContextModal({
       modal: name,
       ...modalProps,
+      ...overrideModalProps,
       onClose: () => {
         // TODO.briant - fix the scrolling this was causing...
         // history.scrollRestoration = 'manual';

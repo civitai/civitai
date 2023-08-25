@@ -57,6 +57,7 @@ const featureFlags = createFeatureFlags({
   },
   profileCollections: ['mod', 'founder'],
   imageSearch: ['dev'],
+  buzz: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

@@ -68,6 +68,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
         variant={alreadyFollowing ? 'outline' : 'filled'}
         onClick={handleFollowClick}
         loading={toggleFollowMutation.isLoading}
+        px="sm"
         sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}
         {...buttonProps}
       >
