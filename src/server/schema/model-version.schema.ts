@@ -90,7 +90,7 @@ export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
-  name: z.string().min(1, 'Name cannot be empty.'),
+  name: z.string().trim().min(1, 'Name cannot be empty.'),
   baseModel: z.enum(constants.baseModels),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({

@@ -134,7 +134,7 @@ export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const modelUpsertSchema = licensingSchema.extend({
   id: z.number().optional(),
-  name: z.string().min(1, 'Name cannot be empty.'),
+  name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
   uploadType: z.nativeEnum(ModelUploadType),

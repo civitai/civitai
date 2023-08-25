@@ -86,7 +86,7 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
 
   const schema = z.object({
     id: z.number().optional(),
-    name: z.string().min(1, 'Name cannot be empty.'),
+    name: z.string().trim().min(1, 'Name cannot be empty.'),
     trainingModelType: z.enum(constants.trainingModelTypes, {
       errorMap: () => ({ message: 'A model type must be chosen.' }),
     }),

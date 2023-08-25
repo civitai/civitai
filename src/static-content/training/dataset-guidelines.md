@@ -15,11 +15,10 @@ If you elect to upload an existing dataset, then we ask that you provide the dat
 ### Filename Convention
 A directory should contain an image file with a name that matches the caption text file. These will be interpreted as a pair in training.
 
-|     | Image File Name | Caption Text File Name |
-| --- | --------------- | ---------------------- |
-| Pair One    | 1.jpg           | 1.txt                  |
-| Pair Two    | 2.jpg           | 2.txt                  |
-
+|          | Image File Name | Caption Text File Name |
+|----------|-----------------|------------------------|
+| Pair One | 1.jpg           | 1.txt                  |
+| Pair Two | 2.jpg           | 2.txt                  |
 
 **Accepted File Extensions**
 For images, we accept any of the following image file extensions: `.png, .jpg, .jpeg`
