@@ -6,7 +6,9 @@ import {
   Center,
   createStyles,
   Group,
+  HoverCard,
   LoadingOverlay,
+  MantineColor,
   Modal,
   Pagination,
   ScrollArea,
@@ -71,6 +73,36 @@ type ModalData = {
   file?: TrainingFileData;
 };
 
+const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; description: string }> = {
+  [TrainingStatus.Pending]: {
+    color: 'yellow',
+    description:
+      'The model has not yet been submitted for training. Important info, like a dataset, may still need to be uploaded.',
+  },
+  [TrainingStatus.Submitted]: {
+    color: 'blue',
+    description: 'A request to train has been submitted, and will soon be actively processing.',
+  },
+  [TrainingStatus.Processing]: {
+    color: 'teal',
+    description: 'The training is actively processing. In other words: the model is baking.',
+  },
+  [TrainingStatus.InReview]: {
+    color: 'green',
+    description:
+      'Training is completed, and your resulting model files are ready to be reviewed and published.',
+  },
+  [TrainingStatus.Approved]: {
+    color: 'green',
+    description: 'The training is complete AND the results were published to Civitai.',
+  },
+  [TrainingStatus.Failed]: {
+    color: 'red',
+    description:
+      'Something went wrong with the training request. Retry the training job if you see this error.',
+  },
+};
+
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
@@ -111,17 +143,6 @@ export default function UserTrainingModels() {
   };
 
   const hasTraining = items.length > 0;
-
-  const trainingStatusColors = {
-    [TrainingStatus.Pending]: 'yellow',
-    [TrainingStatus.Submitted]: 'blue',
-    [TrainingStatus.Processing]: 'teal',
-    [TrainingStatus.InReview]: 'green',
-    [TrainingStatus.Approved]: 'green',
-    [TrainingStatus.Failed]: 'red',
-  };
-
-  console.log(items);
 
   return (
     <Stack>
@@ -233,19 +254,32 @@ export default function UserTrainingModels() {
                       <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>
                     </td>
                     <td>
-                      <Badge
-                        color={
-                          thisModelVersion.trainingStatus
-                            ? trainingStatusColors[thisModelVersion.trainingStatus] || 'gray'
-                            : 'gray'
-                        }
-                      >
-                        {splitUppercase(
-                          thisModelVersion.trainingStatus === TrainingStatus.InReview
-                            ? 'Ready'
-                            : thisModelVersion.trainingStatus || 'N/A'
-                        )}
-                      </Badge>
+                      {thisModelVersion.trainingStatus ? (
+                        <HoverCard shadow="md" width={300} zIndex={100} withArrow>
+                          <HoverCard.Target>
+                            <Badge
+                              color={
+                                trainingStatusFields[thisModelVersion.trainingStatus]?.color ??
+                                'gray'
+                              }
+                            >
+                              {splitUppercase(
+                                thisModelVersion.trainingStatus === TrainingStatus.InReview
+                                  ? 'Ready'
+                                  : thisModelVersion.trainingStatus
+                              )}
+                            </Badge>
+                          </HoverCard.Target>
+                          <HoverCard.Dropdown>
+                            <Text>
+                              {trainingStatusFields[thisModelVersion.trainingStatus]?.description ??
+                                'N/A'}
+                            </Text>
+                          </HoverCard.Dropdown>
+                        </HoverCard>
+                      ) : (
+                        <Badge color="gray">N/A</Badge>
+                      )}
                     </td>
                     <td>{formatDate(model.createdAt)}</td>
                     <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
