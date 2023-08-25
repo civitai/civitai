@@ -76,11 +76,8 @@ export async function getUserBuzzTransactions({
   toUserIds.delete(0);
   fromUserIds.delete(0);
 
-  // Get user data
-  const [toUsers, fromUsers] = await Promise.all([
-    getUsers({ ids: [...toUserIds] }),
-    getUsers({ ids: [...fromUserIds] }),
-  ]);
+  const toUsers = toUserIds.size > 0 ? await getUsers({ ids: [...toUserIds] }) : [];
+  const fromUsers = fromUserIds.size > 0 ? await getUsers({ ids: [...fromUserIds] }) : [];
 
   return {
     cursor,
