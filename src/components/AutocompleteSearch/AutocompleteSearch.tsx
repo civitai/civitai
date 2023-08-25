@@ -40,6 +40,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import {
   applyUserPreferencesArticles,
+  applyUserPreferencesCollections,
   applyUserPreferencesImages,
   applyUserPreferencesModels,
   applyUserPreferencesUsers,
@@ -50,6 +51,8 @@ import { UserSearchIndexRecord } from '~/server/search-index/users.search-index'
 import { SearchPathToIndexMap } from '~/components/Search/useSearchState';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
+import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -118,7 +121,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   const features = useFeatureFlags();
 
   const targetIndex =
-    /\/(model|article|image|user|post)s?\/?/.exec(router.pathname)?.[1] || 'model';
+    /\/(model|article|image|user|post|collection)s?\/?/.exec(router.pathname)?.[1] || 'model';
   let indexName = `${targetIndex}s`;
 
   if (indexName === 'posts') {
@@ -175,6 +178,7 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
         | ArticleSearchIndexRecord
         | ImageSearchIndexRecord
         | UserSearchIndexRecord
+        | CollectionSearchIndexRecord
       )[] = [];
       const opts = {
         currentUserId: currentUser?.id,
@@ -203,6 +207,11 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
         filteredResults = applyUserPreferencesUsers({
           ...opts,
           items: hits as unknown as UserSearchIndexRecord[],
+        });
+      } else if (indexName === 'collections') {
+        filteredResults = applyUserPreferencesCollections({
+          ...opts,
+          items: hits as unknown as CollectionSearchIndexRecord[],
         });
       } else {
         filteredResults = [];
@@ -379,4 +388,5 @@ const IndexRenderItem: Record<string, React.FC> = {
   articles: ArticlesSearchItem,
   users: UserSearchItem,
   images: ImagesSearchItem,
+  collections: CollectionsSearchItem,
 };

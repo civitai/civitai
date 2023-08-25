@@ -113,7 +113,7 @@ export function CollectionHitList() {
               <IconCloudOff size={80} />
             </ThemeIcon>
             <Title order={1} inline>
-              No users found
+              No collections found
             </Title>
             <Text align="center">
               We have a bunch of collections, but it looks like we couldn&rsquo;t find any matching
