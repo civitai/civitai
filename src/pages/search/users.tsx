@@ -132,10 +132,23 @@ export function UserHitList() {
       </Box>
     );
 
+    const loading = status === 'loading' || status === 'stalled';
+
+    if (loading) {
+      return (
+        <Box>
+          <Center mt="md">
+            <Loader />
+          </Center>
+        </Box>
+      );
+    }
+
     return (
       <Box>
         <Center mt="md">
-          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+          {/* Just enough time to avoid blank random page */}
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
       </Box>
     );
