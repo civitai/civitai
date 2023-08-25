@@ -21,7 +21,7 @@ const collectionSearchParamsSchema = searchParamsSchema
     users: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
-    types: z
+    type: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
   })
@@ -43,7 +43,7 @@ export const collectionsInstantSearchRoutingParser: InstantSearchRoutingParser =
     const collections: CollectionSearchParams = (routeState[COLLECTIONS_SEARCH_INDEX] ||
       {}) as CollectionSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
-      types: collections.types,
+      type: collections.type,
       'user.username': collections.users,
     });
     const { query, sortBy } = collections;
@@ -57,7 +57,7 @@ export const collectionsInstantSearchRoutingParser: InstantSearchRoutingParser =
     };
   },
   stateToRoute: (uiState: UiState) => {
-    const types = uiState[COLLECTIONS_SEARCH_INDEX].refinementList?.['types'];
+    const type = uiState[COLLECTIONS_SEARCH_INDEX].refinementList?.['type'];
     const users = uiState[COLLECTIONS_SEARCH_INDEX].refinementList?.['user.username'];
     const sortBy =
       (uiState[COLLECTIONS_SEARCH_INDEX].sortBy as CollectionSearchParams['sortBy']) ||
@@ -66,7 +66,7 @@ export const collectionsInstantSearchRoutingParser: InstantSearchRoutingParser =
     const { query } = uiState[COLLECTIONS_SEARCH_INDEX];
 
     const state: CollectionSearchParams = {
-      types,
+      type,
       users,
       sortBy,
       query,
