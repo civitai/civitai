@@ -64,7 +64,7 @@ export function ModelWizard() {
     model &&
     model.modelVersions.some((version) =>
       model.uploadType === ModelUploadType.Trained
-        ? version.files.filter((f) => f.type === 'Model').length > 0
+        ? version.files.filter((f) => f.type === 'Model' || f.type === 'Pruned Model').length > 0
         : version.files.length > 0
     );
 

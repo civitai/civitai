@@ -86,7 +86,6 @@ const EpochRow = ({
           {epoch.sample_images && epoch.sample_images.length > 0 ? (
             epoch.sample_images.map((imgData, index) => (
               <Stack key={index} style={{ justifyContent: 'flex-start' }}>
-                {/*<div className={classes.imgOverlay}>*/}
                 <Image
                   alt={`Sample image #${index}`}
                   src={imgData.image_url}
@@ -101,7 +100,6 @@ const EpochRow = ({
                     },
                   }}
                 />
-                {/*</div>*/}
                 <Textarea autosize minRows={1} maxRows={4} value={imgData.prompt} readOnly />
               </Stack>
             ))
@@ -275,11 +273,9 @@ export default function TrainingSelectFile({
     return <NotFound />;
   }
 
-  const epochs = modelFile.metadata.trainingResults?.epochs.sort(function (a, b) {
-    const x = a.epoch_number;
-    const y = b.epoch_number;
-    return x > y ? -1 : x < y ? 1 : 0;
-  });
+  const epochs = [...(modelFile.metadata.trainingResults?.epochs || [])].sort(
+    (a, b) => b.epoch_number - a.epoch_number
+  );
 
   return (
     <Stack>

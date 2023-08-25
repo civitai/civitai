@@ -1,10 +1,4 @@
 import {
-  GetAssociatedResourcesInput,
-  GetModelsWithCategoriesSchema,
-  SetAssociatedResourcesInput,
-  SetModelsCategoryInput,
-} from './../schema/model.schema';
-import {
   CommercialUse,
   MetricTimeframe,
   ModelHashType,
@@ -38,9 +32,17 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { modelsSearchIndex } from '~/server/search-index';
+import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getCategoryTags } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
@@ -53,14 +55,12 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { getCategoryTags } from '~/server/services/system-cache';
-import { associatedResourceSelect } from '~/server/selectors/model.selector';
-import { modelsSearchIndex } from '~/server/search-index';
 import {
-  getAvailableCollectionItemsFilterForUser,
-  getUserCollectionPermissionsById,
-} from '~/server/services/collection.service';
-import { modelFileSelect } from '~/server/selectors/modelFile.selector';
+  GetAssociatedResourcesInput,
+  GetModelsWithCategoriesSchema,
+  SetAssociatedResourcesInput,
+  SetModelsCategoryInput,
+} from './../schema/model.schema';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -989,8 +989,7 @@ export const getAllModelsWithCategories = async ({
 }: GetModelsWithCategoriesSchema) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
-    // TODO [bw]: do we need ModelStatus.Training in here too?
-    status: { in: [ModelStatus.Published, ModelStatus.Draft] },
+    status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
     deletedAt: null,
     userId,
   };

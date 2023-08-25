@@ -27,7 +27,7 @@ import { useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { UploadType } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
@@ -174,9 +174,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
 
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
-        if (
-          ['application/zip', 'application/x-zip-compressed', 'multipart/x-zip'].includes(f.type)
-        ) {
+        if (ZIP_MIME_TYPE.includes(f.type as never)) {
           return await handleZip(f);
         } else {
           return { name: f.name, type: f.type, url: URL.createObjectURL(f), caption: '' };
@@ -363,12 +361,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
             max={1000}
             // loading={isLoading}
             count={100}
-            accept={[
-              ...IMAGE_MIME_TYPE,
-              'application/zip',
-              'application/x-zip-compressed',
-              'multipart/x-zip',
-            ]}
+            accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
           />
         </div>
 

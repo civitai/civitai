@@ -1,7 +1,7 @@
 import { createStyles, Group, Text, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, MIME_TYPES } from '~/server/common/mime-types';
 
 export function ImageDropzone({
   disabled: initialDisabled,
@@ -22,7 +22,7 @@ export function ImageDropzone({
   // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
   // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
   const fileExtensions = accept
-    .filter((t) => t !== 'application/x-zip-compressed' && t !== 'multipart/x-zip')
+    .filter((t) => t !== MIME_TYPES.xZipCompressed && t !== MIME_TYPES.xZipMultipart)
     .map((type) => type.replace(/.*\//, '.'));
 
   const handleDrop = (files: File[]) => {

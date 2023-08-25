@@ -12,6 +12,34 @@ import { trpc } from '~/utils/trpc';
 
 type tmTypes = (typeof constants.trainingModelTypes)[number];
 
+const useStyles = createStyles((theme) => ({
+  centerRadio: {
+    '& .mantine-Group-root': {
+      justifyContent: 'space-between',
+      alignItems: 'stretch',
+      [theme.fn.smallerThan('sm')]: {
+        justifyContent: 'center',
+      },
+    },
+    '& .mantine-Radio-inner': {
+      display: 'none',
+    },
+    '& .mantine-Radio-label': {
+      padding: theme.spacing.md,
+    },
+    '& .mantine-Radio-root': {
+      borderRadius: theme.radius.md,
+      // TODO [bw] check for dark theme here
+      '&:hover': {
+        backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
+      },
+      '&[data-checked]': {
+        backgroundColor: theme.fn.rgba(theme.colors.blue[9], 0.2),
+      },
+    },
+  },
+}));
+
 const RadioImg = ({
   value,
   src,
@@ -48,34 +76,6 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
   const queryUtils = trpc.useContext();
   const [trainingModelType, setTrainingModelType] = useState<tmTypes | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
-
-  const useStyles = createStyles((theme) => ({
-    centerRadio: {
-      '& .mantine-Group-root': {
-        justifyContent: 'space-between',
-        alignItems: 'stretch',
-        [theme.fn.smallerThan('sm')]: {
-          justifyContent: 'center',
-        },
-      },
-      '& .mantine-Radio-inner': {
-        display: 'none',
-      },
-      '& .mantine-Radio-label': {
-        padding: theme.spacing.md,
-      },
-      '& .mantine-Radio-root': {
-        borderRadius: theme.radius.md,
-        // TODO [bw] check for dark theme here
-        '&:hover': {
-          backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
-        },
-        '&[data-checked]': {
-          backgroundColor: theme.fn.rgba(theme.colors.blue[9], 0.2),
-        },
-      },
-    },
-  }));
 
   const { classes } = useStyles();
 
