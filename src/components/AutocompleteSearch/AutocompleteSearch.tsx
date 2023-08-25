@@ -49,6 +49,7 @@ import { ImageSearchIndexRecord } from '~/server/search-index/images.search-inde
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { SearchPathToIndexMap } from '~/components/Search/useSearchState';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -106,7 +107,9 @@ const useStyles = createStyles((theme) => ({
     },
   },
   dropdown: {
-    marginTop: '-7px',
+    [theme.fn.smallerThan('sm')]: {
+      marginTop: '-7px',
+    },
   },
 }));
 
@@ -143,6 +146,7 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
   ({ onClear, onSubmit, className, searchBoxProps, indexName, ...autocompleteProps }, ref) => {
     const { classes } = useStyles();
     const router = useRouter();
+    const isMobile = useIsMobile();
     const inputRef = useRef<HTMLInputElement>(null);
 
     const { query, refine: setQuery } = useSearchBox(searchBoxProps);
@@ -360,7 +364,7 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
           // prevent default filtering behavior
           filter={() => true}
           clearable={query.length > 0}
-          maxDropdownHeight={400}
+          maxDropdownHeight={isMobile ? 450 : undefined}
           {...autocompleteProps}
         />
       </>

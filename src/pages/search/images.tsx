@@ -157,17 +157,7 @@ function ImagesHitList() {
         }}
       >
         {images.map((hit) => (
-          <Box
-            key={hit.id}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-
-              router.push(`/images/${hit.id}`);
-            }}
-          >
-            <UnroutedImageCard data={hit} />
-          </Box>
+          <ImageCard key={hit.id} data={hit} />
         ))}
       </div>
       {hits.length > 0 && (
