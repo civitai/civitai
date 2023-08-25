@@ -9,6 +9,7 @@ import {
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
   GetAllCollectionsInfiniteSchema,
+  UpdateCollectionCoverImageInput,
 } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
@@ -470,8 +471,19 @@ export const upsertCollection = async ({
 }: {
   input: UpsertCollectionInput & { userId: number };
 }) => {
-  const { userId, id, name, description, image, read, write, type, nsfw, ...collectionItem } =
-    input;
+  const {
+    userId,
+    id,
+    name,
+    description,
+    image,
+    imageId,
+    read,
+    write,
+    type,
+    nsfw,
+    ...collectionItem
+  } = input;
 
   if (id) {
     const updated = await dbWrite.collection.update({
@@ -483,22 +495,23 @@ export const upsertCollection = async ({
         nsfw,
         read,
         write,
-        image:
-          image !== undefined
-            ? image === null
-              ? { disconnect: true }
-              : {
-                  connectOrCreate: {
-                    where: { id: image.id ?? -1 },
-                    create: {
-                      ...image,
-                      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                      userId,
-                      resources: undefined,
-                    },
+        image: imageId
+          ? { connect: { id: imageId } }
+          : image !== undefined
+          ? image === null
+            ? { disconnect: true }
+            : {
+                connectOrCreate: {
+                  where: { id: image.id ?? -1 },
+                  create: {
+                    ...image,
+                    meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                    userId,
+                    resources: undefined,
                   },
-                }
-            : undefined,
+                },
+              }
+          : undefined,
       },
     });
     if (!updated) throw throwNotFoundError(`No collection with id ${id}`);
@@ -550,6 +563,35 @@ export const upsertCollection = async ({
   });
 
   return collection;
+};
+
+export const updateCollectionCoverImage = async ({
+  input,
+}: {
+  input: UpdateCollectionCoverImageInput & { userId: number; isModerator?: boolean };
+}) => {
+  const { id, imageId, userId, isModerator } = input;
+  const permission = await getUserCollectionPermissionsById({
+    id,
+    userId,
+    isModerator,
+  });
+
+  if (!permission.manage) {
+    return;
+  }
+
+  const updated = await dbWrite.collection.update({
+    select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
+    where: { id },
+    data: {
+      image: { connect: { id: imageId } },
+    },
+  });
+
+  if (!updated) throw throwNotFoundError(`No collection with id ${id}`);
+
+  return updated;
 };
 
 interface ModelCollectionItem {
