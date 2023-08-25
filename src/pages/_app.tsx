@@ -52,6 +52,7 @@ import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvide
 import { env } from '~/env/client.mjs';
 import posthog from 'posthog-js';
 import { PostHogProvider } from 'posthog-js/react';
+import { SignalProvider } from '~/components/Signals/SignalsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -158,29 +159,31 @@ function MyApp(props: CustomAppProps) {
       <RegisterCatchNavigation />
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
-        <CivitaiSessionProvider>
-          <PostHogProvider client={posthog}>
-            <CookiesProvider value={cookies}>
-              <FiltersProvider value={filters}>
-                <HiddenPreferencesProvider>
-                  <FeatureFlagsProvider flags={flags}>
-                    <CivitaiLinkProvider>
-                      <CustomModalsProvider>
-                        <NotificationsProvider>
-                          <FreezeProvider>
-                            <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                          </FreezeProvider>
-                          <GenerationPanel />
-                          <RoutedContextProvider2 />
-                        </NotificationsProvider>
-                      </CustomModalsProvider>
-                    </CivitaiLinkProvider>
-                  </FeatureFlagsProvider>
-                </HiddenPreferencesProvider>
-              </FiltersProvider>
-            </CookiesProvider>
-          </PostHogProvider>
-        </CivitaiSessionProvider>
+        <FeatureFlagsProvider flags={flags}>
+          <SignalProvider>
+            <CivitaiSessionProvider>
+              <PostHogProvider client={posthog}>
+                <CookiesProvider value={cookies}>
+                  <FiltersProvider value={filters}>
+                    <HiddenPreferencesProvider>
+                      <CivitaiLinkProvider>
+                        <CustomModalsProvider>
+                          <NotificationsProvider>
+                            <FreezeProvider>
+                              <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                            </FreezeProvider>
+                            <GenerationPanel />
+                            <RoutedContextProvider2 />
+                          </NotificationsProvider>
+                        </CustomModalsProvider>
+                      </CivitaiLinkProvider>
+                    </HiddenPreferencesProvider>
+                  </FiltersProvider>
+                </CookiesProvider>
+              </PostHogProvider>
+            </CivitaiSessionProvider>
+          </SignalProvider>
+        </FeatureFlagsProvider>
       </SessionProvider>
     </>
   );
@@ -226,6 +229,20 @@ function MyApp(props: CustomAppProps) {
                   label: { cursor: 'pointer' },
                 },
               },
+            },
+            colors: {
+              accent: [
+                '#F4F0EA',
+                '#E8DBCA',
+                '#E2C8A9',
+                '#E3B785',
+                '#EBA95C',
+                '#FC9C2D',
+                '#E48C27',
+                '#C37E2D',
+                '#A27036',
+                '#88643B',
+              ],
             },
           }}
           withGlobalStyles

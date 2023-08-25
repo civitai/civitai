@@ -1,5 +1,6 @@
 import { showNotification } from '@mantine/notifications';
-import { IconCheck, IconX } from '@tabler/icons-react';
+import { IconBolt, IconCheck, IconX } from '@tabler/icons-react';
+import { Group, ThemeIcon } from '@mantine/core';
 
 export function showErrorNotification({
   error,
@@ -26,6 +27,27 @@ export function showSuccessNotification({ message, title }: { message: string; t
     icon: <IconCheck size={18} />,
     color: 'teal',
     message,
+    title,
+  });
+}
+export function showBuzzNotification({
+  message,
+  title,
+}: {
+  message: React.ReactNode;
+  title?: string;
+}) {
+  showNotification({
+    color: 'yellow.4',
+    message: (
+      <Group spacing={4}>
+        {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
+        <ThemeIcon color="yellow.4" variant="transparent">
+          <IconBolt size={18} fill="currentColor" />
+        </ThemeIcon>
+        {message}
+      </Group>
+    ),
     title,
   });
 }

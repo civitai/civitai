@@ -9,6 +9,9 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
 import { playfab } from '~/server/playfab/client';
+import { TransactionType } from '../schema/buzz.schema';
+import { isDefined } from '~/utils/type-guards';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -200,6 +203,29 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
+export const createBuzzSession = async ({
+  customerId,
+  user,
+  returnUrl,
+  priceId,
+}: Schema.CreateBuzzSessionInput & { customerId?: string; user: Schema.CreateCustomerInput }) => {
+  const stripe = await getServerStripe();
+
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  const session = await stripe.checkout.sessions.create({
+    customer: customerId,
+    cancel_url: returnUrl,
+    line_items: [{ price: priceId, quantity: 1 }],
+    mode: 'payment',
+    success_url: returnUrl,
+  });
+
+  return { sessionId: session.id, url: session.url };
+};
+
 export const upsertSubscription = async (
   subscription: Stripe.Subscription,
   customerId: string,
@@ -334,16 +360,62 @@ export const manageCheckoutPayment = async (sessionId: string, customerId: strin
     expand: ['line_items'],
   });
 
-  const purchases = line_items?.data.map((data) => ({
-    customerId,
-    priceId: data.price?.id,
-    productId: data.price?.product as string | undefined,
-    status: payment_status,
-  }));
+  const purchases =
+    line_items?.data.map((data) => ({
+      customerId,
+      priceId: data.price?.id,
+      productId: data.price?.product as string | undefined,
+      status: payment_status,
+    })) ?? [];
 
-  if (purchases) {
+  if (purchases.length > 0) {
     await dbWrite.purchase.createMany({ data: purchases });
   }
+
+  await creditBuzzPurchases({ customerId, items: line_items?.data ?? [] });
+};
+
+const creditBuzzPurchases = async ({
+  customerId,
+  items,
+}: {
+  customerId: string;
+  items: Stripe.LineItem[];
+}) => {
+  const user = await dbRead.user.findUnique({ where: { customerId } });
+  // Early return if user is not found
+  if (!user) {
+    // TODO.buzz: Confirm what should happen if user is not found
+    log(`Could not find user with customerId: ${customerId}`);
+    return;
+  }
+
+  // Check if there were buzz purchases to credit to the user
+  const buzzPurchases =
+    items
+      .filter(({ price }) => !!price?.metadata.buzzAmount)
+      .map(({ price }) => {
+        const meta = Schema.buzzPriceMetadataSchema.safeParse(price?.metadata);
+        if (!meta.success) return null;
+
+        return {
+          amount: meta.data.buzzAmount,
+          type: TransactionType.Purchase,
+          details: { stripeCustomerId: customerId, stripePriceId: price?.id },
+        };
+      })
+      .filter(isDefined) ?? [];
+  if (!buzzPurchases.length) return;
+
+  return await Promise.all(
+    buzzPurchases.map((purchase) =>
+      createBuzzTransaction({
+        ...purchase,
+        fromAccountId: 0,
+        toAccountId: user.id,
+      })
+    )
+  );
 };
 
 export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
@@ -376,4 +448,36 @@ export const cancelSubscription = async ({
   if (!subscriptionId) throw new Error('No subscription found');
   const stripe = await getServerStripe();
   await stripe.subscriptions.del(subscriptionId);
+};
+
+export const getBuzzPackages = async () => {
+  const [buzzProduct] = await dbRead.product.findMany({
+    where: { active: true, metadata: { path: ['tier'], equals: 'buzz' } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      defaultPriceId: true,
+      prices: {
+        where: { active: true },
+        orderBy: { unitAmount: { sort: 'asc', nulls: 'last' } },
+        select: {
+          id: true,
+          description: true,
+          unitAmount: true,
+          currency: true,
+          metadata: true,
+        },
+      },
+    },
+  });
+
+  return buzzProduct.prices.map(({ metadata, ...price }) => {
+    const meta = Schema.buzzPriceMetadataSchema.safeParse(metadata);
+
+    return {
+      ...price,
+      buzzAmount: meta.success ? meta.data.buzzAmount : null,
+    };
+  });
 };

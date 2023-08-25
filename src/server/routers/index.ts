@@ -6,6 +6,7 @@ import { answerRouter } from './answer.router';
 import { apiKeyRouter } from './apiKey.router';
 import { articleRouter } from './article.router';
 import { authRouter } from './auth.router';
+import { buzzRouter } from './buzz.router';
 import { collectionRouter } from '~/server/routers/collection.router';
 import { commentRouter } from './comment.router';
 import { commentv2Router } from './commentv2.router';
@@ -25,6 +26,7 @@ import { questionRouter } from './question.router';
 import { reactionRouter } from './reaction.router';
 import { reportRouter } from './report.router';
 import { resourceReviewRouter } from './resourceReview.router';
+import { signalsRouter } from './signals.router';
 import { stripeRouter } from './stripe.router';
 import { tagRouter } from './tag.router';
 import { trackRouter } from './track.router';
@@ -42,6 +44,7 @@ export const appRouter = router({
   apiKey: apiKeyRouter,
   article: articleRouter,
   auth: authRouter,
+  buzz: buzzRouter,
   collection: collectionRouter,
   comment: commentRouter,
   commentv2: commentv2Router,
@@ -59,6 +62,7 @@ export const appRouter = router({
   reaction: reactionRouter,
   report: reportRouter,
   resourceReview: resourceReviewRouter,
+  signals: signalsRouter,
   stripe: stripeRouter,
   tag: tagRouter,
   track: trackRouter,

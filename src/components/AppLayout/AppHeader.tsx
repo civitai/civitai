@@ -6,13 +6,17 @@ import {
   Burger,
   Button,
   createStyles,
+  Divider,
   Grid,
   Group,
+  GroupProps,
   Header,
+  MantineSize,
   Menu,
   Paper,
   ScrollArea,
   Switch,
+  Text,
   Transition,
   UnstyledButton,
   useMantineColorScheme,
@@ -22,6 +26,7 @@ import { NextLink } from '@mantine/next';
 import {
   IconBookmark,
   IconCircleDashed,
+  IconClockBolt,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -43,7 +48,7 @@ import {
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { IconPhotoUp } from '@tabler/icons-react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
@@ -62,6 +67,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
+import { UserBuzz } from '../User/UserBuzz';
+import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 
 const HEADER_HEIGHT = 70;
 
@@ -157,7 +164,7 @@ const useStyles = createStyles((theme) => ({
 
   user: {
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black,
-    borderRadius: theme.radius.sm,
+    borderRadius: theme.radius.xl,
     transition: 'background-color 100ms ease',
 
     '&:hover': {
@@ -301,6 +308,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
       {
+        href: '',
+        label: <Divider />,
+      },
+      {
         href: '/leaderboard/overall',
         label: (
           <Group align="center" spacing="xs">
@@ -340,6 +351,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
       {
+        href: '/user/transactions',
+        visible: !!features.buzz,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClockBolt stroke={1.5} />
+            Buzz transactions
+          </Group>
+        ),
+      },
+      {
         href: `/login?returnUrl=${router.asPath}`,
         visible: !currentUser,
         label: (
@@ -369,10 +390,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const burgerMenuItems = useMemo(
     () =>
       mainActions
-        .concat(links)
+        .concat([{ href: '', label: <Divider /> }, ...links])
         .filter(({ visible }) => visible !== false)
-        .map((link) => {
-          const item = (
+        .map((link, index) => {
+          const item = link.href ? (
             <Link key={link.href} href={link.href} passHref>
               <Anchor
                 variant="text"
@@ -382,6 +403,8 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 {link.label}
               </Anchor>
             </Link>
+          ) : (
+            <Fragment key={`separator-${index}`}>{link.label}</Fragment>
           );
 
           return link.redirectReason ? (
@@ -398,11 +421,15 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
     () =>
       links
         .filter(({ visible }) => visible !== false)
-        .map((link) => (
-          <Menu.Item key={link.href} component={NextLink} href={link.href}>
-            {link.label}
-          </Menu.Item>
-        )),
+        .map((link, index) =>
+          link.href ? (
+            <Menu.Item key={link.href} component={NextLink} href={link.href}>
+              {link.label}
+            </Menu.Item>
+          ) : (
+            <Fragment key={`separator-${index}`}>{link.label}</Fragment>
+          )
+        ),
     [links]
   );
   const [showSearch, setShowSearch] = useState(false);
@@ -413,6 +440,63 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       searchRef.current.focus(); // Automatically focus input on mount
     }
   }, [showSearch]);
+
+  const BuzzMenuItem = useCallback(
+    ({
+      textSize = 'xs',
+      withAbbreviation = true,
+      ...groupProps
+    }: GroupProps & {
+      textSize?: MantineSize;
+      withAbbreviation?: boolean;
+    }) => {
+      if (!features.buzz) return null;
+      if (!currentUser) return null;
+
+      return (
+        <Group
+          p="sm"
+          position="apart"
+          mx={-4}
+          mt={-4}
+          sx={(theme) => ({
+            backgroundColor:
+              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
+          })}
+          noWrap
+          {...groupProps}
+        >
+          <Group spacing={4} noWrap>
+            <UserBuzz
+              iconSize={16}
+              user={currentUser}
+              textSize={textSize}
+              withAbbreviation={withAbbreviation}
+              withTooltip
+            />
+          </Group>
+          {/* TODO.buzz: Replace this with button below when buying is available */}
+          <Paper radius="xl" py={4} px={12}>
+            <Text size="xs" weight={600}>
+              Available Buzz
+            </Text>
+          </Paper>
+          {/* TODO.buzz: Once buying is available, uncomment this block */}
+          {/* <Button
+            variant="white"
+            radius="xl"
+            size={buttonSize}
+            px={12}
+            onClick={() => openBuyBuzzModal({})}
+            compact
+          >
+            Buy More Buzz
+          </Button> */}
+        </Group>
+      );
+    },
+    [currentUser, features.buzz]
+  );
 
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
@@ -438,12 +522,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 <Menu.Target>
                   <ActionIcon
                     className={classes.links}
-                    size="md"
+                    size={30}
                     variant="filled"
                     color="green"
-                    radius="xl"
+                    radius={10}
+                    sx={(theme) => ({
+                      backgroundColor: '#529C4F',
+                      color: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
+                    })}
                   >
-                    <IconPlus size={24} stroke={2.5} />
+                    <IconPlus size={25} stroke={2.5} />
                   </ActionIcon>
                   {/* <Button className={classes.links} variant="filled" color="green" size="xs" pl={5}>
                     <IconPlus size={16} /> New
@@ -493,7 +581,18 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           )}
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
-          <Group spacing="xs" align="center">
+          <Group spacing="md" align="center" noWrap>
+            <Group spacing="sm" noWrap>
+              {currentUser && (
+                <>
+                  <UploadTracker />
+                  <CivitaiLinkPopover />
+                </>
+              )}
+              {currentUser?.showNsfw && <BrowsingModeIcon />}
+              {currentUser && <NotificationBell />}
+              {currentUser?.isModerator && <ModerationNav />}
+            </Group>
             {!currentUser ? (
               <Button
                 component={NextLink}
@@ -502,16 +601,9 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               >
                 Sign In
               </Button>
-            ) : null}
-            {currentUser && (
-              <>
-                <UploadTracker />
-                <CivitaiLinkPopover />
-              </>
+            ) : (
+              <Divider orientation="vertical" />
             )}
-            {currentUser?.showNsfw && <BrowsingModeIcon />}
-            {currentUser && <NotificationBell />}
-            {currentUser?.isModerator && <ModerationNav />}
             <Menu
               width={260}
               opened={userMenuOpened}
@@ -524,11 +616,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                   className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
                   onClick={() => setUserMenuOpened(true)}
                 >
-                  <UserAvatar user={currentUser} avatarProps={{ size: 'md' }} />
+                  <Group spacing={8} noWrap>
+                    <UserAvatar user={currentUser} size="md" />
+                    {features.buzz && <UserBuzz user={currentUser} />}
+                  </Group>
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
+                <BuzzMenuItem />
                 {userMenuItems}
+                <Divider />
                 <Menu.Item
                   closeMenuOnClick={false}
                   icon={<IconPalette stroke={1.5} />}
@@ -590,6 +687,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 >
                   {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
                   <ScrollArea.Autosize maxHeight={'calc(100vh - 269px)'}>
+                    <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
                     {burgerMenuItems}
                   </ScrollArea.Autosize>
                   {currentUser && (

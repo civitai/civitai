@@ -46,6 +46,7 @@ export const InputMultiSelect = withWatcher(withController(MultiSelectWrapper));
 export const InputSegmentedControl = withWatcher(withController(SegmentedControl));
 export const InputRadioGroup = withWatcher(withController(Radio.Group));
 export const InputCheckboxGroup = withWatcher(withController(Checkbox.Group));
+export const InputChipGroup = withWatcher(withController(Chip.Group));
 export const InputPasswordInput = withWatcher(withController(PasswordInput));
 export const InputJson = withWatcher(withController(JsonInput));
 export const InputColorPicker = withWatcher(withController(ColorPicker));

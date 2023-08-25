@@ -9,6 +9,7 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
+import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 
 export function CreatorCard({ user }: Props) {
   const { data: creator } = trpc.user.getCreator.useQuery(
@@ -37,7 +38,7 @@ export function CreatorCard({ user }: Props) {
     <Card p="xs" withBorder>
       <Card.Section py="xs" inheritPadding>
         <Stack spacing="xs">
-          <Group align="center" position="apart">
+          <Group align="center" position="apart" noWrap>
             <UserAvatar
               size="sm"
               avatarProps={{ size: 32 }}
@@ -46,7 +47,10 @@ export function CreatorCard({ user }: Props) {
               withUsername
               linkToProfile
             />
-            <FollowUserButton userId={creator.id} size="xs" compact />
+            <Group spacing={8} noWrap>
+              <TipBuzzButton toUserId={creator.id} size="xs" compact />
+              <FollowUserButton userId={creator.id} size="xs" compact />
+            </Group>
           </Group>
           <Group spacing={8}>
             <RankBadge size="md" rank={creator.rank} />
