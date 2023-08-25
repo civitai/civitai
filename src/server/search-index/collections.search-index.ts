@@ -24,12 +24,11 @@ import {
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
-import { getCollectionItemsByCollectionId } from '~/server/services/collection.service';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 
-const READ_BATCH_SIZE = 10000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
+const READ_BATCH_SIZE = 250; // 10 items per collection are fetched for images. Careful with this number
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = COLLECTIONS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
@@ -97,6 +96,23 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 };
 
 export type CollectionSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
+
+type ImageProps = {
+  type: MediaType;
+  id: number;
+  createdAt: Date;
+  name: string | null;
+  url: string;
+  hash: string | null;
+  height: number | null;
+  width: number | null;
+  nsfw: NsfwLevel;
+  postId: number | null;
+  index: number | null;
+  scannedAt: Date | null;
+  mimeType: string | null;
+} | null;
+
 type CollectionForSearchIndex = {
   id: number;
   name: string;
@@ -124,26 +140,7 @@ type CollectionForSearchIndex = {
     name: string;
     source: CosmeticSource;
   }[];
-  image: {
-    type: MediaType;
-    id: number;
-    generationProcess: ImageGenerationProcess | null;
-    createdAt: Date;
-    name: string | null;
-    url: string;
-    meta: Prisma.JsonValue;
-    hash: string | null;
-    height: number | null;
-    width: number | null;
-    metadata: Prisma.JsonValue;
-    nsfw: NsfwLevel;
-    postId: number | null;
-    needsReview: string | null;
-    hideMeta: boolean;
-    index: number | null;
-    scannedAt: Date | null;
-    mimeType: string | null;
-  } | null;
+  image: ImageProps;
 };
 
 const onFetchItemsToIndex = async ({
@@ -176,6 +173,24 @@ const onFetchItemsToIndex = async ({
   if (whereOr) {
     WHERE.push(Prisma.sql`(${Prisma.join(whereOr, ' OR ')})`);
   }
+
+  const imageSql = Prisma.sql`
+    jsonb_build_object(
+        'id', i."id",
+        'index', i."index",
+        'postId', i."postId",
+        'name', i."name",
+        'url', i."url",
+        'nsfw', i."nsfw",
+        'width', i."width",
+        'height', i."height",
+        'hash', i."hash",
+        'createdAt', i."createdAt",
+        'mimeType', i."mimeType",
+        'scannedAt', i."scannedAt",
+        'type', i."type"
+      ) image
+  `;
 
   // When metrics are ready use this one :D
   const collections = await db.$queryRaw<CollectionForSearchIndex[]>`
@@ -225,25 +240,7 @@ const onFetchItemsToIndex = async ({
   ), images AS MATERIALIZED (
     SELECT
       i.id,
-      jsonb_build_object(
-        'id', i."id",
-        'index', i."index",
-        'postId', i."postId",
-        'name', i."name",
-        'url', i."url",
-        'nsfw', i."nsfw",
-        'width', i."width",
-        'height', i."height",
-        'hash', i."hash",
-        'meta', i."meta",
-        'hideMeta', i."hideMeta",
-        'generationProcess', i."generationProcess",
-        'createdAt', i."createdAt",
-        'mimeType', i."mimeType",
-        'scannedAt', i."scannedAt",
-        'type', i."type",
-        'metadata', i."metadata"
-      ) image
+      ${imageSql}
     FROM "Image" i
     WHERE i.id IN (SELECT "imageId" FROM target)
     GROUP BY i.id
@@ -281,80 +278,93 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const collectionItemImages = await Promise.all(
-    collections.map(async (c) => {
-      const images = [];
-      const srcs = [];
-      if (c.image) {
-        images.push(c.image);
-      } else {
-        const items = await getCollectionItemsByCollectionId({
-          input: {
-            collectionId: c.id,
-            limit: 10,
-          },
-        });
+  const itemImages = await db.$queryRaw<
+    {
+      id: number;
+      image: ImageProps | null;
+      src: string | null;
+    }[]
+  >`
+  WITH target AS MATERIALIZED (
+      SELECT *, 
+      ROW_NUMBER() OVER (
+          PARTITION BY ci."collectionId"
+          ORDER BY ci.id
+        ) AS idx
+      FROM "CollectionItem" ci
+      WHERE ci.status = 'ACCEPTED'
+      AND ci."collectionId" IN (${Prisma.join(collections.map((c) => c.id))})
+    ), imageItemImage AS MATERIALIZED (
+      SELECT
+        i.id,
+        ${imageSql}
+      FROM "Image" i
+      WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
+    ), postItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            i."postId" id,
+            ${imageSql},
+            ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
+          FROM "Image" i
+          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL) 
+      ) t
+      WHERE t.rn = 1
+    ),modelItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            m.id,
+            ${imageSql},
+            ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
+          FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
+          WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
+              AND i."scannedAt" IS NOT NULL
+              AND i."ingestion" = 'Scanned'
+      ) t
+      WHERE t.rn = 1
+    ), articleItemImage as MATERIALIZED (
+        SELECT a.id, a.cover image FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target)
+    )
+    SELECT
+        target."collectionId" id,
+        COALESCE(
+                (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId" LIMIT 1),
+                (SELECT image FROM postItemImage pii WHERE pii.id = target."postId" LIMIT 1),
+                (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId" LIMIT 1),
+                NULL
+        ) image,
+        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId" LIMIT 1) src
+    FROM target WHERE idx <= 10
+  `;
 
-        const itemImages = uniqBy(
-          items
-            .map((item) => {
-              switch (item.type) {
-                case 'model':
-                  return item.data.images[0];
-                case 'post':
-                  return item.data.image;
-                case 'image':
-                  return item.data;
-                case 'article':
-                default:
-                  return null;
-              }
-            })
-            .filter(isDefined),
-          'id'
-        );
-
-        const itemsSrcs = items
-          .map((item) => {
-            switch (item.type) {
-              case 'article':
-                return item.data.cover;
-              case 'model':
-              case 'post':
-              case 'image':
-              default:
-                return null;
-            }
-          })
-          .filter(isDefined);
-
-        images.push(...itemImages);
-        srcs.push(...itemsSrcs);
-      }
-
-      return {
-        id: c.id,
-        images,
-        srcs,
-      };
-    })
+  console.log(
+    `onFetchItemsToIndex :: images fetching complete on ${indexName} range:`,
+    offset,
+    offset + READ_BATCH_SIZE - 1,
+    'filters:',
+    whereOr
   );
 
-  const indexReadyRecords = collections.map((collection) => {
-    const cosmetics = collection.cosmetics ?? [];
-    const collectionImages = collectionItemImages.find((ci) => ci.id === collection.id);
+  const indexReadyRecords = collections.map(({ cosmetics, user, ...collection }) => {
+    const collectionImages = itemImages.filter((i) => i.id === collection.id);
 
     return {
       ...collection,
       metrics: collection.metrics || {},
       user: {
-        ...collection.user,
-        cosmetics: cosmetics.map((cosmetic) => ({ cosmetic })),
+        ...user,
+        cosmetics: (cosmetics ?? []).map((cosmetic) => ({ cosmetic })),
       },
-      images: collectionImages?.images ?? [],
-      srcs: collectionImages?.srcs ?? [],
+      images: uniqBy(collectionImages.map((i) => i.image).filter(isDefined), 'id') ?? [],
+      srcs: [...new Set(collectionImages.map((i) => i.src).filter(isDefined) ?? [])],
     };
   });
+
+  // console.log(indexReadyRecords);
 
   return indexReadyRecords;
 };
