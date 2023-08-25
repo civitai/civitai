@@ -85,7 +85,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 export const SearchHeader = () => {
-  const { uiState } = useInstantSearch();
+  const { uiState, status } = useInstantSearch();
   const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
   const [index] = Object.keys(uiState);
   const { query } = useSearchBox();
@@ -219,7 +219,13 @@ export const SearchHeader = () => {
     },
   ].filter(isDefined);
 
+  const loading = status === 'loading' || status === 'stalled';
+
   const titleString: React.ReactElement | string = (() => {
+    if (loading) {
+      return 'Searching...';
+    }
+
     if (!query) {
       return `Searching for ${IndexToLabel[index as keyof typeof IndexToLabel]}`;
     }
