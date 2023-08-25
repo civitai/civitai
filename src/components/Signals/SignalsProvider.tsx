@@ -43,7 +43,25 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
   }, [connected]);
 };
 
+function FakeSignalProvider({ children }: { children: React.ReactNode }) {
+  const connection = useRef<HubConnection | null>(null);
+  const [connected, setConnected] = useState(false);
+  return (
+    <SignalContext.Provider
+      value={{
+        connected,
+        connection,
+      }}
+    >
+      <SignalNotifications />
+      {children}
+    </SignalContext.Provider>
+  );
+}
+
 export function SignalProvider({ children }: { children: React.ReactNode }) {
+  return FakeSignalProvider({ children });
+
   const session = useSession();
   const [connected, setConnected] = useState(false);
   const { data } = trpc.signals.getAccessToken.useQuery(undefined, {
