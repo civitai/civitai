@@ -97,6 +97,7 @@ declare global {
     shareDataset?: boolean;
     numImages?: number;
     numCaptions?: number;
+    selectedEpochUrl?: string;
     trainingResults?: TrainingResults;
   };
 

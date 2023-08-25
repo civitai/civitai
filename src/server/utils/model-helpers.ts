@@ -21,6 +21,7 @@ const preferenceWeight: Record<FileMetaKey, number> = {
   shareDataset: 0,
   numImages: 0,
   numCaptions: 0,
+  selectedEpochUrl: 0,
   trainingResults: 0,
 };
 

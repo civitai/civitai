@@ -17,10 +17,11 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
+import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { ModelFileVisibility } from '@prisma/client';
-import { IconCheck, IconTrash, IconX } from '@tabler/icons-react'; // import { saveAs } from 'file-saver';
+import { IconAlertTriangle, IconCheck, IconTrash, IconX } from '@tabler/icons-react'; // import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
@@ -218,106 +219,126 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
     },
   });
 
-  const handleNext = async () => {
-    if (isEqual(imageList, initialImageList)) {
+  const handleNextAfterCheck = async () => {
+    setZipping(true);
+    const zip = new JSZip();
+
+    await Promise.all(
+      imageList.map(async (imgData, idx) => {
+        const filenameBase = String(idx).padStart(3, '0');
+        imgData.caption.length > 0 && zip.file(`${filenameBase}.txt`, imgData.caption);
+
+        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+
+        // TODO [bw] unregister here
+
+        zip.file(`${filenameBase}.${imgData.type.split('/').pop()}`, imgBlob);
+      })
+    );
+    // TODO [bw] handle error
+    zip.generateAsync({ type: 'blob' }).then(async (content) => {
+      // saveAs(content, 'example.zip');
+      // save to ModelFile with type training data
+
+      const blobFile = new File([content], `${thisModelVersion.id}_training_data.zip`, {
+        type: 'application/zip',
+      });
+      console.log(blobFile);
+
+      showNotification({
+        id: notificationId,
+        loading: true,
+        autoClose: false,
+        disallowClose: true,
+        title: 'Creating and uploading archive',
+        message: `Packaging ${imageList.length} images...`,
+      });
+
+      try {
+        await upload(
+          {
+            file: blobFile,
+            type: UploadType.TrainingImages, // TODO [bw] maybe use UploadType.TrainingImagesTemp
+            meta: {
+              versionId: thisModelVersion.id,
+              ownRights,
+              shareDataset,
+              numImages: imageList.length,
+              numCaptions: imageList.filter((i) => i.caption.length > 0).length,
+            },
+          },
+          async ({ meta, size, ...result }) => {
+            console.log(meta);
+            console.log(size);
+            console.log(result);
+            const { versionId, ...metadata } = meta as {
+              versionId: number;
+            };
+            if (versionId) {
+              try {
+                await createFileMutation.mutateAsync({
+                  ...result,
+                  sizeKB: bytesToKB(size),
+                  modelVersionId: versionId,
+                  type: 'Training Data',
+                  visibility:
+                    ownRights && shareDataset
+                      ? ModelFileVisibility.Public
+                      : ownRights
+                      ? ModelFileVisibility.Sensitive
+                      : ModelFileVisibility.Private,
+                  metadata,
+                });
+              } catch (e: unknown) {
+                console.log(e);
+                setZipping(false);
+                updateNotification({
+                  id: notificationId,
+                  icon: <IconX size={18} />,
+                  color: 'red',
+                  title: 'Failed to upload archive.',
+                  message: '',
+                });
+              }
+            }
+          }
+        );
+      } catch (e) {
+        setZipping(false);
+        updateNotification({
+          id: notificationId,
+          icon: <IconX size={18} />,
+          color: 'red',
+          title: 'Failed to upload archive.',
+          message: e instanceof Error ? e.message : '',
+        });
+      }
+    });
+  };
+
+  const handleNext = () => {
+    if (isEqual(imageList, initialImageList) && imageList.length !== 0) {
       return goNext(model.id, thisStep);
     }
 
     if (imageList.length) {
-      setZipping(true);
-      const zip = new JSZip();
-
-      await Promise.all(
-        imageList.map(async (imgData, idx) => {
-          const filenameBase = String(idx).padStart(3, '0');
-          imgData.caption.length > 0 && zip.file(`${filenameBase}.txt`, imgData.caption);
-
-          const imgBlob = await fetch(imgData.url).then((res) => res.blob());
-
-          // TODO [bw] unregister here
-
-          zip.file(`${filenameBase}.${imgData.type.split('/').pop()}`, imgBlob);
-        })
-      );
-      // TODO [bw] handle error
-      zip.generateAsync({ type: 'blob' }).then(async (content) => {
-        // saveAs(content, 'example.zip');
-        // save to ModelFile with type training data
-
-        const blobFile = new File([content], `${thisModelVersion.id}_training_data.zip`, {
-          type: 'application/zip',
+      // if no captions, warn
+      if (imageList.filter((i) => i.caption.length > 0).length === 0) {
+        return openConfirmModal({
+          title: (
+            <Group spacing="xs">
+              <IconAlertTriangle color="gold" />
+              <Text size="lg">Missing captions</Text>
+            </Group>
+          ),
+          children:
+            'You have not provided any captions for your images. This can produce an inflexible model. We will also attempt to generate sample images, but they may not be what you are looking for. Are you sure you want to continue?',
+          labels: { cancel: 'Cancel', confirm: 'Continue' },
+          onConfirm: handleNextAfterCheck,
         });
-        console.log(blobFile);
-
-        showNotification({
-          id: notificationId,
-          loading: true,
-          autoClose: false,
-          disallowClose: true,
-          title: 'Creating and uploading archive',
-          message: `Packaging ${imageList.length} images...`,
-        });
-
-        try {
-          await upload(
-            {
-              file: blobFile,
-              type: UploadType.TrainingImages, // TODO [bw] maybe use UploadType.TrainingImagesTemp
-              meta: {
-                versionId: thisModelVersion.id,
-                ownRights,
-                shareDataset,
-                numImages: imageList.length,
-                numCaptions: imageList.filter((i) => i.caption.length > 0).length,
-              },
-            },
-            async ({ meta, size, ...result }) => {
-              console.log(meta);
-              console.log(size);
-              console.log(result);
-              const { versionId, ...metadata } = meta as {
-                versionId: number;
-              };
-              if (versionId) {
-                try {
-                  await createFileMutation.mutateAsync({
-                    ...result,
-                    sizeKB: bytesToKB(size),
-                    modelVersionId: versionId,
-                    type: 'Training Data',
-                    visibility:
-                      ownRights && shareDataset
-                        ? ModelFileVisibility.Public
-                        : ownRights
-                        ? ModelFileVisibility.Sensitive
-                        : ModelFileVisibility.Private,
-                    metadata,
-                  });
-                } catch (e: unknown) {
-                  console.log(e);
-                  setZipping(false);
-                  updateNotification({
-                    id: notificationId,
-                    icon: <IconX size={18} />,
-                    color: 'red',
-                    title: 'Failed to upload archive.',
-                    message: '',
-                  });
-                }
-              }
-            }
-          );
-        } catch (e) {
-          setZipping(false);
-          updateNotification({
-            id: notificationId,
-            icon: <IconX size={18} />,
-            color: 'red',
-            title: 'Failed to upload archive.',
-            message: e instanceof Error ? e.message : '',
-          });
-        }
-      });
+      } else {
+        handleNextAfterCheck();
+      }
     } else {
       // no images given. could show a takeover or form inline error instead.
       showNotification({

@@ -203,7 +203,15 @@ export default function UserTrainingModels() {
                           <DescriptionTable
                             labelWidth="150px"
                             items={[
-                              { label: 'Training Start', value: 'Unknown' }, // TODO [bw] check this later
+                              {
+                                label: 'Training Start',
+                                value: modalData.file?.metadata?.trainingResults?.start_time
+                                  ? formatDate(
+                                      modalData.file.metadata.trainingResults.start_time,
+                                      'MMM DD, YYYY HH:mm:ss'
+                                    )
+                                  : 'Unknown',
+                              },
                               {
                                 label: 'Images',
                                 value: modalData.file?.metadata?.numImages || 0,

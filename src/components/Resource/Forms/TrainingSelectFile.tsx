@@ -38,6 +38,9 @@ const useStyles = createStyles((theme) => ({
   },
   paperRow: {
     cursor: 'pointer',
+    '&:hover': {
+      backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
+    },
   },
 }));
 
@@ -132,10 +135,12 @@ export default function TrainingSelectFile({
   console.log(modelVersion);
   // TODO [bw] need to worry about multiple files? which one will this grab?
   const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
-  console.log(modelFile);
+  const existingModelFile = modelVersion?.files.find((f) => f.type === 'Model');
 
-  // TODO [bw] autopopulate based on already selected model. how best to do this?
-  const [selectedFile, setSelectedFile] = useState<string | undefined>();
+  // TODO [bw] possibly autoselect the first one
+  const [selectedFile, setSelectedFile] = useState<string | undefined>(
+    existingModelFile?.metadata?.selectedEpochUrl
+  );
 
   const notificationId = `${modelVersion?.id || 1}-uploading-file-notification`;
 
@@ -256,13 +261,16 @@ export default function TrainingSelectFile({
           type: ModelFileType;
           uuid: string;
         };
-        console.log(type);
+        const updatedMetadata = {
+          ...metadata,
+          selectedEpochUrl: selectedFile,
+        };
         createFileMutation.mutate({
           ...result,
           sizeKB: bytesToKB(size),
           modelVersionId: versionId,
           type: 'Model',
-          metadata,
+          metadata: updatedMetadata,
         });
       }
     );
@@ -277,10 +285,15 @@ export default function TrainingSelectFile({
     (a, b) => b.epoch_number - a.epoch_number
   );
 
+  const resultsLoading =
+    (modelVersion.trainingStatus !== TrainingStatus.InReview &&
+      modelVersion.trainingStatus !== TrainingStatus.Approved) ||
+    !epochs ||
+    !epochs.length;
+
   return (
     <Stack>
-      {/* TODO [bw] handle approved state? what happens when its published normally? */}
-      {modelVersion.trainingStatus !== TrainingStatus.InReview || !epochs || !epochs.length ? (
+      {resultsLoading ? (
         <PageLoader text="Models are currently training..." />
       ) : (
         <>
@@ -317,7 +330,7 @@ export default function TrainingSelectFile({
         <Button variant="default" onClick={onBackClick}>
           Back
         </Button>
-        <Button onClick={handleSubmit} loading={awaitInvalidate}>
+        <Button onClick={handleSubmit} disabled={resultsLoading} loading={awaitInvalidate}>
           Next
         </Button>
       </Group>

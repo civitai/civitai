@@ -59,8 +59,8 @@ import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { LoginRedirectReason } from '~/utils/login-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 
 const HEADER_HEIGHT = 70;
@@ -278,6 +278,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconUser stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your profile
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/models?section=training`,
+        visible: !!currentUser && features.imageTraining,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Training
           </Group>
         ),
       },

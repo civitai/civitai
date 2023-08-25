@@ -30,11 +30,14 @@ import { trpc } from '~/utils/trpc';
 const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
 } = {
-  sd_1_5: { label: 'SD 1.5', description: 'Useful for all purposes.' },
-  sdxl: { label: 'SDXL', description: 'Useful for all purposes.' },
-  anime: { label: 'Anime', description: 'Results will have an anime aesthetic' },
-  semi: { label: 'Semi-realistic', description: 'Results will be a blend of anime and realism' },
-  realistic: { label: 'Realistic', description: 'Results will be extremely realistic.' },
+  sd_1_5: { label: 'Standard (SD 1.5)', description: 'Useful for all purposes.' },
+  anime: { label: 'Anime (SD 1.5)', description: 'Results will have an anime aesthetic' },
+  semi: {
+    label: 'Semi-realistic (SD 1.5)',
+    description: 'Results will be a blend of anime and realism',
+  },
+  realistic: { label: 'Realistic (SD 1.5)', description: 'Results will be extremely realistic.' },
+  sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes.' },
 };
 
 type TrainingSettingsType = {
@@ -71,9 +74,29 @@ const trainingSettings: TrainingSettingsType[] = [
     label: 'Num Repeats',
     hint: 'Num Repeats defines how many times each individual image gets put into VRAM. As opposed to batch size, which is how many images you shove into your VRAM at once.',
     type: 'int',
-    default: (n: number) => Math.max(1, Math.min(16, Math.ceil(200 / n))),
+    default: (n: number) => Math.max(1, Math.min(1000, Math.ceil(200 / n))),
     min: 1,
-    max: 16,
+    max: 1000,
+  },
+  {
+    name: 'trainBatchSize',
+    label: 'Train Batch Size',
+    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously.',
+    type: 'int',
+    default: 2,
+    min: 1,
+    max: 4,
+  },
+  {
+    name: 'targetSteps',
+    label: 'Steps',
+    hint: 'The total computed number of steps for training. Computed with (# of epochs x # of images x # repeats)',
+    type: 'int',
+    default: (n: number, r: number, e: number, b: number) =>
+      Math.min(10000, Math.ceil((n * r * e) / b)),
+    min: 1,
+    max: 10000,
+    disabled: true,
   },
   {
     name: 'resolution',
@@ -126,15 +149,6 @@ const trainingSettings: TrainingSettingsType[] = [
     max: 1,
   },
   {
-    name: 'trainBatchSize',
-    label: 'Train Batch Size',
-    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously.',
-    type: 'int',
-    default: 2,
-    min: 1,
-    max: 4,
-  },
-  {
     name: 'unetLR',
     label: 'Unet LR',
     hint: 'Sets the learning rate for U-Net. This is the learning rate when performing additional learning on each attention block (and other blocks depending on the setting) in U-Net.',
@@ -178,13 +192,12 @@ const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 4,
   },
-  // TODO maybe float
   {
     name: 'minSnrGamma',
     label: 'Min SNR Gamma',
     hint: 'In LoRA learning, learning is performed by putting noise of various strengths on the training image (details about this are omitted), but depending on the difference in strength of the noise on which it is placed, learning will be stable by moving closer to or farther from the learning target. not, and the Min SNR gamma was introduced to compensate for that. Especially when learning images with little noise on them, it may deviate greatly from the target, so try to suppress this jump.',
     type: 'int',
-    default: 5,
+    default: 5, // TODO maybe float
     min: 0,
     max: 20,
   },
@@ -231,14 +244,6 @@ const trainingSettings: TrainingSettingsType[] = [
     hint: 'Additional arguments can be passed to control the behavior of the selected optimizer. Place them here as a string, comma separated.',
     type: 'string',
     default: 'weight_decay=0.1',
-  },
-  {
-    name: 'targetSteps',
-    label: 'Steps',
-    hint: 'The total computed number of steps for training. Computed with (# of epochs x # of images x # repeats)',
-    type: 'int',
-    default: (n: number, r: number, e: number, b: number) => Math.ceil((n * r * e) / b),
-    disabled: true,
   },
 ];
 
@@ -315,8 +320,23 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formBaseModel]);
 
-  // TODO [bw] recalc default functions when relevant args change
-  // useEffect(() => {}, []);
+  // TODO [bw] recalc any other default functions when relevant args change
+  // https://react-hook-form.com/docs/useform/watch
+  useEffect(() => {
+    const maxTrainEpochs = form.getValues('maxTrainEpochs');
+    const numRepeats = form.getValues('numRepeats');
+    const trainBatchSize = form.getValues('trainBatchSize');
+
+    form.setValue(
+      'targetSteps',
+      Math.min(
+        10000,
+        Math.ceil(
+          ((thisFile?.metadata['numImages'] || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
+        )
+      )
+    );
+  }, []);
 
   const { isDirty, errors } = form.formState;
 
@@ -496,6 +516,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                 }`,
                 background: 'none',
                 marginTop: theme.spacing.xs * 0.5, // 5px
+                flexWrap: 'wrap',
               },
             })}
             fullWidth

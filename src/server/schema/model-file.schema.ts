@@ -31,6 +31,7 @@ export const modelFileMetadataSchema = z.object({
   shareDataset: z.boolean().nullish(),
   numImages: z.number().nullish(),
   numCaptions: z.number().nullish(),
+  selectedEpochUrl: z.string().url().nullish(),
   trainingResults: trainingResultsSchema.nullish(),
 });
 
