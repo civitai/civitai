@@ -104,9 +104,7 @@ export function UserHitList() {
         <Center>
           <Stack spacing="md" align="center" maw={800}>
             {hiddenItems > 0 && (
-              <Text color="dimmed">
-                {hiddenItems} articles have been hidden due to your settings.
-              </Text>
+              <Text color="dimmed">{hiddenItems} users have been hidden due to your settings.</Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
               <IconCloudOff size={80} />
@@ -123,10 +121,23 @@ export function UserHitList() {
       </Box>
     );
 
+    const loading = status === 'loading' || status === 'stalled';
+
+    if (loading) {
+      return (
+        <Box>
+          <Center mt="md">
+            <Loader />
+          </Center>
+        </Box>
+      );
+    }
+
     return (
       <Box>
         <Center mt="md">
-          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+          {/* Just enough time to avoid blank random page */}
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
       </Box>
     );
@@ -135,7 +146,7 @@ export function UserHitList() {
   return (
     <Stack>
       {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} articles have been hidden due to your settings.</Text>
+        <Text color="dimmed">{hiddenItems} users have been hidden due to your settings.</Text>
       )}
       <Box
         className={cx(classes.grid)}
@@ -150,7 +161,7 @@ export function UserHitList() {
       </Box>
       {hits.length > 0 && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && status === 'idle' && <Loader />}
+          {!isLastPage && <Loader />}
         </Center>
       )}
     </Stack>

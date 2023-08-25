@@ -22,21 +22,28 @@ import {
 } from '~/components/Search/parsers/user.parser';
 import {
   ARTICLES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
+import {
+  CollectionSearchParams,
+  collectionsInstantSearchRoutingParser,
+} from '~/components/Search/parsers/collection.parser';
 
 type StoreState = {
   models: ModelSearchParams;
   images: ImageSearchParams;
   articles: ArticleSearchParams;
   users: UserSearchParams;
+  collections: CollectionSearchParams;
   setSearchParamsByUiState: (uiState: UiState) => void;
   setModelsSearchParams: (filters: Partial<ModelSearchParams>) => void;
   setImagesSearchParams: (filters: Partial<ImageSearchParams>) => void;
   setArticleSearchParams: (filters: Partial<ArticleSearchParams>) => void;
   setUserSearchParams: (filters: Partial<UserSearchParams>) => void;
+  setCollectionSearchParams: (filters: Partial<CollectionSearchParams>) => void;
 };
 
 export const SearchPathToIndexMap = {
@@ -44,6 +51,7 @@ export const SearchPathToIndexMap = {
   ['images']: IMAGES_SEARCH_INDEX,
   ['articles']: ARTICLES_SEARCH_INDEX,
   ['users']: USERS_SEARCH_INDEX,
+  ['collections']: COLLECTIONS_SEARCH_INDEX,
 };
 
 export const IndexToLabel = {
@@ -51,6 +59,7 @@ export const IndexToLabel = {
   [IMAGES_SEARCH_INDEX]: 'Images',
   [ARTICLES_SEARCH_INDEX]: 'Articles',
   [USERS_SEARCH_INDEX]: 'Users',
+  [COLLECTIONS_SEARCH_INDEX]: 'Collections',
 };
 
 export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingParser => {
@@ -63,6 +72,8 @@ export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingPars
       return articlesInstantSearchRoutingParser;
     case USERS_SEARCH_INDEX:
       return usersInstantSearchRoutingParser;
+    case COLLECTIONS_SEARCH_INDEX:
+      return collectionsInstantSearchRoutingParser;
   }
 };
 
@@ -75,6 +86,7 @@ export const useSearchStore = create<StoreState>()(
         images: {},
         articles: {},
         users: {},
+        collections: {},
         // methods
         setSearchParamsByUiState: (uiState: UiState) => {
           const [index] = Object.keys(uiState);
@@ -112,6 +124,13 @@ export const useSearchStore = create<StoreState>()(
                 state.users = routing.stateToRoute(uiState)[USERS_SEARCH_INDEX] as UserSearchParams;
               });
               break;
+            case COLLECTIONS_SEARCH_INDEX:
+              set((state) => {
+                state.collections = routing.stateToRoute(uiState)[
+                  COLLECTIONS_SEARCH_INDEX
+                ] as CollectionSearchParams;
+              });
+              break;
           }
         },
         setModelsSearchParams: (params) =>
@@ -129,6 +148,10 @@ export const useSearchStore = create<StoreState>()(
         setUserSearchParams: (params) =>
           set((state) => {
             state.users = params;
+          }),
+        setCollectionSearchParams: (params) =>
+          set((state) => {
+            state.collections = params;
           }),
       };
     })
@@ -163,6 +186,8 @@ export const routing: InstantSearchProps['routing'] = {
           query = QS.stringify(routeState[IMAGES_SEARCH_INDEX]);
         } else if (routeState[USERS_SEARCH_INDEX]) {
           query = QS.stringify(routeState[USERS_SEARCH_INDEX]);
+        } else if (routeState[COLLECTIONS_SEARCH_INDEX]) {
+          query = QS.stringify(routeState[COLLECTIONS_SEARCH_INDEX]);
         }
 
         // Needs to be absolute url, otherwise instantsearch complains
@@ -201,6 +226,9 @@ export const routing: InstantSearchProps['routing'] = {
       }
       if (routeState[USERS_SEARCH_INDEX]) {
         return getRoutingForIndex(USERS_SEARCH_INDEX).routeToState(routeState);
+      }
+      if (routeState[COLLECTIONS_SEARCH_INDEX]) {
+        return getRoutingForIndex(COLLECTIONS_SEARCH_INDEX).routeToState(routeState);
       }
 
       return routeState;
