@@ -3,7 +3,6 @@ title: Civitai Dataset and Training Guidelines
 description: In this document, we provide you with information about how to prepare and upload a dataset to us for the purpose of model training. 
 ---
 
-# Dataset and Training Guidelines
 In this document, we provide you with information about how to prepare and upload a dataset to us for the purpose of model training.
 
 ## Uploading an Existing Dataset (as a Zip file)
@@ -46,10 +45,10 @@ This section provides information on how to create a dataset on civitai.com
 ### Adding/Uploading Images
 Images can be dragged and dropped to our uploader. These images can later be given captions (see "Providing Captions" below).
 
-![](https://hackmd.io/_uploads/S1ZpOZxa2.png)
+![](https://hackmd.io/_uploads/ByQwai8Th.png)
 
 
 ### Providing Captions
 Captions are an important component of training a successful model. You can train models without them; however, your model will be more flexible and better overall when you do provide them. 
 
-Great captions describe the content of the image on which they are written. There is a wealth of knowledge on the subject. See [this post](https://www.reddit.com/r/StableDiffusion/comments/119307l/what_is_the_process_of_captioning_for_lora/) for in-depth info on captioning. 
+Great captions describe the content of the image on which they are written. There is a wealth of knowledge on the subject. See [this post](https://www.reddit.com/r/StableDiffusion/comments/118spz6/captioning_datasets_for_training_purposes) for in-depth info on captioning. 

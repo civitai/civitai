@@ -31,13 +31,13 @@ const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
 } = {
   sd_1_5: { label: 'Standard (SD 1.5)', description: 'Useful for all purposes.' },
-  anime: { label: 'Anime (SD 1.5)', description: 'Results will have an anime aesthetic' },
+  anime: { label: 'Anime (SD 1.5)', description: 'Results will have an anime aesthetic.' },
   semi: {
     label: 'Semi-realistic (SD 1.5)',
-    description: 'Results will be a blend of anime and realism',
+    description: 'Results will be a blend of anime and realism.',
   },
   realistic: { label: 'Realistic (SD 1.5)', description: 'Results will be extremely realistic.' },
-  sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes.' },
+  sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes, and uses SDXL.' },
 };
 
 type TrainingSettingsType = {

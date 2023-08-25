@@ -3,9 +3,8 @@ title: Civitai Data Storage Policy
 description: Info about how Civitai stores your data
 ---
 
-# Data Storage Policy
 ### General 
-By default, uploaded content will be stored indefinitely with the exception input and output files related to model training that occurs from Civitai.
+By default, uploaded content will be stored indefinitely with the exception of input and output files related to model training that occurs from Civitai.
 
 ### Training Job Data Retention
 **Input Files (Training Datasets)**

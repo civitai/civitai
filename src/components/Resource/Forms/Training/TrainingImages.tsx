@@ -74,6 +74,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
   const [imageList, setImageList] = useState<imageDataType[]>([]);
   const [initialImageList, setInitialImageList] = useState<imageDataType[]>([]);
   const [page, setPage] = useState(1);
+  // TODO [bw] set this from model status
   const [ownRights, setOwnRights] = useState<boolean>(false);
   const [shareDataset, setShareDataset] = useState<boolean>(false);
   const [zipping, setZipping] = useState<boolean>(false);
