@@ -90,12 +90,18 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'targetSteps',
     label: 'Steps',
-    hint: 'The total computed number of steps for training. Computed with (# of epochs x # of images x # repeats)',
+    hint: (
+      <>
+        The total number of steps for training. Computed automatically with (epochs * # of images *
+        repeats / batch size).
+        <br />
+        The maximum allowed is 10,000 steps.
+      </>
+    ),
     type: 'int',
-    default: (n: number, r: number, e: number, b: number) =>
-      Math.min(10000, Math.ceil((n * r * e) / b)),
+    default: (n: number, r: number, e: number, b: number) => Math.ceil((n * r * e) / b),
     min: 1,
-    max: 10000,
+    // max: 10000,
     disabled: true,
   },
   {
@@ -304,6 +310,8 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     shouldUnregister: false,
   });
 
+  const watchFields = form.watch(['maxTrainEpochs', 'numRepeats', 'trainBatchSize']);
+
   // apply default overrides for base model upon selection
   useEffect(() => {
     if (!formBaseModel) return;
@@ -320,23 +328,28 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formBaseModel]);
 
-  // TODO [bw] recalc any other default functions when relevant args change
-  // https://react-hook-form.com/docs/useform/watch
+  // nb: if there are more default calculations, need to put them here
   useEffect(() => {
     const maxTrainEpochs = form.getValues('maxTrainEpochs');
     const numRepeats = form.getValues('numRepeats');
     const trainBatchSize = form.getValues('trainBatchSize');
 
-    form.setValue(
-      'targetSteps',
-      Math.min(
-        10000,
-        Math.ceil(
-          ((thisFile?.metadata['numImages'] || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
-        )
-      )
+    const newSteps = Math.ceil(
+      ((thisFile?.metadata['numImages'] || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
     );
-  }, []);
+
+    // if (newSteps > 10000) {
+    //   showErrorNotification({
+    //     error: new Error(
+    //       'Steps are beyond the maximum (10,000). Please lower Epochs or Num Repeats, or increase Train Batch Size.'
+    //     ),
+    //     title: 'Too many steps',
+    //   });
+    // }
+
+    form.setValue('targetSteps', newSteps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchFields]);
 
   const { isDirty, errors } = form.formState;
 
@@ -360,8 +373,6 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
   });
 
   const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
-    console.log('dirty', isDirty);
-    console.log(rest);
     const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
     if (isDirty) {
       if (!thisFile) {
@@ -371,7 +382,18 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
         return;
       }
 
-      console.log('running model mutation');
+      console.log(form.getValues('targetSteps'));
+
+      if (form.getValues('targetSteps') > 10000) {
+        showErrorNotification({
+          error: new Error(
+            'Steps are beyond the maximum (10,000). Please lower Epochs or Num Repeats, or increase Train Batch Size.'
+          ),
+          title: 'Too many steps',
+        });
+        return;
+      }
+
       setAwaitInvalidate(true);
 
       const { baseModel, ...paramData } = rest;
