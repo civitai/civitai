@@ -176,60 +176,33 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
   const { stats } = data;
 
   return (
-    <Card p="xs" withBorder>
-      <Link href={`/user/${data.username}`} passHref>
-        <Card.Section component="a" py="xs" inheritPadding>
-          <Stack spacing="xs">
-            <Group position="apart" spacing={8}>
-              <UserAvatar
-                size="sm"
-                user={data}
-                subText={`Joined ${formatDate(data.createdAt)}`}
-                withUsername
-              />
-              <FollowUserButton userId={data.id} size="md" compact />
-            </Group>
-            {stats && (
-              <Group spacing={8}>
-                <RankBadge size="md" rank={data.rank} />
-                <UserStatBadges
-                  rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
-                  uploads={stats.uploadCountAllTime}
-                  followers={stats.followerCountAllTime}
-                  favorite={stats.favoriteCountAllTime}
-                  downloads={stats.downloadCountAllTime}
-                />
-              </Group>
-            )}
-          </Stack>
-        </Card.Section>
-      </Link>
-      {data.links && data.links.length > 0 ? (
-        <Card.Section
-          withBorder
-          inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
-          py={5}
-        >
-          <Group spacing={4}>
-            {sortDomainLinks(data.links).map((link, index) => (
-              <ActionIcon
-                key={index}
-                component="a"
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                size="md"
-              >
-                <DomainIcon domain={link.domain} size={20} />
-              </ActionIcon>
-            ))}
+    <Link href={`/user/${data.username}`} passHref>
+      <Card component="a" p="xs" withBorder>
+        <Stack spacing="xs">
+          <Group position="apart" spacing={8}>
+            <UserAvatar
+              size="sm"
+              user={data}
+              subText={`Joined ${formatDate(data.createdAt)}`}
+              withUsername
+            />
+            <FollowUserButton userId={data.id} size="md" compact />
           </Group>
-        </Card.Section>
-      ) : null}
-    </Card>
+          {stats && (
+            <Group spacing={8}>
+              <RankBadge size="md" rank={data.rank} />
+              <UserStatBadges
+                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
+                uploads={stats.uploadCountAllTime}
+                followers={stats.followerCountAllTime}
+                favorite={stats.favoriteCountAllTime}
+                downloads={stats.downloadCountAllTime}
+              />
+            </Group>
+          )}
+        </Stack>
+      </Card>
+    </Link>
   );
 }
 
