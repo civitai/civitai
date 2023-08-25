@@ -172,7 +172,7 @@ function ImagesHitList() {
       </div>
       {hits.length > 0 && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && status === 'idle' && <Loader />}
+          {!isLastPage && <Loader />}
         </Center>
       )}
     </Stack>
