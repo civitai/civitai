@@ -79,9 +79,7 @@ export const hasFeature = (key: FeatureFlagKey, user?: SessionUser) => {
     else if (user.tier && roles.includes(user.tier as FeatureAvailability)) roleAccess = true;
   }
 
-  return (
-    (availability.includes('dev') && isDev) || (devRequirement && (grantedAccess || roleAccess))
-  );
+  return devRequirement && (grantedAccess || roleAccess);
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;

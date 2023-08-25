@@ -302,7 +302,6 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     );
   }
 
-  console.log(defaultValues);
   const form = useForm({
     schema,
     mode: 'onChange',
@@ -382,8 +381,6 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
         return;
       }
 
-      console.log(form.getValues('targetSteps'));
-
       if (form.getValues('targetSteps') > 10000) {
         showErrorNotification({
           error: new Error(
@@ -397,7 +394,6 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
       setAwaitInvalidate(true);
 
       const { baseModel, ...paramData } = rest;
-      console.log(paramData);
 
       const versionMutateData = {
         // these 4 appear to be required for upsert, but aren't actually being updated.

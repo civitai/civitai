@@ -170,9 +170,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
   };
 
   const handleDrop = async (fileList: FileWithPath[]) => {
-    // blob:http://localhost:3000/3949be19-8afa-41ee-9cc6-4773e6a0ab73
-    console.log(fileList);
-
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
         if (ZIP_MIME_TYPE.includes(f.type as never)) {
@@ -188,8 +185,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
   // TODO [bw] should this be doing an update if it exists instead?
   const createFileMutation = trpc.modelFile.create.useMutation({
     async onSuccess(result) {
-      console.log(result);
-
       updateNotification({
         id: notificationId,
         icon: <IconCheck size={18} />,
@@ -243,7 +238,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
       const blobFile = new File([content], `${thisModelVersion.id}_training_data.zip`, {
         type: 'application/zip',
       });
-      console.log(blobFile);
 
       showNotification({
         id: notificationId,
@@ -268,9 +262,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
             },
           },
           async ({ meta, size, ...result }) => {
-            console.log(meta);
-            console.log(size);
-            console.log(result);
             const { versionId, ...metadata } = meta as {
               versionId: number;
             };
@@ -430,7 +421,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
             {imageList
               .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
               .map((imgData, index) => {
-                console.log(imgData);
                 return (
                   <Stack
                     key={index}

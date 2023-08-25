@@ -81,9 +81,6 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
 
   const thisStep = 1;
 
-  console.log(model);
-  console.log(model?.modelVersions[0]);
-
   const schema = z.object({
     id: z.number().optional(),
     name: z.string().trim().min(1, 'Name cannot be empty.'),
@@ -103,7 +100,6 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
     name: model?.name ?? '',
     trainingModelType: thisTrainingDetails?.type ?? undefined,
   };
-  console.log(defaultValues);
   const form = useForm({
     schema,
     mode: 'onChange',
@@ -114,8 +110,7 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
   const { isDirty, errors } = form.formState;
   if (errors) console.log('errors', errors);
 
-  const editing = !!model;
-  console.log('editing2', editing);
+  // const editing = !!model;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
@@ -128,19 +123,11 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
     onSuccess: async (data, payload) => {
-      console.log('success with model');
-      console.log(data);
-      console.log(payload);
-
       if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
 
       const modelId = data.id;
       const modelName = payload.name;
       const versionId = model?.modelVersions[0].id;
-
-      console.log(modelId, modelName);
-      console.log('version, are we editing: ', editing);
-      console.log(versionId);
 
       const versionMutateData = {
         ...(versionId && { id: versionId }),
@@ -179,10 +166,7 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
   });
 
   const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
-    console.log('dirty', isDirty);
-    console.log(rest);
     if (isDirty) {
-      console.log('running model mutation');
       setAwaitInvalidate(true);
       // TODO [bw]: status draft is maybe wrong here
       upsertModelMutation.mutate({

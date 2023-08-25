@@ -130,9 +130,7 @@ export default function TrainingSelectFile({
   const { upload } = useS3UploadStore();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
-  console.log(model);
   const modelVersion = model?.modelVersions?.[0];
-  console.log(modelVersion);
   // TODO [bw] need to worry about multiple files? which one will this grab?
   const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
   const existingModelFile = modelVersion?.files.find((f) => f.type === 'Model');

@@ -53,8 +53,6 @@ export function ModelWizard() {
   const [state, setState] = useState<WizardState>({ step: 1 });
 
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
-  console.log(model);
-  console.log(model?.modelVersions[0]?.files);
 
   const maxSteps = 4;
 
