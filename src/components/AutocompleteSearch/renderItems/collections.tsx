@@ -65,10 +65,10 @@ export const CollectionsSearchItem = forwardRef<
         {metrics && (
           <Group spacing={4}>
             <ActionIconBadge icon={<IconMoodSmile size={12} stroke={2.5} />}>
-              {abbreviateNumber(metrics.followerCount)}
+              {abbreviateNumber(metrics.followerCount || 0)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
-              {abbreviateNumber(metrics.itemCount)}
+              {abbreviateNumber(metrics.itemCount || 0)}
             </ActionIconBadge>
           </Group>
         )}
