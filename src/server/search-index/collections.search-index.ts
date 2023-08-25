@@ -26,6 +26,7 @@ import {
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
+import { dbRead } from '~/server/db/client';
 
 const READ_BATCH_SIZE = 250; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -332,12 +333,12 @@ const onFetchItemsToIndex = async ({
     SELECT
         target."collectionId" id,
         COALESCE(
-                (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId" LIMIT 1),
-                (SELECT image FROM postItemImage pii WHERE pii.id = target."postId" LIMIT 1),
-                (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId" LIMIT 1),
-                NULL
+          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
+          (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
+          (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          NULL
         ) image,
-        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId" LIMIT 1) src
+        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
     FROM target WHERE idx <= 10
   `;
 
@@ -349,8 +350,29 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
+  const imageIds = [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))];
+  const tags = await dbRead.tagsOnImage.findMany({
+    where: { imageId: { in: imageIds }, disabled: false },
+    select: { imageId: true, tagId: true },
+  });
+
+  console.log(
+    `onFetchItemsToIndex :: tags for images fetching complete on ${indexName} range:`,
+    offset,
+    offset + READ_BATCH_SIZE - 1,
+    'filters:',
+    whereOr
+  );
+
   const indexReadyRecords = collections.map(({ cosmetics, user, ...collection }) => {
     const collectionImages = itemImages.filter((i) => i.id === collection.id);
+    const images = collectionImages
+      .map((i) => i.image)
+      .filter(isDefined)
+      .map((i) => ({
+        ...i,
+        tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
+      }));
 
     return {
       ...collection,
@@ -359,7 +381,7 @@ const onFetchItemsToIndex = async ({
         ...user,
         cosmetics: (cosmetics ?? []).map((cosmetic) => ({ cosmetic })),
       },
-      images: uniqBy(collectionImages.map((i) => i.image).filter(isDefined), 'id') ?? [],
+      images: uniqBy(images, 'id') ?? [],
       srcs: [...new Set(collectionImages.map((i) => i.src).filter(isDefined) ?? [])],
     };
   });
