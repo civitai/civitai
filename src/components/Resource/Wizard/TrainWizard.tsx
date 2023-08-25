@@ -28,11 +28,8 @@ export default function TrainWizard() {
   const { classes } = useStyles();
   const router = useRouter();
 
-  console.log(router.query);
-
   const { modelId } = router.query;
   const pathWithId = `${basePath}?modelId=${modelId}`;
-  console.log(pathWithId);
   const isNew = router.pathname === basePath;
   const [state, setState] = useState<WizardState>({ step: 1 });
 

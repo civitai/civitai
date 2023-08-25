@@ -33,7 +33,7 @@ export const createTrainingRequest = async ({
     params: params,
   };
 
-  console.log(JSON.stringify(generationRequest));
+  // console.log(JSON.stringify(generationRequest));
 
   const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
     method: 'POST',
@@ -44,7 +44,7 @@ export const createTrainingRequest = async ({
     body: JSON.stringify(generationRequest),
   });
 
-  console.log(response);
+  // console.log(response);
 
   if (response.status === 429) {
     throw throwRateLimitError();

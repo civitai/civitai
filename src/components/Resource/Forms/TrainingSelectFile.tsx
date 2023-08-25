@@ -145,9 +145,9 @@ export default function TrainingSelectFile({
   const createFileMutation = trpc.modelFile.create.useMutation({
     async onSuccess() {
       if (!model || !modelVersion) {
-        showErrorNotification({
-          error: new Error('Missing model data. Please try again.'),
-        });
+        // showErrorNotification({
+        //   error: new Error('Missing model data. Please try again.'),
+        // });
         return;
       }
 
