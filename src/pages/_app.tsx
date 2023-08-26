@@ -81,6 +81,7 @@ if (typeof window !== 'undefined' && env.NEXT_PUBLIC_POSTHOG_KEY) {
     autocapture: false,
     capture_pageview: false,
     capture_pageleave: false,
+    disable_session_recording: true,
     loaded: () => {
       isDev && posthog.debug();
     },

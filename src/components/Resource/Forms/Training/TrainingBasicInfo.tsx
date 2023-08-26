@@ -198,7 +198,7 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
           <RadioImg
             value="Character"
             src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/c42020cf-ca49-4b4d-b0e6-1807463f90ad/width=1024/00834-2746643195.jpeg"
-            description="A specific person or character, realisitic or anime"
+            description="A specific person or character, realistic or anime"
           />
           <RadioImg
             value="Style"
