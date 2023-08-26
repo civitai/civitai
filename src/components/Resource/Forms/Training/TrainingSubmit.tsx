@@ -44,6 +44,7 @@ type TrainingSettingsType = {
   name: keyof TrainingDetailsParams;
   label: string;
   type: string;
+  // TODO [bw] review - this makes this completely unpredictable and kind of hard to work with, perhaps a discrimated type instead?
   default: string | number | boolean | ((...args: never[]) => number);
   hint?: React.ReactNode;
   options?: string[];
@@ -87,10 +88,9 @@ const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     // TODO [bw] this should have a default/max driven by the resolution they've selected (e.g. 512 -> 9, 768 -> 6, 1024 -> 4 basically cap lower than 4700)
     default: 6,
-    disabled: true,
-    min: 1,
+    min: 4,
     max: 9,
-    overrides: { sdxl: { max: 4, default: 4 } },
+    overrides: { sdxl: { max: 4, min: 2, default: 4 } },
   },
   {
     name: 'targetSteps',
