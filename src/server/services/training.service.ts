@@ -1,4 +1,5 @@
 import { env } from '~/env/server.mjs';
+import { dbWrite } from '~/server/db/client';
 import { TrainingDetailsBaseModel } from '~/server/schema/model-version.schema';
 import { CreateTrainingRequestInput } from '~/server/schema/training.schema';
 import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
@@ -10,6 +11,39 @@ const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   anime: 'anime',
   realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',
+};
+
+// TODO.Training: Use this instead of the other thing, the other thing isn't save to call from the front-end
+type TrainingRequest = {
+  trainingDetails: any;
+  trainingData: string;
+};
+export const createTrainingRequestSecure = async ({
+  modelVersionId,
+  userId,
+}: {
+  modelVersionId: number;
+  userId: number;
+}) => {
+  const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
+    SELECT
+      mv."trainingDetails",
+      mf.url "trainingData"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+    WHERE m."userId" = ${userId} AND mv.id = ${modelVersionId}
+  `;
+
+  if (modelVersions.length) throw throwBadRequestError('Invalid model version');
+  const modelVersion = modelVersions[0];
+
+  return createTrainingRequest({
+    userId,
+    model: modelVersion.trainingDetails.baseModel,
+    trainingData: modelVersion.trainingData,
+    params: modelVersion.trainingDetails.params,
+  });
 };
 
 export const createTrainingRequest = async ({
@@ -43,6 +77,9 @@ export const createTrainingRequest = async ({
     },
     body: JSON.stringify(generationRequest),
   });
+
+  // TODO.Training: Save the ID of this job to the database
+  // So that we can check the status of it later if it's not done
 
   // console.log(response);
 
