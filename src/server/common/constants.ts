@@ -1,12 +1,12 @@
 import {
+  ArticleSort,
+  BrowsingMode,
+  CollectionSort,
   ImageSort,
   PostSort,
   QuestionSort,
-  BrowsingMode,
-  ArticleSort,
-  CollectionSort,
 } from './enums';
-import { License, MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
+import { MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
@@ -64,6 +64,7 @@ export const constants = {
     'Config',
     'Archive',
   ],
+  trainingModelTypes: ['Character', 'Style', 'Concept'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Other'],
   modelFileSizes: ['full', 'pruned'],

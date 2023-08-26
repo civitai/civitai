@@ -13,6 +13,11 @@ export const MIME_TYPES = {
   // Audio
   mp3: 'audio/mpeg',
   wav: 'audio/vnd.wave',
+
+  // Zip
+  zip: 'application/zip',
+  xZipCompressed: 'application/x-zip-compressed',
+  xZipMultipart: 'multipart/x-zip',
 } as const;
 
 export const MEDIA_TYPE: Record<string, MediaType> = {
@@ -28,3 +33,4 @@ export const MEDIA_TYPE: Record<string, MediaType> = {
 export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg];
 export const VIDEO_MIME_TYPE = [MIME_TYPES.mp4, MIME_TYPES.webm];
 export const AUDIO_MIME_TYPE = [MIME_TYPES.mp3, MIME_TYPES.wav];
+export const ZIP_MIME_TYPE = [MIME_TYPES.zip, MIME_TYPES.xZipCompressed, MIME_TYPES.xZipMultipart];

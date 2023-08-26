@@ -1,8 +1,9 @@
 import { NsfwLevel, Prisma, SearchIndexUpdateQueueAction, TagTarget } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
+import { constants } from '~/server/common/constants';
 import { TagSort } from '~/server/common/enums';
 
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import {
   AdjustTagsSchema,
@@ -11,11 +12,10 @@ import {
   GetVotableTagsSchema,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
+import { tagsSearchIndex } from '~/server/search-index';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
-import { tagsSearchIndex } from '~/server/search-index';
-import { constants } from '~/server/common/constants';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -89,7 +89,7 @@ export const getTags = async ({
     AND.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "TagsOnModels" tom WHERE tom."tagId" = t."id" AND tom."modelId" = ${modelId})`
     );
-  if (not && !query) {
+  if (not && not.length > 0 && !query) {
     AND.push(Prisma.sql`t."id" NOT IN (${Prisma.join(not)})`);
     AND.push(Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnTags" tot

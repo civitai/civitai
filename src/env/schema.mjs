@@ -1,7 +1,7 @@
 // @ts-check
-import { z } from 'zod';
-import { zc } from '~/utils/schema-helpers';
-import { commaDelimitedStringArray } from '~/utils/zod-helpers';
+import { z } from "zod";
+import { zc } from "~/utils/schema-helpers";
+import { commaDelimitedStringArray } from "~/utils/zod-helpers";
 
 /**
  * Specify your server-side environment variables schema here.
@@ -77,6 +77,9 @@ export const serverSchema = z.object({
   TRPC_ORIGINS: commaDelimitedStringArray().optional(),
   CANNY_SECRET: z.string().optional(),
   SCHEDULER_ENDPOINT: z.string().url().optional(),
+  GENERATION_ENDPOINT: z.string().url().optional(),
+  GENERATION_CALLBACK_HOST: z.string().url().optional(),
+  ORCHESTRATOR_TOKEN: z.string().optional(),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),

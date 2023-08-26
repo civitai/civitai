@@ -24,6 +24,7 @@ import {
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import {
+  IconBarbell,
   IconBookmark,
   IconCircleDashed,
   IconClockBolt,
@@ -34,6 +35,7 @@ import {
   IconLogout,
   IconMoonStars,
   IconPalette,
+  IconPhotoUp,
   IconPlaylistAdd,
   IconPlus,
   IconSearch,
@@ -49,8 +51,6 @@ import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
-import { IconPhotoUp } from '@tabler/icons-react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
@@ -64,8 +64,8 @@ import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { LoginRedirectReason } from '~/utils/login-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { UserBuzz } from '../User/UserBuzz';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
@@ -241,6 +241,17 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
       {
+        href: '/models/train',
+        visible: !isMuted && features.imageTraining,
+        redirectReason: 'train-model',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Train a model
+          </Group>
+        ),
+      },
+      {
         href: '/posts/create',
         visible: !isMuted,
         redirectReason: 'post-images',
@@ -274,6 +285,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconUser stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your profile
+          </Group>
+        ),
+      },
+      {
+        href: `/user/${currentUser?.username}/models?section=training`,
+        visible: !!currentUser && features.imageTraining,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Training
           </Group>
         ),
       },

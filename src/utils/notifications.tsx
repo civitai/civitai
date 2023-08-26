@@ -22,12 +22,21 @@ export function showErrorNotification({
   });
 }
 
-export function showSuccessNotification({ message, title }: { message: string; title?: string }) {
+export function showSuccessNotification({
+  message,
+  title,
+  autoClose = false,
+}: {
+  message: string;
+  title?: string;
+  autoClose?: number | false;
+}) {
   showNotification({
     icon: <IconCheck size={18} />,
     color: 'teal',
     message,
     title,
+    autoClose,
   });
 }
 export function showBuzzNotification({

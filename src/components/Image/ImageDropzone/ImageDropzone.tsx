@@ -1,7 +1,7 @@
-import { Group, useMantineTheme, createStyles, Text } from '@mantine/core';
+import { createStyles, Group, Text, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
-import { IconUpload, IconX, IconPhoto } from '@tabler/icons-react';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
+import { IMAGE_MIME_TYPE, MIME_TYPES } from '~/server/common/mime-types';
 
 export function ImageDropzone({
   disabled: initialDisabled,
@@ -10,6 +10,7 @@ export function ImageDropzone({
   onDrop,
   count,
   label,
+  description,
   accept = IMAGE_MIME_TYPE,
   ...props
 }: Props) {
@@ -19,7 +20,10 @@ export function ImageDropzone({
   const canAddFiles = max - count > 0;
   const disabled = !canAddFiles || initialDisabled;
   // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
-  const fileExtensions = accept.map((type) => type.replace(/.*\//, '.'));
+  // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
+  const fileExtensions = accept
+    .filter((t) => t !== MIME_TYPES.xZipCompressed && t !== MIME_TYPES.xZipMultipart)
+    .map((type) => type.replace(/.*\//, '.'));
 
   const handleDrop = (files: File[]) => {
     onDrop?.(files.slice(0, max - count));
@@ -59,6 +63,7 @@ export function ImageDropzone({
           <Text size="xl" inline>
             {label ?? 'Drag images here or click to select files'}
           </Text>
+          {description}
           <Text size="sm" color="dimmed" inline mt={7}>
             {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
             {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
@@ -90,5 +95,6 @@ type Props = Omit<DropzoneProps, 'children'> & {
   max?: number;
   hasError?: boolean;
   label?: string;
+  description?: React.ReactNode;
   accept?: string[];
 };

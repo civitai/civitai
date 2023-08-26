@@ -1,25 +1,25 @@
 import { Alert, Grid, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { CheckpointType, CommercialUse, ModelType, TagTarget } from '@prisma/client';
 import {
-  IconCurrencyDollarOff,
-  IconPhoto,
   IconBrush,
-  IconShoppingCart,
+  IconCurrencyDollarOff,
   IconExclamationMark,
+  IconPhoto,
+  IconShoppingCart,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
 
 import {
-  useForm,
   Form,
-  InputText,
-  InputSelect,
-  InputSegmentedControl,
-  InputRTE,
-  InputTags,
   InputCheckbox,
+  InputRTE,
+  InputSegmentedControl,
+  InputSelect,
+  InputTags,
+  InputText,
+  useForm,
 } from '~/libs/form';
 import { TagSort } from '~/server/common/enums';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
@@ -53,6 +53,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     status: model?.status ?? 'Draft',
     type: model?.type ?? 'Checkpoint',
     checkpointType: model?.checkpointType,
+    uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
     nsfw: model?.nsfw ?? false,
     allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
