@@ -49,6 +49,7 @@ type TrainingSettingsType = {
   options?: string[];
   min?: number;
   max?: number;
+  step?: number;
   disabled?: boolean;
   overrides?: {
     [override in TrainingDetailsBaseModel]?: {
@@ -84,8 +85,9 @@ const trainingSettings: TrainingSettingsType[] = [
     hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously.',
     type: 'int',
     default: 2,
+    disabled: true,
     min: 1,
-    max: 4,
+    max: 2,
   },
   {
     name: 'targetSteps',
@@ -111,6 +113,7 @@ const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     default: 512,
     min: 512,
+    step: 64,
     max: 1024,
     overrides: { sdxl: { min: 1024, default: 1024 } },
   },
@@ -250,6 +253,7 @@ const trainingSettings: TrainingSettingsType[] = [
     hint: 'Additional arguments can be passed to control the behavior of the selected optimizer. Place them here as a string, comma separated.',
     type: 'string',
     default: 'weight_decay=0.1',
+    disabled: true,
   },
 ];
 
@@ -577,7 +581,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                           min={override?.min ?? ts.min}
                           max={override?.max ?? ts.max}
                           precision={ts.type === 'number' ? 4 : undefined}
-                          step={ts.type === 'int' ? 1 : 0.0001}
+                          step={ts.step ?? ts.type === 'int' ? 1 : 0.0001}
                           sx={{ flexGrow: 1 }}
                           disabled={ts.disabled === true}
                           format="default"
