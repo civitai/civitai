@@ -9,13 +9,13 @@ export const resubmitTrainingJobs = createJob(
     // Get the training jobs that have failed
     // --------------------------------------------
     const failedTrainingJobs = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    SELECT
-      mv.id,
-      m."userId"
-    FROM "ModelVersion" mv
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv."trainingStatus" IN ('Submitted', 'Failed')
-  `;
+      SELECT
+        mv.id,
+        mv.*
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mv."trainingStatus" IN ('Submitted', 'Failed') AND m.status != 'Deleted';
+    `;
 
     // Resubmit the training jobs
     // --------------------------------------------
