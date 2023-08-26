@@ -52,6 +52,7 @@ export function getModelWizardUrl(model: MyDraftModelGetAll['items'][number]) {
 export function getModelTrainingWizardUrl(model: MyTrainingModelGetAll['items'][number]) {
   const currentVersion = model.modelVersions[0];
   if (
+    currentVersion &&
     currentVersion.trainingStatus &&
     currentVersion.trainingStatus !== TrainingStatus.Pending &&
     currentVersion.trainingStatus !== TrainingStatus.Failed
@@ -60,7 +61,7 @@ export function getModelTrainingWizardUrl(model: MyTrainingModelGetAll['items'][
     return `/models/${model.id}/wizard?step=1`;
   }
 
-  const hasTrainingData = currentVersion.files.length > 0;
+  const hasTrainingData = !!currentVersion?.files.length;
 
   if (!hasTrainingData) return `/models/train?modelId=${model.id}&step=2`;
   return `/models/train?modelId=${model.id}&step=3`;

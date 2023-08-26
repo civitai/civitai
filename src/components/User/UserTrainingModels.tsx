@@ -170,7 +170,9 @@ export default function UserTrainingModels() {
             )}
             {hasTraining ? (
               items.map((model) => {
+                if (!model.modelVersions.length) return null;
                 const thisModelVersion = model.modelVersions[0];
+
                 // TODO why do I have to do this?
                 const thisTrainingDetails = thisModelVersion.trainingDetails as
                   | TrainingDetailsObj
