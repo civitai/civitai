@@ -69,7 +69,7 @@ const trainingSettings: TrainingSettingsType[] = [
     default: 10,
     min: 3,
     max: 16,
-    overrides: { sdxl: { min: 1, default: 3 } },
+    overrides: { sdxl: { min: 1, default: 10 } },
   },
   {
     name: 'numRepeats',
@@ -83,12 +83,14 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'trainBatchSize',
     label: 'Train Batch Size',
-    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously.',
+    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously. To avoid OOM errors, please limit batch counts to the following by resolution: 512 -> 9, 768 -> 6, 1024 -> 4',
     type: 'int',
-    default: 2,
+    // TODO [bw] this should have a default/max driven by the resolution they've selected (e.g. 512 -> 9, 768 -> 6, 1024 -> 4 basically cap lower than 4700)
+    default: 6,
     disabled: true,
     min: 1,
-    max: 2,
+    max: 9,
+    overrides: { sdxl: { max: 4, default: 4 } },
   },
   {
     name: 'targetSteps',
