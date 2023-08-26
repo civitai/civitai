@@ -69,6 +69,7 @@ const trainingSettings: TrainingSettingsType[] = [
     default: 10,
     min: 3,
     max: 16,
+    overrides: { sdxl: { min: 1, default: 3 } },
   },
   {
     name: 'numRepeats',
