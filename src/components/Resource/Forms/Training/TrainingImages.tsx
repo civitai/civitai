@@ -158,7 +158,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
         showSuccessNotification({
           title: 'Zip parsed successfully!',
           message: `Found ${parsedFiles.length} images.`,
-          autoClose: 3000,
         });
       } else {
         showErrorNotification({

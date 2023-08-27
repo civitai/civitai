@@ -25,7 +25,7 @@ export function showErrorNotification({
 export function showSuccessNotification({
   message,
   title,
-  autoClose = false,
+  autoClose = 3000,
 }: {
   message: string;
   title?: string;

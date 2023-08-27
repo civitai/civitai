@@ -438,7 +438,6 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                 showSuccessNotification({
                   title: 'Successfully submitted for training!',
                   message: 'You will be notified when training is complete.',
-                  autoClose: 3000,
                 });
                 await router.replace(userTrainingDashboardURL);
               },
