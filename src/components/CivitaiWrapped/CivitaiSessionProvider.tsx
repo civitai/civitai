@@ -1,6 +1,5 @@
 import { SessionUser } from 'next-auth';
 import { useSession } from 'next-auth/react';
-import posthog from 'posthog-js';
 import { createContext, useCallback, useContext, useMemo } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
@@ -26,14 +25,6 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   const value = useMemo(() => {
     if (!data?.user) return null;
     isAuthed = true;
-    // TODO: PostHog - enable when we're ready
-    // if (typeof window !== 'undefined' && !isIdentified) {
-    //   posthog?.identify(data.user.id + '', {
-    //     name: data.user.username,
-    //     email: data.user.email,
-    //   });
-    //   isIdentified = true;
-    // }
     return {
       ...data.user,
       isMember: data.user.tier != null,

@@ -49,10 +49,8 @@ import { RouterTransition } from '~/components/RouterTransition/RouterTransition
 import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
-import { env } from '~/env/client.mjs';
-import posthog from 'posthog-js';
-import { PostHogProvider } from 'posthog-js/react';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
+import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -74,19 +72,6 @@ type CustomAppProps = {
   flags: FeatureAccess;
   isMaintenanceMode: boolean | undefined;
 }>;
-
-if (typeof window !== 'undefined' && env.NEXT_PUBLIC_POSTHOG_KEY) {
-  posthog.init(env.NEXT_PUBLIC_POSTHOG_KEY, {
-    api_host: env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://app.posthog.com',
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    disable_session_recording: true,
-    loaded: () => {
-      isDev && posthog.debug();
-    },
-  });
-}
 
 function MyApp(props: CustomAppProps) {
   const {
@@ -163,7 +148,7 @@ function MyApp(props: CustomAppProps) {
         <FeatureFlagsProvider flags={flags}>
           <SignalProvider>
             <CivitaiSessionProvider>
-              <PostHogProvider client={posthog}>
+              <CivitaiPosthogProvider>
                 <CookiesProvider value={cookies}>
                   <FiltersProvider value={filters}>
                     <HiddenPreferencesProvider>
@@ -181,7 +166,7 @@ function MyApp(props: CustomAppProps) {
                     </HiddenPreferencesProvider>
                   </FiltersProvider>
                 </CookiesProvider>
-              </PostHogProvider>
+              </CivitaiPosthogProvider>
             </CivitaiSessionProvider>
           </SignalProvider>
         </FeatureFlagsProvider>

@@ -11,8 +11,7 @@ import { TrainingFormSubmit } from '~/components/Resource/Forms/Training/Trainin
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { usePostHog } from 'posthog-js/react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { usePostHog } from '~/hooks/usePostHog';
 
 type WizardState = {
   step: number;
@@ -26,22 +25,13 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-let isIdentified = false;
 export default function TrainWizard() {
   const { classes } = useStyles();
   const router = useRouter();
-  const currentUser = useCurrentUser();
 
   const posthog = usePostHog();
   useEffect(() => {
-    posthog.startSessionRecording();
-    if (!isIdentified && currentUser) {
-      posthog?.identify(currentUser.id + '', {
-        name: currentUser.username,
-        email: currentUser.email,
-      });
-      isIdentified = true;
-    }
+    posthog?.startSessionRecording();
   }, []);
 
   const { modelId } = router.query;
