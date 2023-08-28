@@ -106,6 +106,13 @@ export const articleMetrics = createMetricProcessor({
 
       UNION
 
+      SELECT ci."articleId" as id
+      FROM "CollectionItem" ci
+      JOIN "Article" a ON a.id = ci."articleId"
+      WHERE ci."articleId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
+
+      UNION
+
       SELECT
         "id"
       FROM "MetricUpdateQueue"
@@ -126,7 +133,7 @@ export const articleMetrics = createMetricProcessor({
     )
     -- upsert metrics for all affected
     -- perform a one-pass table scan producing all metrics for all affected
-    INSERT INTO "ArticleMetric" ("articleId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "favoriteCount", "hideCount")
+    INSERT INTO "ArticleMetric" ("articleId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "favoriteCount", "hideCount", "collectedCount")
     SELECT
       m.id,
       tf.timeframe,
@@ -186,6 +193,13 @@ export const articleMetrics = createMetricProcessor({
         WHEN tf.timeframe = 'Week' THEN week_hide_count
         WHEN tf.timeframe = 'Day' THEN day_hide_count
       END AS hide_count
+      CASE
+        WHEN tf.timeframe = 'AllTime' THEN collected_count
+        WHEN tf.timeframe = 'Year' THEN year_collected_count
+        WHEN tf.timeframe = 'Month' THEN month_collected_count
+        WHEN tf.timeframe = 'Week' THEN week_collected_count
+        WHEN tf.timeframe = 'Day' THEN day_collected_count
+      END AS collected_count
     FROM
     (
       SELECT
@@ -230,6 +244,11 @@ export const articleMetrics = createMetricProcessor({
         COALESCE(ae.month_hide_count, 0) AS month_hide_count,
         COALESCE(ae.week_hide_count, 0) AS week_hide_count,
         COALESCE(ae.day_hide_count, 0) AS day_hide_count
+        COALESCE(ci.collected_count, 0) AS collected_count,
+        COALESCE(ci.year_collected_count, 0) AS year_collected_count,
+        COALESCE(ci.month_collected_count, 0) AS month_collected_count,
+        COALESCE(ci.week_collected_count, 0) AS week_collected_count,
+        COALESCE(ci.day_collected_count, 0) AS day_collected_count
       FROM affected q
       LEFT JOIN (
         SELECT
@@ -291,12 +310,25 @@ export const articleMetrics = createMetricProcessor({
         FROM "ArticleReaction" ir
         GROUP BY ir."articleId"
       ) r ON q.id = r.id
+      LEFT JOIN (
+        SELECT
+          aci."articleId" AS id,
+          COUNT(*) AS collected_count,
+          SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
+          SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
+          SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
+          SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
+        FROM "CollectionItem" aci
+        JOIN "Article" a ON a."id" = aci."articleId"
+        WHERE aci."articleId" IS NOT NULL
+        GROUP BY aci."articleId"
+      ) ci ON q.id = ci.id
     ) m
     CROSS JOIN (
       SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
     ) tf
     ON CONFLICT ("articleId", timeframe) DO UPDATE
-      SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "favoriteCount" = EXCLUDED."favoriteCount", "hideCount" = EXCLUDED."hideCount";
+      SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "favoriteCount" = EXCLUDED."favoriteCount", "hideCount" = EXCLUDED."hideCount", "collectedCount" = EXCLUDED."collectedCount";
   `;
 
     const additionallyAffected: Array<{ id: number }> = await db.$queryRaw`
@@ -318,7 +350,7 @@ export const articleMetrics = createMetricProcessor({
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "ArticleMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "viewCount" = 0 WHERE timeframe = 'Day';
+      UPDATE "ArticleMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "viewCount" = 0, "collectedCount" = 0 WHERE timeframe = 'Day';
     `;
   },
   rank: {

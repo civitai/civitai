@@ -60,6 +60,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'publishedAt',
     'rank.commentCountAllTimeRank',
     'rank.reactionCountAllTimeRank',
+    'rank.collectedCountAllTimeRank',
   ];
 
   const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
@@ -143,7 +144,11 @@ type ImageForSearchIndex = {
     likeCountAllTime: number;
     commentCountAllTime: number;
   } | null;
-  rank: { commentCountAllTimeRank: number; reactionCountAllTimeRank: number } | null;
+  rank: {
+    commentCountAllTimeRank: number;
+    reactionCountAllTimeRank: number;
+    collectedCountAllTimeRank: number;
+  } | null;
 };
 
 const onFetchItemsToIndex = async ({
@@ -213,6 +218,7 @@ const onFetchItemsToIndex = async ({
       jsonb_build_object(
         'commentCountAllTimeRank', ir."commentCountAllTimeRank",
         'reactionCountAllTimeRank', ir."reactionCountAllTimeRank"
+        'collectedCountAllTimeRank', ir."collectedCountAllTimeRank"
       ) rank
     FROM "ImageRank" ir
     WHERE ir."imageId" IN (SELECT id FROM target)

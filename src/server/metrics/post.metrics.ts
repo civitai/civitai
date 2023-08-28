@@ -29,6 +29,13 @@ export const postMetrics = createMetricProcessor({
 
       UNION
 
+      SELECT ci."postId" as id
+      FROM "CollectionItem" ci
+      JOIN "Post" p ON p.id = ci."postId"
+      WHERE ci."postId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
+
+      UNION
+
       SELECT
         "id"
       FROM "MetricUpdateQueue"
@@ -92,6 +99,13 @@ export const postMetrics = createMetricProcessor({
         WHEN tf.timeframe = 'Week' THEN week_comment_count
         WHEN tf.timeframe = 'Day' THEN day_comment_count
       END AS comment_count
+      CASE
+        WHEN tf.timeframe = 'AllTime' THEN collected_count
+        WHEN tf.timeframe = 'Year' THEN year_collected_count
+        WHEN tf.timeframe = 'Month' THEN month_collected_count
+        WHEN tf.timeframe = 'Week' THEN week_collected_count
+        WHEN tf.timeframe = 'Day' THEN day_collected_count
+      END AS collected_count
     FROM
     (
       SELECT
@@ -126,6 +140,11 @@ export const postMetrics = createMetricProcessor({
         COALESCE(c.month_comment_count, 0) AS month_comment_count,
         COALESCE(c.week_comment_count, 0) AS week_comment_count,
         COALESCE(c.day_comment_count, 0) AS day_comment_count
+        COALESCE(ci.collected_count, 0) AS collected_count,
+        COALESCE(ci.year_collected_count, 0) AS year_collected_count,
+        COALESCE(ci.month_collected_count, 0) AS month_collected_count,
+        COALESCE(ci.week_collected_count, 0) AS week_collected_count,
+        COALESCE(ci.day_collected_count, 0) AS day_collected_count
       FROM affected q
       LEFT JOIN (
         SELECT
@@ -172,17 +191,30 @@ export const postMetrics = createMetricProcessor({
         JOIN "Image" i ON i.id = ir."imageId"
         GROUP BY i."postId"
       ) ir ON q.id = ir.id
+      LEFT JOIN (
+        SELECT
+          pci."postId" AS id,
+          COUNT(*) AS collected_count,
+          SUM(IIF(p."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
+          SUM(IIF(p."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
+          SUM(IIF(p."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
+          SUM(IIF(p."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
+        FROM "CollectionItem" pci
+        JOIN "Post" p ON p."id" = pci."postId"
+        WHERE pci."postId" IS NOT NULL
+        GROUP BY pci."postId"
+      ) ci ON q.id = ci.id
     ) m
     CROSS JOIN (
       SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
     ) tf
     ON CONFLICT ("postId", timeframe) DO UPDATE
-      SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
+      SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount";
   `;
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "PostMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';
+      UPDATE "PostMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0 WHERE timeframe = 'Day';
     `;
   },
   rank: {
@@ -199,6 +231,11 @@ export const postMetrics = createMetricProcessor({
       'commentCountWeekRank',
       'commentCountMonthRank',
       'commentCountYearRank',
+      'collectedCountAllTimeRank',
+      'collectedCountDayRank',
+      'collectedCountWeekRank',
+      'collectedCountMonthRank',
+      'collectedCountYearRank',
     ],
   },
 });

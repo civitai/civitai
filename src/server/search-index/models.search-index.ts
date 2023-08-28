@@ -66,6 +66,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'metrics.downloadCount',
     'metrics.rating',
     'metrics.ratingCount',
+    'metrics.collectedCount',
   ];
 
   // Meilisearch stores sorted.
@@ -198,6 +199,7 @@ const onFetchItemsToIndex = async ({
           downloadCount: true,
           rating: true,
           ratingCount: true,
+          collectedCount: true,
         },
         where: {
           timeframe: MetricTimeframe.AllTime,
