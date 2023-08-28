@@ -395,15 +395,15 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
         {user && (
           <>
             <Box className={classes.banner} mb="md">
-              <Container size="xl">
+              <Container size="sm" p={0}>
                 <Stack className={classes.wrapper} spacing="md" align="center">
                   {user.image && (
                     <div className={classes.outsideImage}>
-                      <AspectRatio ratio={1 / 1} className={classes.image}>
+                      <AspectRatio ratio={1} className={classes.image}>
                         <EdgeMedia
                           src={user.image}
                           name={user.username}
-                          width={128}
+                          width={145}
                           alt={user.username ?? ''}
                         />
                       </AspectRatio>
@@ -413,23 +413,29 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                     <Group noWrap>
                       {user.image && (
                         <div className={classes.insideImage}>
-                          <AspectRatio ratio={1 / 1} className={classes.image}>
+                          <AspectRatio ratio={1} className={classes.image}>
                             <EdgeMedia
                               src={user.image}
                               name={user.username}
-                              width={128}
+                              width={145}
                               alt={user.username ?? ''}
                             />
                           </AspectRatio>
                         </div>
                       )}
-                      <Stack spacing="xs">
+                      <Stack spacing="xs" sx={{ flexGrow: 1 }}>
                         <Group position="apart" spacing={8} align="flex-start">
                           <Stack spacing={0}>
-                            <Title order={2} size={24} weight={600} lh={1.5}>
-                              <Username {...user} size="lg" inherit />
+                            <Title
+                              className={classes.username}
+                              order={2}
+                              size={24}
+                              weight={600}
+                              lh={1.5}
+                            >
+                              <Username {...user} size="md" inherit />
                             </Title>
-                            <Text size="md" color="dimmed">
+                            <Text className={classes.joinedDate} size="md" color="dimmed">
                               {`Joined ${formatDate(user.createdAt)}`}
                             </Text>
                           </Stack>
@@ -591,11 +597,13 @@ const useStyles = createStyles((theme) => ({
 
     [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
       paddingTop: theme.spacing.md,
+      paddingLeft: theme.spacing.md,
+      paddingRight: theme.spacing.md,
     },
   },
   image: {
-    width: '128px',
-    borderRadius: theme.radius.sm,
+    width: '145px',
+    borderRadius: theme.radius.xs,
     overflow: 'hidden',
   },
   wrapper: {
@@ -618,14 +626,25 @@ const useStyles = createStyles((theme) => ({
   },
   card: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
+    width: '100%',
 
-    [`@media (max-width: ${theme.breakpoints.xs}px)`]: {
-      width: '100%',
+    [theme.fn.smallerThan('sm')]: {
+      padding: 8,
     },
   },
   userActions: {
     [theme.fn.smallerThan('sm')]: {
       flexGrow: 1,
+    },
+  },
+  username: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: theme.fontSizes.md,
+    },
+  },
+  joinedDate: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: theme.fontSizes.xs,
     },
   },
 }));

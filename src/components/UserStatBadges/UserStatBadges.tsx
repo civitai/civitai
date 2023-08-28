@@ -59,7 +59,7 @@ export function UserStatBadges({
           }
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         >
-          <Text size="xs" weight={600}>
+          <Text size="xs" weight={600} inline>
             {abbreviateNumber(rating.count)}
           </Text>
         </IconBadge>
@@ -82,7 +82,7 @@ export function UserStatBadges({
               // @ts-ignore: transparent variant does work
               variant="transparent"
             >
-              <Text size="xs" weight={600}>
+              <Text size="xs" weight={600} inline>
                 {abbreviateNumber(uploads)}
               </Text>
             </IconBadge>
@@ -98,7 +98,7 @@ export function UserStatBadges({
               // @ts-ignore: transparent variant does work
               variant="transparent"
             >
-              <Text size="xs" weight={600}>
+              <Text size="xs" weight={600} inline>
                 {abbreviateNumber(followers)}
               </Text>
             </IconBadge>
@@ -113,7 +113,7 @@ export function UserStatBadges({
               variant="transparent"
               size="lg"
             >
-              <Text size="xs" weight={600}>
+              <Text size="xs" weight={600} inline>
                 {abbreviateNumber(favorite)}
               </Text>
             </IconBadge>
@@ -127,7 +127,7 @@ export function UserStatBadges({
               variant="transparent"
               size="lg"
             >
-              <Text size="xs" weight={600}>
+              <Text size="xs" weight={600} inline>
                 {abbreviateNumber(downloads)}
               </Text>
             </IconBadge>
@@ -141,7 +141,7 @@ export function UserStatBadges({
               variant="transparent"
               size="lg"
             >
-              <Text size="xs" weight={600}>
+              <Text size="xs" weight={600} inline>
                 {abbreviateNumber(answers)}
               </Text>
             </IconBadge>
