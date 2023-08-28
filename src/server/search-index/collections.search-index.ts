@@ -15,8 +15,6 @@ import {
   CollectionWriteConfiguration,
   CosmeticSource,
   CosmeticType,
-  ImageGenerationProcess,
-  LinkType,
   MediaType,
   NsfwLevel,
   Prisma,
@@ -27,6 +25,7 @@ import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const READ_BATCH_SIZE = 250; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -112,6 +111,7 @@ type ImageProps = {
   index: number | null;
   scannedAt: Date | null;
   mimeType: string | null;
+  meta: Prisma.JsonObject | null;
 } | null;
 
 type CollectionForSearchIndex = {
@@ -189,7 +189,8 @@ const onFetchItemsToIndex = async ({
         'createdAt', i."createdAt",
         'mimeType', i."mimeType",
         'scannedAt', i."scannedAt",
-        'type', i."type"
+        'type', i."type",
+        'meta', i."meta"
       ) image
   `;
 
@@ -350,7 +351,11 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
-  const imageIds = [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))];
+  const collectionImages = collections.map((c) => c.image?.id).filter(isDefined);
+  const imageIds = [
+    ...collectionImages,
+    ...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined)),
+  ];
   const tags = await dbRead.tagsOnImage.findMany({
     where: { imageId: { in: imageIds }, disabled: false },
     select: { imageId: true, tagId: true },
@@ -364,7 +369,14 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
-  const indexReadyRecords = collections.map(({ cosmetics, user, ...collection }) => {
+  const indexReadyRecords = collections.map(({ cosmetics, user, image, ...collection }) => {
+    const collectionImage = image
+      ? {
+          ...image,
+          meta: image.meta as ImageMetaProps,
+          tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
+        }
+      : null;
     const collectionImages = itemImages.filter((i) => i.id === collection.id);
     const images = collectionImages
       .map((i) => i.image)
@@ -376,6 +388,7 @@ const onFetchItemsToIndex = async ({
 
     return {
       ...collection,
+      image: collectionImage,
       metrics: collection.metrics || {},
       user: {
         ...user,

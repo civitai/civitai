@@ -14,6 +14,7 @@ import { isDefined } from '~/utils/type-guards';
 import { MediaType, NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import React from 'react';
+import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 
 type ImageProps = {
   id: number;
@@ -34,11 +35,11 @@ export function CollectionCard({ data, sx }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
 
   const getCoverImages = () => {
+    if (data.image) return [data.image];
+
     if (data.images) {
       return data.images ?? [];
     }
-
-    if (data.image) return [data.image];
 
     return (data.items ?? [])
       .map((item) => {
@@ -59,11 +60,11 @@ export function CollectionCard({ data, sx }: Props) {
   };
 
   const getCoverSrcs = () => {
+    if (data.image) return [];
+
     if (data.srcs) {
       return data.srcs ?? [];
     }
-
-    if (data.image) return [];
 
     return (data.items ?? [])
       .map((item) => {
@@ -254,13 +255,15 @@ function ImageSrcCover({ data, coverSrcs }: Props & { coverSrcs: string[] }) {
 }
 
 type Props = {
-  data: CollectionGetInfinite[number] & {
+  data: Omit<CollectionGetInfinite[number], 'image'> & {
     metrics?: {
       itemCount: number;
       contributorCount: number;
     } | null;
     srcs?: string[] | null;
     images?: ImageProps[] | null;
+  } & {
+    image?: ImageProps | null;
   };
   sx?: Sx;
 };

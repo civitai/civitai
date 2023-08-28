@@ -160,6 +160,15 @@ export const applyUserPreferencesCollections = <T>({
     user: {
       id: number;
     };
+    image: {
+      id: number;
+      tags?:
+        | {
+            id: number;
+          }[]
+        | number[]
+        | null;
+    } | null;
     images: {
       id: number;
       tags?:
@@ -179,6 +188,21 @@ export const applyUserPreferencesCollections = <T>({
     .filter((x) => {
       if (x.user.id === currentUserId) return true;
       if (hiddenUsers.get(x.user.id)) return false;
+      if (x.image) {
+        // Cover photo:
+        if (hiddenImages.get(x.image.id)) {
+          return false;
+        }
+
+        for (const tag of x.image.tags ?? []) {
+          if (typeof tag === 'number') {
+            if (hiddenTags.get(tag)) return false;
+          } else {
+            if (hiddenTags.get(tag.id)) return false;
+          }
+        }
+      }
+
       return true;
     })
     .map(({ images, ...x }) => {
