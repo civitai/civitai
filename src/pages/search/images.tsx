@@ -26,12 +26,17 @@ import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesImages } from '~/components/Search/search.utils';
-import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { constants, IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { CollectionContributorPermission } from '@prisma/client';
+import { CollectionContributorPermission, MetricTimeframe } from '@prisma/client';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
+import { z } from 'zod';
+import { periodModeSchema } from '~/server/schema/base.schema';
+import { ModelSort } from '~/server/common/enums';
+import { usernameSchema } from '~/server/schema/user.schema';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 export default function ImageSearch() {
   return (
@@ -226,7 +231,14 @@ export const useImageViewerCtx = ({ images }: { images: { id: number }[] }) => {
   return context;
 };
 
+const imageViewerQueryParams = z
+  .object({
+    imageId: z.coerce.number(),
+  })
+  .partial();
 const ImageViewer = ({ children }: { children: React.ReactElement }) => {
+  const router = useRouter();
+
   const [activeImageId, setActiveImageId] = useState<number | null>(null);
   const [images, setImages] = useState<{ id: number }[]>([]);
 
@@ -246,19 +258,75 @@ const ImageViewer = ({ children }: { children: React.ReactElement }) => {
     return images[index - 1]?.id ?? null;
   }, [images, activeImageId]);
 
-  useHotkeys([['Escape', close]]);
-
   const onSetImage = (imageId: number | null) => {
     if (!imageId) {
       return;
     }
 
-    setActiveImageId(imageId);
+    if (activeImageId) {
+      router.replace(
+        {
+          pathname: router.pathname,
+          query: {
+            ...router.query,
+            imageId: imageId ? imageId.toString() : undefined,
+          },
+        },
+        undefined,
+        { shallow: true }
+      );
+    } else {
+      router.push(
+        {
+          pathname: router.pathname,
+          query: {
+            ...router.query,
+            imageId: imageId ? imageId.toString() : undefined,
+          },
+        },
+        undefined,
+        { shallow: true }
+      );
+    }
   };
   const onClose = () => {
-    console.log('call me crazy');
-    setActiveImageId(null);
+    router.replace(
+      {
+        pathname: router.pathname,
+        query: {
+          ...router.query,
+          imageId: undefined,
+        },
+      },
+      undefined,
+      { shallow: true }
+    );
   };
+
+  useHotkeys([['Escape', onClose]]);
+
+  useEffect(() => {
+    if (router) {
+      const res = imageViewerQueryParams.safeParse(router.query);
+      console.log(res);
+      if (!res.success || !res.data?.imageId) {
+        setActiveImageId(null);
+      } else {
+        setActiveImageId(res.data.imageId ?? null);
+      }
+    }
+  }, [router?.query]);
+
+  useEffect(() => {
+    if (router) {
+      router.beforePopState((state) => {
+        state.options.scroll = false;
+        return true;
+      });
+    }
+  }, [router]);
+
+  console.log(router?.query);
 
   return (
     <ImageViewerCtx.Provider
