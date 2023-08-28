@@ -144,6 +144,12 @@ type CollectionForSearchIndex = {
   image: ImageProps;
 };
 
+type CollectionImageRaw = {
+  id: number;
+  image: ImageProps | null;
+  src: string | null;
+};
+
 const onFetchItemsToIndex = async ({
   db,
   whereOr,
@@ -204,8 +210,8 @@ const onFetchItemsToIndex = async ({
     c."createdAt",
     c."updatedAt",
     c."userId",
-    c."type",    
-    c."read",    
+    c."type",
+    c."read",
     c."write"
     FROM "Collection" c
     WHERE ${Prisma.join(WHERE, ' AND ')}
@@ -245,6 +251,8 @@ const onFetchItemsToIndex = async ({
       ${imageSql}
     FROM "Image" i
     WHERE i.id IN (SELECT "imageId" FROM target)
+      AND i."ingestion" = 'Scanned'
+      AND i."needsReview" IS NULL
     GROUP BY i.id
   ), metrics as MATERIALIZED (
     SELECT
@@ -280,28 +288,29 @@ const onFetchItemsToIndex = async ({
     return [];
   }
 
-  const itemImages = await db.$queryRaw<
-    {
-      id: number;
-      image: ImageProps | null;
-      src: string | null;
-    }[]
-  >`
-  WITH target AS MATERIALIZED (
-      SELECT *, 
-      ROW_NUMBER() OVER (
-          PARTITION BY ci."collectionId"
-          ORDER BY ci.id
-        ) AS idx
-      FROM "CollectionItem" ci
-      WHERE ci.status = 'ACCEPTED'
-      AND ci."collectionId" IN (${Prisma.join(collections.map((c) => c.id))})
+  const collectionsNeedingImages = collections.filter((c) => !c.image).map((c) => c.id);
+  const itemImages = await db.$queryRaw<CollectionImageRaw[]>`
+    WITH target AS MATERIALIZED (
+      SELECT *
+      FROM (
+        SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY ci."collectionId"
+            ORDER BY ci.id
+          ) AS idx
+        FROM "CollectionItem" ci
+        WHERE ci.status = 'ACCEPTED'
+          AND ci."collectionId" IN (${Prisma.join(collectionsNeedingImages)})
+      ) t
+      WHERE idx <= 10
     ), imageItemImage AS MATERIALIZED (
       SELECT
         i.id,
         ${imageSql}
       FROM "Image" i
       WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
+        AND i."ingestion" = 'Scanned'
+        AND i."needsReview" IS NULL
     ), postItemImage AS MATERIALIZED (
       SELECT * FROM (
           SELECT
@@ -309,10 +318,12 @@ const onFetchItemsToIndex = async ({
             ${imageSql},
             ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
           FROM "Image" i
-          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL) 
+          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
+            AND i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
       ) t
       WHERE t.rn = 1
-    ),modelItemImage AS MATERIALIZED (
+    ), modelItemImage AS MATERIALIZED (
       SELECT * FROM (
           SELECT
             m.id,
@@ -323,8 +334,8 @@ const onFetchItemsToIndex = async ({
           JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
           JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
           WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
-              AND i."scannedAt" IS NOT NULL
               AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
       ) t
       WHERE t.rn = 1
     ), articleItemImage as MATERIALIZED (
@@ -340,7 +351,7 @@ const onFetchItemsToIndex = async ({
           NULL
         ) image,
         (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
-    FROM target WHERE idx <= 10
+    FROM target
   `;
 
   console.log(
