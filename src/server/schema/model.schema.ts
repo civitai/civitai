@@ -1,12 +1,13 @@
 import {
-  ModelStatus,
-  MetricTimeframe,
-  CommercialUse,
-  ModelModifier,
   AssociationType,
-  CollectionItemStatus,
-  ModelType,
   CheckpointType,
+  CollectionItemStatus,
+  CommercialUse,
+  MetricTimeframe,
+  ModelModifier,
+  ModelStatus,
+  ModelType,
+  ModelUploadType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -53,6 +54,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
+  // TODO [bw]: do we need uploadType in here?
   status: z
     .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
     .optional()
@@ -99,6 +101,7 @@ export const modelSchema = licensingSchema.extend({
   name: z.string().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
+  uploadType: z.nativeEnum(ModelUploadType),
   status: z.nativeEnum(ModelStatus),
   checkpointType: z.nativeEnum(CheckpointType).nullish(),
   tagsOnModels: z.array(tagSchema).nullish(),
@@ -131,9 +134,10 @@ export type GetDownloadSchema = z.infer<typeof getDownloadSchema>;
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
 export const modelUpsertSchema = licensingSchema.extend({
   id: z.number().optional(),
-  name: z.string().min(1, 'Name cannot be empty.'),
+  name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
   type: z.nativeEnum(ModelType),
+  uploadType: z.nativeEnum(ModelUploadType),
   status: z.nativeEnum(ModelStatus),
   checkpointType: z.nativeEnum(CheckpointType).nullish(),
   tagsOnModels: z.array(tagSchema).nullish(),

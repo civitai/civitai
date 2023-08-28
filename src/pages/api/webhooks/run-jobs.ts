@@ -30,6 +30,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { env } from '~/env/server.mjs';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
+import { resubmitTrainingJobs } from '~/server/jobs/resubmit-training-jobs';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -55,6 +56,7 @@ export const jobs: Job[] = [
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
   cleanImageResources,
+  resubmitTrainingJobs,
   ...metricJobs,
   ...searchIndexJobs,
 ];

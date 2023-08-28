@@ -1,5 +1,4 @@
-import { useWindowEvent } from '@mantine/hooks';
-import { closeAllModals, ContextModalProps, ModalsProvider } from '@mantine/modals';
+import { ContextModalProps, ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
 import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
@@ -10,6 +9,8 @@ import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openAddToCollectionModal } from '~/components/Collections/AddToCollectionModal';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
+import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
+import { openSendTipModal } from '~/components/Modals/SendTipModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -41,6 +42,8 @@ const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddT
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );
+const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 
 const registry = {
   blockModelTags: {
@@ -78,6 +81,14 @@ const registry = {
   manageHomeBlocks: {
     Component: ManageHomeBlocksModal,
     fn: openManageHomeBlocksModal,
+  },
+  buyBuzz: {
+    Component: BuyBuzzModal,
+    fn: openBuyBuzzModal,
+  },
+  sendTip: {
+    Component: SendTipModal,
+    fn: openSendTipModal,
   },
 };
 

@@ -9,6 +9,7 @@ export const loginRedirectReasons = {
   'report-user': 'You need to be logged in to report this user',
   'create-review': 'You need to be logged in to add a review',
   'upload-model': 'You need to be logged in to upload a model',
+  'train-model': 'You need to be logged in to train a model',
   'favorite-model': 'You need to be logged in to like a model',
   'create-comment': 'You need to be logged in to add a comment',
   'report-comment': 'You need to be logged in to report this comment',

@@ -8,23 +8,24 @@ import {
   Stepper,
   Title,
 } from '@mantine/core';
+import { ModelUploadType, TrainingStatus } from '@prisma/client';
 import { IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files, UploadStepActions } from '~/components/Resource/Files';
 import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
+import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { PostUpsertForm } from '../Forms/PostUpsertForm';
 
-type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
+export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ id: number; name: string }>;
 };
 
@@ -53,16 +54,24 @@ export function ModelWizard() {
 
   const { data: model } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
 
+  const maxSteps = 4;
+
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
-  const hasFiles = model && model.modelVersions.some((version) => version.files.length > 0);
+  const hasFiles =
+    model &&
+    model.modelVersions.some((version) =>
+      model.uploadType === ModelUploadType.Trained
+        ? version.files.filter((f) => f.type === 'Model' || f.type === 'Pruned Model').length > 0
+        : version.files.length > 0
+    );
 
   const { uploading, error, aborted } = getUploadStatus(
     (file) => file.meta?.versionId === state.modelVersion?.id
   );
 
   const goNext = () => {
-    if (state.step < 4)
+    if (state.step < maxSteps)
       router.replace(`/models/${id}/wizard?step=${state.step + 1}`, undefined, {
         shallow: true,
       });
@@ -178,17 +187,47 @@ export function ModelWizard() {
                 </ModelVersionUpsertForm>
               </Stack>
             </Stepper.Step>
-            <Stepper.Step
-              label="Upload files"
-              loading={uploading > 0}
-              color={error + aborted > 0 ? 'red' : undefined}
-            >
-              <Stack>
-                <Title order={3}>Upload files</Title>
-                <Files />
-                <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
-              </Stack>
-            </Stepper.Step>
+            {state.model?.uploadType === ModelUploadType.Trained ? (
+              <Stepper.Step
+                label="Select Model File"
+                loading={
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Pending ||
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Submitted ||
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Processing
+                }
+                color={
+                  state.model.modelVersions[0].trainingStatus === TrainingStatus.Failed
+                    ? 'red'
+                    : undefined
+                }
+              >
+                <Stack>
+                  <Title order={3}>Select Model File</Title>
+                  <Title mb="sm" order={5}>
+                    Choose a model file from the results of your training run.
+                    <br />
+                    Sample images are provided for reference.
+                  </Title>
+                  <TrainingSelectFile
+                    model={state.model}
+                    onBackClick={goBack}
+                    onNextClick={goNext}
+                  />
+                </Stack>
+              </Stepper.Step>
+            ) : (
+              <Stepper.Step
+                label="Upload files"
+                loading={uploading > 0}
+                color={error + aborted > 0 ? 'red' : undefined}
+              >
+                <Stack>
+                  <Title order={3}>Upload files</Title>
+                  <Files />
+                  <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
+                </Stack>
+              </Stepper.Step>
+            )}
             <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
               <Stack>
                 <Title order={3}>{postId ? 'Edit post' : 'Create your post'}</Title>

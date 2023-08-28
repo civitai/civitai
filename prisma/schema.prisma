@@ -290,13 +290,23 @@ model Import {
 }
 
 enum ModelStatus {
-  Draft
-  Published
-  Scheduled
-  Unpublished
-  UnpublishedViolation
-  GatherInterest
-  Deleted
+  Draft                 // saved but incomplete
+  Training              // actively training
+  Published             // complete
+  Scheduled             // scheduled for publish
+  Unpublished           // taken from published -> hidden intentionally?
+  UnpublishedViolation  // taken from published -> hidden unintentionally?
+  GatherInterest        // unused?
+  Deleted               // deleted by user/system
+}
+
+enum TrainingStatus {
+  Pending     // not submitted yet (in draft mode)
+  Submitted   // submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Processing  // actively generating
+  InReview    // done, waiting for publish
+  Failed      // something went wrong either externally or internally
+  Approved    // published
 }
 
 enum CommercialUse {
@@ -309,6 +319,11 @@ enum CommercialUse {
 enum CheckpointType {
   Trained
   Merge
+}
+
+enum ModelUploadType {
+  Created
+  Trained
 }
 
 enum ModelModifier {
@@ -345,6 +360,7 @@ model Model {
   deletedBy           Int?
   deletedByUser       User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
   checkpointType      CheckpointType?
+  uploadType          ModelUploadType @default(Created)
   locked              Boolean         @default(false)
   underAttack         Boolean         @default(false)
   earlyAccessDeadline DateTime?
@@ -417,29 +433,31 @@ model ModelEngagement {
 }
 
 model ModelVersion {
-  id                   Int           @id @default(autoincrement())
+  id                   Int             @id @default(autoincrement())
   index                Int?
   name                 String
   description          String?
   modelId              Int
-  model                Model         @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model                Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   trainedWords         String[]
   steps                Int?
   epochs               Int?
   clipSkip             Int?
   vaeId                Int?
-  vae                  ModelVersion? @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  vae                  ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
   publishedAt          DateTime?
-  status               ModelStatus   @default(Draft)
-  fromImport           Import?       @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  status               ModelStatus     @default(Draft)
+  trainingStatus       TrainingStatus?
+  trainingDetails      Json?
+  fromImport           Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId         Int?
-  inaccurate           Boolean       @default(false)
+  inaccurate           Boolean         @default(false)
   baseModel            String
   baseModelType        String?
-  meta                 Json          @default("{}")
-  earlyAccessTimeFrame Int           @default(0)
+  meta                 Json            @default("{}")
+  earlyAccessTimeFrame Int             @default(0)
 
   metrics                 ModelVersionMetric[]
   files                   ModelFile[]
@@ -500,25 +518,32 @@ enum ScanResultCode {
   Error
 }
 
+enum ModelFileVisibility {
+  Sensitive // Choosing not to share
+  Private   // Hidden
+  Public    // Available to all
+}
+
 model ModelFile {
-  id                Int             @id @default(autoincrement())
+  id                Int                  @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime        @default(now())
-  type              String          @default("Model")
+  createdAt         DateTime             @default(now())
+  type              String               @default("Model")
   modelVersionId    Int
-  modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode  @default(Pending)
+  modelVersion      ModelVersion         @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode       @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode  @default(Pending)
+  virusScanResult   ScanResultCode       @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
+  visibility        ModelFileVisibility  @default(Public)
 
   @@index([modelVersionId], type: Hash)
 }
@@ -976,6 +1001,17 @@ model ImageMetric {
   commentCount Int             @default(0)
 
   @@id([imageId, timeframe])
+}
+
+model CollectionMetric {
+  collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collectionId     Int
+  timeframe        MetricTimeframe
+  followerCount    Int             @default(0)
+  itemCount        Int             @default(0)
+  contributorCount Int             @default(0)
+
+  @@id([collectionId, timeframe])
 }
 
 enum ImageOnModelType {
@@ -1776,6 +1812,9 @@ model Collection {
   tags         TagsOnCollection[]
   post         Post[]
   reports      CollectionReport[]
+  rank         CollectionRank?
+  stats        CollectionStat?
+  metrics      CollectionMetric[]
 
   @@index([userId])
 }
@@ -2559,6 +2598,48 @@ model PostRank {
   reactionCountMonthRank   Int  @default(0)
   reactionCountYearRank    Int  @default(0)
   reactionCountAllTimeRank Int  @default(0)
+}
+
+/// @view
+model CollectionStat {
+  collection              Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
+  collectionId            Int        @id
+  followerCountDay        Int
+  followerCountWeek       Int
+  followerCountMonth      Int
+  followerCountYear       Int
+  followerCountAllTime    Int
+  itemCountDay            Int
+  itemCountWeek           Int
+  itemCountMonth          Int
+  itemCountYear           Int
+  itemCountAllTime        Int
+  contributorCountDay     Int
+  contributorCountWeek    Int
+  contributorCountMonth   Int
+  contributorCountYear    Int
+  contributorCountAllTime Int
+}
+
+/// @view
+model CollectionRank {
+  collectionId                Int        @id
+  collection                  Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
+  followerCountDayRank        Int        @default(0)
+  followerCountWeekRank       Int        @default(0)
+  followerCountMonthRank      Int        @default(0)
+  followerCountYearRank       Int        @default(0)
+  followerCountAllTimeRank    Int        @default(0)
+  itemCountDayRank            Int        @default(0)
+  itemCountWeekRank           Int        @default(0)
+  itemCountMonthRank          Int        @default(0)
+  itemCountYearRank           Int        @default(0)
+  itemCountAllTimeRank        Int        @default(0)
+  contributorCountDayRank     Int        @default(0)
+  contributorCountWeekRank    Int        @default(0)
+  contributorCountMonthRank   Int        @default(0)
+  contributorCountYearRank    Int        @default(0)
+  contributorCountAllTimeRank Int        @default(0)
 }
 
 /// @view

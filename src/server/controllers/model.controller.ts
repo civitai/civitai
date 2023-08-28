@@ -1,23 +1,29 @@
-import { modelHashSelect } from './../selectors/modelHash.selector';
 import {
-  ModelStatus,
-  ModelHashType,
-  Prisma,
-  ModelModifier,
   MetricTimeframe,
+  ModelHashType,
+  ModelModifier,
+  ModelStatus,
+  Prisma,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-
-import { dbWrite, dbRead } from '~/server/db/client';
+import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
+import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
+import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
+import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
+
+import { dbRead, dbWrite } from '~/server/db/client';
+import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { ModelVersionMeta, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   ChangeModelModifierSchema,
   DeclineReviewSchema,
   DeleteModelSchema,
   FindResourcesToAssociateSchema,
   GetAllModelsOutput,
+  getAllModelsSchema,
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
@@ -28,14 +34,17 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
   UserPreferencesForModelsInput,
-  getAllModelsSchema,
 } from '~/server/schema/model.schema';
+import { modelsSearchIndex } from '~/server/search-index';
 import {
   associatedResourceSelect,
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getArticles } from '~/server/services/article.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   deleteModelById,
   getDraftModelsByUserId,
@@ -43,6 +52,7 @@ import {
   getModels,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
   publishModelById,
@@ -53,30 +63,21 @@ import {
   updateModelEarlyAccessDeadline,
   upsertModel,
 } from '~/server/services/model.service';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { getCategoryTags } from '~/server/services/system-cache';
+import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
+import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
-import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
-import { getDownloadFilename } from '~/pages/api/download/models/[modelVersionId]';
-import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { isDefined } from '~/utils/type-guards';
-import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
-import { getImagesForModelVersion } from '~/server/services/image.service';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getDownloadUrl } from '~/utils/delivery-worker';
-import { ModelSort } from '~/server/common/enums';
-import { getCategoryTags } from '~/server/services/system-cache';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
-import { getArticles } from '~/server/services/article.service';
-import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
-import { modelsSearchIndex } from '~/server/search-index';
+import { isDefined } from '~/utils/type-guards';
+import { modelHashSelect } from './../selectors/modelHash.selector';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -173,6 +174,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           baseModel: version.baseModel as BaseModel,
           baseModelType: version.baseModelType as BaseModelType,
           meta: version.meta as ModelVersionMeta,
+          trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined | null,
         };
       }),
     };
@@ -747,6 +749,52 @@ export const getMyDraftModelsHandler = async ({
   }
 };
 
+export const getMyTrainingModelsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    return await getTrainingModelsByUserId({
+      ...input,
+      userId,
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        createdAt: true,
+        status: true,
+        updatedAt: true,
+        modelVersions: {
+          select: {
+            id: true,
+            trainingDetails: true,
+            trainingStatus: true,
+            files: {
+              select: {
+                url: true,
+                type: true,
+                metadata: true,
+                sizeKB: true,
+              },
+              where: { type: { equals: 'Training Data' } },
+            },
+            _count: {
+              select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
+            },
+          },
+        },
+        _count: { select: { modelVersions: true } },
+      },
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
 export const reorderModelVersionsHandler = async ({
   input,
 }: {
@@ -791,7 +839,15 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { id: true, name: true, status: true, type: true, meta: true, userId: true },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        type: true,
+        uploadType: true,
+        meta: true,
+        userId: true,
+      },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status !== ModelStatus.UnpublishedViolation)
@@ -824,7 +880,15 @@ export const declineReviewHandler = async ({
 
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { id: true, name: true, status: true, type: true, meta: true, userId: true },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        type: true,
+        uploadType: true,
+        meta: true,
+        userId: true,
+      },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 

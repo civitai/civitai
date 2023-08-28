@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelHashType, Prisma } from '@prisma/client';
+import { ModelHashType, Prisma } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
@@ -10,6 +10,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   name: true,
   description: true,
   type: true,
+  // TODO [bw]: do we need uploadType here?
   poi: true,
   nsfw: true,
   allowNoCredit: true,
@@ -52,6 +53,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   poi: true,
   nsfw: true,
   type: true,
+  uploadType: true,
   updatedAt: true,
   deletedAt: true,
   deletedBy: true,
@@ -110,6 +112,8 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       createdAt: true,
       updatedAt: true,
       trainedWords: true,
+      trainingStatus: true,
+      trainingDetails: true,
       inaccurate: true,
       baseModel: true,
       baseModelType: true,

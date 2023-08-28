@@ -102,7 +102,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
-        title: 'Failed to saved model version',
+        title: 'Failed to save model version',
       });
     },
   });

@@ -3,10 +3,10 @@ import * as searchIndex from '~/server/search-index';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
-  tags: searchIndex.tagsSearchIndex,
   users: searchIndex.usersSearchIndex,
   articles: searchIndex.articlesSearchIndex,
   images: searchIndex.imagesSearchIndex,
+  collections: searchIndex.collectionsSearchIndex,
 };
 
 export const searchIndexJobs = Object.entries(searchIndexSets)

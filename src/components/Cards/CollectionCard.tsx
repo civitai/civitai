@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Group, Stack, Text } from '@mantine/core';
+import { ActionIcon, Badge, Group, Stack, Sx, Text } from '@mantine/core';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
@@ -14,6 +14,7 @@ import { isDefined } from '~/utils/type-guards';
 import { MediaType, NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import React from 'react';
+import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 
 type ImageProps = {
   id: number;
@@ -27,17 +28,20 @@ type ImageProps = {
   user?: SimpleUser;
   url: string;
   type: MediaType;
-  metadata: any; // TODO
   name?: string | null;
 };
 
-export function CollectionCard({ data }: Props) {
+export function CollectionCard({ data, sx }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
 
   const getCoverImages = () => {
     if (data.image) return [data.image];
 
-    return data.items
+    if (data.images) {
+      return data.images ?? [];
+    }
+
+    return (data.items ?? [])
       .map((item) => {
         switch (item.type) {
           case 'model':
@@ -58,7 +62,11 @@ export function CollectionCard({ data }: Props) {
   const getCoverSrcs = () => {
     if (data.image) return [];
 
-    return data.items
+    if (data.srcs) {
+      return data.srcs ?? [];
+    }
+
+    return (data.items ?? [])
       .map((item) => {
         switch (item.type) {
           case 'article':
@@ -78,6 +86,8 @@ export function CollectionCard({ data }: Props) {
   const coverSrcs: string[] = getCoverSrcs();
   const isMultiImage = coverImages.length !== 0 ? coverImages.length > 1 : coverSrcs.length > 1;
   const coverImagesCount = coverImages.length || coverSrcs.length;
+  const contributorCount = data._count?.contributors || data.metrics?.contributorCount || 0;
+  const itemCount = data._count?.items || data.metrics?.itemCount || 0;
 
   return (
     <FeedCard
@@ -85,7 +95,7 @@ export function CollectionCard({ data }: Props) {
       href={`/collections/${data.id}`}
       aspectRatio="square"
       // Necessary when inside a UniformGrid
-      sx={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+      sx={sx || { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
     >
       <div
         className={cx({
@@ -119,10 +129,10 @@ export function CollectionCard({ data }: Props) {
             </Text>
             <Group spacing={4} noWrap>
               <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
-                <Text size="xs">{abbreviateNumber(data._count.items)}</Text>
+                <Text size="xs">{abbreviateNumber(itemCount)}</Text>
               </IconBadge>
               <IconBadge className={classes.iconBadge} icon={<IconUser size={14} />}>
-                <Text size="xs">{abbreviateNumber(data._count.contributors)}</Text>
+                <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
               </IconBadge>
             </Group>
           </Group>
@@ -244,4 +254,16 @@ function ImageSrcCover({ data, coverSrcs }: Props & { coverSrcs: string[] }) {
   );
 }
 
-type Props = { data: CollectionGetInfinite[number] };
+type Props = {
+  data: Omit<CollectionGetInfinite[number], 'image'> & {
+    metrics?: {
+      itemCount: number;
+      contributorCount: number;
+    } | null;
+    srcs?: string[] | null;
+    images?: ImageProps[] | null;
+  } & {
+    image?: ImageProps | null;
+  };
+  sx?: Sx;
+};

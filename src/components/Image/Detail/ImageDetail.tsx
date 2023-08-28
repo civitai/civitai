@@ -42,6 +42,7 @@ import { RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { CollectionType } from '@prisma/client';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -57,7 +58,7 @@ export function ImageDetail() {
         image={image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
       />
       <TrackView entityId={image.id} entityType="Image" type="ImageView" />
-      <MantineProvider theme={{ colorScheme: 'dark' }}>
+      <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
         <Paper className={classes.root}>
           <CloseButton
             style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
@@ -81,7 +82,7 @@ export function ImageDetail() {
             })}
           >
             <Card.Section py="xs" withBorder inheritPadding>
-              <Group position="apart" spacing={8} noWrap>
+              <Group position="apart" spacing={8}>
                 <UserAvatar
                   user={image.user}
                   avatarProps={{ size: 32 }}
@@ -95,12 +96,14 @@ export function ImageDetail() {
                   withUsername
                   linkToProfile
                 />
-                <Group spacing="md">
+                <Group spacing={8} sx={{ [theme.fn.smallerThan('sm')]: { flexGrow: 1 } }} noWrap>
+                  <TipBuzzButton toUserId={image.user.id} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
                   <CloseButton
                     size="md"
                     radius="xl"
                     variant="transparent"
+                    ml="auto"
                     iconSize={20}
                     onClick={close}
                   />

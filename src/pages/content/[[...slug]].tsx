@@ -1,9 +1,10 @@
 import fs from 'fs';
 import matter from 'gray-matter';
 import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
-import { Container, Title } from '@mantine/core';
+import { Container, Table, Title } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 import { getFilesWithExtension } from '~/utils/fs-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
@@ -60,7 +61,7 @@ export default function ContentPage({
       <Container size="md">
         <Title order={1}>{title}</Title>
         <ReactMarkdown
-          rehypePlugins={[rehypeRaw]}
+          rehypePlugins={[rehypeRaw, remarkGfm]}
           className="markdown-content"
           components={{
             a: ({ node, ...props }) => {
@@ -70,6 +71,13 @@ export default function ContentPage({
                     {props.children[0]}
                   </a>
                 </Link>
+              );
+            },
+            table: ({ node, ...props }) => {
+              return (
+                <Table {...props} striped withBorder withColumnBorders>
+                  {props.children}
+                </Table>
               );
             },
           }}

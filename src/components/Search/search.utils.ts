@@ -147,3 +147,87 @@ export const applyUserPreferencesUsers = <T>({
 
   return filtered as T[];
 };
+
+export const applyUserPreferencesCollections = <T>({
+  items,
+  currentUserId,
+  hiddenImages,
+  hiddenUsers,
+  hiddenTags,
+}: {
+  items: {
+    id: number;
+    user: {
+      id: number;
+    };
+    image: {
+      id: number;
+      tags?:
+        | {
+            id: number;
+          }[]
+        | number[]
+        | null;
+    } | null;
+    images: {
+      id: number;
+      tags?:
+        | {
+            id: number;
+          }[]
+        | number[]
+        | null;
+    }[];
+  }[];
+  hiddenImages: Map<number, boolean>;
+  hiddenUsers: Map<number, boolean>;
+  hiddenTags: Map<number, boolean>;
+  currentUserId?: number | null;
+}) => {
+  const filtered = items
+    .filter((x) => {
+      if (x.user.id === currentUserId) return true;
+      if (hiddenUsers.get(x.user.id)) return false;
+      if (x.image) {
+        // Cover photo:
+        if (hiddenImages.get(x.image.id)) {
+          return false;
+        }
+
+        for (const tag of x.image.tags ?? []) {
+          if (typeof tag === 'number') {
+            if (hiddenTags.get(tag)) return false;
+          } else {
+            if (hiddenTags.get(tag.id)) return false;
+          }
+        }
+      }
+
+      return true;
+    })
+    .map(({ images, ...x }) => {
+      const filteredImages = images?.filter((i) => {
+        if (hiddenImages.get(i.id)) return false;
+
+        for (const tag of i.tags ?? []) {
+          if (typeof tag === 'number') {
+            if (hiddenTags.get(tag)) return false;
+          } else {
+            if (hiddenTags.get(tag.id)) return false;
+          }
+        }
+
+        return true;
+      });
+
+      if (!filteredImages?.length) return null;
+
+      return {
+        ...x,
+        images: filteredImages,
+      };
+    })
+    .filter(isDefined);
+
+  return filtered as T[];
+};

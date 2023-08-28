@@ -49,9 +49,8 @@ import { RouterTransition } from '~/components/RouterTransition/RouterTransition
 import Router from 'next/router';
 import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
-import { env } from '~/env/client.mjs';
-import posthog from 'posthog-js';
-import { PostHogProvider } from 'posthog-js/react';
+import { SignalProvider } from '~/components/Signals/SignalsProvider';
+import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -73,18 +72,6 @@ type CustomAppProps = {
   flags: FeatureAccess;
   isMaintenanceMode: boolean | undefined;
 }>;
-
-if (typeof window !== 'undefined' && env.NEXT_PUBLIC_POSTHOG_KEY) {
-  posthog.init(env.NEXT_PUBLIC_POSTHOG_KEY, {
-    api_host: env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://app.posthog.com',
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    loaded: () => {
-      isDev && posthog.debug();
-    },
-  });
-}
 
 function MyApp(props: CustomAppProps) {
   const {
@@ -158,29 +145,31 @@ function MyApp(props: CustomAppProps) {
       <RegisterCatchNavigation />
       <RouterTransition />
       <SessionProvider session={session} refetchOnWindowFocus={false} refetchWhenOffline={false}>
-        <CivitaiSessionProvider>
-          <PostHogProvider client={posthog}>
-            <CookiesProvider value={cookies}>
-              <FiltersProvider value={filters}>
-                <HiddenPreferencesProvider>
-                  <FeatureFlagsProvider flags={flags}>
-                    <CivitaiLinkProvider>
-                      <CustomModalsProvider>
-                        <NotificationsProvider>
-                          <FreezeProvider>
-                            <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                          </FreezeProvider>
-                          <GenerationPanel />
-                          <RoutedContextProvider2 />
-                        </NotificationsProvider>
-                      </CustomModalsProvider>
-                    </CivitaiLinkProvider>
-                  </FeatureFlagsProvider>
-                </HiddenPreferencesProvider>
-              </FiltersProvider>
-            </CookiesProvider>
-          </PostHogProvider>
-        </CivitaiSessionProvider>
+        <FeatureFlagsProvider flags={flags}>
+          <SignalProvider>
+            <CivitaiSessionProvider>
+              <CivitaiPosthogProvider>
+                <CookiesProvider value={cookies}>
+                  <FiltersProvider value={filters}>
+                    <HiddenPreferencesProvider>
+                      <CivitaiLinkProvider>
+                        <CustomModalsProvider>
+                          <NotificationsProvider>
+                            <FreezeProvider>
+                              <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                            </FreezeProvider>
+                            <GenerationPanel />
+                            <RoutedContextProvider2 />
+                          </NotificationsProvider>
+                        </CustomModalsProvider>
+                      </CivitaiLinkProvider>
+                    </HiddenPreferencesProvider>
+                  </FiltersProvider>
+                </CookiesProvider>
+              </CivitaiPosthogProvider>
+            </CivitaiSessionProvider>
+          </SignalProvider>
+        </FeatureFlagsProvider>
       </SessionProvider>
     </>
   );
@@ -226,6 +215,20 @@ function MyApp(props: CustomAppProps) {
                   label: { cursor: 'pointer' },
                 },
               },
+            },
+            colors: {
+              accent: [
+                '#F4F0EA',
+                '#E8DBCA',
+                '#E2C8A9',
+                '#E3B785',
+                '#EBA95C',
+                '#FC9C2D',
+                '#E48C27',
+                '#C37E2D',
+                '#A27036',
+                '#88643B',
+              ],
             },
           }}
           withGlobalStyles

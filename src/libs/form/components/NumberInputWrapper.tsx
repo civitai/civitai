@@ -1,4 +1,4 @@
-import { CloseButton, Group, NumberInput, NumberInputProps } from '@mantine/core';
+import { CloseButton, NumberInput, NumberInputProps } from '@mantine/core';
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -28,8 +28,8 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     };
 
     useEffect(() => {
-      if (!value) handleClearInput();
-    }, [value]) //eslint-disable-line
+      if (value === undefined) handleClearInput();
+    }, [value]); //eslint-disable-line
 
     const handleChange = (value: number | undefined) => {
       onChange?.(value);

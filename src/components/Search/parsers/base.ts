@@ -5,6 +5,7 @@ import {
   USERS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
 } from '~/server/common/constants';
 
 const searchIndexes = [
@@ -12,6 +13,7 @@ const searchIndexes = [
   ARTICLES_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
 ] as const;
 export type SearchIndex = (typeof searchIndexes)[number];
 

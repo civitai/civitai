@@ -154,10 +154,23 @@ export function ModelsHitList() {
       </Box>
     );
 
+    const loading = status === 'loading' || status === 'stalled';
+
+    if (loading) {
+      return (
+        <Box>
+          <Center mt="md">
+            <Loader />
+          </Center>
+        </Box>
+      );
+    }
+
     return (
       <Box>
         <Center mt="md">
-          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+          {/* Just enough time to avoid blank random page */}
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
       </Box>
     );
@@ -189,7 +202,7 @@ export function ModelsHitList() {
       </Box>
       {hits.length > 0 && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && status === 'idle' && <Loader />}
+          {!isLastPage && <Loader />}
         </Center>
       )}
     </Stack>

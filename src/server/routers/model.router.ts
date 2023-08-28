@@ -18,6 +18,7 @@ import {
   getModelVersionsHandler,
   getModelWithVersionsHandler,
   getMyDraftModelsHandler,
+  getMyTrainingModelsHandler,
   publishModelHandler,
   reorderModelVersionsHandler,
   requestReviewHandler,
@@ -42,7 +43,6 @@ import {
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
   ModelInput,
-  modelSchema,
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
@@ -161,6 +161,9 @@ export const modelRouter = router({
   getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
   getVersions: publicProcedure.input(getModelVersionsSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
+  getMyTrainingModels: protectedProcedure
+    .input(getAllQuerySchema)
+    .query(getMyTrainingModelsHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)

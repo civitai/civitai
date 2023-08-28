@@ -119,7 +119,7 @@ function ImagesHitList() {
           <Stack spacing="md" align="center" maw={800}>
             {hiddenItems > 0 && (
               <Text color="dimmed">
-                {hiddenItems} models have been hidden due to your settings.
+                {hiddenItems} images have been hidden due to your settings.
               </Text>
             )}
             <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
@@ -137,10 +137,23 @@ function ImagesHitList() {
       </Box>
     );
 
+    const loading = status === 'loading' || status === 'stalled';
+
+    if (loading) {
+      return (
+        <Box>
+          <Center mt="md">
+            <Loader />
+          </Center>
+        </Box>
+      );
+    }
+
     return (
       <Box>
         <Center mt="md">
-          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} />
+          {/* Just enough time to avoid blank random page */}
+          <TimeoutLoader renderTimeout={() => <>{NotFound}</>} delay={150} />
         </Center>
       </Box>
     );
@@ -159,7 +172,7 @@ function ImagesHitList() {
   return (
     <Stack>
       {hiddenItems > 0 && (
-        <Text color="dimmed">{hiddenItems} models have been hidden due to your settings.</Text>
+        <Text color="dimmed">{hiddenItems} images have been hidden due to your settings.</Text>
       )}
       <div
         className={classes.grid}
@@ -184,7 +197,7 @@ function ImagesHitList() {
       </div>
       {hits.length > 0 && (
         <Center ref={ref} sx={{ height: 36 }} mt="md">
-          {!isLastPage && status === 'idle' && <Loader />}
+          {!isLastPage && <Loader />}
         </Center>
       )}
     </Stack>
@@ -289,6 +302,7 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 };
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ features }) => {
     if (!features?.imageSearch) return { notFound: true };
   },

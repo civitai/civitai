@@ -11,10 +11,17 @@ import {
   Title,
   Tooltip,
   createStyles,
+  Menu,
 } from '@mantine/core';
-import { CollectionType, MetricTimeframe } from '@prisma/client';
-import { IconCirclePlus, IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
-import { useState } from 'react';
+import { CollectionContributorPermission, CollectionType, MetricTimeframe } from '@prisma/client';
+import {
+  IconCirclePlus,
+  IconCloudOff,
+  IconDotsVertical,
+  IconPhoto,
+  IconPlaylistAdd,
+} from '@tabler/icons-react';
+import React, { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -41,6 +48,12 @@ import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enu
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
+import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
+import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ImageUploadProps } from '~/server/schema/image.schema';
+import { showSuccessNotification } from '~/utils/notifications';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -71,33 +84,87 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
   );
 };
 
-const ImageCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
+const ImageCollection = ({
+  collection,
+  permissions,
+}: {
+  collection: NonNullable<CollectionByIdModel>;
+  permissions?: CollectionContributorPermissionFlags;
+}) => {
   const { replace, query } = useImageQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? ImageSort.Newest;
+  const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
+  const utils = trpc.useContext();
 
   return (
-    <Stack spacing="xs">
-      <IsClient>
-        <Group position="apart" spacing={0}>
-          <SortFilter
-            type="images"
-            value={sort}
-            onChange={(x) => replace({ sort: x as ImageSort })}
+    <ImageGuardReportContext.Provider
+      value={{
+        getMenuItems: ({ menuItems, ...image }) => {
+          const items = menuItems.map((item) => item.component);
+          if (!permissions || !permissions.manage || !image.id) {
+            return items;
+          }
+
+          const useAsCover = (
+            <Menu.Item
+              key="make-cover-photo"
+              icon={
+                // @ts-ignore: transparent variant actually works here.
+                <ThemeIcon color="pink.7" variant="transparent" size="sm">
+                  <IconPhoto size={16} stroke={1.5} />
+                </ThemeIcon>
+              }
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                updateCollectionCoverImageMutation.mutate(
+                  {
+                    id: collection.id,
+                    imageId: image.id,
+                  },
+                  {
+                    onSuccess: async () => {
+                      showSuccessNotification({
+                        title: 'Cover image updated',
+                        message: 'Collection cover image has been updated',
+                      });
+                      await utils.collection.getById.invalidate({ id: collection.id });
+                    },
+                  }
+                );
+              }}
+            >
+              Use as cover image
+            </Menu.Item>
+          );
+
+          return [useAsCover, ...items];
+        },
+      }}
+    >
+      <Stack spacing="xs">
+        <IsClient>
+          <Group position="apart" spacing={0}>
+            <SortFilter
+              type="images"
+              value={sort}
+              onChange={(x) => replace({ sort: x as ImageSort })}
+            />
+            <PeriodFilter type="images" value={period} onChange={(x) => replace({ period: x })} />
+          </Group>
+          <ImageCategories />
+          <ImagesInfinite
+            filters={{
+              ...query,
+              period,
+              sort,
+              collectionId: collection.id,
+            }}
           />
-          <PeriodFilter type="images" value={period} onChange={(x) => replace({ period: x })} />
-        </Group>
-        <ImageCategories />
-        <ImagesInfinite
-          filters={{
-            ...query,
-            period,
-            sort,
-            collectionId: collection.id,
-          }}
-        />
-      </IsClient>
-    </Stack>
+        </IsClient>
+      </Stack>
+    </ImageGuardReportContext.Provider>
   );
 };
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
@@ -290,7 +357,7 @@ export function Collection({
               <ModelCollection collection={collection} />
             )}
             {collection && collectionType === CollectionType.Image && (
-              <ImageCollection collection={collection} />
+              <ImageCollection collection={collection} permissions={permissions} />
             )}
             {collection && collectionType === CollectionType.Post && (
               <PostCollection collection={collection} />

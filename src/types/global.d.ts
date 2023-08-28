@@ -1,4 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+import { FileWithPath } from '@mantine/dropzone';
+import { ImageAnalysisInput } from '~/server/schema/image.schema';
+
 export {};
 
 declare global {
@@ -72,10 +76,29 @@ declare global {
     imageFormat: ImageFormat;
   };
 
+  type TrainingResults = {
+    start_time: date;
+    end_time: date;
+    epochs: Array<{
+      epoch_number: number;
+      model_url: string;
+      sample_images?: Array<{
+        image_url: string;
+        prompt: string;
+      }>;
+    }>;
+  };
+
   type FileMetadata = {
     format?: ModelFileFormat;
     size?: ModelFileSize;
     fp?: ModelFileFp;
+    ownRights?: boolean;
+    shareDataset?: boolean;
+    numImages?: number;
+    numCaptions?: number;
+    selectedEpochUrl?: string;
+    trainingResults?: TrainingResults;
   };
 
   type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };

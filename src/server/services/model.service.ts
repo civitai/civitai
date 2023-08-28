@@ -1,16 +1,10 @@
 import {
-  GetAssociatedResourcesInput,
-  GetModelsWithCategoriesSchema,
-  SetAssociatedResourcesInput,
-  SetModelsCategoryInput,
-} from './../schema/model.schema';
-import {
   CommercialUse,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
   ModelStatus,
-  ModelType,
+  ModelUploadType,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagTarget,
@@ -38,9 +32,17 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { modelsSearchIndex } from '~/server/search-index';
+import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getCategoryTags } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
@@ -53,14 +55,12 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { getCategoryTags } from '~/server/services/system-cache';
-import { associatedResourceSelect } from '~/server/selectors/model.selector';
-import { modelsSearchIndex } from '~/server/search-index';
 import {
-  getAvailableCollectionItemsFilterForUser,
-  getUserCollectionPermissionsById,
-} from '~/server/services/collection.service';
-import { modelFileSelect } from '~/server/selectors/modelFile.selector';
+  GetAssociatedResourcesInput,
+  GetModelsWithCategoriesSchema,
+  SetAssociatedResourcesInput,
+  SetModelsCategoryInput,
+} from './../schema/model.schema';
 
 export const getModel = <TSelect extends Prisma.ModelSelect>({
   id,
@@ -755,6 +755,35 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const where: Prisma.ModelFindManyArgs['where'] = {
     userId,
     status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
+    uploadType: { equals: ModelUploadType.Created },
+  };
+
+  const items = await dbRead.model.findMany({
+    select,
+    skip,
+    take,
+    where,
+    orderBy: { updatedAt: 'desc' },
+  });
+  const count = await dbRead.model.count({ where });
+
+  return getPagingData({ items, count }, take, page);
+};
+
+export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelSelect>({
+  userId,
+  select,
+  page,
+  limit = DEFAULT_PAGE_SIZE,
+}: GetAllSchema & {
+  userId: number;
+  select: TSelect;
+}) => {
+  const { take, skip } = getPagination(limit, page);
+  const where: Prisma.ModelFindManyArgs['where'] = {
+    userId,
+    status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
+    uploadType: { equals: ModelUploadType.Trained },
   };
 
   const items = await dbRead.model.findMany({
@@ -963,7 +992,7 @@ export const getAllModelsWithCategories = async ({
 }: GetModelsWithCategoriesSchema) => {
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
-    status: { in: [ModelStatus.Published, ModelStatus.Draft] },
+    status: { in: [ModelStatus.Published, ModelStatus.Draft, ModelStatus.Training] },
     deletedAt: null,
     userId,
   };

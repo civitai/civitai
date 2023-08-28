@@ -237,6 +237,29 @@ ImageGuard.Safe = function Safe({ children }: { children?: React.ReactNode }) {
   return safe ? <>{children}</> : null;
 };
 
+// #region [ImageGuardReportContext]
+type ImageGuardReportState = {
+  getMenuItems: (
+    data: ImageProps & { menuItems: Array<{ key: string; component: React.ReactElement }> }
+  ) => React.ReactElement[];
+};
+
+export const ImageGuardReportContext = createContext<ImageGuardReportState>({
+  getMenuItems: ({ menuItems }) => menuItems.map((item) => item.component),
+});
+
+const useImageGuardReportContext = () => {
+  const context = useContext(ImageGuardReportContext);
+  if (!context) {
+    return {
+      getMenuItems: ({ menuItems }) => menuItems.map((item) => item.component),
+    } as ImageGuardReportState;
+  }
+
+  return context;
+};
+// #endregion
+
 ImageGuard.Report = function ReportImage({
   position = 'top-right',
   withinPortal = false,
@@ -246,6 +269,7 @@ ImageGuard.Report = function ReportImage({
   withinPortal?: boolean;
   context?: 'post' | 'image';
 }) {
+  const { getMenuItems } = useImageGuardReportContext();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -320,58 +344,76 @@ ImageGuard.Report = function ReportImage({
     );
   }
 
-  const menuItems: React.ReactElement[] = [];
+  const defaultMenuItems: Array<{ key: string; component: React.ReactElement }> = [];
   if (features.collections) {
-    menuItems.push(
-      <AddToCollectionMenuItem
-        key="add-to-collection"
-        onClick={() => {
-          switch (context) {
-            case 'post':
-              if (!image.postId) {
-                return;
+    defaultMenuItems.push({
+      key: 'add-to-collection',
+      component: (
+        <AddToCollectionMenuItem
+          key="add-to-collection"
+          onClick={() => {
+            switch (context) {
+              case 'post':
+                if (!image.postId) {
+                  return;
+                }
+                openContext('addToCollection', { postId: image.postId, type: CollectionType.Post });
+                break;
+              default: {
+                openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
+                break;
               }
-              openContext('addToCollection', { postId: image.postId, type: CollectionType.Post });
-              break;
-            default: {
-              openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
-              break;
             }
-          }
-        }}
-      />
-    );
+          }}
+        />
+      ),
+    });
   }
 
   if (!isOwner)
-    menuItems.push(
-      <LoginRedirect reason="report-content" key="report">
-        <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
-          Report image
-        </Menu.Item>
-      </LoginRedirect>
-    );
+    defaultMenuItems.push({
+      key: 'report',
+      component: (
+        <LoginRedirect reason="report-content" key="report">
+          <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
+            Report image
+          </Menu.Item>
+        </LoginRedirect>
+      ),
+    });
 
   if (currentUser && (isOwner || isModerator) && image.postId)
-    menuItems.push(
-      <Menu.Item
-        icon={<IconPencil size={14} stroke={1.5} />}
-        onClick={handleEditClick}
-        key="edit-post"
-      >
-        Edit Image Post
-      </Menu.Item>
-    );
+    defaultMenuItems.push({
+      key: 'edit-post',
+      component: (
+        <Menu.Item
+          icon={<IconPencil size={14} stroke={1.5} />}
+          onClick={handleEditClick}
+          key="edit-post"
+        >
+          Edit Image Post
+        </Menu.Item>
+      ),
+    });
 
   if (image.postId && !router.query.postId)
-    menuItems.push(
-      <RoutedContextLink modal="postDetailModal" postId={image.postId} key="view-post">
-        <Menu.Item icon={<IconEye size={14} stroke={1.5} />}>View Post</Menu.Item>
-      </RoutedContextLink>
-    );
+    defaultMenuItems.push({
+      key: 'view-post',
+      component: (
+        <RoutedContextLink modal="postDetailModal" postId={image.postId} key="view-post">
+          <Menu.Item icon={<IconEye size={14} stroke={1.5} />}>View Post</Menu.Item>
+        </RoutedContextLink>
+      ),
+    });
 
   const userId = image.userId ?? image.user?.id;
-  if (userId) menuItems.push(<HideUserButton key="hide-button" as="menu-item" userId={userId} />);
+  if (userId)
+    defaultMenuItems.push({
+      key: 'hide-button',
+      component: <HideUserButton key="hide-button" as="menu-item" userId={userId} />,
+    });
+
+  const menuItems = getMenuItems({ ...image, menuItems: defaultMenuItems });
 
   if (!menuItems) return null;
 
