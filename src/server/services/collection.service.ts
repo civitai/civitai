@@ -44,7 +44,12 @@ import {
   ModelSort,
   PostSort,
 } from '~/server/common/enums';
-import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
+import {
+  deleteImageById,
+  getAllImages,
+  ImagesInfiniteModel,
+  ingestImage,
+} from '~/server/services/image.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import {
   GetByIdInput,
@@ -486,6 +491,13 @@ export const upsertCollection = async ({
   } = input;
 
   if (id) {
+    // Get current collection values for comparison
+    const currentCollection = await dbWrite.collection.findUnique({
+      where: { id },
+      select: { id: true, image: { select: { id: true } } },
+    });
+    if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
+
     const updated = await dbWrite.collection.update({
       select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
       where: { id },
@@ -514,7 +526,6 @@ export const upsertCollection = async ({
           : undefined,
       },
     });
-    if (!updated) throw throwNotFoundError(`No collection with id ${id}`);
 
     if (input.read === CollectionReadConfiguration.Public) {
       // Set publishedAt for all post belonging to this collection if changing privacy to public
@@ -533,6 +544,11 @@ export const upsertCollection = async ({
     // Start image ingestion only if it's ingestion status is pending
     if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending) {
       await ingestImage({ image: updated.image });
+    }
+
+    // Delete image if it was removed
+    if (currentCollection.image && !input.image) {
+      await deleteImageById({ id: currentCollection.image.id });
     }
 
     return updated;
