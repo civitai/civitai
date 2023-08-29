@@ -4,7 +4,7 @@ import { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 type Props = NumberInputProps & {
-  format?: 'default' | 'delimited';
+  format?: 'default' | 'delimited' | 'currency';
   clearable?: boolean;
   onClear?: () => void;
 };
@@ -57,6 +57,33 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
           return {
             parser: (value?: string) => value && value.replace(/\$\s?|(,*)/g, ''),
             formatter: (value?: string) => numberWithCommas(value),
+          };
+        case 'currency':
+          return {
+            parser: (value?: string) => {
+              if (!value) {
+                return '';
+              }
+
+              const int = parseInt(value.replace(/\$\s?|(,*)/g, '').replace('.', ''));
+
+              return isNaN(int) ? '' : int.toString();
+            },
+            formatter: (value?: string) => {
+              if (!value) {
+                return '';
+              }
+
+              const int = parseInt(value);
+
+              if (isNaN(int)) {
+                return '';
+              }
+
+              const [intPart, decimalPart] = (int / 100).toFixed(2).split('.');
+
+              return `${numberWithCommas(intPart)}.${decimalPart}`;
+            },
           };
         default: {
           return {

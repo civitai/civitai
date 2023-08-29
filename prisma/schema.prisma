@@ -290,23 +290,23 @@ model Import {
 }
 
 enum ModelStatus {
-  Draft                 // saved but incomplete
-  Training              // actively training
-  Published             // complete
-  Scheduled             // scheduled for publish
-  Unpublished           // taken from published -> hidden intentionally?
-  UnpublishedViolation  // taken from published -> hidden unintentionally?
-  GatherInterest        // unused?
-  Deleted               // deleted by user/system
+  Draft // saved but incomplete
+  Training // actively training
+  Published // complete
+  Scheduled // scheduled for publish
+  Unpublished // taken from published -> hidden intentionally?
+  UnpublishedViolation // taken from published -> hidden unintentionally?
+  GatherInterest // unused?
+  Deleted // deleted by user/system
 }
 
 enum TrainingStatus {
-  Pending     // not submitted yet (in draft mode)
-  Submitted   // submitted for processing (in civitai queue/delay, OR not picked up by external system)
-  Processing  // actively generating
-  InReview    // done, waiting for publish
-  Failed      // something went wrong either externally or internally
-  Approved    // published
+  Pending // not submitted yet (in draft mode)
+  Submitted // submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Processing // actively generating
+  InReview // done, waiting for publish
+  Failed // something went wrong either externally or internally
+  Approved // published
 }
 
 enum CommercialUse {
@@ -432,32 +432,65 @@ model ModelEngagement {
   @@index([modelId], type: Hash)
 }
 
+enum ModelVersionSponsorshipSettingsType {
+  FixedPrice
+  Bidding
+}
+
+model ModelVersionSponsorshipSettings {
+  id                         Int                                 @id @default(autoincrement())
+  modelVersionMonetizationId Int                                 @unique
+  modelVersionMonetization   ModelVersionMonetization            @relation(fields: [modelVersionMonetizationId], references: [id], onDelete: Cascade)
+  type                       ModelVersionSponsorshipSettingsType @default(FixedPrice)
+  currency                   String
+  unitAmount                 Int
+}
+
+enum ModelVersionMonetizationType {
+  PaidAccess
+  PaidEarlyAccess
+  CivitaiClubOnly
+  MySubscribersOnly
+  Sponsored
+}
+
+model ModelVersionMonetization {
+  id                  Int                              @id @default(autoincrement())
+  modelVersionId      Int                              @unique
+  modelVersion        ModelVersion                     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type                ModelVersionMonetizationType     @default(PaidAccess)
+  currency            String
+  unitAmount          Int?
+  sponsorshipSettings ModelVersionSponsorshipSettings?
+}
+
 model ModelVersion {
-  id                   Int             @id @default(autoincrement())
+  id                   Int                       @id @default(autoincrement())
   index                Int?
   name                 String
   description          String?
   modelId              Int
-  model                Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model                Model                     @relation(fields: [modelId], references: [id], onDelete: Cascade)
   trainedWords         String[]
   steps                Int?
   epochs               Int?
   clipSkip             Int?
   vaeId                Int?
-  vae                  ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  vae                  ModelVersion?             @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
   publishedAt          DateTime?
-  status               ModelStatus     @default(Draft)
+  status               ModelStatus               @default(Draft)
   trainingStatus       TrainingStatus?
   trainingDetails      Json?
-  fromImport           Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImport           Import?                   @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId         Int?
-  inaccurate           Boolean         @default(false)
+  inaccurate           Boolean                   @default(false)
   baseModel            String
   baseModelType        String?
-  meta                 Json            @default("{}")
-  earlyAccessTimeFrame Int             @default(0)
+  meta                 Json                      @default("{}")
+  earlyAccessTimeFrame Int                       @default(0)
+  monetization         ModelVersionMonetization?
 
   metrics                 ModelVersionMetric[]
   files                   ModelFile[]
@@ -520,30 +553,30 @@ enum ScanResultCode {
 
 enum ModelFileVisibility {
   Sensitive // Choosing not to share
-  Private   // Hidden
-  Public    // Available to all
+  Private // Hidden
+  Public // Available to all
 }
 
 model ModelFile {
-  id                Int                  @id @default(autoincrement())
+  id                Int                 @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime             @default(now())
-  type              String               @default("Model")
+  createdAt         DateTime            @default(now())
+  type              String              @default("Model")
   modelVersionId    Int
-  modelVersion      ModelVersion         @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode       @default(Pending)
+  modelVersion      ModelVersion        @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode      @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode       @default(Pending)
+  virusScanResult   ScanResultCode      @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
-  visibility        ModelFileVisibility  @default(Public)
+  visibility        ModelFileVisibility @default(Public)
 
   @@index([modelVersionId], type: Hash)
 }
