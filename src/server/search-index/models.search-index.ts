@@ -122,7 +122,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 export type ModelSearchIndexRecord = Awaited<
   ReturnType<typeof onFetchItemsToIndex>
 >['indexReadyRecords'][number] &
-  Awaited<ReturnType<typeof onFetchItemsToIndex>>['indexRecordsWithImages'][number];
+  Awaited<ReturnType<typeof onFetchItemsToIndex>>['indexRecordsWithImages'][number] & {
+    category: { id: number; name: string };
+  };
 
 const onFetchItemsToIndex = async ({
   db,
