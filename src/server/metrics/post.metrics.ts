@@ -195,12 +195,11 @@ export const postMetrics = createMetricProcessor({
         SELECT
           pci."postId" AS id,
           COUNT(*) AS collected_count,
-          SUM(IIF(p."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
-          SUM(IIF(p."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
-          SUM(IIF(p."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
-          SUM(IIF(p."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
+          SUM(IIF(pci."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
+          SUM(IIF(pci."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
+          SUM(IIF(pci."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
+          SUM(IIF(pci."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
         FROM "CollectionItem" pci
-        JOIN "Post" p ON p."id" = pci."postId"
         WHERE pci."postId" IS NOT NULL
         GROUP BY pci."postId"
       ) ci ON q.id = ci.id

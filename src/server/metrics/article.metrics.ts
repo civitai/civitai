@@ -314,12 +314,11 @@ export const articleMetrics = createMetricProcessor({
         SELECT
           aci."articleId" AS id,
           COUNT(*) AS collected_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
+          SUM(IIF(aci."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
+          SUM(IIF(aci."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
+          SUM(IIF(aci."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
+          SUM(IIF(aci."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
         FROM "CollectionItem" aci
-        JOIN "Article" a ON a."id" = aci."articleId"
         WHERE aci."articleId" IS NOT NULL
         GROUP BY aci."articleId"
       ) ci ON q.id = ci.id

@@ -25,7 +25,6 @@ FROM (
         "articleId",
         ci."createdAt"
     FROM "CollectionItem" ci
-    JOIN "Article" aci ON aci.id = ci."articleId"
     WHERE "articleId" IS NOT NULL
 ) i
 JOIN "Article" a ON a."id" = i."articleId"
@@ -53,7 +52,6 @@ FROM (
         "imageId",
         ci."createdAt"
     FROM "CollectionItem" ci
-    JOIN "Image" ici ON ici.id = ci."imageId"
     WHERE "imageId" IS NOT NULL
 ) i
 JOIN "Image" img ON img."id" = i."imageId"
@@ -81,7 +79,6 @@ FROM (
         "postId",
         ci."createdAt"
     FROM "CollectionItem" ci
-    JOIN "Post" pci ON pci.id = ci."postId"
     WHERE "postId" IS NOT NULL
 ) i
 JOIN "Post" p ON p."id" = i."postId"
