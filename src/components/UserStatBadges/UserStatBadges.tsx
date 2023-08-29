@@ -11,6 +11,7 @@ import {
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
+import { StarRating } from '../StartRating/StarRating';
 
 const mapBadgeTextIconSize: Record<MantineSize, { textSize: MantineSize; iconSize: number }> = {
   xs: { textSize: 'xs', iconSize: 12 },
@@ -45,18 +46,7 @@ export function UserStatBadges({
           sx={{ userSelect: 'none' }}
           size="lg"
           px={8}
-          icon={
-            <Rating
-              size="xs"
-              value={rating.value}
-              readOnly
-              emptySymbol={
-                theme.colorScheme === 'dark' ? (
-                  <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-                ) : undefined
-              }
-            />
-          }
+          icon={<StarRating size={14} value={rating.value} />}
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         >
           <Text size="xs" weight={600} inline>

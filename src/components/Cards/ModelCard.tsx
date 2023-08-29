@@ -49,6 +49,7 @@ import { generationPanel } from '~/store/generation.store';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { InView } from 'react-intersection-observer';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
+import { StarRating } from '../StartRating/StarRating';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -356,23 +357,7 @@ export function ModelCard({ data }: Props) {
                       <IconBadge
                         className={classes.iconBadge}
                         sx={{ userSelect: 'none' }}
-                        icon={
-                          <Rating
-                            size="xs"
-                            value={data.rank.rating}
-                            fractions={4}
-                            emptySymbol={
-                              theme.colorScheme === 'dark' ? (
-                                <IconStar
-                                  size={14}
-                                  fill="rgba(255,255,255,.3)"
-                                  color="transparent"
-                                />
-                              ) : undefined
-                            }
-                            readOnly
-                          />
-                        }
+                        icon={<StarRating size={14} value={data.rank.rating} />}
                       >
                         <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
                           {abbreviateNumber(data.rank.ratingCount)}

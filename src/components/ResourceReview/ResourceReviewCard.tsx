@@ -4,6 +4,7 @@ import { IconPhoto, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewInfiniteModel } from '~/types/router';
+import { StarRating } from '../StartRating/StarRating';
 
 export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel }) {
   return (
@@ -12,7 +13,7 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
         <UserAvatar user={data.user} withUsername withLink />
         {data.rating && (
           <Group position="apart">
-            <Rating value={data.rating ?? undefined} readOnly />
+            <StarRating value={data.rating ?? undefined} />
             {data.helper?.imageCount && (
               <Badge
                 leftSection={

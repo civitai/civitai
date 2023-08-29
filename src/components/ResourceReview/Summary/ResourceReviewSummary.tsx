@@ -4,6 +4,7 @@ import { ResourceReviewRatingTotals } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { StarRating } from '~/components/StartRating/StarRating';
 
 type ContextState = {
   count: number;
@@ -95,7 +96,7 @@ ResourceReviewSummary.Header = function Header({
             </Text>
           </Group>
           <Group>
-            <Rating value={roundedRating} readOnly />
+            <StarRating value={roundedRating} />
             <Text>{roundedRating} out of 5</Text>
           </Group>
         </>
@@ -155,7 +156,7 @@ ResourceReviewSummary.Simple = function Simple({
         radius="sm"
         color="gray"
         size="lg"
-        icon={<Rating value={roundedRating} fractions={4} readOnly />}
+        icon={<StarRating value={roundedRating} />}
         sx={{ cursor: 'pointer' }}
         onClick={onClick}
       >
