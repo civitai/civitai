@@ -102,6 +102,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'version.baseModel',
     'user.username',
     'status',
+    'category.name',
   ];
 
   if (
@@ -301,7 +302,7 @@ const onFetchItemsToIndex = async ({
       return {
         ...model,
         user,
-        category,
+        category: category?.tag,
         version,
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),

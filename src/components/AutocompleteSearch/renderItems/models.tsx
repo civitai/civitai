@@ -98,7 +98,7 @@ export const ModelSearchItem = forwardRef<
             </Badge>
           )}
           <Badge size="xs">{type}</Badge>
-          {category && <Badge size="xs">{category.tag.name}</Badge>}
+          {category && <Badge size="xs">{category.name}</Badge>}
         </Group>
         <Group spacing={4}>
           <IconBadge icon={<StarRating value={metrics.rating} size={12} />}>

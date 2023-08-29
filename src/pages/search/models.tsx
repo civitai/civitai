@@ -63,6 +63,12 @@ const RenderFilters = () => {
         sortBy={['name']}
         attribute="checkpointType"
       />
+      <ChipRefinementList
+        title="Filter by Category"
+        sortBy={['name']}
+        attribute="category.name"
+        limit={100}
+      />
       <SearchableMultiSelectRefinementList
         title="Users"
         attribute="user.username"
