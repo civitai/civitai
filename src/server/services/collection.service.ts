@@ -399,8 +399,11 @@ export const saveItemInCollections = async ({
     )
   ).filter(isDefined);
 
-  const transactions: Prisma.PrismaPromise<Prisma.BatchPayload | number>[] = [
-    dbWrite.$executeRaw`
+  const transactions: Prisma.PrismaPromise<Prisma.BatchPayload | number>[] = [];
+
+  if (data.length > 0) {
+    transactions.push(
+      dbWrite.$executeRaw`
       INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(itemKey)}")
       SELECT
         v."collectionId",
@@ -416,8 +419,9 @@ export const saveItemInCollections = async ({
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
         DO NOTHING;
-    `,
-  ];
+    `
+    );
+  }
 
   if (removeFromCollectionIds?.length) {
     const removeAllowedCollectionItemIds = (
