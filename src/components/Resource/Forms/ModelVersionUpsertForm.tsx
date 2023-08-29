@@ -41,6 +41,7 @@ const schema = modelVersionUpsertSchema2
       .refine((value) => ['0', '1', '2', '3', '4', '5'].includes(value), {
         message: 'Invalid value',
       }),
+    useMonetization: z.boolean().default(false),
   })
   .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
     message: 'You need to specify at least one trained word',
@@ -98,9 +99,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     description: version?.description ?? null,
     epochs: version?.epochs ?? null,
     steps: version?.steps ?? null,
+    useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
-    // @ts-ignore: we only need this for the toggle
-    _monetization: !!version?.monetization,
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -345,7 +345,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             </AlertWithIcon>
             <Stack spacing="xs">
               <InputSwitch
-                name="_monetization"
+                name="useMonetization"
                 label="I want to monetize this model"
                 onChange={(e) => {
                   return e.target.checked
