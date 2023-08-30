@@ -5,6 +5,7 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export type EpochSchema = z.infer<typeof epoch_schema>;
+
 const epoch_schema = z.object({
   epoch_number: z.number(),
   model_url: z.string(),
@@ -20,7 +21,7 @@ const epoch_schema = z.object({
 
 type ContextProps = z.infer<typeof context>;
 const context = z.object({
-  modelFileId: z.number(),
+  modelFileId: z.number().gt(0),
   status: z.string(),
   message: z.string().optional(),
   model: z.string(),
@@ -44,8 +45,8 @@ const schema = z.object({
   date: z.string(),
   duration: z.string().optional(),
   totalDuration: z.string().optional(),
-  workerId: z.string(),
-  attempt: z.number(),
+  workerId: z.string().optional(),
+  attempt: z.number().optional(),
   context: context.nullable(),
 });
 
@@ -63,28 +64,33 @@ export default WebhookEndpoint(async (req, res) => {
 
   const status = {
     Success: TrainingStatus.InReview,
-    Fail: TrainingStatus.Failed,
     Update: TrainingStatus.Processing,
+    Fail: TrainingStatus.Failed,
+    Reject: TrainingStatus.Failed,
+    LateReject: TrainingStatus.Failed,
   }[data.type];
 
   switch (data.type) {
     case 'Success':
     case 'Fail':
+    case 'Reject':
+    case 'LateReject':
     case 'Update':
-      // TODO: this validation could be done by zod but would need to handle all the other type cases
       if (!data.context) {
         return res.status(400).json({ ok: false, error: 'context is undefined' });
       }
 
-      if (!data.context?.modelFileId) {
-        return res.status(400).json({ ok: false, error: 'modelFileId is undefined' });
+      try {
+        await updateRecords(data.context, status as TrainingStatus);
+      } catch (e: unknown) {
+        return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }
 
-      await updateRecords(data.context, status as TrainingStatus);
-
       break;
+    // cannot do anything with Expire and Claim until we store the jobId
+    case 'Expire':
+    case 'Claim':
     default:
-    // TODO: what should we do in the default case...
   }
 
   return res.status(200).json({ ok: true });
