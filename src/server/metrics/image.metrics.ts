@@ -24,7 +24,6 @@ export const imageMetrics = createMetricProcessor({
 
         SELECT ci."imageId" as id
         FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
         WHERE ci."imageId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
 
         UNION

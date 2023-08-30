@@ -31,7 +31,6 @@ export const postMetrics = createMetricProcessor({
 
       SELECT ci."postId" as id
       FROM "CollectionItem" ci
-      JOIN "Post" p ON p.id = ci."postId"
       WHERE ci."postId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
 
       UNION

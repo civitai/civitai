@@ -9,81 +9,63 @@ ALTER TABLE "PostMetric" ADD COLUMN     "collectedCount" INTEGER NOT NULL DEFAUL
 
 INSERT INTO "ArticleMetric" ("articleId", timeframe, "collectedCount")
 SELECT
-    a."id",
+    ci."articleId",
     tf.timeframe,
     COALESCE(SUM(
         CASE
             WHEN tf.timeframe = 'AllTime' THEN 1
-            WHEN tf.timeframe = 'Year' THEN IIF(i."createdAt" >= NOW() - interval '1 year', 1, 0)
-            WHEN tf.timeframe = 'Month' THEN IIF(i."createdAt" >= NOW() - interval '1 month', 1, 0)
-            WHEN tf.timeframe = 'Week' THEN IIF(i."createdAt" >= NOW() - interval '1 week', 1, 0)
-            WHEN tf.timeframe = 'Day' THEN IIF(i."createdAt" >= NOW() - interval '1 day', 1, 0)
+            WHEN tf.timeframe = 'Year' THEN IIF(ci."createdAt" >= NOW() - interval '1 year', 1, 0)
+            WHEN tf.timeframe = 'Month' THEN IIF(ci."createdAt" >= NOW() - interval '1 month', 1, 0)
+            WHEN tf.timeframe = 'Week' THEN IIF(ci."createdAt" >= NOW() - interval '1 week', 1, 0)
+            WHEN tf.timeframe = 'Day' THEN IIF(ci."createdAt" >= NOW() - interval '1 day', 1, 0)
         END
     ), 0)
-FROM (
-    SELECT
-        "articleId",
-        ci."createdAt"
-    FROM "CollectionItem" ci
-    WHERE "articleId" IS NOT NULL
-) i
-JOIN "Article" a ON a."id" = i."articleId"
+FROM "CollectionItem" ci
 CROSS JOIN (
   SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
 ) tf
-GROUP BY a."id", tf.timeframe
+WHERE ci."articleId" IS NOT NULL
+GROUP BY ci."articleId", tf.timeframe
 ON CONFLICT ("articleId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount";
 
 INSERT INTO "ImageMetric" ("imageId", timeframe, "collectedCount")
 SELECT
-    img."id",
+    ci."imageId",
     tf.timeframe,
     COALESCE(SUM(
         CASE
             WHEN tf.timeframe = 'AllTime' THEN 1
-            WHEN tf.timeframe = 'Year' THEN IIF(i."createdAt" >= NOW() - interval '1 year', 1, 0)
-            WHEN tf.timeframe = 'Month' THEN IIF(i."createdAt" >= NOW() - interval '1 month', 1, 0)
-            WHEN tf.timeframe = 'Week' THEN IIF(i."createdAt" >= NOW() - interval '1 week', 1, 0)
-            WHEN tf.timeframe = 'Day' THEN IIF(i."createdAt" >= NOW() - interval '1 day', 1, 0)
+            WHEN tf.timeframe = 'Year' THEN IIF(ci."createdAt" >= NOW() - interval '1 year', 1, 0)
+            WHEN tf.timeframe = 'Month' THEN IIF(ci."createdAt" >= NOW() - interval '1 month', 1, 0)
+            WHEN tf.timeframe = 'Week' THEN IIF(ci."createdAt" >= NOW() - interval '1 week', 1, 0)
+            WHEN tf.timeframe = 'Day' THEN IIF(ci."createdAt" >= NOW() - interval '1 day', 1, 0)
         END
     ), 0)
-FROM (
-    SELECT
-        "imageId",
-        ci."createdAt"
-    FROM "CollectionItem" ci
-    WHERE "imageId" IS NOT NULL
-) i
-JOIN "Image" img ON img."id" = i."imageId"
+FROM "CollectionItem" ci
 CROSS JOIN (
   SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
 ) tf
-GROUP BY img."id", tf.timeframe
+WHERE ci."imageId" IS NOT NULL
+GROUP BY ci."imageId", tf.timeframe
 ON CONFLICT ("imageId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount";
 
 INSERT INTO "PostMetric" ("postId", timeframe, "collectedCount")
 SELECT
-    p."id",
+    ci."postId",
     tf.timeframe,
     COALESCE(SUM(
         CASE
             WHEN tf.timeframe = 'AllTime' THEN 1
-            WHEN tf.timeframe = 'Year' THEN IIF(i."createdAt" >= NOW() - interval '1 year', 1, 0)
-            WHEN tf.timeframe = 'Month' THEN IIF(i."createdAt" >= NOW() - interval '1 month', 1, 0)
-            WHEN tf.timeframe = 'Week' THEN IIF(i."createdAt" >= NOW() - interval '1 week', 1, 0)
-            WHEN tf.timeframe = 'Day' THEN IIF(i."createdAt" >= NOW() - interval '1 day', 1, 0)
+            WHEN tf.timeframe = 'Year' THEN IIF(ci."createdAt" >= NOW() - interval '1 year', 1, 0)
+            WHEN tf.timeframe = 'Month' THEN IIF(ci."createdAt" >= NOW() - interval '1 month', 1, 0)
+            WHEN tf.timeframe = 'Week' THEN IIF(ci."createdAt" >= NOW() - interval '1 week', 1, 0)
+            WHEN tf.timeframe = 'Day' THEN IIF(ci."createdAt" >= NOW() - interval '1 day', 1, 0)
         END
     ), 0)
-FROM (
-    SELECT
-        "postId",
-        ci."createdAt"
-    FROM "CollectionItem" ci
-    WHERE "postId" IS NOT NULL
-) i
-JOIN "Post" p ON p."id" = i."postId"
+FROM "CollectionItem" ci
 CROSS JOIN (
   SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
 ) tf
-GROUP BY p."id", tf.timeframe
+WHERE ci."postId" IS NOT NULL
+GROUP BY ci."postId", tf.timeframe
 ON CONFLICT ("postId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount";

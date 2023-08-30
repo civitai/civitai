@@ -108,7 +108,6 @@ export const articleMetrics = createMetricProcessor({
 
       SELECT ci."articleId" as id
       FROM "CollectionItem" ci
-      JOIN "Article" a ON a.id = ci."articleId"
       WHERE ci."articleId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
 
       UNION
