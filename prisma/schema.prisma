@@ -131,6 +131,11 @@ model User {
   collectionItems         CollectionItem[]
   contributingCollections CollectionContributor[]
   homeBlocks              HomeBlock[]
+  bounties                Bounty[]
+  bountyEntries           BountyEntry[]
+  sponsoredBounties       BountyBenefactor[]
+  engagedBounties         BountyEngagement[]
+  engagedBountyEntries    BountyEntryEngagement[]
 }
 
 model CustomerSubscription {
@@ -290,23 +295,23 @@ model Import {
 }
 
 enum ModelStatus {
-  Draft                 // saved but incomplete
-  Training              // actively training
-  Published             // complete
-  Scheduled             // scheduled for publish
-  Unpublished           // taken from published -> hidden intentionally?
-  UnpublishedViolation  // taken from published -> hidden unintentionally?
-  GatherInterest        // unused?
-  Deleted               // deleted by user/system
+  Draft // saved but incomplete
+  Training // actively training
+  Published // complete
+  Scheduled // scheduled for publish
+  Unpublished // taken from published -> hidden intentionally?
+  UnpublishedViolation // taken from published -> hidden unintentionally?
+  GatherInterest // unused?
+  Deleted // deleted by user/system
 }
 
 enum TrainingStatus {
-  Pending     // not submitted yet (in draft mode)
-  Submitted   // submitted for processing (in civitai queue/delay, OR not picked up by external system)
-  Processing  // actively generating
-  InReview    // done, waiting for publish
-  Failed      // something went wrong either externally or internally
-  Approved    // published
+  Pending // not submitted yet (in draft mode)
+  Submitted // submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Processing // actively generating
+  InReview // done, waiting for publish
+  Failed // something went wrong either externally or internally
+  Approved // published
 }
 
 enum CommercialUse {
@@ -520,30 +525,30 @@ enum ScanResultCode {
 
 enum ModelFileVisibility {
   Sensitive // Choosing not to share
-  Private   // Hidden
-  Public    // Available to all
+  Private // Hidden
+  Public // Available to all
 }
 
 model ModelFile {
-  id                Int                  @id @default(autoincrement())
+  id                Int                 @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime             @default(now())
-  type              String               @default("Model")
+  createdAt         DateTime            @default(now())
+  type              String              @default("Model")
   modelVersionId    Int
-  modelVersion      ModelVersion         @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode       @default(Pending)
+  modelVersion      ModelVersion        @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode      @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode       @default(Pending)
+  virusScanResult   ScanResultCode      @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
-  visibility        ModelFileVisibility  @default(Public)
+  visibility        ModelFileVisibility @default(Public)
 
   @@index([modelVersionId], type: Hash)
 }
@@ -951,6 +956,10 @@ model Image {
   engagements     ImageEngagement[]
   collectionItems CollectionItem[]
   collections     Collection[]
+  bountyId        Int?
+  bounty          Bounty?               @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyEntryId   Int?
+  bountyEntry     BountyEntry?          @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1026,6 +1035,7 @@ enum TagTarget {
   Post
   Tag
   Article
+  Bounty
 }
 
 enum TagType {
@@ -1067,6 +1077,7 @@ model Tag {
   rank                 TagRank?
   tagsOnPostComposite  PostTag[]
   tagsOnPostVotes      TagsOnPostVote[]
+  tagsOnBounties       TagsOnBounty[]
 
   @@unique([name])
 }
@@ -1174,6 +1185,17 @@ model TagsOnArticle {
 
   @@id([tagId, articleId])
   @@index([articleId], type: Hash)
+}
+
+model TagsOnBounty {
+  bountyId  Int
+  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, bountyId])
+  @@index([bountyId], type: Hash)
 }
 
 model TagsOnPostVote {
@@ -1455,23 +1477,27 @@ model Thread {
   id     Int     @id @default(autoincrement())
   locked Boolean @default(false)
 
-  questionId Int?            @unique
-  question   Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
-  answerId   Int?            @unique
-  answer     Answer?         @relation(fields: [answerId], references: [id], onDelete: SetNull)
-  imageId    Int?            @unique
-  image      Image?          @relation(fields: [imageId], references: [id], onDelete: SetNull)
-  postId     Int?            @unique
-  post       Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
-  reviewId   Int?            @unique
-  review     ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
-  commentId  Int?            @unique
-  comment    CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
-  modelId    Int?            @unique
-  model      Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
-  articleId  Int?            @unique
-  article    Article?        @relation(fields: [articleId], references: [id], onDelete: SetNull)
-  metadata   Json            @default("{}")
+  questionId    Int?            @unique
+  question      Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  answerId      Int?            @unique
+  answer        Answer?         @relation(fields: [answerId], references: [id], onDelete: SetNull)
+  imageId       Int?            @unique
+  image         Image?          @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  postId        Int?            @unique
+  post          Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
+  reviewId      Int?            @unique
+  review        ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  commentId     Int?            @unique
+  comment       CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
+  modelId       Int?            @unique
+  model         Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  articleId     Int?            @unique
+  article       Article?        @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  bountyId      Int?            @unique
+  bounty        Bounty?         @relation(fields: [bountyId], references: [id], onDelete: SetNull)
+  bountyEntryId Int?            @unique
+  bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
+  metadata      Json            @default("{}")
 
   comments CommentV2[] @relation("thread")
 
@@ -1896,6 +1922,134 @@ model HomeBlock {
   sourceId  Int?
   source    HomeBlock?    @relation("Clones", fields: [sourceId], references: [id], onDelete: SetNull)
   clones    HomeBlock[]   @relation("Clones")
+}
+
+enum BountyType {
+  ResourceDevelopment
+  DataSetCreation
+  DataSetCaption
+  ContentCreation
+  Other
+}
+
+enum BountyEntryStatus {
+  Submitted
+  Accepted
+  Rejected
+  Awarded
+}
+
+model Bounty {
+  id                      Int        @id @default(autoincrement())
+  userId                  Int?
+  user                    User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name                    String
+  description             String
+  expiresAt               DateTime
+  createdAt               DateTime   @default(now())
+  updatedAt               DateTime   @updatedAt
+  type                    BountyType
+  subtype                 String?
+  minBenefactorBuzzAmount Int
+  maxBenefactorBuzzAmount Int // Default to initial benefactor's entry
+
+  tags        TagsOnBounty[]
+  images      Image[] // TODO: Can we do ImagesOnBounty table?
+  entries     BountyEntry[]
+  benefactors BountyBenefactor[]
+  files       BountyFile[]
+  thread      Thread?
+  engagements BountyEngagement[]
+}
+
+model BountyEntry {
+  id                Int               @id @default(autoincrement())
+  userId            Int?
+  user              User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  bountyId          Int
+  bounty            Bounty            @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  status            BountyEntryStatus
+  minimumEntryValue Int
+  locked            Boolean           @default(false)
+
+  images      Image[]
+  benefactors BountyBenefactor[]
+  files       BountyEntryFile[]
+  engagements BountyEntryEngagement[]
+  thread      Thread?
+}
+
+model BountyBenefactor {
+  userId      Int
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyId    Int
+  bounty      Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  buzzAmount  Int
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  awardedAt   DateTime
+  awardedToId Int?
+  awartedTo   BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
+
+  @@id([userId, bountyId])
+}
+
+model BountyFile {
+  id        Int      @id @default(autoincrement())
+  bountyId  Int
+  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  name      String
+  url       String
+  sizeKB    Float
+  createdAt DateTime @default(now())
+  type      String   @default("Training Data")
+}
+
+model BountyEntryFile {
+  id                  Int         @id @default(autoincrement())
+  bountyEntryId       Int
+  bountyEntry         BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  name                String
+  url                 String
+  sizeKB              Float
+  createdAt           DateTime    @default(now())
+  unlockAmount        Int // Determines minimum amount of buzz before the file gets unlocked.
+  requireContribution Boolean     @default(true) // Determines if a file can be only seen by people who contribute to the bounty. 
+}
+
+enum BountyEngagementType {
+  Favorite
+  Track
+}
+
+model BountyEngagement {
+  userId    Int
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyId  Int
+  bounty    Bounty               @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  type      BountyEngagementType
+  createdAt DateTime             @default(now())
+
+  @@id([userId, bountyId])
+  @@index([bountyId])
+}
+
+enum BountyEntryEngagementType {
+  Favorite
+}
+
+model BountyEntryEngagement {
+  userId        Int
+  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyEntryId Int
+  bountyEntry   BountyEntry               @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  type          BountyEntryEngagementType
+  createdAt     DateTime                  @default(now())
+
+  @@id([userId, bountyEntryId])
+  @@index([bountyEntryId])
 }
 
 /// @view
