@@ -75,6 +75,7 @@ export function EdgeMedia({
           muted
           playsInline
           style={style}
+          controls
         >
           <source src={_src} type="video/webm" />
         </video>
