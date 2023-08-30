@@ -1,6 +1,6 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
-import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { imagesSearchIndex } from '~/server/search-index';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
@@ -94,7 +94,7 @@ export const imageMetrics = createMetricProcessor({
           WHEN tf.timeframe = 'Month' THEN month_comment_count
           WHEN tf.timeframe = 'Week' THEN week_comment_count
           WHEN tf.timeframe = 'Day' THEN day_comment_count
-        END AS comment_count
+        END AS comment_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN collected_count
           WHEN tf.timeframe = 'Year' THEN year_collected_count
@@ -135,7 +135,7 @@ export const imageMetrics = createMetricProcessor({
           COALESCE(c.year_comment_count, 0) AS year_comment_count,
           COALESCE(c.month_comment_count, 0) AS month_comment_count,
           COALESCE(c.week_comment_count, 0) AS week_comment_count,
-          COALESCE(c.day_comment_count, 0) AS day_comment_count
+          COALESCE(c.day_comment_count, 0) AS day_comment_count,
           COALESCE(ci.collected_count, 0) AS collected_count,
           COALESCE(ci.year_collected_count, 0) AS year_collected_count,
           COALESCE(ci.month_collected_count, 0) AS month_collected_count,

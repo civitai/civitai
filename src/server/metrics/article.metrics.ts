@@ -191,7 +191,7 @@ export const articleMetrics = createMetricProcessor({
         WHEN tf.timeframe = 'Month' THEN month_hide_count
         WHEN tf.timeframe = 'Week' THEN week_hide_count
         WHEN tf.timeframe = 'Day' THEN day_hide_count
-      END AS hide_count
+      END AS hide_count,
       CASE
         WHEN tf.timeframe = 'AllTime' THEN collected_count
         WHEN tf.timeframe = 'Year' THEN year_collected_count
@@ -242,7 +242,7 @@ export const articleMetrics = createMetricProcessor({
         COALESCE(ae.year_hide_count, 0) AS year_hide_count,
         COALESCE(ae.month_hide_count, 0) AS month_hide_count,
         COALESCE(ae.week_hide_count, 0) AS week_hide_count,
-        COALESCE(ae.day_hide_count, 0) AS day_hide_count
+        COALESCE(ae.day_hide_count, 0) AS day_hide_count,
         COALESCE(ci.collected_count, 0) AS collected_count,
         COALESCE(ci.year_collected_count, 0) AS year_collected_count,
         COALESCE(ci.month_collected_count, 0) AS month_collected_count,
