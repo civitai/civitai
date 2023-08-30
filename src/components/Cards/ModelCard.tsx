@@ -361,7 +361,11 @@ export function ModelCard({ data }: Props) {
                         sx={{ userSelect: 'none' }}
                         icon={<StarRating size={14} value={data.rank.rating} />}
                       >
-                        <Text size="xs" color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}>
+                        <Text
+                          size="xs"
+                          color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}
+                          inline
+                        >
                           {abbreviateNumber(data.rank.ratingCount)}
                         </Text>
                       </IconBadge>
