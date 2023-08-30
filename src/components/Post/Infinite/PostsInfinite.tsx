@@ -2,7 +2,7 @@ import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine
 import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons-react';
-import { debounce } from 'lodash-es';
+import { debounce, isEqual } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
@@ -36,7 +36,7 @@ export default function PostsInfinite({
   const postFilters = usePostFilters();
   const filters = removeEmpty({ ...postFilters, ...filterOverrides });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
-  const [debouncedFilters] = useDebouncedValue(filters, 500);
+  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const { posts, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(
     debouncedFilters,
@@ -49,6 +49,12 @@ export default function PostsInfinite({
     if (inView && !isFetching) debouncedFetchNextPage();
   }, [debouncedFetchNextPage, inView, isFetching]);
   // #endregion
+
+  //#region [useEffect] cancel debounced filters
+  useEffect(() => {
+    if (isEqual(filters, debouncedFilters)) cancel();
+  }, [cancel, debouncedFilters, filters]);
+  //#endregion
 
   return (
     <>

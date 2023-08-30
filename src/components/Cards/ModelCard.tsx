@@ -17,6 +17,7 @@ import {
   IconTagOff,
   IconDotsVertical,
   IconBrush,
+  IconPlaylistAdd,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -49,6 +50,7 @@ import { generationPanel } from '~/store/generation.store';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { InView } from 'react-intersection-observer';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
+import { AddToCollectionDropdown } from '~/components/Collections/AddToCollectionDropdown';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -401,6 +403,18 @@ export function ModelCard({ data }: Props) {
                       <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
                         <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
                       </IconBadge>
+                      <AddToCollectionDropdown
+                        dropdownTrigger={
+                          <IconBadge
+                            className={classes.iconBadge}
+                            icon={<IconPlaylistAdd size={14} />}
+                          >
+                            <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                          </IconBadge>
+                        }
+                        modelId={data.id}
+                        type={CollectionType.Model}
+                      />
                     </Group>
                   </Group>
                 </Stack>

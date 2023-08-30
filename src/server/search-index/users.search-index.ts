@@ -12,13 +12,10 @@ import {
 import {
   CosmeticSource,
   CosmeticType,
-  LinkType,
-  MetricTimeframe,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 
 const READ_BATCH_SIZE = 10000;
@@ -54,8 +51,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const sortableAttributes = [
     'createdAt',
     'stats.weightedRating',
-    'stats.followerCountAllTime',
-    'stats.uploadCountAllTime',
+    'metrics.followerCount',
+    'metrics.uploadCount',
   ];
 
   if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
@@ -66,7 +63,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  const rankingRules = ['attribute', 'sort', 'words', 'typo', 'proximity', 'exactness'];
+  const rankingRules = ['sort', 'words', 'typo', 'proximity', 'attribute', 'exactness'];
 
   if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
     const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
@@ -169,6 +166,7 @@ const onFetchItemsToIndex = async ({
     u.id,
       u.username,
     u."deletedAt",
+    u."createdAt",
     u.image
       FROM "User" u
       WHERE ${Prisma.join(WHERE, ' AND ')}
@@ -220,12 +218,12 @@ const onFetchItemsToIndex = async ({
       um."userId",
       jsonb_build_object(
         'followerCount', um."followerCount",
-              'uploadCount', um."uploadCount",
-              'followingCount', um."followingCount",
-              'reviewCount', um."reviewCount",
-              'answerAcceptCount', um."answerAcceptCount",
-              'hiddenCount', um."hiddenCount",
-              'answerCount', um."answerCount"
+        'uploadCount', um."uploadCount",
+        'followingCount', um."followingCount",
+        'reviewCount', um."reviewCount",
+        'answerAcceptCount', um."answerAcceptCount",
+        'hiddenCount', um."hiddenCount",
+        'answerCount', um."answerCount"
       ) metrics
     FROM "UserMetric" um
     WHERE um.timeframe = 'AllTime'
@@ -270,10 +268,7 @@ const onFetchItemsToIndex = async ({
             weightedRating,
           }
         : null,
-      metrics: {
-        // Flattens metric array
-        ...(userRecord.metrics?.[0] || {}),
-      },
+      metrics: userRecord.metrics ?? {},
       cosmetics: cosmetics.map((cosmetic) => ({ cosmetic })),
     };
   });

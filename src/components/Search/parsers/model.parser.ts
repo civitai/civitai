@@ -35,6 +35,9 @@ const modelSearchParamsSchema = searchParamsSchema
     users: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
+    category: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
   })
   .partial();
 
@@ -53,6 +56,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const models: ModelSearchParams = routeState[MODELS_SEARCH_INDEX] as ModelSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'version.baseModel': models.baseModel,
+      'category.name': models.category,
       type: models.modelType,
       checkpointType: models.checkpointType,
       'tags.name': models.tags,
@@ -72,6 +76,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
   stateToRoute: (uiState: UiState) => {
     const baseModel = uiState[MODELS_SEARCH_INDEX].refinementList?.['version.baseModel'];
     const modelType = uiState[MODELS_SEARCH_INDEX].refinementList?.['type'];
+    const category = uiState[MODELS_SEARCH_INDEX].refinementList?.['category.name'];
     const checkpointType = uiState[MODELS_SEARCH_INDEX].refinementList?.['checkpointType'];
     const tags = uiState[MODELS_SEARCH_INDEX].refinementList?.['tags.name'];
     const users = uiState[MODELS_SEARCH_INDEX].refinementList?.['user.username'];
@@ -80,6 +85,7 @@ export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const { query } = uiState[MODELS_SEARCH_INDEX];
 
     const state: ModelSearchParams = {
+      category,
       baseModel,
       modelType,
       checkpointType,

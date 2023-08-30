@@ -1,5 +1,5 @@
 import { createJob } from './job';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { discord, DiscordRole } from '~/server/integrations/discord';
 import { env } from '~/env/server.mjs';
 import dayjs from 'dayjs';
@@ -19,7 +19,7 @@ const applyDiscordActivityRoles = createJob(
       const enthusiastCutoff = dayjs().subtract(ENTHUSIAST_ROLE_CUTOFF, 'day').toDate();
       const enthusiasts =
         (
-          await dbRead.$queryRaw<{ providerAccountId: string }[]>`
+          await dbWrite.$queryRaw<{ providerAccountId: string }[]>`
         SELECT DISTINCT a."providerAccountId"
         FROM "Image" i
         JOIN "Account" a ON a."userId" = i."userId" AND a.provider = 'discord'
@@ -40,7 +40,7 @@ const applyDiscordActivityRoles = createJob(
       const creatorCutoff = dayjs().subtract(CREATOR_ROLE_CUTOFF, 'day').toDate();
       const creator = new Set(
         (
-          await dbRead.model.findMany({
+          await dbWrite.model.findMany({
             where: {
               OR: [
                 { publishedAt: { gte: creatorCutoff } },
@@ -88,7 +88,7 @@ export const applyDiscordLeaderboardRoles = async () => {
   // Get the top 100 users with a discord account
   const top100 =
     (
-      await dbRead.user.findMany({
+      await dbWrite.user.findMany({
         where: {
           rank: { leaderboardRank: { lte: 100 } },
           accounts: {
@@ -148,7 +148,7 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
     // Add the supporter role to any new supporters
     const supporters =
       (
-        await dbRead.customerSubscription.findMany({
+        await dbWrite.customerSubscription.findMany({
           where: {
             status: 'active',
             user: {
@@ -188,7 +188,7 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
     const donatorCutoff = dayjs().subtract(1, 'month').toDate();
     const donators = new Set(
       (
-        await dbRead.purchase.findMany({
+        await dbWrite.purchase.findMany({
           where: {
             createdAt: { gt: donatorCutoff },
             priceId: env.STRIPE_DONATE_ID,
@@ -226,7 +226,7 @@ export const applyDiscordRoles = [applyDiscordActivityRoles, applyDiscordPaidRol
 const getAccountsInRole = async (role: DiscordRole) => {
   const accounts =
     (
-      await dbRead.$queryRawUnsafe<{ providerAccountId: string }[]>(`
+      await dbWrite.$queryRawUnsafe<{ providerAccountId: string }[]>(`
         SELECT "providerAccountId"
         FROM "Account"
         WHERE provider = 'discord' AND metadata->'roles' @> '["${role.name}"]'`)

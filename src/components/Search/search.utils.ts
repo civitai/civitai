@@ -36,7 +36,7 @@ export const applyUserPreferencesModels = <T>({
       if (x.user.id === currentUserId) return true;
       if (hiddenUsers.get(x.user.id)) return false;
       if (hiddenModels.get(x.id)) return false;
-      for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
+      for (const tag of x.tags ?? []) if (hiddenTags.get(tag.id)) return false;
       return true;
     })
     .map(({ images, ...x }) => {
@@ -92,7 +92,7 @@ export const applyUserPreferencesImages = <T>({
     if (x.user.id === currentUserId) return true;
     if (hiddenUsers.get(x.user.id)) return false;
     if (hiddenImages.get(x.id)) return false;
-    for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
+    for (const tag of x.tags ?? []) if (hiddenTags.get(tag.id)) return false;
     return true;
   });
 
@@ -121,7 +121,7 @@ export const applyUserPreferencesArticles = <T>({
   const filtered = items.filter((x) => {
     if (x.user.id === currentUserId) return true;
     if (hiddenUsers.get(x.user.id)) return false;
-    for (const tag of x.tags) if (hiddenTags.get(tag.id)) return false;
+    for (const tag of x.tags ?? []) if (hiddenTags.get(tag.id)) return false;
     return true;
   });
 

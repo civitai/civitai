@@ -2,7 +2,7 @@ import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine
 import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '@prisma/client';
 import { IconCloudOff } from '@tabler/icons-react';
-import { debounce } from 'lodash-es';
+import { debounce, isEqual } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 
@@ -37,7 +37,7 @@ export function ModelsInfinite({
   const modelFilters = useModelFilters();
 
   const filters = removeEmpty({ ...modelFilters, ...filterOverrides });
-  const [debouncedFilters] = useDebouncedValue(filters, 500);
+  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryModels(debouncedFilters, { keepPreviousData: true });
@@ -50,6 +50,12 @@ export function ModelsInfinite({
     }
   }, [debouncedFetchNextPage, inView, isFetching]);
   // #endregion
+
+  //#region [useEffect] cancel debounced filters
+  useEffect(() => {
+    if (isEqual(filters, debouncedFilters)) cancel();
+  }, [cancel, debouncedFilters, filters]);
+  //#endregion
 
   return (
     <>
