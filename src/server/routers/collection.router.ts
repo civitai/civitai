@@ -67,7 +67,6 @@ export const collectionRouter = router({
   getInfinite: protectedProcedure
     .input(getAllCollectionsInfiniteSchema)
     .use(isFlagProtected('profileCollections'))
-    .use(applyUserPreferences())
     .query(getAllCollectionsInfiniteHandler),
   getAllUser: protectedProcedure
     .input(getAllUserCollectionsInputSchema)
