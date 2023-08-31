@@ -121,7 +121,6 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
 
 export function SignalProvider({ children }: { children: React.ReactNode }) {
   const features = useFeatureFlags();
-  console.log({ signal: features.signal });
   if (!features.signal) return FakeSignalProvider({ children });
   else return RealSignalProvider({ children });
 }

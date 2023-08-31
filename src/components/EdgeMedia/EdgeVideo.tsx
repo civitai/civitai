@@ -20,7 +20,6 @@ export function EdgeVideo({
   const { classes } = useStyles();
 
   // const showAudioControl = ref.current ? hasAudio(ref.current) : false;
-  // console.log({ video: ref.current, showAudioControl });
 
   return (
     <div style={{ position: 'relative' }}>
@@ -43,7 +42,8 @@ export function EdgeVideo({
         }
         {...props}
       >
-        <source src={src} type="video/webm" />
+        <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
+        <source src={src} type="video/mp4" />
       </video>
       {controls && (
         <div className={classes.controls}>
