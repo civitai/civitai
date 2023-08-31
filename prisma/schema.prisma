@@ -135,7 +135,7 @@ model User {
   bountyEntries           BountyEntry[]
   sponsoredBounties       BountyBenefactor[]
   engagedBounties         BountyEngagement[]
-  engagedBountyEntries    BountyEntryEngagement[]
+  bountyEntryReactions    BountyEntryReaction[]
 }
 
 model CustomerSubscription {
@@ -341,6 +341,12 @@ enum ContentType {
   Character
   Text
   Audio
+}
+
+enum FileEntityType {
+  Article
+  Bounty
+  BountyEntry
 }
 
 model Model {
@@ -554,16 +560,16 @@ model ModelFile {
 }
 
 model File {
-  id        Int      @id @default(autoincrement())
-  name      String
-  url       String
-  sizeKB    Float
-  createdAt DateTime @default(now())
-  articleId Int?
-  article   Article? @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  metadata  Json?
+  id         Int            @id @default(autoincrement())
+  name       String
+  url        String
+  sizeKB     Float
+  createdAt  DateTime       @default(now())
+  entityId   Int
+  entityType FileEntityType
+  metadata   Json?
 
-  @@index([articleId], type: Hash)
+  @@unique([entityId, entityType])
 }
 
 enum MetricTimeframe {
@@ -910,6 +916,14 @@ enum MediaType {
   audio
 }
 
+enum ImageEntityType {
+  ModelVersion
+  Article
+  Bounty
+  BountyEntry
+  Collection
+}
+
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -960,10 +974,20 @@ model Image {
   bounty          Bounty?               @relation(fields: [bountyId], references: [id], onDelete: Cascade)
   bountyEntryId   Int?
   bountyEntry     BountyEntry?          @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  connections     ImageConnection[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+}
+
+model ImageConnection {
+  imageId    Int
+  image      Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  entityId   Int
+  entityType ImageEntityType
+
+  @@id([imageId, entityId, entityType])
 }
 
 enum ImageEngagementType {
@@ -1678,7 +1702,6 @@ model Article {
   metrics         ArticleMetric[]
   rank            ArticleRank?
   stats           ArticleStat?
-  attachments     File[]
   engagements     ArticleEngagement[]
   associations    ModelAssociations[]
   collectionItems CollectionItem[]
@@ -1925,60 +1948,77 @@ model HomeBlock {
 }
 
 enum BountyType {
-  ResourceDevelopment
+  ModelCreation
+  LoraCreation
+  EmbedCreation
   DataSetCreation
   DataSetCaption
-  ContentCreation
+  ImageCreation
+  VideoCreation
   Other
 }
 
-enum BountyEntryStatus {
-  Submitted
-  Accepted
-  Rejected
-  Awarded
+enum BountyMode {
+  Individual
+  Split
+}
+
+enum BountyEntryMode {
+  Open
+  BenefactorsOnly
 }
 
 model Bounty {
-  id                      Int        @id @default(autoincrement())
+  id                      Int             @id @default(autoincrement())
   userId                  Int?
-  user                    User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
-  name                    String
+  user                    User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name                    String // Locked after created
   description             String
-  expiresAt               DateTime
-  createdAt               DateTime   @default(now())
-  updatedAt               DateTime   @updatedAt
+  expiresAt               DateTime // Locked after created
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  details                 Json
+  mode                    BountyMode      @default(Individual)
+  entryMode               BountyEntryMode @default(Open)
   type                    BountyType
-  subtype                 String?
   minBenefactorBuzzAmount Int
   maxBenefactorBuzzAmount Int // Default to initial benefactor's entry
+  entryLimit              Int             @default(1)
 
   tags        TagsOnBounty[]
   images      Image[] // TODO: Can we do ImagesOnBounty table?
   entries     BountyEntry[]
   benefactors BountyBenefactor[]
-  files       BountyFile[]
-  thread      Thread?
   engagements BountyEngagement[]
+  thread      Thread?
 }
 
 model BountyEntry {
-  id                Int               @id @default(autoincrement())
+  id                Int      @id @default(autoincrement())
   userId            Int?
-  user              User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user              User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   bountyId          Int
-  bounty            Bounty            @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  status            BountyEntryStatus
+  bounty            Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
   minimumEntryValue Int
-  locked            Boolean           @default(false)
+  locked            Boolean  @default(false)
 
   images      Image[]
   benefactors BountyBenefactor[]
-  files       BountyEntryFile[]
-  engagements BountyEntryEngagement[]
   thread      Thread?
+  reactions   BountyEntryReaction[]
+}
+
+model BountyEntryReaction {
+  bountyEntry   BountyEntry     @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  bountyEntryId Int
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        Int
+  reaction      ReviewReactions
+  createdAt     DateTime        @default(now())
+
+  @@id([bountyEntryId, userId, reaction])
 }
 
 model BountyBenefactor {
@@ -1994,29 +2034,6 @@ model BountyBenefactor {
   awartedTo   BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
 
   @@id([userId, bountyId])
-}
-
-model BountyFile {
-  id        Int      @id @default(autoincrement())
-  bountyId  Int
-  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  name      String
-  url       String
-  sizeKB    Float
-  createdAt DateTime @default(now())
-  type      String   @default("Training Data")
-}
-
-model BountyEntryFile {
-  id                  Int         @id @default(autoincrement())
-  bountyEntryId       Int
-  bountyEntry         BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
-  name                String
-  url                 String
-  sizeKB              Float
-  createdAt           DateTime    @default(now())
-  unlockAmount        Int // Determines minimum amount of buzz before the file gets unlocked.
-  requireContribution Boolean     @default(true) // Determines if a file can be only seen by people who contribute to the bounty. 
 }
 
 enum BountyEngagementType {
@@ -2036,20 +2053,20 @@ model BountyEngagement {
   @@index([bountyId])
 }
 
-enum BountyEntryEngagementType {
-  Favorite
+enum TipEntityType {
+  ModelVersion
+  Image
+  Article
+  Bounty
+  BountyEntry
 }
 
-model BountyEntryEngagement {
-  userId        Int
-  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bountyEntryId Int
-  bountyEntry   BountyEntry               @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
-  type          BountyEntryEngagementType
-  createdAt     DateTime                  @default(now())
+model TipConnection {
+  transactionId String // guid
+  entityId      Int
+  entityType    TipEntityType
 
-  @@id([userId, bountyEntryId])
-  @@index([bountyEntryId])
+  @@id([entityId, entityType, transactionId])
 }
 
 /// @view
