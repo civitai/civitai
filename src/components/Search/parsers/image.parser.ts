@@ -9,6 +9,7 @@ export const ImagesSearchIndexSortBy = [
   IMAGES_SEARCH_INDEX,
   `${IMAGES_SEARCH_INDEX}:rank.reactionCountAllTimeRank:asc`,
   `${IMAGES_SEARCH_INDEX}:rank.commentCountAllTimeRank:asc`,
+  `${IMAGES_SEARCH_INDEX}:rank.collectedCountAllTimeRank:asc`,
   `${IMAGES_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 

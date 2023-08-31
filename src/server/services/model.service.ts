@@ -288,6 +288,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     orderBy = { rank: { [`downloadCount${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostDiscussed)
     orderBy = { rank: { [`commentCount${period}Rank`]: 'asc' } };
+  else if (sort === ModelSort.MostCollected)
+    orderBy = { rank: { [`collectedCount${period}Rank`]: 'asc' } };
 
   const items = await dbRead.model.findMany({
     take,
@@ -342,6 +344,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           [`commentCount${input.period}`]: true,
           [`ratingCount${input.period}`]: true,
           [`rating${input.period}`]: true,
+          [`collectedCount${input.period}`]: true,
         },
       },
       modelVersions: {
@@ -411,6 +414,7 @@ export const getModelsWithImagesAndModelVersions = async ({
             favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
+            collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,

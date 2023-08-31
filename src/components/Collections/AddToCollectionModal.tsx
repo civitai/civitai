@@ -38,14 +38,14 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { PrivacyData, collectionReadPrivacyData } from './collection.utils';
 
-type Props = Partial<AddCollectionItemInput>;
+type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
 const { openModal: openAddToCollectionModal, Modal } = createContextModal<Props>({
   name: 'addToCollection',
   title: 'Add to Collection',
   size: 'sm',
   Element: ({ context, props }) => {
-    const [creating, setCreating] = useState(false);
+    const [creating, setCreating] = useState(props.createNew ?? false);
 
     return creating ? (
       <NewCollectionForm

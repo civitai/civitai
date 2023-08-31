@@ -470,6 +470,7 @@ export const getAllImages = async ({
     // Sort by selected sort
     if (sort === ImageSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
     else if (sort === ImageSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+    else if (sort === ImageSort.MostCollected) orderBy = `r."collectedCount${period}Rank"`;
     else orderBy = `i."id" DESC`;
   }
 

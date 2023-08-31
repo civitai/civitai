@@ -29,7 +29,13 @@ import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { getSystemPermissions } from '~/server/services/system-cache';
-import { usersSearchIndex } from '~/server/search-index';
+import {
+  articlesSearchIndex,
+  collectionsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+  usersSearchIndex,
+} from '~/server/search-index';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -474,8 +480,16 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   };
 };
 
-export const removeAllContent = ({ id }: { id: number }) => {
-  return dbWrite.$transaction([
+export const removeAllContent = async ({ id }: { id: number }) => {
+  const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
+  const images = await dbRead.image.findMany({ where: { userId: id }, select: { id: true } });
+  const articles = await dbRead.article.findMany({ where: { userId: id }, select: { id: true } });
+  const collections = await dbRead.collection.findMany({
+    where: { userId: id },
+    select: { id: true },
+  });
+
+  const res = await dbWrite.$transaction([
     dbWrite.model.deleteMany({ where: { userId: id } }),
     dbWrite.comment.deleteMany({ where: { userId: id } }),
     dbWrite.commentV2.deleteMany({ where: { userId: id } }),
@@ -484,6 +498,22 @@ export const removeAllContent = ({ id }: { id: number }) => {
     dbWrite.image.deleteMany({ where: { userId: id } }),
     dbWrite.article.deleteMany({ where: { userId: id } }),
   ]);
+
+  await modelsSearchIndex.queueUpdate(
+    models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await imagesSearchIndex.queueUpdate(
+    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await articlesSearchIndex.queueUpdate(
+    articles.map((a) => ({ id: a.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await collectionsSearchIndex.queueUpdate(
+    collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  return res;
 };
 
 export const getUserCosmetics = ({

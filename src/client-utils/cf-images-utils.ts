@@ -23,7 +23,7 @@ export type EdgeUrlProps = {
 
 const typeExtensions: Record<MediaType, string> = {
   image: '.jpeg',
-  video: '.webm',
+  video: '.mp4',
   audio: '.mp3',
 };
 

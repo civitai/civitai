@@ -49,7 +49,8 @@ const RenderFilters = () => {
           { label: 'Most Downloaded', value: ModelSearchIndexSortBy[2] as string },
           { label: 'Most Liked', value: ModelSearchIndexSortBy[3] as string },
           { label: 'Most Discussed', value: ModelSearchIndexSortBy[4] as string },
-          { label: 'Newest', value: ModelSearchIndexSortBy[5] as string },
+          { label: 'Most Collected', value: ModelSearchIndexSortBy[5] as string },
+          { label: 'Newest', value: ModelSearchIndexSortBy[6] as string },
         ]}
       />
       <ChipRefinementList
@@ -62,6 +63,12 @@ const RenderFilters = () => {
         title="Filter by Checkpoint Type"
         sortBy={['name']}
         attribute="checkpointType"
+      />
+      <ChipRefinementList
+        title="Filter by Category"
+        sortBy={['name']}
+        attribute="category.name"
+        limit={100}
       />
       <SearchableMultiSelectRefinementList
         title="Users"
