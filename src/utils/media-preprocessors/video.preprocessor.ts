@@ -1,6 +1,14 @@
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { createBlurHash } from '~/utils/blurhash';
 
+const hasAudio = (video: any): boolean => {
+  return (
+    video.mozHasAudio ||
+    Boolean(video.webkitAudioDecodedByteCount) ||
+    Boolean(video.audioTracks && video.audioTracks.length)
+  );
+};
+
 const getVideoData = async (src: string) =>
   new Promise<VideoMetadata>((resolve, reject) => {
     const video = document.createElement('video');
@@ -10,12 +18,13 @@ const getVideoData = async (src: string) =>
     video.onseeked = function () {
       const width = video.videoWidth;
       const height = video.videoHeight;
-      console.log({ video });
+      const audio = hasAudio(video);
       resolve({
         width,
         height,
         hash: createBlurHash(video, width, height),
         duration: Math.round(video.duration * 1000) / 1000,
+        audio,
       });
     };
     video.onerror = (...args) => reject(args);

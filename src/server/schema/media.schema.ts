@@ -14,6 +14,7 @@ export const videoMetadataSchema = z.object({
   width: z.number(),
   hash: z.string().optional(), // first frame of video
   duration: z.number().optional(),
+  audio: z.boolean().optional(),
   size: z.number().optional(),
   // hasSound: z.boolean().default(false), not accessible from HTMLVideoElement
 });
