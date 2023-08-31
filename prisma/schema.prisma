@@ -343,12 +343,6 @@ enum ContentType {
   Audio
 }
 
-enum FileEntityType {
-  Article
-  Bounty
-  BountyEntry
-}
-
 model Model {
   id                  Int             @id @default(autoincrement())
   name                String          @db.Citext
@@ -560,13 +554,13 @@ model ModelFile {
 }
 
 model File {
-  id         Int            @id @default(autoincrement())
+  id         Int      @id @default(autoincrement())
   name       String
   url        String
   sizeKB     Float
-  createdAt  DateTime       @default(now())
+  createdAt  DateTime @default(now())
   entityId   Int
-  entityType FileEntityType
+  entityType String
   metadata   Json?
 
   @@unique([entityId, entityType])
@@ -916,14 +910,6 @@ enum MediaType {
   audio
 }
 
-enum ImageEntityType {
-  ModelVersion
-  Article
-  Bounty
-  BountyEntry
-  Collection
-}
-
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -970,10 +956,6 @@ model Image {
   engagements     ImageEngagement[]
   collectionItems CollectionItem[]
   collections     Collection[]
-  bountyId        Int?
-  bounty          Bounty?               @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  bountyEntryId   Int?
-  bountyEntry     BountyEntry?          @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
   connections     ImageConnection[]
 
   @@index([featuredAt])
@@ -983,9 +965,9 @@ model Image {
 
 model ImageConnection {
   imageId    Int
-  image      Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image      Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
   entityId   Int
-  entityType ImageEntityType
+  entityType String
 
   @@id([imageId, entityId, entityType])
 }
@@ -1986,7 +1968,6 @@ model Bounty {
   entryLimit              Int             @default(1)
 
   tags        TagsOnBounty[]
-  images      Image[] // TODO: Can we do ImagesOnBounty table?
   entries     BountyEntry[]
   benefactors BountyBenefactor[]
   engagements BountyEngagement[]
@@ -1994,17 +1975,15 @@ model Bounty {
 }
 
 model BountyEntry {
-  id                Int      @id @default(autoincrement())
-  userId            Int?
-  user              User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  bountyId          Int
-  bounty            Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  minimumEntryValue Int
-  locked            Boolean  @default(false)
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  bountyId  Int
+  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  locked    Boolean  @default(false)
 
-  images      Image[]
   benefactors BountyBenefactor[]
   thread      Thread?
   reactions   BountyEntryReaction[]
@@ -2049,22 +2028,14 @@ model BountyEngagement {
   type      BountyEngagementType
   createdAt DateTime             @default(now())
 
-  @@id([userId, bountyId])
+  @@id([userId, bountyId, type])
   @@index([bountyId])
-}
-
-enum TipEntityType {
-  ModelVersion
-  Image
-  Article
-  Bounty
-  BountyEntry
 }
 
 model TipConnection {
   transactionId String // guid
   entityId      Int
-  entityType    TipEntityType
+  entityType    String
 
   @@id([entityId, entityType, transactionId])
 }
