@@ -13,6 +13,7 @@ export enum ModelSort {
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
   MostDiscussed = 'Most Discussed',
+  MostCollected = 'Most Collected',
   Newest = 'Newest',
 }
 
@@ -42,12 +43,14 @@ export enum QuestionStatus {
 export enum ImageSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
+  MostCollected = 'Most Collected',
   Newest = 'Newest',
 }
 
 export enum PostSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
+  MostCollected = 'Most Collected',
   Newest = 'Newest',
 }
 
@@ -90,6 +93,7 @@ export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
+  MostCollected = 'Most Collected',
   Newest = 'Newest',
 }
 

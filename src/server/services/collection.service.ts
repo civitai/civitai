@@ -20,7 +20,9 @@ import {
   CollectionWriteConfiguration,
   HomeBlockType,
   ImageIngestionStatus,
+  MediaType,
   MetricTimeframe,
+  NsfwLevel,
   Prisma,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
@@ -76,7 +78,7 @@ export type CollectionContributorPermissionFlags = {
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
-  input: { limit, cursor, privacy, types, userId, sort, ids, browsingMode },
+  input: { limit, cursor, privacy, types, userId, sort, ids },
   user,
   select,
 }: {
@@ -85,7 +87,6 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
   user?: SessionUser;
 }) => {
   if (privacy && !user?.isModerator) privacy = [CollectionReadConfiguration.Public];
-  const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
   const orderBy: Prisma.CollectionFindManyArgs['orderBy'] = [{ createdAt: 'desc' }];
   if (sort === CollectionSort.MostContributors)
@@ -98,7 +99,6 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
       id: ids && ids.length > 0 ? { in: ids } : undefined,
       read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
       type: types && types.length > 0 ? { in: types } : undefined,
-      nsfw: browsingMode === BrowsingMode.SFW || !canViewNsfw ? false : undefined,
       userId,
     },
     select,
@@ -1161,4 +1161,140 @@ export const bulkSaveItems = async ({
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
   return dbWrite.collectionItem.createMany({ data });
+};
+
+type ImageProps = {
+  type: MediaType;
+  id: number;
+  createdAt: Date;
+  name: string | null;
+  url: string;
+  hash: string | null;
+  height: number | null;
+  width: number | null;
+  nsfw: NsfwLevel;
+  postId: number | null;
+  index: number | null;
+  scannedAt: Date | null;
+  mimeType: string | null;
+  meta: Prisma.JsonObject | null;
+} | null;
+
+type CollectionImageRaw = {
+  id: number;
+  image: ImageProps | null;
+  src: string | null;
+};
+
+export const getCollectionCoverImages = async ({
+  collectionIds,
+  imagesPerCollection,
+}: {
+  collectionIds: number[];
+  imagesPerCollection: number;
+}) => {
+  const imageSql = Prisma.sql`
+    jsonb_build_object(
+        'id', i."id",
+        'index', i."index",
+        'postId', i."postId",
+        'name', i."name",
+        'url', i."url",
+        'nsfw', i."nsfw",
+        'width', i."width",
+        'height', i."height",
+        'hash', i."hash",
+        'createdAt', i."createdAt",
+        'mimeType', i."mimeType",
+        'scannedAt', i."scannedAt",
+        'type', i."type",
+        'meta', i."meta"
+      ) image
+  `;
+
+  const itemImages = await dbRead.$queryRaw<CollectionImageRaw[]>`
+    WITH target AS MATERIALIZED (
+      SELECT *
+      FROM (
+        SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY ci."collectionId"
+            ORDER BY ci.id
+          ) AS idx
+        FROM "CollectionItem" ci
+        WHERE ci.status = 'ACCEPTED'
+          AND ci."collectionId" IN (${Prisma.join(collectionIds)})
+      ) t
+      WHERE idx <= ${imagesPerCollection}
+    ), imageItemImage AS MATERIALIZED (
+      SELECT
+        i.id,
+        ${imageSql}
+      FROM "Image" i
+      WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
+        AND i."ingestion" = 'Scanned'
+        AND i."needsReview" IS NULL
+    ), postItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            i."postId" id,
+            ${imageSql},
+            ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
+          FROM "Image" i
+          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
+            AND i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+      ) t
+      WHERE t.rn = 1
+    ), modelItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            m.id,
+            ${imageSql},
+            ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
+          FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
+          WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
+              AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
+      ) t
+      WHERE t.rn = 1
+    ), articleItemImage as MATERIALIZED (
+        SELECT a.id, a.cover image FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target)
+    )
+    SELECT
+        target."collectionId" id,
+        COALESCE(
+          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
+          (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
+          (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          NULL
+        ) image,
+        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
+    FROM target
+  `;
+
+  const tags = await dbRead.tagsOnImage.findMany({
+    where: {
+      imageId: { in: [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))] },
+      disabled: false,
+    },
+    select: { imageId: true, tagId: true },
+  });
+
+  return itemImages
+    .map(({ id, image, src }) => ({
+      id,
+      image: image
+        ? {
+            ...image,
+            tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
+          }
+        : null,
+      src,
+    }))
+    .filter((itemImage) => !!(itemImage.image || itemImage.src));
 };

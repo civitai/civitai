@@ -49,7 +49,8 @@ const RenderFilters = () => {
           { label: 'Most Downloaded', value: ModelSearchIndexSortBy[2] as string },
           { label: 'Most Liked', value: ModelSearchIndexSortBy[3] as string },
           { label: 'Most Discussed', value: ModelSearchIndexSortBy[4] as string },
-          { label: 'Newest', value: ModelSearchIndexSortBy[5] as string },
+          { label: 'Most Collected', value: ModelSearchIndexSortBy[5] as string },
+          { label: 'Newest', value: ModelSearchIndexSortBy[6] as string },
         ]}
       />
       <ChipRefinementList
