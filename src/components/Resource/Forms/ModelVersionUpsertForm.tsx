@@ -29,7 +29,7 @@ import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IconCash, IconCurrency, IconInfoCircle } from '@tabler/icons-react';
+import { IconCurrencyDollar, IconInfoCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ModelVersionMonetizationType } from '@prisma/client';
 
@@ -405,7 +405,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     sx={{ flexGrow: 1 }}
                     precision={2}
                     step={0.01}
-                    icon={<IconCash size={18} />}
+                    icon={<IconCurrencyDollar size={18} />}
                     format="currency"
                   />
                 </Group>

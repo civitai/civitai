@@ -287,3 +287,5 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
   [ModelVersionSponsorshipSettingsType.FixedPrice]: 'Fixed Price',
   [ModelVersionSponsorshipSettingsType.Bidding]: 'Bidding',
 };
+
+export const DEFAULT_CURRENCY = 'USD';

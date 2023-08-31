@@ -1,7 +1,7 @@
 import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
-import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { BaseModel, baseModelSets, DEFAULT_CURRENCY } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -118,12 +118,12 @@ export const upsertModelVersion = async ({
               ? {
                   create: {
                     type: monetization.type,
-                    currency: 'USD', // TODO: add currency to schema
+                    currency: DEFAULT_CURRENCY,
                     sponsorshipSettings: monetization.sponsorshipSettings
                       ? {
                           create: {
                             type: monetization.sponsorshipSettings?.type,
-                            currency: 'USD', // TODO: add currency to schema
+                            currency: DEFAULT_CURRENCY,
                             unitAmount: monetization?.sponsorshipSettings?.unitAmount,
                           },
                         }
@@ -170,12 +170,12 @@ export const upsertModelVersion = async ({
                 upsert: {
                   create: {
                     type: monetization.type,
-                    currency: 'USD', // TODO: add currency to schema
+                    currency: DEFAULT_CURRENCY,
                     sponsorshipSettings: monetization.sponsorshipSettings
                       ? {
                           create: {
                             type: monetization.sponsorshipSettings?.type,
-                            currency: 'USD', // TODO: add currency to schema
+                            currency: DEFAULT_CURRENCY,
                             unitAmount: monetization?.sponsorshipSettings?.unitAmount,
                           },
                         }
@@ -183,7 +183,7 @@ export const upsertModelVersion = async ({
                   },
                   update: {
                     type: monetization.type,
-                    currency: 'USD', // TODO: add currency to schema
+                    currency: DEFAULT_CURRENCY,
                     sponsorshipSettings:
                       existingVersion.monetization?.sponsorshipSettings &&
                       !monetization.sponsorshipSettings
@@ -193,12 +193,12 @@ export const upsertModelVersion = async ({
                             upsert: {
                               create: {
                                 type: monetization.sponsorshipSettings?.type,
-                                currency: 'USD', // TODO: add currency to schema
+                                currency: DEFAULT_CURRENCY,
                                 unitAmount: monetization?.sponsorshipSettings?.unitAmount,
                               },
                               update: {
                                 type: monetization.sponsorshipSettings?.type,
-                                currency: 'USD', // TODO: add currency to schema
+                                currency: DEFAULT_CURRENCY,
                                 unitAmount: monetization?.sponsorshipSettings?.unitAmount,
                               },
                             },
