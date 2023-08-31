@@ -8,3 +8,10 @@ export const baseFileSchema = z.object({
   metadata: z.object({}).optional(),
 });
 export type BaseFileSchema = z.infer<typeof baseFileSchema>;
+
+export const FileEntityType = {
+  Article: 'Article',
+  Bounty: 'Bounty',
+  BountyEntry: 'BountyEntry',
+} as const;
+export type FileEntityType = (typeof FileEntityType)[keyof typeof FileEntityType];

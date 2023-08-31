@@ -1,6 +1,5 @@
 import {
   ArticleEngagementType,
-  FileEntityType,
   MetricTimeframe,
   Prisma,
   SearchIndexUpdateQueueAction,
@@ -203,7 +202,7 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
     const articleCategories = await getCategoryTags('article');
-    const attachments = await getFilesByEntity({ id, type: FileEntityType.Article });
+    const attachments = await getFilesByEntity({ id, type: 'Article' });
 
     return {
       ...article,
@@ -292,7 +291,7 @@ export const upsertArticle = async ({
             data: attachments.map((attachment) => ({
               ...attachment,
               entityId: article.id,
-              entityType: FileEntityType.Article,
+              entityType: 'Article',
             })),
           });
         }
@@ -341,7 +340,7 @@ export const upsertArticle = async ({
         await tx.file.deleteMany({
           where: {
             entityId: id,
-            entityType: FileEntityType.Article,
+            entityType: 'Article',
             id: { notIn: attachments.map((x) => x.id).filter(isDefined) },
           },
         });
@@ -353,7 +352,7 @@ export const upsertArticle = async ({
             .map((attachment) => ({
               ...attachment,
               entityId: article.id,
-              entityType: FileEntityType.Article,
+              entityType: 'Article',
             })),
         });
       }
