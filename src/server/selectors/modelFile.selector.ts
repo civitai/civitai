@@ -6,6 +6,7 @@ export const modelFileSelect = Prisma.validator<Prisma.ModelFileSelect>()({
   sizeKB: true,
   name: true,
   type: true,
+  visibility: true,
   metadata: true,
   pickleScanResult: true,
   pickleScanMessage: true,

@@ -1,6 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ModelFileCreateInput, ModelFileUpdateInput } from '~/server/schema/model-file.schema';
+import {
+  ModelFileCreateInput,
+  ModelFileUpdateInput,
+  ModelFileUpsertInput,
+} from '~/server/schema/model-file.schema';
 import {
   createFile,
   deleteFile,
@@ -44,6 +48,18 @@ export const createFileHandler = async ({ input }: { input: ModelFileCreateInput
 export const updateFileHandler = async ({ input }: { input: ModelFileUpdateInput }) => {
   try {
     return await updateFile(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const upsertFileHandler = async ({ input }: { input: ModelFileUpsertInput }) => {
+  try {
+    if (input.id !== undefined) {
+      return await updateFileHandler({ input });
+    } else {
+      return await createFileHandler({ input });
+    }
   } catch (error) {
     throw throwDbError(error);
   }

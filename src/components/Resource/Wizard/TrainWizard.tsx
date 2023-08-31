@@ -8,10 +8,9 @@ import { TrainingFormBasic } from '~/components/Resource/Forms/Training/Training
 import { basePath } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { TrainingFormImages } from '~/components/Resource/Forms/Training/TrainingImages';
 import { TrainingFormSubmit } from '~/components/Resource/Forms/Training/TrainingSubmit';
-import { ModelById } from '~/types/router';
+import { usePostHog } from '~/hooks/usePostHog';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { usePostHog } from '~/hooks/usePostHog';
 
 type WizardState = {
   step: number;
@@ -32,6 +31,7 @@ export default function TrainWizard() {
   const posthog = usePostHog();
   useEffect(() => {
     posthog?.startSessionRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const { modelId } = router.query;
@@ -43,10 +43,10 @@ export default function TrainWizard() {
     data: model,
     isInitialLoading: modelLoading,
     isError: modelError,
-  } = trpc.model.getById.useQuery({ id: Number(modelId) }, { enabled: !!modelId });
+  } = trpc.training.getModelBasic.useQuery({ id: Number(modelId) }, { enabled: !!modelId });
 
   const editing = !!model;
-  const hasFiles = model && model.modelVersions[0].files.length > 0;
+  const hasFiles = model && model.modelVersions[0]?.files?.length > 0;
 
   useEffect(() => {
     if (!isNew) {
@@ -136,7 +136,7 @@ export default function TrainWizard() {
             <Stepper.Step label={hasFiles ? 'Edit training data' : 'Add training data'}>
               <Stack>
                 <Title order={3}>{hasFiles ? 'Edit training data' : 'Add training data'}</Title>
-                <TrainingFormImages model={model as ModelById} />
+                {model ? <TrainingFormImages model={model} /> : <NotFound />}
               </Stack>
             </Stepper.Step>
 
@@ -144,7 +144,7 @@ export default function TrainWizard() {
             <Stepper.Step label="Review and Submit">
               <Stack>
                 <Title order={3}>Review and Submit</Title>
-                <TrainingFormSubmit model={model as ModelById} />
+                {model ? <TrainingFormSubmit model={model} /> : <NotFound />}
               </Stack>
             </Stepper.Step>
           </Stepper>

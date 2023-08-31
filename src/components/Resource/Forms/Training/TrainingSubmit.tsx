@@ -16,6 +16,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
+import { BaseModel } from '~/server/common/constants';
 import {
   TrainingDetailsBaseModel,
   trainingDetailsBaseModels,
@@ -23,7 +24,7 @@ import {
   TrainingDetailsParams,
   trainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import { ModelById } from '~/types/router';
+import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -59,6 +60,17 @@ type TrainingSettingsType = {
       max?: number;
     };
   };
+};
+
+const getPrecision = (n: any) => {
+  if (!isFinite(n)) return 0;
+  const e = 1;
+  let p = 0;
+  while (Math.round(n * e) / e !== n) {
+    n *= 10;
+    p++;
+  }
+  return p;
 };
 
 const trainingSettings: TrainingSettingsType[] = [
@@ -166,6 +178,7 @@ const trainingSettings: TrainingSettingsType[] = [
     hint: 'Sets the learning rate for U-Net. This is the learning rate when performing additional learning on each attention block (and other blocks depending on the setting) in U-Net.',
     type: 'number',
     default: 0.0005,
+    step: 0.0001,
     min: 0,
     max: 1,
   },
@@ -174,7 +187,8 @@ const trainingSettings: TrainingSettingsType[] = [
     label: 'Text Encoder LR',
     hint: 'Sets the learning rate for the text encoder. The effect of additional training on text encoders affects the entire U-Net.',
     type: 'number',
-    default: 0.0001,
+    default: 0.00005,
+    step: 0.00001,
     min: 0,
     max: 1,
   },
@@ -260,10 +274,11 @@ const trainingSettings: TrainingSettingsType[] = [
   },
 ];
 
-export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
+export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
-  const thisFile = thisModelVersion.files.find((f) => f.type === 'Training Data');
+  const thisFile = thisModelVersion.files[0];
+  const thisMetadata = thisFile?.metadata as FileMetadata | null;
 
   const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
     thisTrainingDetails?.baseModel ?? undefined
@@ -300,9 +315,9 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
       b: number
     ) => number;
 
-    defaultValues.numRepeats = numRepeatsFnc(thisFile?.metadata['numImages'] || 1);
+    defaultValues.numRepeats = numRepeatsFnc(thisMetadata?.numImages || 1);
     defaultValues.targetSteps = targetStepsFnc(
-      thisFile?.metadata['numImages'] || 1,
+      thisMetadata?.numImages || 1,
       defaultValues.numRepeats,
       defaultValues.maxTrainEpochs,
       defaultValues.trainBatchSize
@@ -341,7 +356,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     const trainBatchSize = form.getValues('trainBatchSize');
 
     const newSteps = Math.ceil(
-      ((thisFile?.metadata['numImages'] || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
+      ((thisMetadata?.numImages || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
     );
 
     // if (newSteps > 10000) {
@@ -402,13 +417,18 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
 
       const { baseModel, ...paramData } = rest;
 
+      const baseModelConvert: BaseModel =
+        baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
+
       const versionMutateData = {
         // these 4 appear to be required for upsert, but aren't actually being updated.
         // only ID should technically be necessary
         id: thisModelVersion.id,
         name: thisModelVersion.name,
         modelId: model.id,
-        baseModel: thisModelVersion.baseModel,
+        baseModel: baseModelConvert,
+        epochs: paramData.maxTrainEpochs,
+        steps: paramData.targetSteps,
         trainingStatus: TrainingStatus.Submitted,
         trainingDetails: {
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
@@ -418,7 +438,25 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
       };
 
       upsertVersionMutation.mutate(versionMutateData, {
-        onSuccess: () => {
+        onSuccess: (response, request) => {
+          queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+            if (!old) return old;
+
+            const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
+            if (!versionToUpdate) return old;
+
+            versionToUpdate.trainingStatus = request.trainingStatus!;
+            versionToUpdate.trainingDetails = request.trainingDetails!;
+
+            return {
+              ...old,
+              modelVersions: [
+                versionToUpdate,
+                ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+              ],
+            };
+          });
+
           doTraining.mutate(
             {
               model: baseModel,
@@ -431,9 +469,6 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
             },
             {
               onSuccess: async () => {
-                // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
-                await queryUtils.modelVersion.getById.invalidate({ id: thisModelVersion.id });
-                await queryUtils.model.getById.invalidate({ id: model.id });
                 setAwaitInvalidate(false);
                 showSuccessNotification({
                   title: 'Successfully submitted for training!',
@@ -442,6 +477,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                 await router.replace(userTrainingDashboardURL);
               },
               onError: () => {
+                // TODO [bw] set status back to pending
                 setAwaitInvalidate(false);
               },
             }
@@ -495,17 +531,11 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                   { label: 'Type', value: thisTrainingDetails?.type },
                   {
                     label: 'Images',
-                    value:
-                      thisModelVersion.files.find((f) => f.type === 'Training Data')?.metadata[
-                        'numImages'
-                      ] || 0,
+                    value: thisMetadata?.numImages || 0,
                   },
                   {
                     label: 'Captions',
-                    value:
-                      thisModelVersion.files.find((f) => f.type === 'Training Data')?.metadata[
-                        'numCaptions'
-                      ] || 0,
+                    value: thisMetadata?.numCaptions || 0,
                   },
                 ]}
               />
@@ -582,8 +612,10 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                           name={ts.name}
                           min={override?.min ?? ts.min}
                           max={override?.max ?? ts.max}
-                          precision={ts.type === 'number' ? 4 : undefined}
-                          step={ts.step ?? ts.type === 'int' ? 1 : 0.0001}
+                          precision={
+                            ts.type === 'number' ? getPrecision(ts.default) || 4 : undefined
+                          }
+                          step={ts.step}
                           sx={{ flexGrow: 1 }}
                           disabled={ts.disabled === true}
                           format="default"

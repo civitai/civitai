@@ -146,7 +146,11 @@ export default function UserTrainingModels() {
 
   return (
     <Stack>
-      <ScrollArea style={{ height: 400 }} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
+      <ScrollArea
+        // TODO [bw] should do something like calc(100vh - 400px)
+        style={{ height: 400 }}
+        onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
+      >
         <Table verticalSpacing="md" fontSize="md" striped={hasTraining}>
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
@@ -210,7 +214,7 @@ export default function UserTrainingModels() {
                                 value: modalData.file?.metadata?.trainingResults?.start_time
                                   ? formatDate(
                                       modalData.file.metadata.trainingResults.start_time,
-                                      'MMM DD, YYYY HH:mm:ss'
+                                      'MMM D, YYYY hh:mm:ss A'
                                     )
                                   : 'Unknown',
                               },
@@ -329,7 +333,7 @@ export default function UserTrainingModels() {
                   </tr>
                 );
               })
-            ) : (
+            ) : !isLoading ? (
               <tr>
                 <td colSpan={7}>
                   <Center py="md">
@@ -337,6 +341,8 @@ export default function UserTrainingModels() {
                   </Center>
                 </td>
               </tr>
+            ) : (
+              <></>
             )}
           </tbody>
         </Table>

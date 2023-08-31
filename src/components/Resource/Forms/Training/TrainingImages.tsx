@@ -31,7 +31,7 @@ import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { ModelById } from '~/types/router';
+import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -70,21 +70,21 @@ const imageExts: { [key: string]: string } = {
   // webp: 'image/webp',
 };
 
-export const TrainingFormImages = ({ model }: { model: ModelById }) => {
+export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const [imageList, setImageList] = useState<imageDataType[]>([]);
   const [initialImageList, setInitialImageList] = useState<imageDataType[]>([]);
   const [page, setPage] = useState(1);
-  // TODO [bw] set this from model status
   const [ownRights, setOwnRights] = useState<boolean>(false);
   const [shareDataset, setShareDataset] = useState<boolean>(false);
   const [zipping, setZipping] = useState<boolean>(false);
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
+  const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
 
-  const thisModelVersion = model?.modelVersions[0];
+  const thisModelVersion = model.modelVersions[0];
 
   const notificationId = `${thisModelVersion.id}-uploading-data-notification`;
 
@@ -108,9 +108,14 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
       });
       return await handleZip(zipFile, false);
     }
-    const existingDataFile = thisModelVersion.files.find((f) => f.type === 'Training Data');
+
+    const existingDataFile = thisModelVersion.files[0];
+    const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
     if (existingDataFile) {
       setLoadingZip(true);
+      setModelFileId(existingDataFile.id);
+      setOwnRights(existingMetadata?.ownRights ?? false);
+      setShareDataset(existingMetadata?.shareDataset ?? false);
       parseExisting().then((files) => {
         if (files) {
           const flatFiles = files.flat();
@@ -182,9 +187,8 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
     setImageList(imageList.concat(newFiles.flat()));
   };
 
-  // TODO [bw] should this be doing an update if it exists instead?
-  const createFileMutation = trpc.modelFile.create.useMutation({
-    async onSuccess(result) {
+  const upsertFileMutation = trpc.modelFile.upsert.useMutation({
+    async onSuccess(response, request) {
       updateNotification({
         id: notificationId,
         icon: <IconCheck size={18} />,
@@ -195,11 +199,32 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
         disallowClose: false,
       });
 
-      await queryUtils.modelVersion.getById.invalidate({ id: result.modelVersion.id });
-      await queryUtils.model.getById.invalidate({ id: model.id });
+      queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+        if (!old) return old;
+
+        const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
+        if (!versionToUpdate) return old;
+        versionToUpdate.files = [
+          {
+            id: response.id,
+            url: request.url!,
+            type: request.type!,
+            metadata: request.metadata!,
+            sizeKB: request.sizeKB!,
+            visibility: request.visibility!,
+          },
+        ];
+
+        return {
+          ...old,
+          modelVersions: [
+            versionToUpdate,
+            ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+          ],
+        };
+      });
 
       setZipping(false);
-
       goNext(model.id, thisStep);
     },
     onError(error) {
@@ -233,7 +258,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
     // TODO [bw] handle error
     zip.generateAsync({ type: 'blob' }).then(async (content) => {
       // saveAs(content, 'example.zip');
-      // save to ModelFile with type training data
 
       const blobFile = new File([content], `${thisModelVersion.id}_training_data.zip`, {
         type: 'application/zip',
@@ -266,9 +290,11 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
               versionId: number;
             };
             if (versionId) {
+              console.log(result);
               try {
-                await createFileMutation.mutateAsync({
+                await upsertFileMutation.mutateAsync({
                   ...result,
+                  ...(modelFileId && { id: modelFileId }),
                   sizeKB: bytesToKB(size),
                   modelVersionId: versionId,
                   type: 'Training Data',
@@ -291,6 +317,8 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
                   message: '',
                 });
               }
+            } else {
+              throw new Error('Missing version data.');
             }
           }
         );
