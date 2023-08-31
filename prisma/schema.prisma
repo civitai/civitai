@@ -290,23 +290,23 @@ model Import {
 }
 
 enum ModelStatus {
-  Draft                 // saved but incomplete
-  Training              // actively training
-  Published             // complete
-  Scheduled             // scheduled for publish
-  Unpublished           // taken from published -> hidden intentionally?
-  UnpublishedViolation  // taken from published -> hidden unintentionally?
-  GatherInterest        // unused?
-  Deleted               // deleted by user/system
+  Draft // saved but incomplete
+  Training // actively training
+  Published // complete
+  Scheduled // scheduled for publish
+  Unpublished // taken from published -> hidden intentionally?
+  UnpublishedViolation // taken from published -> hidden unintentionally?
+  GatherInterest // unused?
+  Deleted // deleted by user/system
 }
 
 enum TrainingStatus {
-  Pending     // not submitted yet (in draft mode)
-  Submitted   // submitted for processing (in civitai queue/delay, OR not picked up by external system)
-  Processing  // actively generating
-  InReview    // done, waiting for publish
-  Failed      // something went wrong either externally or internally
-  Approved    // published
+  Pending // not submitted yet (in draft mode)
+  Submitted // submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Processing // actively generating
+  InReview // done, waiting for publish
+  Failed // something went wrong either externally or internally
+  Approved // published
 }
 
 enum CommercialUse {
@@ -520,30 +520,30 @@ enum ScanResultCode {
 
 enum ModelFileVisibility {
   Sensitive // Choosing not to share
-  Private   // Hidden
-  Public    // Available to all
+  Private // Hidden
+  Public // Available to all
 }
 
 model ModelFile {
-  id                Int                  @id @default(autoincrement())
+  id                Int                 @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime             @default(now())
-  type              String               @default("Model")
+  createdAt         DateTime            @default(now())
+  type              String              @default("Model")
   modelVersionId    Int
-  modelVersion      ModelVersion         @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode       @default(Pending)
+  modelVersion      ModelVersion        @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode      @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode       @default(Pending)
+  virusScanResult   ScanResultCode      @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
-  visibility        ModelFileVisibility  @default(Public)
+  visibility        ModelFileVisibility @default(Public)
 
   @@index([modelVersionId], type: Hash)
 }
@@ -863,15 +863,16 @@ model Post {
 }
 
 model PostMetric {
-  postId       Int
-  post         Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
-  timeframe    MetricTimeframe
-  likeCount    Int             @default(0)
-  dislikeCount Int             @default(0)
-  laughCount   Int             @default(0)
-  cryCount     Int             @default(0)
-  heartCount   Int             @default(0)
-  commentCount Int             @default(0)
+  postId         Int
+  post           Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  timeframe      MetricTimeframe
+  likeCount      Int             @default(0)
+  dislikeCount   Int             @default(0)
+  laughCount     Int             @default(0)
+  cryCount       Int             @default(0)
+  heartCount     Int             @default(0)
+  commentCount   Int             @default(0)
+  collectedCount Int             @default(0)
 
   @@id([postId, timeframe])
 }
@@ -990,15 +991,16 @@ model ImageResource {
 }
 
 model ImageMetric {
-  image        Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId      Int
-  timeframe    MetricTimeframe
-  likeCount    Int             @default(0)
-  dislikeCount Int             @default(0)
-  laughCount   Int             @default(0)
-  cryCount     Int             @default(0)
-  heartCount   Int             @default(0)
-  commentCount Int             @default(0)
+  image          Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId        Int
+  timeframe      MetricTimeframe
+  likeCount      Int             @default(0)
+  dislikeCount   Int             @default(0)
+  laughCount     Int             @default(0)
+  cryCount       Int             @default(0)
+  heartCount     Int             @default(0)
+  commentCount   Int             @default(0)
+  collectedCount Int             @default(0)
 
   @@id([imageId, timeframe])
 }
@@ -1676,18 +1678,19 @@ model ArticleEngagement {
 }
 
 model ArticleMetric {
-  article       Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  articleId     Int
-  timeframe     MetricTimeframe
-  likeCount     Int             @default(0)
-  dislikeCount  Int             @default(0)
-  laughCount    Int             @default(0)
-  cryCount      Int             @default(0)
-  heartCount    Int             @default(0)
-  commentCount  Int             @default(0)
-  viewCount     Int             @default(0)
-  favoriteCount Int             @default(0)
-  hideCount     Int             @default(0)
+  article        Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  articleId      Int
+  timeframe      MetricTimeframe
+  likeCount      Int             @default(0)
+  dislikeCount   Int             @default(0)
+  laughCount     Int             @default(0)
+  cryCount       Int             @default(0)
+  heartCount     Int             @default(0)
+  commentCount   Int             @default(0)
+  viewCount      Int             @default(0)
+  favoriteCount  Int             @default(0)
+  hideCount      Int             @default(0)
+  collectedCount Int             @default(0)
 
   @@id([articleId, timeframe])
 }
@@ -2183,58 +2186,63 @@ model ArticleStat {
 
 /// @view
 model ArticleRank {
-  articleId                Int     @id
-  article                  Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  cryCountDayRank          Int     @default(0)
-  cryCountWeekRank         Int     @default(0)
-  cryCountMonthRank        Int     @default(0)
-  cryCountYearRank         Int     @default(0)
-  cryCountAllTimeRank      Int     @default(0)
-  dislikeCountDayRank      Int     @default(0)
-  dislikeCountWeekRank     Int     @default(0)
-  dislikeCountMonthRank    Int     @default(0)
-  dislikeCountYearRank     Int     @default(0)
-  dislikeCountAllTimeRank  Int     @default(0)
-  heartCountDayRank        Int     @default(0)
-  heartCountWeekRank       Int     @default(0)
-  heartCountMonthRank      Int     @default(0)
-  heartCountYearRank       Int     @default(0)
-  heartCountAllTimeRank    Int     @default(0)
-  laughCountDayRank        Int     @default(0)
-  laughCountWeekRank       Int     @default(0)
-  laughCountMonthRank      Int     @default(0)
-  laughCountYearRank       Int     @default(0)
-  laughCountAllTimeRank    Int     @default(0)
-  likeCountDayRank         Int     @default(0)
-  likeCountWeekRank        Int     @default(0)
-  likeCountMonthRank       Int     @default(0)
-  likeCountYearRank        Int     @default(0)
-  likeCountAllTimeRank     Int     @default(0)
-  commentCountDayRank      Int     @default(0)
-  commentCountWeekRank     Int     @default(0)
-  commentCountMonthRank    Int     @default(0)
-  commentCountYearRank     Int     @default(0)
-  commentCountAllTimeRank  Int     @default(0)
-  reactionCountDayRank     Int     @default(0)
-  reactionCountWeekRank    Int     @default(0)
-  reactionCountMonthRank   Int     @default(0)
-  reactionCountYearRank    Int     @default(0)
-  reactionCountAllTimeRank Int     @default(0)
-  viewCountDayRank         Int     @default(0)
-  viewCountWeekRank        Int     @default(0)
-  viewCountMonthRank       Int     @default(0)
-  viewCountYearRank        Int     @default(0)
-  viewCountAllTimeRank     Int     @default(0)
-  favoriteCountDayRank     Int     @default(0)
-  favoriteCountWeekRank    Int     @default(0)
-  favoriteCountMonthRank   Int     @default(0)
-  favoriteCountYearRank    Int     @default(0)
-  favoriteCountAllTimeRank Int     @default(0)
-  hideCountDayRank         Int     @default(0)
-  hideCountWeekRank        Int     @default(0)
-  hideCountMonthRank       Int     @default(0)
-  hideCountYearRank        Int     @default(0)
-  hideCountAllTimeRank     Int     @default(0)
+  articleId                 Int     @id
+  article                   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  cryCountDayRank           Int     @default(0)
+  cryCountWeekRank          Int     @default(0)
+  cryCountMonthRank         Int     @default(0)
+  cryCountYearRank          Int     @default(0)
+  cryCountAllTimeRank       Int     @default(0)
+  dislikeCountDayRank       Int     @default(0)
+  dislikeCountWeekRank      Int     @default(0)
+  dislikeCountMonthRank     Int     @default(0)
+  dislikeCountYearRank      Int     @default(0)
+  dislikeCountAllTimeRank   Int     @default(0)
+  heartCountDayRank         Int     @default(0)
+  heartCountWeekRank        Int     @default(0)
+  heartCountMonthRank       Int     @default(0)
+  heartCountYearRank        Int     @default(0)
+  heartCountAllTimeRank     Int     @default(0)
+  laughCountDayRank         Int     @default(0)
+  laughCountWeekRank        Int     @default(0)
+  laughCountMonthRank       Int     @default(0)
+  laughCountYearRank        Int     @default(0)
+  laughCountAllTimeRank     Int     @default(0)
+  likeCountDayRank          Int     @default(0)
+  likeCountWeekRank         Int     @default(0)
+  likeCountMonthRank        Int     @default(0)
+  likeCountYearRank         Int     @default(0)
+  likeCountAllTimeRank      Int     @default(0)
+  commentCountDayRank       Int     @default(0)
+  commentCountWeekRank      Int     @default(0)
+  commentCountMonthRank     Int     @default(0)
+  commentCountYearRank      Int     @default(0)
+  commentCountAllTimeRank   Int     @default(0)
+  reactionCountDayRank      Int     @default(0)
+  reactionCountWeekRank     Int     @default(0)
+  reactionCountMonthRank    Int     @default(0)
+  reactionCountYearRank     Int     @default(0)
+  reactionCountAllTimeRank  Int     @default(0)
+  viewCountDayRank          Int     @default(0)
+  viewCountWeekRank         Int     @default(0)
+  viewCountMonthRank        Int     @default(0)
+  viewCountYearRank         Int     @default(0)
+  viewCountAllTimeRank      Int     @default(0)
+  favoriteCountDayRank      Int     @default(0)
+  favoriteCountWeekRank     Int     @default(0)
+  favoriteCountMonthRank    Int     @default(0)
+  favoriteCountYearRank     Int     @default(0)
+  favoriteCountAllTimeRank  Int     @default(0)
+  hideCountDayRank          Int     @default(0)
+  hideCountWeekRank         Int     @default(0)
+  hideCountMonthRank        Int     @default(0)
+  hideCountYearRank         Int     @default(0)
+  hideCountAllTimeRank      Int     @default(0)
+  collectedCountDayRank     Int     @default(0)
+  collectedCountWeekRank    Int     @default(0)
+  collectedCountMonthRank   Int     @default(0)
+  collectedCountYearRank    Int     @default(0)
+  collectedCountAllTimeRank Int     @default(0)
 }
 
 /// @view
@@ -2453,43 +2461,48 @@ model ImageStat {
 
 /// @view
 model ImageRank {
-  imageId                  Int   @id
-  image                    Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
-  cryCountDayRank          Int   @default(0)
-  cryCountWeekRank         Int   @default(0)
-  cryCountMonthRank        Int   @default(0)
-  cryCountYearRank         Int   @default(0)
-  cryCountAllTimeRank      Int   @default(0)
-  dislikeCountDayRank      Int   @default(0)
-  dislikeCountWeekRank     Int   @default(0)
-  dislikeCountMonthRank    Int   @default(0)
-  dislikeCountYearRank     Int   @default(0)
-  dislikeCountAllTimeRank  Int   @default(0)
-  heartCountDayRank        Int   @default(0)
-  heartCountWeekRank       Int   @default(0)
-  heartCountMonthRank      Int   @default(0)
-  heartCountYearRank       Int   @default(0)
-  heartCountAllTimeRank    Int   @default(0)
-  laughCountDayRank        Int   @default(0)
-  laughCountWeekRank       Int   @default(0)
-  laughCountMonthRank      Int   @default(0)
-  laughCountYearRank       Int   @default(0)
-  laughCountAllTimeRank    Int   @default(0)
-  likeCountDayRank         Int   @default(0)
-  likeCountWeekRank        Int   @default(0)
-  likeCountMonthRank       Int   @default(0)
-  likeCountYearRank        Int   @default(0)
-  likeCountAllTimeRank     Int   @default(0)
-  commentCountDayRank      Int   @default(0)
-  commentCountWeekRank     Int   @default(0)
-  commentCountMonthRank    Int   @default(0)
-  commentCountYearRank     Int   @default(0)
-  commentCountAllTimeRank  Int   @default(0)
-  reactionCountDayRank     Int   @default(0)
-  reactionCountWeekRank    Int   @default(0)
-  reactionCountMonthRank   Int   @default(0)
-  reactionCountYearRank    Int   @default(0)
-  reactionCountAllTimeRank Int   @default(0)
+  imageId                   Int   @id
+  image                     Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDayRank           Int   @default(0)
+  cryCountWeekRank          Int   @default(0)
+  cryCountMonthRank         Int   @default(0)
+  cryCountYearRank          Int   @default(0)
+  cryCountAllTimeRank       Int   @default(0)
+  dislikeCountDayRank       Int   @default(0)
+  dislikeCountWeekRank      Int   @default(0)
+  dislikeCountMonthRank     Int   @default(0)
+  dislikeCountYearRank      Int   @default(0)
+  dislikeCountAllTimeRank   Int   @default(0)
+  heartCountDayRank         Int   @default(0)
+  heartCountWeekRank        Int   @default(0)
+  heartCountMonthRank       Int   @default(0)
+  heartCountYearRank        Int   @default(0)
+  heartCountAllTimeRank     Int   @default(0)
+  laughCountDayRank         Int   @default(0)
+  laughCountWeekRank        Int   @default(0)
+  laughCountMonthRank       Int   @default(0)
+  laughCountYearRank        Int   @default(0)
+  laughCountAllTimeRank     Int   @default(0)
+  likeCountDayRank          Int   @default(0)
+  likeCountWeekRank         Int   @default(0)
+  likeCountMonthRank        Int   @default(0)
+  likeCountYearRank         Int   @default(0)
+  likeCountAllTimeRank      Int   @default(0)
+  commentCountDayRank       Int   @default(0)
+  commentCountWeekRank      Int   @default(0)
+  commentCountMonthRank     Int   @default(0)
+  commentCountYearRank      Int   @default(0)
+  commentCountAllTimeRank   Int   @default(0)
+  reactionCountDayRank      Int   @default(0)
+  reactionCountWeekRank     Int   @default(0)
+  reactionCountMonthRank    Int   @default(0)
+  reactionCountYearRank     Int   @default(0)
+  reactionCountAllTimeRank  Int   @default(0)
+  collectedCountDayRank     Int   @default(0)
+  collectedCountWeekRank    Int   @default(0)
+  collectedCountMonthRank   Int   @default(0)
+  collectedCountYearRank    Int   @default(0)
+  collectedCountAllTimeRank Int   @default(0)
 }
 
 /// @view
@@ -2561,43 +2574,48 @@ model PostStat {
 
 /// @view
 model PostRank {
-  postId                   Int  @id
-  post                     Post @relation(fields: [postId], references: [id], onDelete: NoAction)
-  cryCountDayRank          Int  @default(0)
-  cryCountWeekRank         Int  @default(0)
-  cryCountMonthRank        Int  @default(0)
-  cryCountYearRank         Int  @default(0)
-  cryCountAllTimeRank      Int  @default(0)
-  dislikeCountDayRank      Int  @default(0)
-  dislikeCountWeekRank     Int  @default(0)
-  dislikeCountMonthRank    Int  @default(0)
-  dislikeCountYearRank     Int  @default(0)
-  dislikeCountAllTimeRank  Int  @default(0)
-  heartCountDayRank        Int  @default(0)
-  heartCountWeekRank       Int  @default(0)
-  heartCountMonthRank      Int  @default(0)
-  heartCountYearRank       Int  @default(0)
-  heartCountAllTimeRank    Int  @default(0)
-  laughCountDayRank        Int  @default(0)
-  laughCountWeekRank       Int  @default(0)
-  laughCountMonthRank      Int  @default(0)
-  laughCountYearRank       Int  @default(0)
-  laughCountAllTimeRank    Int  @default(0)
-  likeCountDayRank         Int  @default(0)
-  likeCountWeekRank        Int  @default(0)
-  likeCountMonthRank       Int  @default(0)
-  likeCountYearRank        Int  @default(0)
-  likeCountAllTimeRank     Int  @default(0)
-  commentCountDayRank      Int  @default(0)
-  commentCountWeekRank     Int  @default(0)
-  commentCountMonthRank    Int  @default(0)
-  commentCountYearRank     Int  @default(0)
-  commentCountAllTimeRank  Int  @default(0)
-  reactionCountDayRank     Int  @default(0)
-  reactionCountWeekRank    Int  @default(0)
-  reactionCountMonthRank   Int  @default(0)
-  reactionCountYearRank    Int  @default(0)
-  reactionCountAllTimeRank Int  @default(0)
+  postId                    Int  @id
+  post                      Post @relation(fields: [postId], references: [id], onDelete: NoAction)
+  cryCountDayRank           Int  @default(0)
+  cryCountWeekRank          Int  @default(0)
+  cryCountMonthRank         Int  @default(0)
+  cryCountYearRank          Int  @default(0)
+  cryCountAllTimeRank       Int  @default(0)
+  dislikeCountDayRank       Int  @default(0)
+  dislikeCountWeekRank      Int  @default(0)
+  dislikeCountMonthRank     Int  @default(0)
+  dislikeCountYearRank      Int  @default(0)
+  dislikeCountAllTimeRank   Int  @default(0)
+  heartCountDayRank         Int  @default(0)
+  heartCountWeekRank        Int  @default(0)
+  heartCountMonthRank       Int  @default(0)
+  heartCountYearRank        Int  @default(0)
+  heartCountAllTimeRank     Int  @default(0)
+  laughCountDayRank         Int  @default(0)
+  laughCountWeekRank        Int  @default(0)
+  laughCountMonthRank       Int  @default(0)
+  laughCountYearRank        Int  @default(0)
+  laughCountAllTimeRank     Int  @default(0)
+  likeCountDayRank          Int  @default(0)
+  likeCountWeekRank         Int  @default(0)
+  likeCountMonthRank        Int  @default(0)
+  likeCountYearRank         Int  @default(0)
+  likeCountAllTimeRank      Int  @default(0)
+  commentCountDayRank       Int  @default(0)
+  commentCountWeekRank      Int  @default(0)
+  commentCountMonthRank     Int  @default(0)
+  commentCountYearRank      Int  @default(0)
+  commentCountAllTimeRank   Int  @default(0)
+  reactionCountDayRank      Int  @default(0)
+  reactionCountWeekRank     Int  @default(0)
+  reactionCountMonthRank    Int  @default(0)
+  reactionCountYearRank     Int  @default(0)
+  reactionCountAllTimeRank  Int  @default(0)
+  collectedCountDayRank     Int  @default(0)
+  collectedCountWeekRank    Int  @default(0)
+  collectedCountMonthRank   Int  @default(0)
+  collectedCountYearRank    Int  @default(0)
+  collectedCountAllTimeRank Int  @default(0)
 }
 
 /// @view
