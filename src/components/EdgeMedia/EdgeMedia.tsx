@@ -77,7 +77,7 @@ export function EdgeMedia({
           style={style}
           controls
         >
-          <source src={_src} type="video/webm" />
+          <source src={_src} type="video/mp4" />
         </video>
       );
     case 'audio':
