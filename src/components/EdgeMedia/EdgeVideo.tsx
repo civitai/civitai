@@ -31,16 +31,18 @@ export function EdgeVideo({
         loop
         playsInline
         style={{ display: 'block', ...style }}
-        onLoadedMetadata={
-          controls
-            ? (e) => {
-                setTimeout(() => {
-                  // doesn't work without timeout
-                  setShowAudioControl(hasAudio(e.target));
-                }, 100);
-              }
-            : undefined
-        }
+        onLoadedData={controls ? (e) => setShowAudioControl(hasAudio(e.target)) : undefined}
+        // onLoadedMetadata={
+        //   controls
+        //     ? (e) => {
+        //         console.log('loaded metadata');
+        //         setTimeout(() => {
+        //           // doesn't work without timeout
+        //           setShowAudioControl(hasAudio(e.target));
+        //         }, 100);
+        //       }
+        //     : undefined
+        // }
         {...props}
       >
         <source src={src} type="video/webm" />
