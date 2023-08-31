@@ -176,6 +176,8 @@ const onFetchItemsToIndex = async ({
     Prisma.sql`i."tosViolation" = false`,
     Prisma.sql`i."type" = 'image'`,
     Prisma.sql`i."scannedAt" IS NOT NULL`,
+    Prisma.sql`i."needsReview" = false`,
+    Prisma.sql`p."publishedAt" IS NOT NULL`,
   ];
 
   if (whereOr) {
@@ -205,6 +207,7 @@ const onFetchItemsToIndex = async ({
     i."userId"
       FROM "Image" i
       WHERE ${Prisma.join(WHERE, ' AND ')}
+    JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
     ORDER BY i."id"  
     LIMIT ${READ_BATCH_SIZE}
   ), ranks AS MATERIALIZED (
