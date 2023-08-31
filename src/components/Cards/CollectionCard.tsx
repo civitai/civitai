@@ -41,22 +41,7 @@ export function CollectionCard({ data, sx }: Props) {
       return data.images ?? [];
     }
 
-    return (data.items ?? [])
-      .map((item) => {
-        switch (item.type) {
-          case 'model':
-            return item.data.images[0];
-          case 'post':
-            return item.data.image;
-          case 'image':
-            return item.data;
-          case 'article':
-          default:
-            return null;
-        }
-      })
-      .filter(isDefined)
-      .slice(0, 4);
+    return [];
   };
 
   const getCoverSrcs = () => {
@@ -66,20 +51,7 @@ export function CollectionCard({ data, sx }: Props) {
       return data.srcs ?? [];
     }
 
-    return (data.items ?? [])
-      .map((item) => {
-        switch (item.type) {
-          case 'article':
-            return item.data.cover;
-          case 'model':
-          case 'post':
-          case 'image':
-          default:
-            return null;
-        }
-      })
-      .filter(isDefined)
-      .slice(0, 4);
+    return [];
   };
 
   const coverImages: ImageProps[] = getCoverImages();

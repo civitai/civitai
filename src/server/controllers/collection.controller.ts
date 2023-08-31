@@ -33,6 +33,7 @@ import {
   getAllCollections,
   CollectionItemExpanded,
   updateCollectionCoverImage,
+  getCollectionCoverImages,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -42,6 +43,7 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/clien
 import { constants } from '~/server/common/constants';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { isDefined } from '~/utils/type-guards';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -80,30 +82,29 @@ export const getAllCollectionsInfiniteHandler = async ({
     }
 
     const { cursor, sort, privacy, types, userId, ids, ...userPreferences } = input;
-    const collectionsWithItems = await Promise.all(
-      items.map(async (collection) => ({
-        ...collection,
-        items: !collection.image
-          ? await getCollectionItemsByCollectionId({
-              user: ctx.user,
-              input: {
-                ...userPreferences,
-                collectionId: collection.id,
-                limit: 4, // TODO.collections: only bring max four items per collection atm
-              },
-            })
-          : ([] as CollectionItemExpanded[]),
-      }))
-    );
+    const collectionRequiringImages = items.filter((item) => !item.image).map((i) => i.id);
+    const collectionImages = await getCollectionCoverImages({
+      collectionIds: collectionRequiringImages,
+      imagesPerCollection: 10, // Some fallbacks
+    });
 
     return {
       nextCursor,
-      items: collectionsWithItems.map((item) => ({
-        ...item,
-        image: item.image
-          ? { ...item.image, meta: item.image.meta as ImageMetaProps | null }
-          : undefined,
-      })),
+      items: items.map((item) => {
+        const collectionImageItems = collectionImages.filter((ci) => ci.id === item.id);
+        return {
+          ...item,
+          image: item.image
+            ? {
+                ...item.image,
+                meta: item.image.meta as ImageMetaProps | null,
+                tags: item.image.tags.map((t) => t.tag),
+              }
+            : null,
+          images: collectionImageItems.map((ci) => ci.image).filter(isDefined) ?? [],
+          srcs: collectionImageItems.map((ci) => ci.src).filter(isDefined) ?? [],
+        };
+      }),
     };
   } catch (error) {
     throw throwDbError(error);

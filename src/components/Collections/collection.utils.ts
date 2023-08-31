@@ -9,6 +9,11 @@ import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.sche
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { applyUserPreferencesCollections } from '~/components/Search/search.utils';
+import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CollectionGetInfinite } from '~/types/router';
 
 const collectionQueryParamSchema = z
   .object({
@@ -108,9 +113,18 @@ export const useQueryCollections = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+
+  const currentUser = useCurrentUser();
+
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
+
   const { data, ...rest } = trpc.collection.getInfinite.useInfiniteQuery(
-    { ...filters, browsingMode },
+    { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
@@ -118,7 +132,19 @@ export const useQueryCollections = (
     }
   );
 
-  const collections = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  const collections = useMemo(() => {
+    if (isLoadingHidden) return [];
+    const arr = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
+    const filtered = applyUserPreferencesCollections<CollectionGetInfinite[number]>({
+      items: arr,
+      hiddenUsers,
+      hiddenImages,
+      hiddenTags,
+      currentUserId: currentUser?.id,
+    });
+
+    return filtered;
+  }, [data, hiddenUsers, hiddenImages, hiddenTags]);
 
   return { data, collections, ...rest };
 };
