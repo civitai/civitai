@@ -380,12 +380,19 @@ export const upsertArticle = async ({
 
 export const deleteArticleById = async ({ id }: GetByIdInput) => {
   try {
-    const article = await dbWrite.article.delete({ where: { id } });
-    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    const deleted = await dbWrite.$transaction(async (tx) => {
+      const article = await tx.article.delete({ where: { id } });
+      if (!article) return null;
+
+      await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
+
+      return article;
+    });
+    if (!deleted) throw throwNotFoundError(`No article with id ${id}`);
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
-    return article;
+    return deleted;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

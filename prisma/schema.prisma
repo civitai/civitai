@@ -1959,12 +1959,12 @@ model Bounty {
   expiresAt               DateTime // Locked after created
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
-  details                 Json
+  details                 Json?
   mode                    BountyMode      @default(Individual)
   entryMode               BountyEntryMode @default(Open)
   type                    BountyType
   minBenefactorBuzzAmount Int
-  maxBenefactorBuzzAmount Int // Default to initial benefactor's entry
+  maxBenefactorBuzzAmount Int? // Default to initial benefactor's entry
   entryLimit              Int             @default(1)
 
   tags        TagsOnBounty[]
