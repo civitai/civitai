@@ -91,6 +91,7 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Expire':
     case 'Claim':
     default:
+      return res.status(400).json({ ok: false, error: 'type not supported' });
   }
 
   return res.status(200).json({ ok: true });
