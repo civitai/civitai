@@ -125,3 +125,11 @@ export enum CollectionSort {
 export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
 }
+
+export enum BountySortSchema {
+  MostBuzz = 'Most Buzz',
+  ClosestToExpire = 'Closest to Expire',
+  MostComments = 'Most Comments',
+  MostContributors = 'Most Contributors',
+  Newest = 'Newest',
+}

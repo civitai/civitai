@@ -1,28 +1,43 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '../createContext';
-import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
+import { GetByIdInput } from '../schema/base.schema';
 import {
   createBounty,
   deleteBountyById,
   getAllBounties,
   getBountyById,
+  getBountyImages,
   updateBountyById,
 } from '../services/bounty.service';
 import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
-import { UpsertBountyInput } from '../schema/bounty.schema';
+import {
+  CreateBountyInput,
+  GetInfiniteBountySchema,
+  UpdateBountyInput,
+} from '../schema/bounty.schema';
+import { userWithCosmeticsSelect } from '../selectors/user.selector';
 
 export const getInfiniteBountiesHandler = async ({
   input,
   ctx,
 }: {
-  input: InfiniteQueryInput;
+  input: GetInfiniteBountySchema;
   ctx: Context;
 }) => {
   const limit = input.limit + 1 ?? 10;
 
   try {
-    const items = await getAllBounties({ ...input, limit });
+    const items = await getAllBounties({
+      input: { ...input, limit },
+      select: {
+        id: true,
+        name: true,
+        expiresAt: true,
+        type: true,
+        user: { select: userWithCosmeticsSelect },
+      },
+    });
 
     let nextCursor: number | undefined;
     if (items.length > input.limit) {
@@ -41,6 +56,26 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     const bounty = await getBountyById({ ...input, select: getBountyDetailsSelect });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
+    const images = await getBountyImages({ id: bounty.id });
+
+    return { ...bounty, images };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const createBountyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CreateBountyInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const bounty = await createBounty({ ...input, userId });
+
     return bounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -48,24 +83,18 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
   }
 };
 
-export const upsertBountyHandler = async ({
+export const updateBountyHandler = async ({
   input,
   ctx,
 }: {
-  input: UpsertBountyInput;
+  input: UpdateBountyInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    if (input.id) {
-      const bounty = await updateBountyById(input);
-      if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
+    const updated = await updateBountyById(input);
+    if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
-      return bounty;
-    }
-
-    const { id: userId } = ctx.user;
-    const bounty = await createBounty({ ...input, userId });
-    return bounty;
+    return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

@@ -3,13 +3,20 @@ import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
 import { getFilesByEntity } from './file.service';
 import { throwNotFoundError } from '../utils/errorHandling';
-import { UpsertBountyInput } from '../schema/bounty.schema';
+import { CreateBountyInput, UpdateBountyInput } from '../schema/bounty.schema';
+import { imageSelect } from '../selectors/image.selector';
 
-export const getAllBounties = ({ cursor, limit: take }: InfiniteQueryInput) => {
+export const getAllBounties = <TSelect extends Prisma.BountySelect>({
+  input: { cursor, limit: take },
+  select,
+}: {
+  input: InfiniteQueryInput;
+  select: TSelect;
+}) => {
   return dbRead.bounty.findMany({
     take,
     cursor: cursor ? { id: cursor } : undefined,
-    select: { id: true, name: true, expiresAt: true },
+    select,
   });
 };
 
@@ -31,7 +38,7 @@ export const createBounty = async ({
   details,
   tags,
   ...data
-}: UpsertBountyInput & { userId: number }) => {
+}: CreateBountyInput & { userId: number }) => {
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.create({ data });
 
@@ -54,7 +61,7 @@ export const updateBountyById = async ({
   details,
   tags,
   ...data
-}: UpsertBountyInput) => {
+}: UpdateBountyInput) => {
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.update({ where: { id }, data });
     if (!bounty) return null;
@@ -83,4 +90,13 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
   });
 
   return bounty;
+};
+
+export const getBountyImages = async ({ id }: GetByIdInput) => {
+  const connections = await dbRead.imageConnection.findMany({
+    where: { entityId: id, entityType: 'Bounty' },
+    select: { image: { select: imageSelect } },
+  });
+
+  return connections.map(({ image }) => image);
 };

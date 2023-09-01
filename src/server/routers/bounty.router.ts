@@ -1,16 +1,22 @@
 import {
+  createBountyHandler,
+  deleteBountyHandler,
   getBountyHandler,
   getInfiniteBountiesHandler,
-  upsertBountyHandler,
+  updateBountyHandler,
 } from '../controllers/bounty.controller';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
-import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
-import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
-import { deleteBountyHandler } from '~/server/controllers/bounty.controller';
+import { getByIdSchema } from '~/server/schema/base.schema';
+import {
+  createBountyInputSchema,
+  getInfiniteBountySchema,
+  updateBountyInputSchema,
+} from '~/server/schema/bounty.schema';
 
 export const bountyRouter = router({
-  getAll: publicProcedure.input(infiniteQuerySchema).query(getInfiniteBountiesHandler),
+  getInfinite: publicProcedure.input(getInfiniteBountySchema).query(getInfiniteBountiesHandler),
   getById: publicProcedure.input(getByIdSchema).query(getBountyHandler),
-  upsert: protectedProcedure.input(upsertBountyInputSchema).mutation(upsertBountyHandler),
+  create: protectedProcedure.input(createBountyInputSchema).mutation(createBountyHandler),
+  update: protectedProcedure.input(updateBountyInputSchema).mutation(updateBountyHandler),
   delete: protectedProcedure.input(getByIdSchema).mutation(deleteBountyHandler),
 });
