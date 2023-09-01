@@ -53,9 +53,8 @@ const swapIndex = async ({
   // Will swap if index is created. Non-created indexes cannot be swapped.
   const index = await getOrCreateIndex(indexName);
   console.log('swapOrCreateIndex :: start swapIndexes from', swapIndexName, 'to', indexName);
-  const swapTask = await client.swapIndexes([{ indexes: [indexName, swapIndexName] }]);
-  await client.waitForTask(swapTask.taskUid);
-  console.log('swapOrCreateIndex :: complete swapIndexes, starting index delete...');
+  await client.swapIndexes([{ indexes: [indexName, swapIndexName] }]);
+  console.log('swapOrCreateIndex :: Swap task created');
   await client.deleteIndex(swapIndexName);
 
   return index;
@@ -96,8 +95,8 @@ const onSearchIndexDocumentsCleanup = async ({
     return;
   }
 
-  const task = await index.deleteDocuments(itemIds);
-  await waitForTasksWithRetries([task.taskUid]);
+  await index.deleteDocuments(itemIds);
+  console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
 };
 
 const waitForTasksWithRetries = async (
