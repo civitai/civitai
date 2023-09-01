@@ -33,6 +33,7 @@ import {
   IconHistory,
   IconInfoSquareRounded,
   IconLogout,
+  IconMoneybag,
   IconMoonStars,
   IconPalette,
   IconPhotoUp,
@@ -270,6 +271,17 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconWriting stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Write an article
+          </Group>
+        ),
+      },
+      {
+        href: '/bounty/create',
+        visible: !isMuted && features.bounties,
+        redirectReason: 'create-bounty',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconMoneybag stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Create a bounty
           </Group>
         ),
       },

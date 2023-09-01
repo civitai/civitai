@@ -1,4 +1,4 @@
-import { BountyType, BountyMode, MetricTimeframe, Currency } from '@prisma/client';
+import { BountyType, BountyMode, MetricTimeframe, Currency, BountyEntryMode } from '@prisma/client';
 import { z } from 'zod';
 import { baseFileSchema } from './file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -25,16 +25,19 @@ export const createBountyInputSchema = z.object({
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
   unitAmount: z.number().min(5000),
-  currency: z.nativeEnum(Currency).default(Currency.BUZZ),
+  currency: z.nativeEnum(Currency),
   details: z.object({}).passthrough().optional(),
   expiresAt: z.date().min(new Date(), 'Expiration date must be in the future'),
+  startsAt: z.date().min(new Date(), 'Start date must be in the future'),
   type: z.nativeEnum(BountyType),
   mode: z.nativeEnum(BountyMode),
-  minBenefactorBuzzAmount: z.number().min(1),
-  maxBenefactorBuzzAmount: z.number().optional(),
+  entryMode: z.nativeEnum(BountyEntryMode),
+  minBenefactorUnitAmount: z.number().min(1),
+  maxBenefactorUnitAmount: z.number().optional(),
   entryLimit: z.number().min(1).optional(),
   tags: z.array(tagSchema).optional(),
   files: z.array(baseFileSchema).optional(),
+  nsfw: z.boolean().optional(),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
