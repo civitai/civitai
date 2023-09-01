@@ -10,11 +10,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
-import {
-  getOrCreateIndex,
-  onSearchIndexDocumentsCleanup,
-  waitForTasksWithRetries,
-} from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
@@ -504,10 +500,7 @@ const onIndexUpdate = async ({
     offset += indexReadyRecords.length;
   }
 
-  const waitForTaskTime = Date.now();
-  console.log('onIndexUpdate :: start waitForTasks');
-  await waitForTasksWithRetries(modelTasks.map((x) => x.taskUid));
-  console.log('onIndexUpdate :: complete waitForTasks', '- time:', Date.now() - waitForTaskTime);
+  console.log('onIndexUpdate :: Indexing complete');
 };
 
 export const modelsSearchIndex = createSearchIndexUpdateProcessor({
