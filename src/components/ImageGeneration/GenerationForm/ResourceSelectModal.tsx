@@ -67,10 +67,6 @@ export default function ResourceSelectModal({
   return (
     <Stack spacing={4}>
       <Stack>
-        <DismissibleAlert
-          id="generation-resources"
-          content="With this tech test, not all resources will be available"
-        />
         <TextInput
           value={search}
           placeholder="Search"

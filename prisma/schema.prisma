@@ -312,6 +312,7 @@ enum TrainingStatus {
 enum CommercialUse {
   None
   Image
+  RentCivit
   Rent
   Sell
 }

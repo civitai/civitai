@@ -6,6 +6,7 @@ import {
   IconExclamationMark,
   IconPhoto,
   IconShoppingCart,
+  IconWorldUpload,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
@@ -262,10 +263,18 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                           ),
                         },
                         {
+                          value: CommercialUse.RentCivit,
+                          label: (
+                            <Group>
+                              <IconBrush size={16} /> Use on Civit generation
+                            </Group>
+                          ),
+                        },
+                        {
                           value: CommercialUse.Rent,
                           label: (
                             <Group>
-                              <IconBrush size={16} /> Use on generation services
+                              <IconWorldUpload size={16} /> Use on generation services
                             </Group>
                           ),
                         },

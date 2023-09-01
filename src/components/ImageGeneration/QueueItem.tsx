@@ -128,9 +128,9 @@ export function QueueItem({ request }: Props) {
                 </ThemeIcon>
               </Tooltip>
             )}
-            {pendingProcessing && (
+            {pendingProcessing && request.queuePosition && (
               <Button.Group>
-                {/* {request.queuePosition?.estimatedCompletedDate && (
+                {request.queuePosition && (
                   <Button
                     size="xs"
                     variant="outline"
@@ -138,13 +138,9 @@ export function QueueItem({ request }: Props) {
                     sx={{ pointerEvents: 'none' }}
                     compact
                   >
-                    ETA{' '}
-                    <Countdown
-                      endTime={request.queuePosition?.estimatedCompletedDate}
-                      format="short"
-                    />
+                    {request.queuePosition.precedingJobs}/{request.queuePosition.jobs}
                   </Button>
-                )} */}
+                )}
                 <HoverCard withArrow position="top" withinPortal zIndex={400}>
                   <HoverCard.Target>
                     <Button
