@@ -235,8 +235,9 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         status: ModelStatus.Draft,
         type: ModelType.LORA,
         uploadType: ModelUploadType.Trained,
-        // TODO [bw] we can set the tag here based on type so category is filled out
-        // tagsOnModels:
+        ...(trainingModelType
+          ? { tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }] }
+          : {}),
       });
     } else {
       goNext(model?.id, thisStep);

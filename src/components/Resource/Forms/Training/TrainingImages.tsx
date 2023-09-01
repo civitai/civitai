@@ -242,8 +242,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       }
   );
 
-  console.log(imageList);
-
   const [page, setPage] = useState(1);
   const [zipping, setZipping] = useState<boolean>(false);
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
