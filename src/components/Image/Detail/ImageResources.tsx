@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { cloneElement, useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { StarRating } from '~/components/StartRating/StarRating';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -188,21 +189,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                         <IconBadge
                           className={classes.statBadge}
                           sx={{ userSelect: 'none' }}
-                          icon={
-                            <Rating
-                              size="xs"
-                              value={resource.modelRating ?? 0}
-                              readOnly
-                              fractions={4}
-                              emptySymbol={
-                                <IconStar
-                                  size={14}
-                                  fill="rgba(255,255,255,.3)"
-                                  color="transparent"
-                                />
-                              }
-                            />
-                          }
+                          icon={<StarRating size={14} value={resource.modelRating ?? 0} />}
                         >
                           <Text
                             size="xs"

@@ -42,6 +42,7 @@ import { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
+import { StarRating } from '~/components/StartRating/StarRating';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -260,7 +261,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
           />
         </Group>
         <Group spacing="xs">
-          <Rating value={review.rating} readOnly />
+          <StarRating value={review.rating} />
 
           <RoutedContextLink
             modal="resourceReviewModal"
