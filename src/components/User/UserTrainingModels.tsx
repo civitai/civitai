@@ -177,13 +177,11 @@ export default function UserTrainingModels() {
                 if (!model.modelVersions.length) return null;
                 const thisModelVersion = model.modelVersions[0];
 
-                // TODO why do I have to do this?
                 const thisTrainingDetails = thisModelVersion.trainingDetails as
                   | TrainingDetailsObj
                   | undefined;
                 const thisFile = thisModelVersion.files[0];
 
-                const hasVersion = model._count.modelVersions > 0;
                 const hasFiles = !!thisFile;
                 const hasTrainingParams = !!thisTrainingDetails?.params;
 
@@ -299,22 +297,20 @@ export default function UserTrainingModels() {
                     <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
                     <td>
                       <Group>
-                        {!hasVersion || !hasFiles || !hasTrainingParams ? (
+                        {!hasFiles || !hasTrainingParams ? (
                           <IconAlertCircle size={16} color="orange" />
                         ) : (
                           <IconCircleCheck size={16} color="green" />
                         )}
                         <Stack spacing={4}>
                           {/* technically this step 1 alert should never happen */}
-                          {!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}
+                          {/*{!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}*/}
                           {!hasFiles && <Text inherit>Needs training files (Step 2)</Text>}
                           {!hasTrainingParams && (
                             <Text inherit>Needs training parameters (Step 3)</Text>
                           )}
                           {/* TODO [bw] we should probably include the model related fields here after training is done */}
-                          {hasVersion && hasFiles && hasTrainingParams && (
-                            <Text inherit>All good!</Text>
-                          )}
+                          {hasFiles && hasTrainingParams && <Text inherit>All good!</Text>}
                         </Stack>
                       </Group>
                     </td>

@@ -116,7 +116,6 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const upsertModelMutation = trpc.model.upsert.useMutation({
     onSuccess: async (response, request) => {
       const modelId = response.id;
-      const previousModelId = request.id;
       const modelName = request.name;
       const versionId = thisModelVersion?.id;
 
@@ -138,7 +137,12 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
       });
 
       // TODO [bw] don't invalidate, just update
-      if (!previousModelId) await queryUtils.model.getMyTrainingModels.invalidate();
+      await queryUtils.model.getMyTrainingModels.invalidate();
+      // queryUtils.model.getMyTrainingModels.setData({}, (old) => {
+      //   if (!old) return old;
+      //
+      //   return {};
+      // });
 
       const versionMutateData = {
         ...(versionId && { id: versionId }),

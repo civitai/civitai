@@ -438,7 +438,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       };
 
       upsertVersionMutation.mutate(versionMutateData, {
-        onSuccess: (response, request) => {
+        async onSuccess(response, request) {
           queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
             if (!old) return old;
 
@@ -456,6 +456,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               ],
             };
           });
+          // TODO [bw] don't invalidate, just update
+          await queryUtils.model.getMyTrainingModels.invalidate();
 
           doTraining.mutate(
             {
