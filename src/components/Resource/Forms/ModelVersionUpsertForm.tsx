@@ -16,7 +16,11 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
+import {
+  constants,
+  modelVersionMonetizationTypeOptions,
+  modelVersionSponsorshipSettingsTypeOptions,
+} from '~/server/common/constants';
 import {
   ModelVersionUpsertInput,
   modelVersionUpsertSchema2,
@@ -25,6 +29,9 @@ import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { IconCurrencyDollar, IconInfoCircle } from '@tabler/icons-react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { ModelVersionMonetizationType } from '@prisma/client';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -34,6 +41,7 @@ const schema = modelVersionUpsertSchema2
       .refine((value) => ['0', '1', '2', '3', '4', '5'].includes(value), {
         message: 'Invalid value',
       }),
+    useMonetization: z.boolean().default(false),
   })
   .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
     message: 'You need to specify at least one trained word',
@@ -91,11 +99,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     description: version?.description ?? null,
     epochs: version?.epochs ?? null,
     steps: version?.steps ?? null,
+    useMonetization: !!version?.monetization,
+    monetization: version?.monetization ?? null,
   };
+
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
+  const monetization = form.watch('monetization') ?? null;
+  const sponsorshipSettings = form.watch('monetization.sponsorshipSettings') ?? null;
   const { isDirty } = form.formState;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
@@ -118,6 +131,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
         vaeId: hasVAE ? data.vaeId : undefined,
+        monetization: data.monetization,
       });
       await queryUtils.modelVersion.getById.invalidate();
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
@@ -314,6 +328,89 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 />
               )}
             </Group>
+          </Stack>
+          <Stack spacing={4}>
+            <Divider label="Monetization options" />
+            <AlertWithIcon
+              icon={<IconInfoCircle size={16} />}
+              iconColor="blue"
+              radius={0}
+              size="xs"
+              mb="sm"
+            >
+              <Text size="xs">
+                Monetization feature is not yet available but we have started collecting user
+                preferences so that when the time comes, we can readily apply your settings.
+              </Text>
+            </AlertWithIcon>
+            <Stack spacing="xs">
+              <InputSwitch
+                name="useMonetization"
+                label="I want to monetize this model"
+                onChange={(e) => {
+                  return e.target.checked
+                    ? form.setValue('monetization', {
+                        type: ModelVersionMonetizationType.PaidAccess,
+                      })
+                    : form.setValue('monetization', null);
+                }}
+              />
+              {monetization && (
+                <InputSelect
+                  name="monetization.type"
+                  label="Monetization Type"
+                  placeholder="Please select monetization type"
+                  withAsterisk
+                  onChange={(type) =>
+                    type !== ModelVersionMonetizationType.Sponsored
+                      ? form.setValue('monetization.sponsorshipSettings', null)
+                      : undefined
+                  }
+                  style={{ flex: 1 }}
+                  data={Object.keys(modelVersionMonetizationTypeOptions).map((k) => {
+                    const key = k as keyof typeof modelVersionMonetizationTypeOptions;
+
+                    return {
+                      value: k,
+                      label: modelVersionMonetizationTypeOptions[key],
+                    };
+                  })}
+                />
+              )}
+
+              {monetization?.type === ModelVersionMonetizationType.Sponsored && (
+                <Group spacing="xs" grow>
+                  <InputSelect
+                    name="monetization.sponsorshipSettings.type"
+                    label="Sponsorship Type"
+                    placeholder="Please select sponsorship type"
+                    withAsterisk
+                    sx={{ flexGrow: 1 }}
+                    data={Object.keys(modelVersionSponsorshipSettingsTypeOptions).map((k) => {
+                      const key = k as keyof typeof modelVersionSponsorshipSettingsTypeOptions;
+
+                      return {
+                        value: k,
+                        label: modelVersionSponsorshipSettingsTypeOptions[key],
+                      };
+                    })}
+                  />
+                  <InputNumber
+                    name="monetization.sponsorshipSettings.unitAmount"
+                    label="Price"
+                    placeholder="Price"
+                    withAsterisk
+                    min={0}
+                    max={100000}
+                    sx={{ flexGrow: 1 }}
+                    precision={2}
+                    step={0.01}
+                    icon={<IconCurrencyDollar size={18} />}
+                    format="currency"
+                  />
+                </Group>
+              )}
+            </Stack>
           </Stack>
         </Stack>
         {children({ loading: upsertVersionMutation.isLoading })}

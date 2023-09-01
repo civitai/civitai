@@ -41,6 +41,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -122,19 +123,7 @@ export function ModelCategoryCard({
     <IconBadge
       className={classes.statBadge}
       sx={{ userSelect: 'none' }}
-      icon={
-        <Rating
-          size="xs"
-          value={rank.rating}
-          readOnly
-          fractions={4}
-          emptySymbol={
-            theme.colorScheme === 'dark' ? (
-              <IconStar size={14} fill="rgba(255,255,255,.3)" color="transparent" />
-            ) : undefined
-          }
-        />
-      }
+      icon={<StarRating size={14} value={rank.rating} />}
     >
       <Text size="xs" color={rank.ratingCount > 0 ? undefined : 'dimmed'}>
         {abbreviateNumber(rank.ratingCount)}

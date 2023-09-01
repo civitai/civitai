@@ -6,7 +6,14 @@ import {
   PostSort,
   QuestionSort,
 } from './enums';
-import { MetricTimeframe, ModelStatus, ModelType, ReviewReactions } from '@prisma/client';
+import {
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+  ModelVersionMonetizationType,
+  ModelVersionSponsorshipSettingsType,
+  ReviewReactions,
+} from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 
@@ -264,3 +271,21 @@ export const IMAGES_SEARCH_INDEX = 'images_v2';
 export const ARTICLES_SEARCH_INDEX = 'articles_v2';
 export const USERS_SEARCH_INDEX = 'users_v2';
 export const COLLECTIONS_SEARCH_INDEX = 'collections';
+
+export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
+  [ModelVersionMonetizationType.PaidAccess]: 'Paid access',
+  [ModelVersionMonetizationType.PaidEarlyAccess]: 'Paid early access',
+  [ModelVersionMonetizationType.CivitaiClubOnly]: 'Exclusive to Civitai Club members',
+  [ModelVersionMonetizationType.MySubscribersOnly]: 'Exclusive to my subscribers',
+  [ModelVersionMonetizationType.Sponsored]: 'Sponsored',
+};
+
+export const modelVersionSponsorshipSettingsTypeOptions: Record<
+  ModelVersionSponsorshipSettingsType,
+  string
+> = {
+  [ModelVersionSponsorshipSettingsType.FixedPrice]: 'Fixed Price',
+  [ModelVersionSponsorshipSettingsType.Bidding]: 'Bidding',
+};
+
+export const DEFAULT_CURRENCY = 'USD';

@@ -32,6 +32,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { PostSort } from '~/server/common/enums';
 import { Meta } from '~/components/Meta/Meta';
 import { truncate } from 'lodash-es';
+import { StarRating } from '../StartRating/StarRating';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -127,7 +128,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 paddingRight: 0,
                 height: 'auto',
               }}
-              icon={<Rating size="md" value={data.rating} fractions={2} readOnly />}
+              icon={<StarRating value={data.rating} />}
             ></IconBadge>
           </Group>
         </Stack>
