@@ -444,9 +444,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
     offset = indexReadyRecords[indexReadyRecords.length - 1].id;
   }
 
-  console.log('onIndexUpdate :: start waitForTasks');
-  await waitForTasksWithRetries(imageTasks.map((task) => task.taskUid));
-  console.log('onIndexUpdate :: complete waitForTasks');
+  console.log('onIndexUpdate :: index update complete');
 };
 
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
