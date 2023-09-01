@@ -220,7 +220,7 @@ const onFetchItemsToIndex = async ({
       ir."imageId",
       jsonb_build_object(
         'commentCountAllTimeRank', ir."commentCountAllTimeRank",
-        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank"
+        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank",
         'collectedCountAllTimeRank', ir."collectedCountAllTimeRank"
       ) rank
     FROM "ImageRank" ir
