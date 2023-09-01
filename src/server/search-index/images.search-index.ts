@@ -60,6 +60,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'publishedAt',
     'rank.commentCountAllTimeRank',
     'rank.reactionCountAllTimeRank',
+    'rank.collectedCountAllTimeRank',
   ];
 
   const filterableAttributes: FilterableAttributes = ['tags.name', 'user.username'];
@@ -143,7 +144,11 @@ type ImageForSearchIndex = {
     likeCountAllTime: number;
     commentCountAllTime: number;
   } | null;
-  rank: { commentCountAllTimeRank: number; reactionCountAllTimeRank: number } | null;
+  rank: {
+    commentCountAllTimeRank: number;
+    reactionCountAllTimeRank: number;
+    collectedCountAllTimeRank: number;
+  } | null;
 };
 
 const onFetchItemsToIndex = async ({
@@ -176,6 +181,8 @@ const onFetchItemsToIndex = async ({
     Prisma.sql`i."tosViolation" = false`,
     Prisma.sql`i."type" = 'image'`,
     Prisma.sql`i."scannedAt" IS NOT NULL`,
+    Prisma.sql`i."needsReview" IS NULL`,
+    Prisma.sql`p."publishedAt" IS NOT NULL`,
   ];
 
   if (whereOr) {
@@ -204,6 +211,7 @@ const onFetchItemsToIndex = async ({
     i."metadata",
     i."userId"
       FROM "Image" i
+      JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
       WHERE ${Prisma.join(WHERE, ' AND ')}
     ORDER BY i."id"  
     LIMIT ${READ_BATCH_SIZE}
@@ -212,7 +220,8 @@ const onFetchItemsToIndex = async ({
       ir."imageId",
       jsonb_build_object(
         'commentCountAllTimeRank', ir."commentCountAllTimeRank",
-        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank"
+        'reactionCountAllTimeRank', ir."reactionCountAllTimeRank",
+        'collectedCountAllTimeRank', ir."collectedCountAllTimeRank"
       ) rank
     FROM "ImageRank" ir
     WHERE ir."imageId" IN (SELECT id FROM target)

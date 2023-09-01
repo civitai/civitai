@@ -1,4 +1,10 @@
-import { ModelStatus, ModelType, TrainingStatus } from '@prisma/client';
+import {
+  ModelStatus,
+  ModelType,
+  ModelVersionMonetizationType,
+  ModelVersionSponsorshipSettingsType,
+  TrainingStatus,
+} from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
@@ -109,6 +115,19 @@ export const modelVersionUpsertSchema2 = z.object({
     z.number().min(0).max(5).optional()
   ),
   status: z.nativeEnum(ModelStatus).optional(),
+  monetization: z
+    .object({
+      id: z.number().nullish(),
+      type: z.nativeEnum(ModelVersionMonetizationType).nullish(),
+      unitValue: z.number().nullish(),
+      sponsorshipSettings: z
+        .object({
+          type: z.nativeEnum(ModelVersionSponsorshipSettingsType),
+          unitAmount: z.number().min(0),
+        })
+        .nullish(),
+    })
+    .nullish(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;

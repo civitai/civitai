@@ -28,6 +28,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '@mantine/next';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { StarRating } from '~/components/StartRating/StarRating';
 
 export function ImagesAsPostsCard({
   data,
@@ -129,13 +130,7 @@ export function ImagesAsPostsCard({
                           style={{ paddingRight: data.review?.details ? undefined : 0 }}
                           icon={
                             <Group spacing={2} align="center" noWrap>
-                              <Rating
-                                size="xs"
-                                value={data.review.rating / 5}
-                                readOnly
-                                fractions={5}
-                                count={1}
-                              />
+                              <StarRating size={14} value={data.review.rating / 5} count={1} />
                               <Text size="xs" sx={{ lineHeight: 1.2 }}>
                                 {`${data.review.rating}.0`}
                               </Text>

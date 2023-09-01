@@ -108,6 +108,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
                     width={image.width ?? 1200}
                     anim
+                    controls
                   />
                 </ImageGuard.Safe>
               </Center>

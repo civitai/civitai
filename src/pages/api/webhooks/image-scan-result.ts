@@ -195,6 +195,11 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
         .join(', ')}
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
     `);
+    // TODO.justin - how do we want to handle an image receiving the same tag multiple times with different confidence levels
+    // track the number of times a tag has been submitted for an image in order to calc confidence levels?
+    // from Koen: ((currentConfidence * timesWeGotTheTag) + newConfidence) / (timesWeGotTheTag + 1)
+    // simply take the highest confidence score?
+    // how do we want to handle tags from the different providers? (rekognition, salad)
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);

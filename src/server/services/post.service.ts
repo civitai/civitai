@@ -170,6 +170,7 @@ export const getPostsInfinite = async ({
   let orderBy = 'p."publishedAt" DESC NULLS LAST';
   if (sort === PostSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
   else if (sort === PostSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
+  else if (sort === PostSort.MostCollected) orderBy = `r."collectedCount${period}Rank"`;
   const includeRank = orderBy.startsWith('r.');
   if (includeRank) {
     const optionalRank = !!(username || modelVersionId || ids || collectionId);

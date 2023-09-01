@@ -1,6 +1,6 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
-import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { imagesSearchIndex } from '~/server/search-index';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
@@ -19,6 +19,12 @@ export const imageMetrics = createMetricProcessor({
         FROM "Thread" t
         JOIN "CommentV2" c ON c."threadId" = t.id
         WHERE t."imageId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
+
+        UNION
+
+        SELECT ci."imageId" as id
+        FROM "CollectionItem" ci
+        WHERE ci."imageId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
 
         UNION
 
@@ -43,7 +49,7 @@ export const imageMetrics = createMetricProcessor({
 
       -- upsert metrics for all affected users
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount")
+      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "collectedCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -88,7 +94,14 @@ export const imageMetrics = createMetricProcessor({
           WHEN tf.timeframe = 'Month' THEN month_comment_count
           WHEN tf.timeframe = 'Week' THEN week_comment_count
           WHEN tf.timeframe = 'Day' THEN day_comment_count
-        END AS comment_count
+        END AS comment_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN collected_count
+          WHEN tf.timeframe = 'Year' THEN year_collected_count
+          WHEN tf.timeframe = 'Month' THEN month_collected_count
+          WHEN tf.timeframe = 'Week' THEN week_collected_count
+          WHEN tf.timeframe = 'Day' THEN day_collected_count
+        END AS collected_count
       FROM
       (
         SELECT
@@ -122,7 +135,12 @@ export const imageMetrics = createMetricProcessor({
           COALESCE(c.year_comment_count, 0) AS year_comment_count,
           COALESCE(c.month_comment_count, 0) AS month_comment_count,
           COALESCE(c.week_comment_count, 0) AS week_comment_count,
-          COALESCE(c.day_comment_count, 0) AS day_comment_count
+          COALESCE(c.day_comment_count, 0) AS day_comment_count,
+          COALESCE(ci.collected_count, 0) AS collected_count,
+          COALESCE(ci.year_collected_count, 0) AS year_collected_count,
+          COALESCE(ci.month_collected_count, 0) AS month_collected_count,
+          COALESCE(ci.week_collected_count, 0) AS week_collected_count,
+          COALESCE(ci.day_collected_count, 0) AS day_collected_count
         FROM affected q
         LEFT JOIN (
           SELECT
@@ -168,12 +186,24 @@ export const imageMetrics = createMetricProcessor({
           FROM "ImageReaction" ir
           GROUP BY ir."imageId"
         ) r ON q.id = r.id
+        LEFT JOIN (
+          SELECT
+            ici."imageId" AS id,
+            COUNT(*) AS collected_count,
+            SUM(IIF(ici."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
+            SUM(IIF(ici."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
+            SUM(IIF(ici."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
+            SUM(IIF(ici."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
+          FROM "CollectionItem" ici
+          WHERE ici."imageId" IS NOT NULL
+          GROUP BY ici."imageId"
+        ) ci ON q.id = ci.id
       ) m
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount";
+        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount";
   `;
 
     const affectedImages: Array<{ id: number }> = await db.$queryRaw`
@@ -191,7 +221,7 @@ export const imageMetrics = createMetricProcessor({
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0 WHERE timeframe = 'Day';
+      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0 WHERE timeframe = 'Day';
     `;
   },
   rank: {
@@ -208,6 +238,11 @@ export const imageMetrics = createMetricProcessor({
       'commentCountWeekRank',
       'commentCountMonthRank',
       'commentCountYearRank',
+      'collectedCountAllTimeRank',
+      'collectedCountDayRank',
+      'collectedCountWeekRank',
+      'collectedCountMonthRank',
+      'collectedCountYearRank',
     ],
   },
 });

@@ -127,6 +127,8 @@ export const getArticles = async ({
       orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
     else if (sort === ArticleSort.MostReactions)
       orderBy.unshift({ rank: { [`reactionCount${period}Rank`]: 'asc' } });
+    else if (sort === ArticleSort.MostCollected)
+      orderBy.unshift({ rank: { [`collectedCount${period}Rank`]: 'asc' } });
 
     const articles = await dbRead.article.findMany({
       take,

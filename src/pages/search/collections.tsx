@@ -169,7 +169,6 @@ export function CollectionHitList() {
                 // Image is filled via images
                 images: hit.images.slice(0, 4),
                 srcs: hit.srcs.slice(0, 4),
-                items: [],
                 _count: {
                   items: hit.metrics?.itemCount ?? 0,
                   contributors: hit.metrics?.followerCount ?? 0,

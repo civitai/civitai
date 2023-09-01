@@ -16,6 +16,7 @@ import { getSessionUser, updateAccountScope } from '~/server/services/user.servi
 import { Tracker } from '~/server/clickhouse/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
+import { isDev } from '~/env/other';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -77,6 +78,12 @@ export function createAuthOptions(): NextAuthOptions {
         token = await refreshToken(token);
         session.user = (token.user ? token.user : session.user) as Session['user'];
         return session;
+      },
+      async redirect({ url, baseUrl }) {
+        if (url.startsWith('/')) return `${baseUrl}${url}`;
+        // allow redirects to other civitai domains
+        if (isDev || new URL(url).origin.includes('civitai')) return url;
+        return baseUrl;
       },
     },
     // Configure one or more authentication providers
