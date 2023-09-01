@@ -130,7 +130,7 @@ export function QueueItem({ request }: Props) {
             )}
             {pendingProcessing && (
               <Button.Group>
-                {request.queuePosition?.estimatedCompletedDate && (
+                {/* {request.queuePosition?.estimatedCompletedDate && (
                   <Button
                     size="xs"
                     variant="outline"
@@ -144,7 +144,7 @@ export function QueueItem({ request }: Props) {
                       format="short"
                     />
                   </Button>
-                )}
+                )} */}
                 <HoverCard withArrow position="top" withinPortal zIndex={400}>
                   <HoverCard.Target>
                     <Button

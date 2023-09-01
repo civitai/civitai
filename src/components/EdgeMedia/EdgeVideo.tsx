@@ -19,43 +19,33 @@ export function EdgeVideo({
   const [showAudioControl, setShowAudioControl] = useState(false);
   const { classes } = useStyles();
 
-  // const showAudioControl = ref.current ? hasAudio(ref.current) : false;
-
   return (
-    <div style={{ position: 'relative' }}>
-      <video
-        ref={ref}
-        muted={muted}
-        autoPlay
-        loop
-        playsInline
-        style={{ display: 'block', ...style }}
-        onLoadedData={controls ? (e) => setShowAudioControl(hasAudio(e.target)) : undefined}
-        // onLoadedMetadata={
-        //   controls
-        //     ? (e) => {
-        //         console.log('loaded metadata');
-        //         setTimeout(() => {
-        //           // doesn't work without timeout
-        //           setShowAudioControl(hasAudio(e.target));
-        //         }, 100);
-        //       }
-        //     : undefined
-        // }
-        {...props}
-      >
-        <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
-        <source src={src} type="video/mp4" />
-      </video>
-      {controls && (
-        <div className={classes.controls}>
-          {showAudioControl && (
-            <ActionIcon onClick={() => setMuted((muted) => !muted)} variant="light" size="lg">
-              {muted ? <IconVolume /> : <IconVolumeOff />}
-            </ActionIcon>
-          )}
-        </div>
-      )}
+    // extra div wrapper to prevent positioning errors of parent components that make their child absolute
+    <div>
+      <div style={{ position: 'relative' }}>
+        <video
+          ref={ref}
+          muted={muted}
+          autoPlay
+          loop
+          playsInline
+          style={{ display: 'block', ...style }}
+          onLoadedData={controls ? (e) => setShowAudioControl(hasAudio(e.target)) : undefined}
+          {...props}
+        >
+          <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
+          <source src={src} type="video/mp4" />
+        </video>
+        {controls && (
+          <div className={classes.controls}>
+            {showAudioControl && (
+              <ActionIcon onClick={() => setMuted((muted) => !muted)} variant="light" size="lg">
+                {muted ? <IconVolume /> : <IconVolumeOff />}
+              </ActionIcon>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

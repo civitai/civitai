@@ -3,12 +3,12 @@ import { HubConnectionBuilder, HubConnection, HttpTransportType } from '@microso
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { SignalMessages } from '~/server/common/enums';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
 import { useSession } from 'next-auth/react';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
 
 type SignalState = {
   connected: boolean;
@@ -114,6 +114,7 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       <SignalNotifications />
+      <SignalsRegistrar />
       {children}
     </SignalContext.Provider>
   );
