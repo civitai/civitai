@@ -15,3 +15,9 @@ export const FileEntityType = {
   BountyEntry: 'BountyEntry',
 } as const;
 export type FileEntityType = (typeof FileEntityType)[keyof typeof FileEntityType];
+
+export type GetFilesByEntitySchema = z.infer<typeof getFilesByEntitySchema>;
+export const getFilesByEntitySchema = z.object({
+  id: z.number(),
+  type: z.nativeEnum(FileEntityType),
+});

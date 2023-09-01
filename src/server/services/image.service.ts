@@ -22,6 +22,8 @@ import {
   IngestImageInput,
   ingestImageSchema,
   isImageResource,
+  ImageEntityType,
+  UpdateImageInput,
 } from './../schema/image.schema';
 
 import { TRPCError } from '@trpc/server';
@@ -33,7 +35,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { UpdateImageInput } from '~/server/schema/image.schema';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -50,6 +51,7 @@ import { hashifyObject } from '~/utils/string-helpers';
 import { logToDb } from '~/utils/logging';
 import { imagesSearchIndex } from '~/server/search-index';
 import { getCosmeticsForUsers } from '~/server/services/user.service';
+import { imageSelect } from '../selectors/image.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1441,4 +1443,13 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
   }
 
   return dictionary;
+};
+
+export const getImagesByEntity = async ({ id, type }: { id: number; type: ImageEntityType }) => {
+  const images = await dbRead.imageConnection.findMany({
+    where: { entityId: id, entityType: type },
+    select: { image: { select: imageSelect } },
+  });
+
+  return images.map(({ image }) => image);
 };

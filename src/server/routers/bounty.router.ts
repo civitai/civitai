@@ -2,6 +2,7 @@ import {
   createBountyHandler,
   deleteBountyHandler,
   getBountyHandler,
+  getBountyEntriesHandler,
   getInfiniteBountiesHandler,
   updateBountyHandler,
 } from '../controllers/bounty.controller';
@@ -16,6 +17,7 @@ import {
 export const bountyRouter = router({
   getInfinite: publicProcedure.input(getInfiniteBountySchema).query(getInfiniteBountiesHandler),
   getById: publicProcedure.input(getByIdSchema).query(getBountyHandler),
+  getEntries: publicProcedure.input(getByIdSchema).query(getBountyEntriesHandler),
   create: protectedProcedure.input(createBountyInputSchema).mutation(createBountyHandler),
   update: protectedProcedure.input(updateBountyInputSchema).mutation(updateBountyHandler),
   delete: protectedProcedure.input(getByIdSchema).mutation(deleteBountyHandler),

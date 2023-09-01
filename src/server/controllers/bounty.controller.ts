@@ -17,6 +17,7 @@ import {
   UpdateBountyInput,
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
+import { getAllEntriesByBountyId } from '../services/bountyEntry.service';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -59,6 +60,26 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     const images = await getBountyImages({ id: bounty.id });
 
     return { ...bounty, images };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getBountyEntriesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    const entries = await getAllEntriesByBountyId({
+      input: { bountyId: input.id },
+      select: { id: true, user: { select: userWithCosmeticsSelect } },
+    });
+
+    return entries;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
