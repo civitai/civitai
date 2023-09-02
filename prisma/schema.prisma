@@ -450,6 +450,7 @@ model ModelVersionSponsorshipSettings {
 enum ModelVersionMonetizationType {
   PaidAccess
   PaidEarlyAccess
+  PaidGeneration
   CivitaiClubOnly
   MySubscribersOnly
   Sponsored

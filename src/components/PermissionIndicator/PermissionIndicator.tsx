@@ -32,7 +32,7 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
     'Use the model without crediting the creator': allowNoCredit,
     'Sell images they generate': canSellImages,
     'Run on services that generate images for money': canRent,
-    'Run on Civit': canRentCivit,
+    'Run on Civitai': canRentCivit,
     'Share merges using this model': allowDerivatives,
     'Sell this model or merges using this model': canSell,
     'Have different permissions when sharing merges': allowDifferentLicense,
@@ -41,7 +41,7 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
   const icons = [
     !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
     !canSellImages && { label: 'No selling images', icon: <IconPhotoOff {...iconProps} /> },
-    !canRentCivit && { label: 'No Civit generation', icon: <IconBrushOff {...iconProps} /> },
+    !canRentCivit && { label: 'No Civitai generation', icon: <IconBrushOff {...iconProps} /> },
     !canRent && { label: 'No generation services', icon: <IconWorldOff {...iconProps} /> },
     !canSell && { label: 'No selling models', icon: <IconShoppingCartOff {...iconProps} /> },
     !allowDerivatives && { label: 'No sharing merges', icon: <IconExchangeOff {...iconProps} /> },

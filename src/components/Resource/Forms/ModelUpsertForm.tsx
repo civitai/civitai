@@ -66,7 +66,11 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useContext();
 
-  const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
+  const [type, allowDerivatives, allowCommercialUse] = form.watch([
+    'type',
+    'allowDerivatives',
+    'allowCommercialUse',
+  ]);
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const { isDirty, errors } = form.formState;
 
@@ -227,9 +231,15 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 </Grid.Col>
                 <Grid.Col xs={12} sm={6}>
                   <Stack spacing="xs">
-                    <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
-                      Commercial Use
-                    </Text>
+                    <Stack spacing={4}>
+                      <Text size="md" weight={500} sx={{ lineHeight: 1.2 }}>
+                        Commercial Use
+                      </Text>
+                      <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                        Select the most permissive option that applies to your model. Options are
+                        listed from least to most permissive.
+                      </Text>
+                    </Stack>
                     <InputSegmentedControl
                       name="allowCommercialUse"
                       orientation="vertical"
@@ -266,7 +276,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                           value: CommercialUse.RentCivit,
                           label: (
                             <Group>
-                              <IconBrush size={16} /> Use on Civit generation
+                              <IconBrush size={16} /> Use on Civitai generation service
                             </Group>
                           ),
                         },
@@ -274,7 +284,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                           value: CommercialUse.Rent,
                           label: (
                             <Group>
-                              <IconWorldUpload size={16} /> Use on generation services
+                              <IconWorldUpload size={16} /> Use on other generation services
                             </Group>
                           ),
                         },
