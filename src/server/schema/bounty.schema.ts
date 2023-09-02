@@ -4,7 +4,7 @@ import { baseFileSchema } from './file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { tagSchema } from './tag.schema';
 import { infiniteQuerySchema } from './base.schema';
-import { BountySortSchema } from '../common/enums';
+import { BountySort } from '../common/enums';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -14,7 +14,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     mode: z.nativeEnum(BountyMode).optional(),
     nsfw: z.boolean().optional(),
     period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
-    sort: z.nativeEnum(BountySortSchema).default(BountySortSchema.Newest),
+    sort: z.nativeEnum(BountySort).default(BountySort.Newest),
   })
 );
 

@@ -5,6 +5,7 @@ import { getFilesByEntity } from './file.service';
 import { throwNotFoundError } from '../utils/errorHandling';
 import { CreateBountyInput, UpdateBountyInput } from '../schema/bounty.schema';
 import { imageSelect } from '../selectors/image.selector';
+import { groupBy } from 'lodash-es';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: { cursor, limit: take },
@@ -99,4 +100,21 @@ export const getBountyImages = async ({ id }: GetByIdInput) => {
   });
 
   return connections.map(({ image }) => image);
+};
+
+export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] }) => {
+  const connections = await dbRead.imageConnection.findMany({
+    where: { entityType: 'Bounty', entityId: { in: bountyIds } },
+    select: {
+      entityId: true,
+      image: { select: imageSelect },
+    },
+  });
+
+  const groupedImages = groupBy(
+    connections.map(({ image }) => image),
+    'entityId'
+  );
+
+  return groupedImages;
 };
