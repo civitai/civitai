@@ -30,8 +30,9 @@ export function StarRating({ value, count = 5, size = 20 }: Props) {
   return (
     <Group spacing={2} align="center">
       {Array.from({ length: Math.floor(count) }).map((_, index) => {
-        const delta = value - Math.floor(value);
-        const isFilled = index < Math.floor(value);
+        const rounded = Math.floor(value);
+        const isFilled = index < rounded;
+        const delta = !isFilled && index === rounded ? value - rounded : 0;
 
         return (
           <Box key={index} sx={{ position: 'relative', width: size, height: size, marginTop: -4 }}>

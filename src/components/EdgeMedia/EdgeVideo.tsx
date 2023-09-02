@@ -40,7 +40,7 @@ export function EdgeVideo({
           <div className={classes.controls}>
             {showAudioControl && (
               <ActionIcon onClick={() => setMuted((muted) => !muted)} variant="light" size="lg">
-                {muted ? <IconVolume /> : <IconVolumeOff />}
+                {!muted ? <IconVolume /> : <IconVolumeOff />}
               </ActionIcon>
             )}
           </div>
