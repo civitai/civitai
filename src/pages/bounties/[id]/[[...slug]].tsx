@@ -92,12 +92,9 @@ export default function BountyDetailsPage({
     );
   }
 
-  console.log(bounty, mainImage);
-
   return (
     <>
       {meta}
-      <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
       <Container size="xl">
         <Stack spacing={0} mb="xl">
           <Group position="apart" noWrap>
@@ -121,6 +118,7 @@ export default function BountyDetailsPage({
                 nsfw={bounty.nsfw}
                 entityId={bounty.id}
                 entityType="bounty"
+                mobile={mobile}
               />
               <Title order={2} mt="sm">
                 About this bounty
