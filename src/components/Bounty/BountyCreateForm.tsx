@@ -43,8 +43,6 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
-import { useDidUpdate } from '@mantine/hooks';
-import { isDefined } from '~/utils/type-guards';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -120,7 +118,7 @@ export function BountyCreateForm({}: Props) {
   const bountyCreateMutation = trpc.bounty.create.useMutation();
 
   const handleSubmit = ({ ...data }: CreateBountyInput) => {
-    const filteredImages = files
+    const filteredImages = imageFiles
       .filter((file) => file.status === 'success')
       .map(({ id, url, ...file }) => ({ ...file, url: id })); ///
 
