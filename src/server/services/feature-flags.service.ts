@@ -59,6 +59,7 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['dev'],
   buzz: ['mod'],
   signal: ['user'],
+  bounties: ['dev'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

@@ -1,10 +1,12 @@
-import { BountyType, BountyMode, MetricTimeframe } from '@prisma/client';
+import dayjs from 'dayjs';
+import { BountyType, BountyMode, MetricTimeframe, Currency, BountyEntryMode } from '@prisma/client';
 import { z } from 'zod';
 import { baseFileSchema } from './file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { tagSchema } from './tag.schema';
 import { infiniteQuerySchema } from './base.schema';
 import { BountySortSchema } from '../common/enums';
+import { imageSchema } from '~/server/schema/image.schema';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -24,15 +26,23 @@ export const createBountyInputSchema = z.object({
   description: getSanitizedStringSchema().refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
+  unitAmount: z.number().min(5000),
+  currency: z.nativeEnum(Currency),
   details: z.object({}).passthrough().optional(),
-  expiresAt: z.date().min(new Date(), 'Expiration date must be in the future'),
-  type: z.nativeEnum(BountyType),
+  expiresAt: z
+    .date()
+    .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+  startsAt: z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
   mode: z.nativeEnum(BountyMode),
-  minBenefactorBuzzAmount: z.number().min(1),
-  maxBenefactorBuzzAmount: z.number().optional(),
+  type: z.nativeEnum(BountyType),
+  entryMode: z.nativeEnum(BountyEntryMode),
+  minBenefactorUnitAmount: z.number().min(1),
+  maxBenefactorUnitAmount: z.number().optional(),
   entryLimit: z.number().min(1).optional(),
   tags: z.array(tagSchema).optional(),
+  nsfw: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
+  images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
