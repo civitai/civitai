@@ -149,7 +149,7 @@ export function PostDetail({ postId }: { postId: number }) {
                   leftIcon={<IconPlaylistAdd size={14} />}
                   onClick={() =>
                     openContext('addToCollection', {
-                      imageId: post.id,
+                      postId: post.id,
                       type: CollectionType.Post,
                     })
                   }
