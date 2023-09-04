@@ -5,7 +5,7 @@ export const baseFileSchema = z.object({
   name: z.string(),
   url: z.string().url().min(1, 'You must select a file'),
   sizeKB: z.number(),
-  metadata: z.object({}).optional(),
+  metadata: z.object({}).passthrough().optional(),
 });
 export type BaseFileSchema = z.infer<typeof baseFileSchema>;
 
