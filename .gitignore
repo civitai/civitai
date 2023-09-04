@@ -49,3 +49,4 @@ yarn-error.log*
 
 # WebStorm
 .idea
+sample.http
