@@ -275,7 +275,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
       {
-        href: '/bounty/create',
+        href: '/bounties/create',
         visible: !isMuted && features.bounties,
         redirectReason: 'create-bounty',
         label: (

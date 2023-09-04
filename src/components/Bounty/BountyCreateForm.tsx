@@ -21,7 +21,7 @@ import {
 import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -30,6 +30,7 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
+  InputDatePicker,
   InputMultiFileUpload,
   InputNumber,
   InputRTE,
@@ -50,6 +51,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { constants } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import dayjs from 'dayjs';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -71,6 +73,16 @@ export function BountyCreateForm({}: Props) {
     }
   };
 
+  const { minStartDate, maxStartDate, minExpiresDate, maxExpiresDate } = useMemo(
+    () => ({
+      minStartDate: dayjs().startOf('day').toDate(),
+      maxStartDate: dayjs().add(1, 'month').toDate(),
+      minExpiresDate: dayjs().add(1, 'day').toDate(),
+      maxExpiresDate: dayjs().add(1, 'day').add(1, 'month').toDate(),
+    }),
+    []
+  );
+
   const defaultValues: CreateBountyInput = {
     name: '',
     description: '',
@@ -84,8 +96,8 @@ export function BountyCreateForm({}: Props) {
     minBenefactorUnitAmount: MIN_CREATE_BOUNTY_AMOUNT,
     entryLimit: 1,
     files: [],
-    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
-    startsAt: new Date(Date.now()),
+    expiresAt: new Date(dayjs().add(7, 'day').toDate()),
+    startsAt: new Date(),
   };
 
   const form = useForm({ schema: createBountyInputSchema, defaultValues, shouldUnregister: false });
@@ -250,6 +262,26 @@ export function BountyCreateForm({}: Props) {
             />
           )}
         </Group>
+        <Divider label="Dates" />
+        <Group spacing="xs" grow>
+          <InputDatePicker
+            name="startsAt"
+            label="Start Date"
+            placeholder="Select a starts date"
+            withAsterisk
+            minDate={minStartDate}
+            maxDate={maxStartDate}
+          />
+          <InputDatePicker
+            name="expiresAt"
+            label="expiration Date"
+            placeholder="Select an end date"
+            withAsterisk
+            minDate={minExpiresDate}
+            maxDate={maxExpiresDate}
+          />
+        </Group>
+
         <Divider label="Bounty Images" />
         <Text>
           Please add at least 1 reference image to your bounty. This will serve as a reference point
@@ -330,7 +362,7 @@ export function BountyCreateForm({}: Props) {
           name="attachments"
           label="Attachments"
           dropzoneProps={{
-            maxSize: 30 * 1024 ** 2, // 30MB
+            maxSize: 100 * 1024 ** 2, // 100MB
             maxFiles: 10,
             accept: {
               'application/pdf': ['.pdf'],

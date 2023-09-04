@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { BountyType, BountyMode, MetricTimeframe, Currency, BountyEntryMode } from '@prisma/client';
 import { z } from 'zod';
 import { baseFileSchema } from './file.schema';
@@ -27,10 +28,12 @@ export const createBountyInputSchema = z.object({
   unitAmount: z.number().min(5000),
   currency: z.nativeEnum(Currency),
   details: z.object({}).passthrough().optional(),
-  expiresAt: z.date().min(new Date(), 'Expiration date must be in the future'),
-  startsAt: z.date().min(new Date(), 'Start date must be in the future'),
-  type: z.nativeEnum(BountyType),
+  expiresAt: z
+    .date()
+    .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+  startsAt: z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
   mode: z.nativeEnum(BountyMode),
+  type: z.nativeEnum(BountyType),
   entryMode: z.nativeEnum(BountyEntryMode),
   minBenefactorUnitAmount: z.number().min(1),
   maxBenefactorUnitAmount: z.number().optional(),
