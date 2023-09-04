@@ -139,22 +139,20 @@ export function BountyCreateForm({}: Props) {
           <Title>Create new Bounty</Title>
         </Group>
         <Divider label="Bounty details" />
-        <Group spacing="xs" grow>
-          <InputText name="name" label="Name" placeholder="e.g.:LoRA for XYZ" withAsterisk />
-          <InputCheckbox
-            name="nsfw"
-            label={
-              <Group spacing={4}>
-                Mature
-                <Tooltip label={matureLabel} {...tooltipProps}>
-                  <ThemeIcon radius="xl" size="xs" color="gray">
-                    <IconQuestionMark />
-                  </ThemeIcon>
-                </Tooltip>
-              </Group>
-            }
-          />
-        </Group>
+        <InputText name="name" label="Name" placeholder="e.g.:LoRA for XYZ" withAsterisk />
+        <InputCheckbox
+          name="nsfw"
+          label={
+            <Group spacing={4}>
+              Mature
+              <Tooltip label={matureLabel} {...tooltipProps}>
+                <ThemeIcon radius="xl" size="xs" color="gray">
+                  <IconQuestionMark />
+                </ThemeIcon>
+              </Tooltip>
+            </Group>
+          }
+        />
         <InputRTE
           name="description"
           label="Description"
@@ -172,26 +170,25 @@ export function BountyCreateForm({}: Props) {
             style={{ flex: 1 }}
             data={Object.values(BountyMode)}
           />
-          {mode === BountyMode.Individual && (
-            <Text>
-              Only you will be the benefactor of this bounty. This is great if you are offering a
-              good reward for a really specific resource that you want tailored for your specific
-              needs. The number of entries might be limited if the reward you are offering is not
-              enticing enough.
-            </Text>
-          )}
-          {mode === BountyMode.Split && (
-            <Text>
-              Other users can become a benefactor in your bounty and select other entries to
-              support. This is great for incentivizing a large number of people to contribute to
-              submit entries to your bounty.
-            </Text>
-          )}
+          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
+            {mode === BountyMode.Individual && (
+              <Text>
+                Only you will be the benefactor of this bounty. This is great if you are offering a
+                good reward for a really specific resource that you want tailored for your specific
+                needs. The number of entries might be limited if the reward you are offering is not
+                enticing enough.
+              </Text>
+            )}
+            {mode === BountyMode.Split && (
+              <Text>
+                Other users can become a benefactor in your bounty and select other entries to
+                support. This is great for incentivizing a large number of people to contribute to
+                submit entries to your bounty.
+              </Text>
+            )}
+          </AlertWithIcon>
         </Stack>
         <Stack>
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
-            Entry mode affects how we treat entries in your bounty.
-          </AlertWithIcon>
           <InputSelect
             name="entryMode"
             label="Entry Mode"
@@ -200,20 +197,23 @@ export function BountyCreateForm({}: Props) {
             style={{ flex: 1 }}
             data={Object.values(BountyEntryMode)}
           />
-          {entryMode === BountyEntryMode.Open && (
-            <Text>
-              By selecting the Open entry mode, any user, at any time, can support an entry and gain
-              access to its files.
-            </Text>
-          )}
-          {entryMode === BountyEntryMode.BenefactorsOnly && (
-            <Text>
-              By selecting the Benefactors Only entry mode, only people who become benefactors in
-              your bounty can support an entry and gain access to the files. Each benefactor can
-              only select 1 entry they support. So at best, each benefactor will have access to 1
-              set of files.
-            </Text>
-          )}
+          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
+            <Text>Entry mode affects how we treat entries in your bounty.</Text>
+            {entryMode === BountyEntryMode.Open && (
+              <Text>
+                By selecting the Open entry mode, any user, at any time, can support an entry and
+                gain access to its files.
+              </Text>
+            )}
+            {entryMode === BountyEntryMode.BenefactorsOnly && (
+              <Text>
+                By selecting the Benefactors Only entry mode, only people who become benefactors in
+                your bounty can support an entry and gain access to the files. Each benefactor can
+                only select 1 entry they support. So at best, each benefactor will have access to 1
+                set of files.
+              </Text>
+            )}
+          </AlertWithIcon>
         </Stack>
         <Divider label="Bounty rewards" />
         <Group spacing="xs" grow>
@@ -221,7 +221,7 @@ export function BountyCreateForm({}: Props) {
             name="unitAmount"
             label="Bounty Amount"
             placeholder="How much are you willing to reward for this bounty"
-            min={0}
+            min={MIN_CREATE_BOUNTY_AMOUNT}
             max={100000}
             sx={{ flexGrow: 1 }}
             format={currency !== Currency.BUZZ ? 'currency' : undefined}
