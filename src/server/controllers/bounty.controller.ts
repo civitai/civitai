@@ -6,6 +6,7 @@ import {
   deleteBountyById,
   getAllBounties,
   getBountyById,
+  getBountyFiles,
   getBountyImages,
   updateBountyById,
 } from '../services/bounty.service';
@@ -54,12 +55,27 @@ export const getInfiniteBountiesHandler = async ({
 
 export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
-    const bounty = await getBountyById({ ...input, select: getBountyDetailsSelect });
+    const bounty = await getBountyById({
+      ...input,
+      select: {
+        ...getBountyDetailsSelect,
+        benefactors: {
+          select: {
+            user: {
+              select: userWithCosmeticsSelect,
+            },
+            unitAmount: true,
+            currency: true,
+          },
+        },
+      },
+    });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     const images = await getBountyImages({ id: bounty.id });
+    const files = await getBountyFiles({ id: bounty.id });
 
-    return { ...bounty, images };
+    return { ...bounty, images, files };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

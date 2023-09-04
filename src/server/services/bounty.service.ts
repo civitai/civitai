@@ -184,3 +184,17 @@ export const getBountyImages = async ({ id }: GetByIdInput) => {
 
   return connections.map(({ image }) => image);
 };
+
+export const getBountyFiles = async ({ id }: GetByIdInput) => {
+  const files = await dbRead.file.findMany({
+    where: { entityId: id, entityType: 'Bounty' },
+    select: {
+      id: true,
+      url: true,
+      metadata: true,
+      sizeKB: true,
+    },
+  });
+
+  return files;
+};

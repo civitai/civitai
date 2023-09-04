@@ -43,6 +43,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
+import { z } from 'zod';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -77,10 +78,10 @@ export function BountyCreateForm({}: Props) {
   const defaultValues: CreateBountyInput = {
     name: '',
     description: '',
-    tags: [],
     unitAmount: MIN_CREATE_BOUNTY_AMOUNT,
-    nsfw: false,
     currency: Currency.BUZZ,
+    tags: [],
+    nsfw: false,
     type: BountyType.LoraCreation,
     mode: BountyMode.Individual,
     entryMode: BountyEntryMode.Open,
@@ -89,6 +90,7 @@ export function BountyCreateForm({}: Props) {
     files: [],
     expiresAt: new Date(dayjs().add(7, 'day').toDate()),
     startsAt: new Date(),
+    images: [],
   };
 
   const form = useForm({ schema: createBountyInputSchema, defaultValues, shouldUnregister: false });

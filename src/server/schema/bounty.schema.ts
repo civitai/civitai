@@ -42,7 +42,7 @@ export const createBountyInputSchema = z.object({
   tags: z.array(tagSchema).optional(),
   nsfw: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
-  images: z.array(imageSchema).min(1, 'At least one image must be uploaded').optional(),
+  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
