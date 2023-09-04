@@ -6,6 +6,7 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { tagSchema } from './tag.schema';
 import { infiniteQuerySchema } from './base.schema';
 import { BountySortSchema } from '../common/enums';
+import { imageSchema } from '~/server/schema/image.schema';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -39,8 +40,9 @@ export const createBountyInputSchema = z.object({
   maxBenefactorUnitAmount: z.number().optional(),
   entryLimit: z.number().min(1).optional(),
   tags: z.array(tagSchema).optional(),
-  files: z.array(baseFileSchema).optional(),
   nsfw: z.boolean().optional(),
+  files: z.array(baseFileSchema).optional(),
+  images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;

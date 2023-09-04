@@ -1,17 +1,12 @@
 import {
-  Anchor,
   Button,
-  ButtonProps,
-  Grid,
   Group,
   Stack,
-  StackProps,
   Text,
   ThemeIcon,
   Title,
   Tooltip,
   TooltipProps,
-  createStyles,
   SimpleGrid,
   Paper,
   ActionIcon,
@@ -22,10 +17,9 @@ import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@p
 import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo, useState } from 'react';
-import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
-import { hiddenLabel, matureLabel } from '~/components/Post/Edit/EditPostControls';
+import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
@@ -35,11 +29,9 @@ import {
   InputNumber,
   InputRTE,
   InputSelect,
-  InputSimpleImageUpload,
   InputText,
   useForm,
 } from '~/libs/form';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CreateBountyInput, createBountyInputSchema } from '~/server/schema/bounty.schema';
@@ -49,9 +41,10 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { constants } from '~/server/common/constants';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
+import { useDidUpdate } from '@mantine/hooks';
+import { isDefined } from '~/utils/type-guards';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -65,7 +58,7 @@ const MIN_CREATE_BOUNTY_AMOUNT = 5000;
 export function BountyCreateForm({}: Props) {
   const router = useRouter();
 
-  const { files, uploadToCF, removeImage } = useCFImageUpload();
+  const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
   const handleDropImages = async (droppedFiles: File[]) => {
     for (const file of droppedFiles) {
@@ -96,6 +89,7 @@ export function BountyCreateForm({}: Props) {
     minBenefactorUnitAmount: MIN_CREATE_BOUNTY_AMOUNT,
     entryLimit: 1,
     files: [],
+    images: [],
     expiresAt: new Date(dayjs().add(7, 'day').toDate()),
     startsAt: new Date(),
   };
@@ -107,7 +101,7 @@ export function BountyCreateForm({}: Props) {
     form,
     timeout: 1000,
     key: `bounty_new`,
-    watch: ({ description, unitAmount, name, nsfw, mode, currency, entryMode }) => ({
+    watch: ({ mode, name, nsfw, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
       nsfw,
@@ -126,8 +120,12 @@ export function BountyCreateForm({}: Props) {
   const bountyCreateMutation = trpc.bounty.create.useMutation();
 
   const handleSubmit = ({ ...data }: CreateBountyInput) => {
+    const filteredImages = files
+      .filter((file) => file.status === 'success')
+      .map(({ id, url, ...file }) => ({ ...file, url: id })); ///
+
     bountyCreateMutation.mutate(
-      { ...data },
+      { ...data, images: filteredImages },
       {
         async onSuccess(result) {
           await router.push(`/bounties/${result.id}`);
@@ -274,7 +272,7 @@ export function BountyCreateForm({}: Props) {
           />
           <InputDatePicker
             name="expiresAt"
-            label="expiration Date"
+            label="Expiration Date"
             placeholder="Select an end date"
             withAsterisk
             minDate={minExpiresDate}
@@ -290,10 +288,10 @@ export function BountyCreateForm({}: Props) {
         <ImageDropzone
           label="Drag & drop images here or click to browse"
           onDrop={handleDropImages}
-          count={files.length}
+          count={imageFiles.length}
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
         />
-        {files.length > 0 && (
+        {imageFiles.length > 0 && (
           <SimpleGrid
             spacing="sm"
             breakpoints={[
@@ -302,7 +300,7 @@ export function BountyCreateForm({}: Props) {
               { minWidth: 'md', cols: 4 },
             ]}
           >
-            {files
+            {imageFiles
               .slice()
               .reverse()
               .map((file) => (

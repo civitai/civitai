@@ -123,7 +123,7 @@ export function throwRateLimitError(message: string | null = null, error?: unkno
 export function throwInsufficientFundsError(message: string | null = null, error?: unknown) {
   message ??= `Hey buddy, seems like you don't have enough funds to perform this action.`;
   throw new TRPCError({
-    code: 'INSUFFICIENT_FUNDS',
+    code: 'BAD_REQUEST',
     message,
     cause: error,
   });

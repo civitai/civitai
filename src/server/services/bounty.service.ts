@@ -37,6 +37,7 @@ export const getBountyById = async <TSelect extends Prisma.BountySelect>({
 
 // TODO.bounty: tags
 export const createBounty = async ({
+  images,
   files,
   tags,
   unitAmount,
@@ -47,6 +48,7 @@ export const createBounty = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
+      console.log(account.balance, unitAmount);
       if (account.balance < unitAmount) {
         throw throwInsufficientFundsError();
       }
@@ -70,6 +72,35 @@ export const createBounty = async ({
     if (files) {
       await tx.file.createMany({
         data: files.map((file) => ({ ...file, entityId: bounty.id, entityType: 'Bounty' })),
+      });
+    }
+
+    if (images) {
+      await tx.image.createMany({
+        data: images.map((image) => ({
+          ...image,
+          meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+          userId,
+          resources: undefined,
+        })),
+      });
+
+      const imageIds = await tx.image.findMany({
+        select: { id: true },
+        where: {
+          url: {
+            in: images.map((i) => i.url),
+          },
+          userId,
+        },
+      });
+
+      await tx.imageConnection.createMany({
+        data: imageIds.map((image) => ({
+          imageId: image.id,
+          entityId: bounty.id,
+          entityType: 'Bounty',
+        })),
       });
     }
 
