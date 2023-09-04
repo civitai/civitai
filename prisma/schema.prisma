@@ -317,6 +317,7 @@ enum TrainingStatus {
 enum CommercialUse {
   None
   Image
+  RentCivit
   Rent
   Sell
 }
@@ -454,6 +455,7 @@ model ModelVersionSponsorshipSettings {
 enum ModelVersionMonetizationType {
   PaidAccess
   PaidEarlyAccess
+  PaidGeneration
   CivitaiClubOnly
   MySubscribersOnly
   Sponsored
@@ -596,7 +598,7 @@ model File {
   entityType String
   metadata   Json?
 
-  @@unique([entityId, entityType])
+  @@unique([id, entityId, entityType])
 }
 
 enum MetricTimeframe {
@@ -1965,6 +1967,11 @@ model HomeBlock {
   clones    HomeBlock[]   @relation("Clones")
 }
 
+enum Currency {
+  USD
+  BUZZ
+}
+
 enum BountyType {
   ModelCreation
   LoraCreation
@@ -1992,6 +1999,7 @@ model Bounty {
   user                    User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
   name                    String // Locked after created
   description             String
+  startsAt                DateTime
   expiresAt               DateTime // Locked after created
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
@@ -1999,9 +2007,10 @@ model Bounty {
   mode                    BountyMode      @default(Individual)
   entryMode               BountyEntryMode @default(Open)
   type                    BountyType
-  minBenefactorBuzzAmount Int
-  maxBenefactorBuzzAmount Int? // Default to initial benefactor's entry
+  minBenefactorUnitAmount Int
+  maxBenefactorUnitAmount Int? // Default to initial benefactor's entry
   entryLimit              Int             @default(1)
+  nsfw                    Boolean         @default(false)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -2041,12 +2050,13 @@ model BountyBenefactor {
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   bountyId    Int
   bounty      Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  buzzAmount  Int
+  unitAmount  Int
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  awardedAt   DateTime
+  awardedAt   DateTime?
   awardedToId Int?
   awartedTo   BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
+  currency    Currency     @default(BUZZ)
 
   @@id([userId, bountyId])
 }

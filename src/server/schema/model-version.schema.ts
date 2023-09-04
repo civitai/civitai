@@ -119,7 +119,7 @@ export const modelVersionUpsertSchema2 = z.object({
     .object({
       id: z.number().nullish(),
       type: z.nativeEnum(ModelVersionMonetizationType).nullish(),
-      unitValue: z.number().nullish(),
+      unitAmount: z.number().nullish(),
       sponsorshipSettings: z
         .object({
           type: z.nativeEnum(ModelVersionSponsorshipSettingsType),

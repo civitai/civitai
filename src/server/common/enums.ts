@@ -124,6 +124,7 @@ export enum CollectionSort {
 
 export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
+  ImageGenStatusUpdate = 'image-gen:status-update',
 }
 
 export enum BountySort {

@@ -29,7 +29,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
 
   const modelVersion = await dbRead.modelVersion.findFirst({
-    where: { id },
+    where: { id, status: 'Published' },
     select: getModelVersionApiSelect,
   });
 

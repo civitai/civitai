@@ -12,6 +12,7 @@ export namespace Generation {
     available: boolean;
     requestId: number;
     seed?: number; // TODO.generation - check if this prop will be set
+    status?: 'Success' | 'Started' | 'Error';
   };
 
   export type Data = {

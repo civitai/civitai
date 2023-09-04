@@ -1,10 +1,13 @@
-import { Prisma } from '@prisma/client';
+import { Currency, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
 import { getFilesByEntity } from './file.service';
-import { throwNotFoundError } from '../utils/errorHandling';
+import { throwInsufficientFundsError, throwNotFoundError } from '../utils/errorHandling';
 import { CreateBountyInput, UpdateBountyInput } from '../schema/bounty.schema';
 import { imageSelect } from '../selectors/image.selector';
+import { getUserAccountHandler } from '~/server/controllers/buzz.controller';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import { groupBy } from 'lodash-es';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
@@ -33,20 +36,86 @@ export const getBountyById = async <TSelect extends Prisma.BountySelect>({
   return { ...bounty, files };
 };
 
-// TODO.bounty: handle details and tags
+// TODO.bounty: tags
 export const createBounty = async ({
+  images,
   files,
-  details,
   tags,
+  unitAmount,
+  currency,
   ...data
 }: CreateBountyInput & { userId: number }) => {
+  const { userId } = data;
+  switch (currency) {
+    case Currency.BUZZ:
+      const account = await getUserBuzzAccount({ accountId: userId });
+      console.log(account.balance, unitAmount);
+      if (account.balance < unitAmount) {
+        throw throwInsufficientFundsError();
+      }
+      break;
+    default: // Do no checks
+      break;
+  }
+
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.create({ data });
+
+    await tx.bountyBenefactor.create({
+      data: {
+        userId,
+        bountyId: bounty.id,
+        unitAmount,
+        currency,
+      },
+    });
 
     if (files) {
       await tx.file.createMany({
         data: files.map((file) => ({ ...file, entityId: bounty.id, entityType: 'Bounty' })),
       });
+    }
+
+    if (images) {
+      await tx.image.createMany({
+        data: images.map((image) => ({
+          ...image,
+          meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+          userId,
+          resources: undefined,
+        })),
+      });
+
+      const imageIds = await tx.image.findMany({
+        select: { id: true },
+        where: {
+          url: {
+            in: images.map((i) => i.url),
+          },
+          userId,
+        },
+      });
+
+      await tx.imageConnection.createMany({
+        data: imageIds.map((image) => ({
+          imageId: image.id,
+          entityId: bounty.id,
+          entityType: 'Bounty',
+        })),
+      });
+    }
+
+    switch (currency) {
+      case Currency.BUZZ:
+        await createBuzzTransaction({
+          fromAccountId: userId,
+          toAccountId: 0,
+          amount: unitAmount,
+          type: TransactionType.Bounty,
+        });
+        break;
+      default: // Do no checks
+        break;
     }
 
     return bounty;

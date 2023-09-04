@@ -28,7 +28,7 @@ export default PublicEndpoint(
     const files = await dbRead.modelFile.findMany({
       where: {
         hashes: { some: { hash: { in: results.data }, type: 'SHA256' } },
-        modelVersion: { model: { status: 'Published' } },
+        modelVersion: { model: { status: 'Published' }, status: 'Published' },
       },
       select: {
         modelVersion: {

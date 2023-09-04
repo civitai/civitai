@@ -63,7 +63,7 @@ const useStyles = createStyles((theme) => ({
     height: 'calc(100vh - 54px)',
 
     [theme.fn.smallerThan('md')]: {
-      height: 'calc(90vh - 54px)',
+      height: 'calc(90vh - 54px - var(--mantine-header-height))',
     },
   },
   tabsList: {

@@ -109,6 +109,7 @@ export const upsertModelVersion = async ({
       select: { id: true },
       orderBy: { index: 'asc' },
     });
+
     const [version] = await dbWrite.$transaction([
       dbWrite.modelVersion.create({
         data: {
@@ -118,6 +119,7 @@ export const upsertModelVersion = async ({
               ? {
                   create: {
                     type: monetization.type,
+                    unitAmount: monetization.unitAmount,
                     currency: DEFAULT_CURRENCY,
                     sponsorshipSettings: monetization.sponsorshipSettings
                       ? {
@@ -148,6 +150,7 @@ export const upsertModelVersion = async ({
           select: {
             id: true,
             type: true,
+            unitAmount: true,
             sponsorshipSettings: {
               select: {
                 id: true,
@@ -170,6 +173,7 @@ export const upsertModelVersion = async ({
                 upsert: {
                   create: {
                     type: monetization.type,
+                    unitAmount: monetization.unitAmount,
                     currency: DEFAULT_CURRENCY,
                     sponsorshipSettings: monetization.sponsorshipSettings
                       ? {
@@ -183,6 +187,7 @@ export const upsertModelVersion = async ({
                   },
                   update: {
                     type: monetization.type,
+                    unitAmount: monetization.unitAmount,
                     currency: DEFAULT_CURRENCY,
                     sponsorshipSettings:
                       existingVersion.monetization?.sponsorshipSettings &&

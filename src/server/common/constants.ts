@@ -277,7 +277,8 @@ export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizatio
   [ModelVersionMonetizationType.PaidEarlyAccess]: 'Paid early access',
   [ModelVersionMonetizationType.CivitaiClubOnly]: 'Exclusive to Civitai Club members',
   [ModelVersionMonetizationType.MySubscribersOnly]: 'Exclusive to my subscribers',
-  [ModelVersionMonetizationType.Sponsored]: 'Sponsored',
+  [ModelVersionMonetizationType.Sponsored]: 'Sponsorships',
+  [ModelVersionMonetizationType.PaidGeneration]: 'Paid on-site generation',
 };
 
 export const modelVersionSponsorshipSettingsTypeOptions: Record<
