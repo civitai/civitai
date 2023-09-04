@@ -87,7 +87,6 @@ export function BountyCreateForm({}: Props) {
     minBenefactorUnitAmount: MIN_CREATE_BOUNTY_AMOUNT,
     entryLimit: 1,
     files: [],
-    images: [],
     expiresAt: new Date(dayjs().add(7, 'day').toDate()),
     startsAt: new Date(),
   };
@@ -355,7 +354,7 @@ export function BountyCreateForm({}: Props) {
           </SimpleGrid>
         )}
         <InputMultiFileUpload
-          name="attachments"
+          name="files"
           label="Attachments"
           dropzoneProps={{
             maxSize: 100 * 1024 ** 2, // 100MB
