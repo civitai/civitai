@@ -65,6 +65,7 @@ export function ImageDetailByProps({
   const { data: image = null, isLoading } = trpc.image.get.useQuery(
     {
       id: imageId,
+      withoutPost: true,
     },
     {
       enabled: !!imageId,

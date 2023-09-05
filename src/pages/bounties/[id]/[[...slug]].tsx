@@ -48,7 +48,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useRouter } from 'next/router';
 import { formatCurrencyForDisplay, formatKBytes } from '~/utils/number-helpers';
 import { getBountyCurrency, isMainBenefactor } from '~/components/Bounty/bounties.util';
-import { CurrencyConfig } from '~/server/common/constants';
+import { CurrencyConfig, IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
 import {
   DescriptionTable,
@@ -64,6 +64,10 @@ import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useDisclosure } from '@mantine/hooks';
+import { SearchLayout } from '~/components/Search/SearchLayout';
+import ImageSearch from '~/pages/search/images';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
+import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -94,6 +98,8 @@ export default function BountyDetailsPage({
   const mobile = useIsMobile();
   const { data: bounty, isLoading } = trpc.bounty.getById.useQuery({ id });
   const [mainImage] = bounty?.images ?? [];
+  // Set no images initially, as this might be used by the entries and bounty page too.
+  const { setImages, onSetImage } = useImageViewerCtx({ images: [] });
   const totalUnitAmount = useMemo(() => {
     if (!bounty) {
       return 0;
@@ -174,6 +180,10 @@ export default function BountyDetailsPage({
                 entityId={bounty.id}
                 entityType="bounty"
                 mobile={mobile}
+                onClick={(image) => {
+                  setImages(bounty.images);
+                  onSetImage(image.id);
+                }}
               />
               <Title order={2} mt="sm">
                 About this bounty
@@ -551,3 +561,11 @@ const useStyles = createStyles((theme) => ({
     },
   },
 }));
+
+BountyDetailsPage.getLayout = function getLayout(page: React.ReactNode) {
+  return (
+    <ImageViewer>
+      <AppLayout>{page}</AppLayout>
+    </ImageViewer>
+  );
+};

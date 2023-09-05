@@ -761,6 +761,7 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
+  withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i.id = ${id}`];
   if (!isModerator)
@@ -812,8 +813,10 @@ export const getImage = async ({
       ) reactions
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
-      !isModerator ? 'AND p."publishedAt" < now()' : ''
+    ${Prisma.raw(
+      withoutPost
+        ? ''
+        : `JOIN "Post" p ON p.id = i."postId" ${!isModerator ? 'AND p."publishedAt" < now()' : ''}`
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}

@@ -11,6 +11,7 @@ import {
   getInfiniteImagesSchema,
   imageModerationSchema,
   getImagesByCategorySchema,
+  getImageSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -78,7 +79,7 @@ export const imageRouter = router({
     .use(applyUserPreferences())
     .use(applyBrowsingMode())
     .query(getImagesAsPostsInfiniteHandler),
-  get: publicProcedure.input(getByIdSchema).query(getImageHandler),
+  get: publicProcedure.input(getImageSchema).query(getImageHandler),
   getResources: publicProcedure.input(getByIdSchema).query(getImageResourcesHandler),
   removeResource: protectedProcedure
     .input(getByIdSchema)

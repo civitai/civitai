@@ -13,6 +13,7 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  UnstyledButton,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconPhotoOff } from '@tabler/icons-react';
@@ -111,7 +112,14 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ImageCarousel({ images, entityId, entityType, nsfw, mobile = false }: Props) {
+export function ImageCarousel({
+  images,
+  entityId,
+  entityType,
+  nsfw,
+  mobile = false,
+  onClick,
+}: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
@@ -182,36 +190,38 @@ export function ImageCarousel({ images, entityId, entityType, nsfw, mobile = fal
         render={(image) => {
           return (
             <Carousel.Slide>
-              <ImageGuard.Content>
-                {({ safe }) => (
-                  <Center style={{ height: '100%', width: '100%' }}>
-                    <div style={{ width: '100%', position: 'relative' }}>
-                      <ImageGuard.ToggleConnect position="top-left" />
-                      <ImageGuard.Report />
-                      {!safe ? (
-                        <AspectRatio
-                          ratio={1}
-                          sx={(theme) => ({
-                            width: '100%',
-                            borderRadius: theme.radius.md,
-                            overflow: 'hidden',
-                          })}
-                        >
-                          <MediaHash {...image} />
-                        </AspectRatio>
-                      ) : (
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{ width: 450 }}
-                          radius="md"
-                          style={{ width: '100%' }}
-                          aspectRatio={1}
-                        />
-                      )}
-                    </div>
-                  </Center>
-                )}
-              </ImageGuard.Content>
+              <Box sx={{ cursor: 'pointer' }} onClick={() => onClick(image)}>
+                <ImageGuard.Content>
+                  {({ safe }) => (
+                    <Center style={{ height: '100%', width: '100%' }}>
+                      <div style={{ width: '100%', position: 'relative' }}>
+                        <ImageGuard.ToggleConnect position="top-left" />
+                        <ImageGuard.Report />
+                        {!safe ? (
+                          <AspectRatio
+                            ratio={1}
+                            sx={(theme) => ({
+                              width: '100%',
+                              borderRadius: theme.radius.md,
+                              overflow: 'hidden',
+                            })}
+                          >
+                            <MediaHash {...image} />
+                          </AspectRatio>
+                        ) : (
+                          <ImagePreview
+                            image={image}
+                            edgeImageProps={{ width: 450 }}
+                            radius="md"
+                            style={{ width: '100%' }}
+                            aspectRatio={1}
+                          />
+                        )}
+                      </div>
+                    </Center>
+                  )}
+                </ImageGuard.Content>
+              </Box>
             </Carousel.Slide>
           );
         }}
@@ -224,4 +234,5 @@ type Props = {
   images: ImageProps[];
   nsfw: boolean;
   mobile?: boolean;
+  onClick: (image: ImageProps) => void;
 } & ImageGuardConnect;

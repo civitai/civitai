@@ -3,10 +3,26 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
+import { NsfwLevel } from '@prisma/client';
+import { SimpleUser } from '~/server/selectors/user.selector';
+
+interface ImageProps {
+  id: number;
+  nsfw: NsfwLevel;
+  imageNsfw?: boolean;
+  postId?: number | null;
+  width?: number | null;
+  height?: number | null;
+  needsReview?: string | null;
+  userId?: number;
+  user?: SimpleUser;
+  url?: string | null;
+  name?: string | null;
+}
 
 type ImageViewerState = {
   imageId: number | null;
-  images: { id: number }[];
+  images: ImageProps[];
   setImages: (images: { id: number }[]) => void;
   nextImageId: number | null;
   prevImageId: number | null;
@@ -15,14 +31,9 @@ type ImageViewerState = {
 };
 
 const ImageViewerCtx = createContext<ImageViewerState>({} as any);
-export const useImageViewerCtx = ({ images }: { images: { id: number }[] }) => {
+export const useImageViewerCtx = () => {
   const context = useContext(ImageViewerCtx);
   if (!context) throw new Error('useImageViewerCtx can only be used inside ImageViewerCtx');
-
-  useEffect(() => {
-    context.setImages(images);
-  }, [images]);
-
   return context;
 };
 
@@ -35,7 +46,7 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
   const router = useRouter();
 
   const [activeImageId, setActiveImageId] = useState<number | null>(null);
-  const [images, setImages] = useState<{ id: number }[]>([]);
+  const [images, setImages] = useState<ImageProps[]>([]);
 
   const nextImageId = useMemo(() => {
     if (!activeImageId) return null;
@@ -120,8 +131,6 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
       });
     }
   }, [router]);
-
-  console.log(router?.query);
 
   return (
     <ImageViewerCtx.Provider
