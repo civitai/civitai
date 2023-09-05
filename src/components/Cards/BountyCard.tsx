@@ -5,24 +5,31 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
-import { IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
-import { ArticleGetAll, BountyGetAll } from '~/types/router';
-import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
+import { BountyGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import {
+  IconBolt,
+  IconClockHour4,
+  IconHeart,
+  IconMessage2,
+  IconViewfinder,
+} from '@tabler/icons-react';
+import { Countdown } from '../Countdown/Countdown';
+import dayjs from 'dayjs';
 
 const IMAGE_CARD_WIDTH = 332;
 
 export function BountyCard({ data }: Props) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
+  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, name, images, user, type, createdAt, expiresAt } = data;
   // TODO.bounty: applyUserPreferences on bounty image
-  const cover = images[0];
+  const cover = images?.[0];
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
@@ -48,7 +55,9 @@ export function BountyCard({ data }: Props) {
                           variant="light"
                           radius="xl"
                         >
-                          {getDisplayName(type)}
+                          <Text color="white" size="xs" transform="capitalize">
+                            {getDisplayName(type)}
+                          </Text>
                         </Badge>
                       )}
                       {Date.now() > expiresAt.valueOf() && (
@@ -57,6 +66,18 @@ export function BountyCard({ data }: Props) {
                         </Badge>
                       )}
                     </Group>
+                    <IconBadge
+                      radius="xl"
+                      color="dark"
+                      variant="filled"
+                      px={8}
+                      h={26}
+                      icon={<IconClockHour4 size={14} color={theme.colors.success[5]} />}
+                    >
+                      <Text color="success.5" size="xs">
+                        {dayjs(expiresAt).toNow(true)}
+                      </Text>
+                    </IconBadge>
                     {/* <ArticleContextMenu article={data} ml="auto" /> */}
                   </Group>
                   {image ? (
@@ -102,26 +123,69 @@ export function BountyCard({ data }: Props) {
             <UserAvatar user={user} />
           )}
           <Stack spacing={0}>
-            <Text size="xs" weight={500} color="white" inline>
-              {formatDate(createdAt)}
-            </Text>
             <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
           </Stack>
-          {/* <Group position="apart">
-            <Group spacing={4}>
-              <IconBadge icon={<IconBookmark size={14} />} color="dark">
-                <Text size="xs">{abbreviateNumber(favoriteCount)}</Text>
-              </IconBadge>
-              <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
-                <Text size="xs">{abbreviateNumber(commentCount)}</Text>
-              </IconBadge>
-            </Group>
-            <IconBadge icon={<IconEye size={14} />} color="dark">
-              <Text size="xs">{abbreviateNumber(viewCount)}</Text>
+          <Group spacing={8} position="apart">
+            {/* TODO.bounty: use correct field when metrics are in place */}
+            <IconBadge
+              className={classes.chip}
+              icon={
+                <IconBolt size={14} color={theme.colors.accent[5]} fill={theme.colors.accent[5]} />
+              }
+              radius="xl"
+              px={8}
+              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              variant="filled"
+            >
+              <Text size="xs" color="accent.5">
+                0
+              </Text>
             </IconBadge>
-          </Group> */}
+
+            <Badge
+              className={classes.chip}
+              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
+              radius="xl"
+              px={8}
+              variant="filled"
+            >
+              {/* TODO.bounty: use correct fields when metrics are in place */}
+              <Group spacing="xs" noWrap>
+                <IconBadge
+                  icon={<IconViewfinder size={14} />}
+                  color="dark"
+                  p={0}
+                  size="lg"
+                  // @ts-ignore: transparent variant does work
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconHeart size={14} />}
+                  color="dark"
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconMessage2 size={14} />}
+                  color="dark"
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(0)}</Text>
+                </IconBadge>
+              </Group>
+            </Badge>
+          </Group>
         </Stack>
       </div>
     </FeedCard>

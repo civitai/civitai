@@ -1,24 +1,23 @@
-import { Group, Stack, Title } from '@mantine/core';
-import { useRouter } from 'next/router';
+import { Group, Stack } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
-import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { ArticleCategoriesInfinite } from '~/components/Article/Categories/ArticleCategoriesInfinite';
-import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { BountiesInfinite } from '~/components/Bounties/Infinite/BountiesInfinite';
-import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
-import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { BountyFiltersDropdown } from '~/components/Bounties/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features }) => {
+    if (!features?.bounties) return { notFound: true };
+  },
+});
 
 export default function BountiesPage() {
   const currentUser = useCurrentUser();
@@ -35,7 +34,7 @@ export default function BountiesPage() {
         description="Browse Civitai Bounties, featuring AI-generated images along with prompts and resources used for their creation, showcasing the creativity of our talented community."
       />
       <MasonryProvider
-        columnWidth={constants.cardSizes.image}
+        columnWidth={constants.cardSizes.bounty}
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
@@ -49,17 +48,14 @@ export default function BountiesPage() {
                 },
               })}
             />
-            <Group position="left">
+            <Group position="apart" spacing={8}>
               <FullHomeContentToggle />
-            </Group>
-            <Group position="apart" spacing={0}>
-              <SortFilter type="articles" />
-              <Group spacing={4}>
-                <PeriodFilter type="articles" />
-                <ViewToggle type="articles" />
+              <Group spacing={8} noWrap>
+                <SortFilter type="bounties" variant="button" />
+                {/* <PeriodFilter type="bounties" /> */}
+                <BountyFiltersDropdown />
               </Group>
             </Group>
-            <ArticleCategories />
             <BountiesInfinite />
           </Stack>
         </MasonryContainer>

@@ -1,6 +1,13 @@
 import { useMemo } from 'react';
 import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { trpc } from '~/utils/trpc';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { removeEmpty } from '~/utils/object-helpers';
+
+export const useBountyFilters = () => {
+  const storeFilters = useFiltersContext((state) => state.bounties);
+  return removeEmpty(storeFilters);
+};
 
 export const useQueryBounties = (
   filters: Partial<GetInfiniteBountySchema>,

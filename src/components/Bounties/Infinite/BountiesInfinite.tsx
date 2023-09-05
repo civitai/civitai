@@ -1,25 +1,21 @@
 import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
-import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Center, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconCloudOff } from '@tabler/icons-react';
 import { debounce, isEqual } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { ArticleCard } from '~/components/Article/Infinite/ArticleCard';
-import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { BountyCard } from '~/components/Cards/BountyCard';
-import { useQueryBounties } from '../bounty.utils';
+import { useBountyFilters, useQueryBounties } from '../bounty.utils';
 
 export function BountiesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const { ref, inView } = useInView();
-  // const bountiesFilters = useArticleFilters();
+  const bountiesFilters = useBountyFilters();
 
-  const filters = removeEmpty({ ...filterOverrides });
+  const filters = removeEmpty({ ...bountiesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const { bounties, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =

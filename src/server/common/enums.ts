@@ -128,14 +128,21 @@ export enum SignalMessages {
 }
 
 export enum BountySort {
-  MostBuzz = 'Most Buzz',
-  ClosestToExpire = 'Closest to Expire',
-  MostComments = 'Most Comments',
+  HighestBounty = 'Highest Bounty',
+  EndingSoon = 'Ending Soon',
+  MostLiked = 'Most Liked',
+  MostDiscussed = 'Most Discussed',
   MostContributors = 'Most Contributors',
   Newest = 'Newest',
 }
 
 export enum BountyBenefactorSort {
-  MostBuzz = 'Most Buzz',
+  HighestAmount = 'Highest Amount',
   Newest = 'Newest',
+}
+
+export enum BountyStatus {
+  Open = 'Open',
+  Expired = 'Expired',
+  Awarded = 'Awarded',
 }

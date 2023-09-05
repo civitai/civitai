@@ -21,6 +21,7 @@ import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId } from '../services/bountyEntry.service';
 import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
 import { getImagesByEntity } from '../services/image.service';
+import { isDefined } from '~/utils/type-guards';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -55,7 +56,15 @@ export const getInfiniteBountiesHandler = async ({
 
     return {
       nextCursor,
-      items: items.map((item) => ({ ...item, images: images[item.id] })),
+      items: items
+        .map((item) => {
+          const itemImages = images[item.id];
+          // if there are no images, we don't want to show the bounty
+          if (!itemImages?.length) return null;
+
+          return { ...item, images: itemImages };
+        })
+        .filter(isDefined),
     };
   } catch (error) {
     throw throwDbError(error);
@@ -106,7 +115,7 @@ export const getBountyBenefactorsHandler = async ({
   try {
     const benefactors = await getAllBenefactorsByBountyId({
       input: { bountyId: input.id },
-      select: { buzzAmount: true, user: { select: userWithCosmeticsSelect } },
+      select: { unitAmount: true, user: { select: userWithCosmeticsSelect } },
     });
 
     return benefactors;

@@ -97,6 +97,7 @@ export const constants = {
     model: 320,
     image: 320,
     articles: 450,
+    bounty: 332,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {
