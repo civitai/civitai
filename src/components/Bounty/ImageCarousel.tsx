@@ -15,19 +15,13 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
+import { IconPhotoOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
-import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { Reactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { ImageSort } from '~/server/common/enums';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';

@@ -14,10 +14,11 @@ import {
   Accordion,
   Center,
   SimpleGrid,
+  Box,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -53,14 +54,16 @@ import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { getFileDisplayName } from '~/server/utils/model-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import produce from 'immer';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { useDisclosure } from '@mantine/hooks';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -89,7 +92,6 @@ export default function BountyDetailsPage({
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useIsMobile();
-
   const { data: bounty, isLoading } = trpc.bounty.getById.useQuery({ id });
   const [mainImage] = bounty?.images ?? [];
   const totalUnitAmount = useMemo(() => {
@@ -102,23 +104,7 @@ export default function BountyDetailsPage({
     }, 0);
   }, [bounty]);
 
-  const mainBenefactor = useMemo(() => {
-    if (!bounty) {
-      return null;
-    }
-
-    return bounty.benefactors.find((b) => b.user.id === bounty.user?.id);
-  }, [bounty]);
-
   const currency = getBountyCurrency(bounty);
-
-  const isBenefactor = useMemo(() => {
-    if (!bounty || !currentUser) {
-      return false;
-    }
-
-    return bounty.benefactors.some((b) => b.user.id === currentUser.id);
-  }, [bounty, currentUser]);
 
   const meta = (
     <Meta
@@ -193,7 +179,13 @@ export default function BountyDetailsPage({
                 About this bounty
               </Title>
               <article>
-                <RenderHtml html={bounty.description} />
+                <Stack spacing={4}>
+                  {bounty.description && (
+                    <ContentClamp maxHeight={200}>
+                      <RenderHtml html={bounty.description} />
+                    </ContentClamp>
+                  )}
+                </Stack>
               </article>
               <Divider />
             </Stack>
@@ -219,14 +211,14 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         await queryUtils.bounty.getById.setData(
           { id: bounty.id },
           produce((bounty) => {
-            if (!bounty) {
+            if (!bounty || !currentUser) {
               return;
             }
 
             if (isBenefactor) {
               // Update the benefactor:
               bounty.benefactors = bounty.benefactors.map((b) => {
-                if (b.user.id === currentUser.id) {
+                if (b.user.id === currentUser?.id) {
                   return { ...b, unitAmount: b.unitAmount + unitAmount };
                 }
 
@@ -238,16 +230,25 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           })
         );
       },
-      onSuccess: async () => {
+      onSuccess: async (_, { unitAmount }) => {
+        showSuccessNotification({
+          title: isBenefactor
+            ? 'You have raised how much you contribute!'
+            : 'You have been added as a benefactor to the bounty!',
+          message: `The amount of ${formatCurrencyForDisplay(
+            unitAmount,
+            currency
+          )} ${currency} has been added to the bounty`,
+        });
         await queryUtils.bounty.getById.invalidate({ id: bounty.id });
       },
       onError: async (error) => {
-        await queryUtils.bounty.getById.invalidate({ id: bounty.id });
-
         showErrorNotification({
           title: 'There was an error adding to the bounty.',
           error: new Error(error.message),
         });
+
+        await queryUtils.bounty.getById.invalidate({ id: bounty.id });
       },
     });
 

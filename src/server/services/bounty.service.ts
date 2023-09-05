@@ -209,7 +209,7 @@ export const addBenefactorUnitAmount = async ({
   unitAmount,
   userId,
 }: AddBenefactorUnitAmountInputSchema & { userId: number }) => {
-  const benefactor = await dbRead.bountyBenefactor.findUniqueOrThrow({
+  const benefactor = await dbRead.bountyBenefactor.findUnique({
     where: {
       userId_bountyId: {
         userId,
@@ -222,7 +222,7 @@ export const addBenefactorUnitAmount = async ({
     },
   });
 
-  const { currency } = benefactor;
+  const { currency } = benefactor || { currency: Currency.BUZZ };
 
   switch (currency) {
     case Currency.BUZZ:
@@ -250,9 +250,14 @@ export const addBenefactorUnitAmount = async ({
   }
 
   // Update benefactor record;
-  const updatedBenefactor = await dbWrite.bountyBenefactor.update({
-    data: {
-      unitAmount: unitAmount + benefactor.unitAmount,
+  const updatedBenefactor = await dbWrite.bountyBenefactor.upsert({
+    update: {
+      unitAmount: unitAmount + (benefactor?.unitAmount ?? 0),
+    },
+    create: {
+      userId,
+      bountyId,
+      unitAmount,
     },
     where: {
       userId_bountyId: {
