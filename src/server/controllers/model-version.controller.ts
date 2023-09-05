@@ -90,9 +90,26 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
             }
           : false,
         posts: withFiles ? { select: { id: true } } : false,
+        monetization: {
+          select: {
+            id: true,
+            type: true,
+            unitAmount: true,
+            currency: true,
+            sponsorshipSettings: {
+              select: {
+                id: true,
+                unitAmount: true,
+                type: true,
+                currency: true,
+              },
+            },
+          },
+        },
       },
     });
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
+    console.log(version.monetization?.unitAmount);
 
     return {
       ...version,

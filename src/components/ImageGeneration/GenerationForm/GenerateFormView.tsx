@@ -282,8 +282,8 @@ export function GenerateFormView({
               title="Share your feedback!"
               content={
                 <Text>
-                  Thank you for participating in our generation tech test. To help us improve the
-                  service and prioritize feature development, please take a moment to fill out{' '}
+                  Thank you for participating in our generation beta. To help us improve the service
+                  and prioritize feature development, please take a moment to fill out{' '}
                   <Text
                     component="a"
                     td="underline"

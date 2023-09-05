@@ -22,15 +22,15 @@ const featureFlags = createFeatureFlags({
   imageGeneration: {
     toggleable: true,
     default: true,
-    displayName: 'Image Generation (Preview)',
-    description: `Generate images with any supported AI resource. This is still in tech preview, so please report any issues you find!`,
+    displayName: 'Image Generation (Beta)',
+    description: `Generate images with any supported AI resource. This is a beta feature, so please report any issues you find!`,
     availability: ['user'],
   },
   enhancedSearch: {
     toggleable: true,
     default: true,
-    displayName: 'Quick Search (Beta)',
-    description: `We're improving our search experience! Starting with a new quick search feature with more coming soon. This is a beta feature, so please report any issues you find!`,
+    displayName: 'Search (Beta)',
+    description: `We're improving our search experience! This is a beta feature, so please report any issues you find!`,
     availability: ['public'],
   },
   alternateHome: {
@@ -58,6 +58,7 @@ const featureFlags = createFeatureFlags({
   profileCollections: ['mod', 'founder'],
   imageSearch: ['dev'],
   buzz: ['mod'],
+  signal: ['user'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

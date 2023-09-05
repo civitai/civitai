@@ -89,7 +89,7 @@ export const getGenerationResources = async ({
   user,
   supported,
 }: GetGenerationResourcesInput & { user?: SessionUser }): Promise<Generation.Resource[]> => {
-  const sqlAnd = [Prisma.sql`mv.status = 'Published'`];
+  const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
   if (ids) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
   if (!!types?.length)
     sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);

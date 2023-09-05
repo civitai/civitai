@@ -7,6 +7,7 @@ import { UserSearchIndexRecord } from '~/server/search-index/users.search-index'
 import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
+import { StarRating } from '~/components/StartRating/StarRating';
 
 export const UserSearchItem = forwardRef<
   HTMLDivElement,
@@ -37,10 +38,7 @@ export const UserSearchItem = forwardRef<
         </Text>
         {stats && (
           <Group spacing={4}>
-            <ActionIconBadge
-              // @ts-ignore: ignoring because size doesn't allow number
-              icon={<Rating value={stats.ratingAllTime} size={12} readOnly />}
-            >
+            <ActionIconBadge icon={<StarRating value={stats.ratingAllTime} size={12} />}>
               {abbreviateNumber(stats.ratingCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>

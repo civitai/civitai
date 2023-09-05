@@ -1,7 +1,7 @@
 import { ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
-import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { BaseModel, baseModelSets, DEFAULT_CURRENCY } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -96,22 +96,43 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
 };
 
-export const upsertModelVersion = async (
-  data: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
-    meta?: Prisma.ModelVersionCreateInput['meta'];
-    trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
-  }
-) => {
+export const upsertModelVersion = async ({
+  monetization,
+  ...data
+}: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
+  meta?: Prisma.ModelVersionCreateInput['meta'];
+  trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
+}) => {
   if (!data.id) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: { id: true },
       orderBy: { index: 'asc' },
     });
+
     const [version] = await dbWrite.$transaction([
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          monetization:
+            monetization && monetization.type
+              ? {
+                  create: {
+                    type: monetization.type,
+                    unitAmount: monetization.unitAmount,
+                    currency: DEFAULT_CURRENCY,
+                    sponsorshipSettings: monetization.sponsorshipSettings
+                      ? {
+                          create: {
+                            type: monetization.sponsorshipSettings?.type,
+                            currency: DEFAULT_CURRENCY,
+                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                          },
+                        }
+                      : undefined,
+                  },
+                }
+              : undefined,
           index: 0,
         },
       }),
@@ -121,9 +142,78 @@ export const upsertModelVersion = async (
     ]);
     return version;
   } else {
+    const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
+      where: { id: data.id },
+      select: {
+        id: true,
+        monetization: {
+          select: {
+            id: true,
+            type: true,
+            unitAmount: true,
+            sponsorshipSettings: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
     const version = await dbWrite.modelVersion.update({
       where: { id: data.id },
-      data,
+      data: {
+        ...data,
+        monetization:
+          existingVersion.monetization?.id && !monetization
+            ? { delete: true }
+            : monetization && monetization.type
+            ? {
+                upsert: {
+                  create: {
+                    type: monetization.type,
+                    unitAmount: monetization.unitAmount,
+                    currency: DEFAULT_CURRENCY,
+                    sponsorshipSettings: monetization.sponsorshipSettings
+                      ? {
+                          create: {
+                            type: monetization.sponsorshipSettings?.type,
+                            currency: DEFAULT_CURRENCY,
+                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                          },
+                        }
+                      : undefined,
+                  },
+                  update: {
+                    type: monetization.type,
+                    unitAmount: monetization.unitAmount,
+                    currency: DEFAULT_CURRENCY,
+                    sponsorshipSettings:
+                      existingVersion.monetization?.sponsorshipSettings &&
+                      !monetization.sponsorshipSettings
+                        ? { delete: true }
+                        : monetization.sponsorshipSettings
+                        ? {
+                            upsert: {
+                              create: {
+                                type: monetization.sponsorshipSettings?.type,
+                                currency: DEFAULT_CURRENCY,
+                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                              },
+                              update: {
+                                type: monetization.sponsorshipSettings?.type,
+                                currency: DEFAULT_CURRENCY,
+                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                              },
+                            },
+                          }
+                        : undefined,
+                  },
+                },
+              }
+            : undefined,
+      },
     });
 
     return version;

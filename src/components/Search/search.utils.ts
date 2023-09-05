@@ -157,7 +157,8 @@ export const applyUserPreferencesCollections = <T>({
 }: {
   items: {
     id: number;
-    user: {
+    userId?: number;
+    user?: {
       id: number;
     };
     image: {
@@ -186,8 +187,9 @@ export const applyUserPreferencesCollections = <T>({
 }) => {
   const filtered = items
     .filter((x) => {
-      if (x.user.id === currentUserId) return true;
-      if (hiddenUsers.get(x.user.id)) return false;
+      const userId = x.user?.id || x.userId;
+      if (userId === currentUserId) return true;
+      if (userId && hiddenUsers.get(userId)) return false;
       if (x.image) {
         // Cover photo:
         if (hiddenImages.get(x.image.id)) {

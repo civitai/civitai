@@ -2,9 +2,14 @@ import { createStyles, Text } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { CSSProperties, ReactNode } from 'react';
+import { MediaType } from '@prisma/client';
 
 export type EdgeMediaProps = EdgeUrlProps &
-  Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'>;
+  Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
+    controls?: boolean;
+  };
 
 export function EdgeMedia({
   src,
@@ -18,6 +23,8 @@ export function EdgeMedia({
   name,
   type,
   style,
+  children,
+  controls,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width });
@@ -31,19 +38,19 @@ export function EdgeMedia({
       ? 'video'
       : 'image';
 
-  type === type ?? _inferredType;
+  let _type = type ?? _inferredType;
 
   // videos are always transcoded
-  if (_inferredType === 'video' && type === 'image') {
+  if (_inferredType === 'video' && _type === 'image') {
     transcode = true;
     anim = false;
-  } else if (type === 'video') {
+  } else if (_type === 'video') {
     transcode = true;
     anim = anim ?? currentUser?.autoplayGifs ?? true;
   }
 
   // anim false makes a video url return the first frame as an image
-  if (!anim) type = 'image';
+  if (!anim) _type = 'image';
 
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
@@ -57,10 +64,10 @@ export function EdgeMedia({
     gravity,
     optimized: optimized ? true : undefined,
     name,
-    type,
+    type: _type,
   });
 
-  switch (type) {
+  switch (_type) {
     case 'image':
       return (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
@@ -68,17 +75,12 @@ export function EdgeMedia({
       );
     case 'video':
       return (
-        <video
+        <EdgeVideo
+          src={_src}
           className={cx(classes.responsive, className)}
-          autoPlay={anim ?? true}
-          loop
-          muted
-          playsInline
           style={style}
-          controls
-        >
-          <source src={_src} type="video/mp4" />
-        </video>
+          controls={controls}
+        />
       );
     case 'audio':
     default:

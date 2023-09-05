@@ -1,12 +1,14 @@
+/* eslint-disable react-hooks/rules-of-hooks */
 import { HubConnectionBuilder, HubConnection, HttpTransportType } from '@microsoft/signalr';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { SignalMessages } from '~/server/common/enums';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
 import { useSession } from 'next-auth/react';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
 
 type SignalState = {
   connected: boolean;
@@ -59,9 +61,7 @@ function FakeSignalProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function SignalProvider({ children }: { children: React.ReactNode }) {
-  return FakeSignalProvider({ children });
-
+function RealSignalProvider({ children }: { children: React.ReactNode }) {
   const session = useSession();
   const [connected, setConnected] = useState(false);
   const { data } = trpc.signals.getAccessToken.useQuery(undefined, {
@@ -114,7 +114,14 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       <SignalNotifications />
+      <SignalsRegistrar />
       {children}
     </SignalContext.Provider>
   );
+}
+
+export function SignalProvider({ children }: { children: React.ReactNode }) {
+  const features = useFeatureFlags();
+  if (!features.signal) return FakeSignalProvider({ children });
+  else return RealSignalProvider({ children });
 }

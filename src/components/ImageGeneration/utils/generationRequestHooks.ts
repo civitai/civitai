@@ -4,12 +4,12 @@ import produce from 'immer';
 import { GetGenerationRequestsReturn } from '~/server/services/generation/generation.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
 import { GenerationRequestStatus, Generation } from '~/server/services/generation/generation.types';
 import { useDebouncer } from '~/utils/debouncer';
-import { usePrevious } from '@dnd-kit/utilities';
-import { isEqual } from 'lodash-es';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { SignalMessages } from '~/server/common/enums';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,
@@ -70,12 +70,20 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
   useEffect(() => {
     update((old) => {
       if (!old) return;
-      for (const request of requests) {
+      requests: for (const request of requests) {
         for (const page of old.pages) {
           const index = page.items.findIndex((x) => x.id === request.id);
           if (index > -1) {
-            page.items[index] = request;
-            break;
+            // page.items[index] = request;
+            const item = page.items[index];
+            item.estimatedCompletionDate = request.estimatedCompletionDate;
+            item.status = request.status;
+            item.queuePosition = request.queuePosition;
+            item.images = item.images?.map((x) => {
+              const match = request.images?.find((image) => image.hash === x.hash);
+              return { ...x, ...match };
+            });
+            break requests;
           }
         }
       }
@@ -157,4 +165,28 @@ export const useDeleteGenerationRequestImages = (
       options?.onError?.(error, ...args);
     },
   });
+};
+
+export const useImageGenStatusUpdate = () => {
+  const update = useUpdateGenerationRequests();
+  const onStatusUpdate = useCallback(
+    ({ status, imageHash }: { status: 'Success' | 'Started' | 'Error'; imageHash: string }) => {
+      update((old) => {
+        if (!old) return;
+        pages: for (const page of old.pages) {
+          for (const item of page.items) {
+            const image = item.images?.find((x) => x.hash === imageHash);
+            if (image) {
+              image.status = status;
+              if (image.status === 'Success') image.available = true;
+              break pages;
+            }
+          }
+        }
+      });
+    },
+    [] //eslint-disable-line
+  );
+
+  useSignalConnection(SignalMessages.ImageGenStatusUpdate, onStatusUpdate);
 };

@@ -13,7 +13,15 @@ import { useDebouncer } from '~/utils/debouncer';
 
 const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'), {
   loading: () => (
-    <Center sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+    <Center
+      py="xl"
+      sx={(theme) => ({
+        [theme.fn.smallerThan('sm')]: {
+          position: 'relative',
+          height: '600px',
+        },
+      })}
+    >
       <Stack spacing="xs" align="center">
         <Text weight={500}>Loading...</Text>
         <Loader variant="bars" />
@@ -94,6 +102,9 @@ export function GenerationPanel() {
       position={mobile ? 'bottom' : 'right'}
       withCloseButton={false}
       zIndex={constants.imageGeneration.drawerZIndex}
+      styles={(theme) => ({
+        drawer: { [theme.fn.smallerThan('md')]: { position: 'absolute', height: 'auto' } },
+      })}
     >
       {showContent && <GenerationTabs />}
     </Drawer>

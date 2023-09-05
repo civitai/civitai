@@ -153,6 +153,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         break;
       case CommercialUse.Image:
         commercialUseOr.push(CommercialUse.Image);
+      case CommercialUse.RentCivit:
+        commercialUseOr.push(CommercialUse.RentCivit);
       case CommercialUse.Rent:
         commercialUseOr.push(CommercialUse.Rent);
       case CommercialUse.Sell:

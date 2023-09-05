@@ -29,6 +29,7 @@ import {
   useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
+import { StarRating } from '~/components/StartRating/StarRating';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
@@ -100,10 +101,7 @@ export const ModelSearchItem = forwardRef<
           {category && <Badge size="xs">{category.name}</Badge>}
         </Group>
         <Group spacing={4}>
-          <IconBadge
-            // @ts-ignore: ignoring because size doesn't allow number
-            icon={<Rating value={metrics.rating} size={12} readOnly />}
-          >
+          <IconBadge icon={<StarRating value={metrics.rating} size={12} />}>
             {abbreviateNumber(metrics.ratingCount)}
           </IconBadge>
           <IconBadge icon={<IconHeart size={12} stroke={2.5} />}>
