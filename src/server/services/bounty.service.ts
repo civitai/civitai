@@ -1,4 +1,4 @@
-import { Currency, Prisma } from '@prisma/client';
+import { Currency, ImageIngestionStatus, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
 import { getFilesByEntity } from './file.service';
@@ -8,7 +8,8 @@ import { imageSelect } from '../selectors/image.selector';
 import { getUserAccountHandler } from '~/server/controllers/buzz.controller';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { groupBy } from 'lodash-es';
+import { ingestImage } from '~/server/services/image.service';
+import { chunk, groupBy } from 'lodash-es';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: { cursor, limit: take },
@@ -86,8 +87,8 @@ export const createBounty = async ({
         })),
       });
 
-      const imageIds = await tx.image.findMany({
-        select: { id: true },
+      const imageRecords = await tx.image.findMany({
+        select: { id: true, ingestion: true, url: true },
         where: {
           url: {
             in: images.map((i) => i.url),
@@ -96,8 +97,21 @@ export const createBounty = async ({
         },
       });
 
+      const batches = chunk(imageRecords, 50);
+      for (const batch of batches) {
+        await Promise.all(
+          batch.map((image) => {
+            if (image.ingestion === ImageIngestionStatus.Pending) {
+              return ingestImage({ image });
+            }
+
+            return;
+          })
+        );
+      }
+
       await tx.imageConnection.createMany({
-        data: imageIds.map((image) => ({
+        data: imageRecords.map((image) => ({
           imageId: image.id,
           entityId: bounty.id,
           entityType: 'Bounty',
