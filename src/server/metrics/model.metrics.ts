@@ -235,10 +235,9 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
     `;
   }
 
-  if (affectedModelVersions.length > 0) {
+  if (modelVersionIds.size > 0) {
     // Get affected models from version IDs:
-    const versionIds = affectedModelVersions.map(({ modelVersionId }) => modelVersionId);
-    return getModelIdFromVersions({ versionIds, db });
+    return getModelIdFromVersions({ versionIds: [...modelVersionIds], db });
   }
 
   return [];
