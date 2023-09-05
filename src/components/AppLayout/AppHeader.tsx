@@ -54,7 +54,7 @@ import { useRouter } from 'next/router';
 import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
-import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
+import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';

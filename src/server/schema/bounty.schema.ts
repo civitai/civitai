@@ -5,18 +5,19 @@ import { baseFileSchema } from './file.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { tagSchema } from './tag.schema';
 import { infiniteQuerySchema } from './base.schema';
-import { BountySortSchema } from '../common/enums';
+import { BountySort, BountyStatus } from '../common/enums';
 import { imageSchema } from '~/server/schema/image.schema';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
   z.object({
     query: z.string().optional(),
-    type: z.nativeEnum(BountyType).optional(),
+    types: z.nativeEnum(BountyType).array().optional(),
     mode: z.nativeEnum(BountyMode).optional(),
+    status: z.nativeEnum(BountyStatus).optional(),
     nsfw: z.boolean().optional(),
     period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
-    sort: z.nativeEnum(BountySortSchema).default(BountySortSchema.Newest),
+    sort: z.nativeEnum(BountySort).default(BountySort.Newest),
   })
 );
 

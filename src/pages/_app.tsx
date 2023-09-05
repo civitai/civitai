@@ -229,6 +229,18 @@ function MyApp(props: CustomAppProps) {
                 '#A27036',
                 '#88643B',
               ],
+              success: [
+                '#9EC3B8',
+                '#84BCAC',
+                '#69BAA2',
+                '#4CBD9C',
+                '#32BE95',
+                '#1EBD8E',
+                '#299C7A',
+                '#2F826A',
+                '#326D5C',
+                '#325D51',
+              ],
             },
           }}
           withGlobalStyles

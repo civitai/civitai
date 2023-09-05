@@ -7,6 +7,7 @@ import {
   getAllBounties,
   getBountyById,
   getBountyImages,
+  getImagesForBounties,
   updateBountyById,
 } from '../services/bounty.service';
 import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
@@ -18,6 +19,9 @@ import {
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId } from '../services/bountyEntry.service';
+import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
+import { getImagesByEntity } from '../services/image.service';
+import { isDefined } from '~/utils/type-guards';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -34,6 +38,7 @@ export const getInfiniteBountiesHandler = async ({
       select: {
         id: true,
         name: true,
+        createdAt: true,
         expiresAt: true,
         type: true,
         user: { select: userWithCosmeticsSelect },
@@ -46,7 +51,21 @@ export const getInfiniteBountiesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    return { nextCursor, items };
+    const bountIds = items.map((bounty) => bounty.id);
+    const images = await getImagesForBounties({ bountyIds: bountIds });
+
+    return {
+      nextCursor,
+      items: items
+        .map((item) => {
+          const itemImages = images[item.id];
+          // if there are no images, we don't want to show the bounty
+          if (!itemImages?.length) return null;
+
+          return { ...item, images: itemImages };
+        })
+        .filter(isDefined),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -57,7 +76,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     const bounty = await getBountyById({ ...input, select: getBountyDetailsSelect });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
-    const images = await getBountyImages({ id: bounty.id });
+    const images = await getImagesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return { ...bounty, images };
   } catch (error) {
@@ -80,6 +99,26 @@ export const getBountyEntriesHandler = async ({
     });
 
     return entries;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getBountyBenefactorsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    const benefactors = await getAllBenefactorsByBountyId({
+      input: { bountyId: input.id },
+      select: { unitAmount: true, user: { select: userWithCosmeticsSelect } },
+    });
+
+    return benefactors;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

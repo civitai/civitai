@@ -54,7 +54,8 @@ export type ImageGuardConnect = {
     | 'user'
     | 'post'
     | 'collectionItem'
-    | 'collection';
+    | 'collection'
+    | 'bounty';
   entityId: string | number;
 };
 // #region [store]
