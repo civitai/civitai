@@ -1,10 +1,22 @@
-import { ModelFileVisibility } from '@prisma/client';
+import { ModelFileVisibility, TrainingStatus } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
+export type TrainingResults = z.infer<typeof trainingResultsSchema>;
 export const trainingResultsSchema = z.object({
-  start_time: z.string().nullish(),
-  end_time: z.string().nullish(),
+  start_time: z.date().nullish(),
+  end_time: z.date().nullish(),
+  attempts: z.number().nullish(),
+  history: z
+    .array(
+      z.object({
+        jobId: z.string(),
+        jobToken: z.string(),
+        status: z.nativeEnum(TrainingStatus),
+        message: z.string().nullish(),
+      })
+    )
+    .nullish(),
   epochs: z
     .array(
       z.object({

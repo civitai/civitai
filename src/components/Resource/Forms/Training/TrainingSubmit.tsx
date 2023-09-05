@@ -460,15 +460,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           await queryUtils.model.getMyTrainingModels.invalidate();
 
           doTraining.mutate(
-            {
-              model: baseModel,
-              trainingData: thisFile.url,
-              params: {
-                ...paramData,
-                modelFileId: thisFile.id,
-                loraName: model.name,
-              },
-            },
+            { modelVersionId: thisModelVersion.id },
             {
               onSuccess: async () => {
                 setAwaitInvalidate(false);
@@ -478,9 +470,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 });
                 await router.replace(userTrainingDashboardURL);
               },
-              onError: () => {
+              onError: (error) => {
                 // TODO [bw] set status back to pending
                 setAwaitInvalidate(false);
+                showErrorNotification({
+                  error: new Error(error.message),
+                  title: 'Failed to submit.',
+                });
               },
             }
           );
