@@ -72,7 +72,6 @@ export const createBounty = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      console.log(account.balance, unitAmount);
       if (account.balance < unitAmount) {
         throw throwInsufficientFundsError();
       }
@@ -208,6 +207,7 @@ export const getBountyImages = async ({ id }: GetByIdInput) => {
 };
 
 export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] }) => {
+  // TODO.bounty: correctly handle image ingestion
   const connections = await dbRead.imageConnection.findMany({
     where: { entityType: 'Bounty', entityId: { in: bountyIds }, image: { ingestion: 'Pending' } },
     select: {

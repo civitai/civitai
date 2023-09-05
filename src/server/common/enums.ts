@@ -133,6 +133,7 @@ export enum BountySort {
   MostLiked = 'Most Liked',
   MostDiscussed = 'Most Discussed',
   MostContributors = 'Most Contributors',
+  MostTracked = 'Most Tracked',
   Newest = 'Newest',
 }
 

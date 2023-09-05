@@ -173,6 +173,7 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         </Group>
       ),
       value: 'bounties',
+      disabled: !features.bounties,
     },
   ];
 
@@ -185,7 +186,7 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
       size="md"
       classNames={classes}
       value={activePath}
-      data={data}
+      data={data.filter((item) => item.disabled === undefined || item.disabled === false)}
       onChange={(value) => {
         const url = set(value as HomeOptions);
         router.push(url);

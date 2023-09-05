@@ -1,6 +1,5 @@
 import {
   Popover,
-  ActionIcon,
   Group,
   Indicator,
   Stack,
@@ -25,7 +24,8 @@ export function BountyFiltersDropdown() {
     setFilters: state.setBountyFilters,
   }));
 
-  const filterLength = (filters.types?.length ?? 0) + (!!filters.mode ? 1 : 0);
+  const filterLength =
+    (filters.types?.length ?? 0) + (!!filters.mode ? 1 : 0) + (!!filters.status ? 1 : 0);
 
   const clearFilters = useCallback(
     () =>

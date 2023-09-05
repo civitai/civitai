@@ -8,7 +8,6 @@ import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
-import { formatDate } from '~/utils/date-helpers';
 import { BountyGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -19,7 +18,6 @@ import {
   IconMessage2,
   IconViewfinder,
 } from '@tabler/icons-react';
-import { Countdown } from '../Countdown/Countdown';
 import dayjs from 'dayjs';
 
 const IMAGE_CARD_WIDTH = 332;
@@ -27,7 +25,7 @@ const IMAGE_CARD_WIDTH = 332;
 export function BountyCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const { id, name, images, user, type, createdAt, expiresAt } = data;
+  const { id, name, images, user, type, expiresAt } = data;
   // TODO.bounty: applyUserPreferences on bounty image
   const cover = images?.[0];
 
