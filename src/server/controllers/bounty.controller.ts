@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '../createContext';
 import { GetByIdInput } from '../schema/base.schema';
 import {
+  addBenefactorUnitAmount,
   createBounty,
   deleteBountyById,
   getAllBounties,
@@ -13,6 +14,7 @@ import {
 import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import {
+  AddBenefactorUnitAmountInputSchema,
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
@@ -158,6 +160,23 @@ export const deleteBountyHandler = async ({
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     return deleted;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const addBenefactorUnitAmountHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddBenefactorUnitAmountInputSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const bountyBenefactor = await addBenefactorUnitAmount({ ...input, userId });
+    return bountyBenefactor;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

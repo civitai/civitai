@@ -3,7 +3,11 @@ import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
 import { getFilesByEntity } from './file.service';
 import { throwInsufficientFundsError, throwNotFoundError } from '../utils/errorHandling';
-import { CreateBountyInput, UpdateBountyInput } from '../schema/bounty.schema';
+import {
+  AddBenefactorUnitAmountInputSchema,
+  CreateBountyInput,
+  UpdateBountyInput,
+} from '../schema/bounty.schema';
 import { imageSelect } from '../selectors/image.selector';
 import { getUserAccountHandler } from '~/server/controllers/buzz.controller';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
@@ -198,4 +202,65 @@ export const getBountyFiles = async ({ id }: GetByIdInput) => {
   });
 
   return files;
+};
+
+export const addBenefactorUnitAmount = async ({
+  bountyId,
+  unitAmount,
+  userId,
+}: AddBenefactorUnitAmountInputSchema & { userId: number }) => {
+  const benefactor = await dbRead.bountyBenefactor.findUniqueOrThrow({
+    where: {
+      userId_bountyId: {
+        userId,
+        bountyId,
+      },
+    },
+    select: {
+      unitAmount: true,
+      currency: true,
+    },
+  });
+
+  const { currency } = benefactor;
+
+  switch (currency) {
+    case Currency.BUZZ:
+      const account = await getUserBuzzAccount({ accountId: userId });
+      console.log(account.balance, unitAmount);
+      if (account.balance < unitAmount) {
+        throw throwInsufficientFundsError();
+      }
+      break;
+    default: // Do no checks
+      break;
+  }
+
+  switch (currency) {
+    case Currency.BUZZ:
+      await createBuzzTransaction({
+        fromAccountId: userId,
+        toAccountId: 0,
+        amount: unitAmount,
+        type: TransactionType.Bounty,
+      });
+      break;
+    default: // Do no checks
+      break;
+  }
+
+  // Update benefactor record;
+  const updatedBenefactor = await dbWrite.bountyBenefactor.update({
+    data: {
+      unitAmount: unitAmount + benefactor.unitAmount,
+    },
+    where: {
+      userId_bountyId: {
+        userId,
+        bountyId,
+      },
+    },
+  });
+
+  return updatedBenefactor;
 };

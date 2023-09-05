@@ -1,6 +1,5 @@
 import {
   Badge,
-  Box,
   Button,
   Container,
   Divider,
@@ -13,11 +12,7 @@ import {
   BadgeProps,
   Tooltip,
   Accordion,
-  Menu,
-  Anchor,
-  StarIcon,
   Center,
-  Card,
   SimpleGrid,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
@@ -47,7 +42,7 @@ import { BountyMode, CollectionType, Currency, ModelStatus } from '@prisma/clien
 import { Countdown } from '~/components/Countdown/Countdown';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { IconDownload, IconHeart, IconShare3, IconStar } from '@tabler/icons-react';
+import { IconCheck, IconDownload, IconHeart, IconShare3, IconStar } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useRouter } from 'next/router';
 import { formatCurrencyForDisplay, formatKBytes } from '~/utils/number-helpers';
@@ -62,6 +57,10 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { getFileDisplayName } from '~/server/utils/model-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import produce from 'immer';
+import { showErrorNotification } from '~/utils/notifications';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -206,11 +205,52 @@ export default function BountyDetailsPage({
 }
 
 const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
-  const { classes, theme } = useStyles();
+  const { theme } = useStyles();
   const currentUser = useCurrentUser();
   const router = useRouter();
+  const queryUtils = trpc.useContext();
+
   const addToBountyEnabled =
     bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser);
+  const { isLoading, mutate: addBenefactorUnitAmountMutation } =
+    trpc.bounty.addBenefactorUnitAmount.useMutation({
+      onMutate: async ({ unitAmount }) => {
+        console.log(unitAmount);
+        await queryUtils.bounty.getById.setData(
+          { id: bounty.id },
+          produce((bounty) => {
+            if (!bounty) {
+              return;
+            }
+
+            if (isBenefactor) {
+              // Update the benefactor:
+              bounty.benefactors = bounty.benefactors.map((b) => {
+                if (b.user.id === currentUser.id) {
+                  return { ...b, unitAmount: b.unitAmount + unitAmount };
+                }
+
+                return b;
+              });
+            } else {
+              bounty.benefactors.push({ user: currentUser, unitAmount });
+            }
+          })
+        );
+      },
+      onSuccess: async () => {
+        await queryUtils.bounty.getById.invalidate({ id: bounty.id });
+      },
+      onError: async (error) => {
+        await queryUtils.bounty.getById.invalidate({ id: bounty.id });
+
+        showErrorNotification({
+          title: 'There was an error adding to the bounty.',
+          error: new Error(error.message),
+        });
+      },
+    });
+
   const isBenefactor = useMemo(() => {
     if (!bounty || !currentUser) {
       return false;
@@ -228,8 +268,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     console.log('is favorite');
   };
 
-  const onAddToBounty = () => {
-    console.log('Add to bounty!');
+  const onAddToBounty = (amount: number) => {
+    addBenefactorUnitAmountMutation({ bountyId: bounty.id, unitAmount: amount });
   };
 
   const bountyDetails: DescriptionTableProps['items'] = [
@@ -239,6 +279,52 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         <Group spacing={0} noWrap position="apart">
           <Badge radius="xl" color="gray">
             {getDisplayName(bounty.type)}
+          </Badge>
+        </Group>
+      ),
+    },
+    {
+      label: 'Bounty Mode',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="xl" color="gray">
+            {getDisplayName(bounty.mode)}
+          </Badge>
+        </Group>
+      ),
+    },
+    {
+      label: 'Entry Mode',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="xl" color="gray">
+            {getDisplayName(bounty.entryMode)}
+          </Badge>
+        </Group>
+      ),
+    },
+    {
+      label: 'Date started',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Text>{formatDate(bounty.startsAt)}</Text>
+        </Group>
+      ),
+    },
+    {
+      label: 'Deadline',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Text>{formatDate(bounty.expiresAt)}</Text>
+        </Group>
+      ),
+    },
+    {
+      label: 'Tags',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="xl" color="gray">
+            TODO.bounties
           </Badge>
         </Group>
       ),
@@ -286,9 +372,45 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               />
               <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
             </Group>
-            <Button variant="filled">
-              {isBenefactor ? 'Add to bounty' : 'Become a benefactor'}
-            </Button>
+            <PopConfirm
+              message={
+                <Stack spacing={0}>
+                  <Text size="sm">
+                    Are you sure you want {isBenefactor ? 'add' : 'become a benefactor by adding'}{' '}
+                    <Text component="span" weight={590}>
+                      <Icon
+                        color={CurrencyConfig[currency].color(theme)}
+                        fill={CurrencyConfig[currency].color(theme)}
+                        size={16}
+                      />{' '}
+                      {formatCurrencyForDisplay(minUnitAmount, currency)}
+                    </Text>{' '}
+                    to this bounty?
+                  </Text>
+                  <Text color="red.4" size="sm">
+                    This action is non refundable.
+                  </Text>
+
+                  {!isBenefactor && (
+                    <Text size="sm" mt="sm">
+                      <strong>Note:</strong> As a benefactor, you will be unable to add entries to
+                      this bounty
+                    </Text>
+                  )}
+                </Stack>
+              }
+              position="bottom-end"
+              onConfirm={() => onAddToBounty(minUnitAmount)}
+              withArrow
+            >
+              <Button variant="filled" disabled={isLoading}>
+                {isLoading
+                  ? 'Processing...'
+                  : isBenefactor
+                  ? 'Add to bounty'
+                  : 'Become a benefactor'}
+              </Button>
+            </PopConfirm>
           </Group>
         )}
         <Tooltip label="Share" position="top" withArrow>

@@ -54,3 +54,9 @@ export const updateBountyInputSchema = createBountyInputSchema
     files: true,
   })
   .merge(z.object({ id: z.number() }));
+
+export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUnitAmountInputSchema>;
+export const addBenefactorUnitAmountInputSchema = z.object({
+  unitAmount: z.number().min(1),
+  bountyId: z.number(),
+});

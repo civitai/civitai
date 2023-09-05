@@ -28,7 +28,7 @@ export const isMainBenefactor = (
     user: { id: number } | null;
     benefactors: { currency: Currency; user: { id: number } }[];
   },
-  user?: { id: number }
+  user?: { id: number } | null
 ) => {
   if (!bounty || !user) {
     return false;
