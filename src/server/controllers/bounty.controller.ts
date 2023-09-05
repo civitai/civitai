@@ -19,6 +19,7 @@ import {
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId } from '../services/bountyEntry.service';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -75,7 +76,14 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     const images = await getBountyImages({ id: bounty.id });
     const files = await getBountyFiles({ id: bounty.id });
 
-    return { ...bounty, images, files };
+    return {
+      ...bounty,
+      images: images.map((image) => ({
+        ...image,
+        meta: image?.meta as ImageMetaProps | null,
+      })),
+      files,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

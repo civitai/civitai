@@ -32,19 +32,22 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 
-type ImageProps = {
+interface ImageProps {
   id: number;
   nsfw: NsfwLevel;
   imageNsfw?: boolean;
   postId?: number | null;
   width?: number | null;
   height?: number | null;
-  needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
   url?: string | null;
   name?: string | null;
-};
+  type?: string | null;
+  hash?: string | null;
+  meta?: ImageMetaProps | null;
+  generationProcess?: string | null;
+}
 
 const useStyles = createStyles((theme) => ({
   control: {

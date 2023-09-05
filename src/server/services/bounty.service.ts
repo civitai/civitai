@@ -193,6 +193,7 @@ export const getBountyFiles = async ({ id }: GetByIdInput) => {
       url: true,
       metadata: true,
       sizeKB: true,
+      name: true,
     },
   });
 

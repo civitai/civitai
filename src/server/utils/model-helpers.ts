@@ -60,7 +60,7 @@ export const getFileDisplayName = ({
   modelType,
 }: {
   file: { type: string | ModelFileType; metadata: FileMetadata };
-  modelType: ModelType;
+  modelType?: ModelType;
 }) => {
   const { format, size, fp } = file.metadata;
   if (file.type === 'Model') {

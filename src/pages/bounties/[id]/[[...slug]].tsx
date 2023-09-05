@@ -10,21 +10,27 @@ import {
   Text,
   Title,
   createStyles,
+  BadgeProps,
+  Tooltip,
+  Accordion,
+  Menu,
+  Anchor,
+  StarIcon,
+  Center,
+  Card,
+  SimpleGrid,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { Sidebar } from '~/components/Article/Detail/Sidebar';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -34,8 +40,28 @@ import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
-import { isNsfwImage } from '~/server/common/model-helpers';
+import { createModelFileDownloadUrl, isNsfwImage } from '~/server/common/model-helpers';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { BountyMode, CollectionType, Currency, ModelStatus } from '@prisma/client';
+import { Countdown } from '~/components/Countdown/Countdown';
+import { BountyGetById } from '~/types/router';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { IconDownload, IconHeart, IconShare3, IconStar } from '@tabler/icons-react';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useRouter } from 'next/router';
+import { formatCurrencyForDisplay, formatKBytes } from '~/utils/number-helpers';
+import { getBountyCurrency, isMainBenefactor } from '~/components/Bounty/bounties.util';
+import { CurrencyConfig } from '~/server/common/constants';
+import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
+import {
+  DescriptionTable,
+  Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
+import { getDisplayName } from '~/utils/string-helpers';
+import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { getFileDisplayName } from '~/server/utils/model-helpers';
+import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -47,7 +73,7 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ ctx, ssg, session }) => {
     const features = getFeatureFlags({ user: session?.user });
-    if (!features.articles) return { notFound: true };
+    if (!features.bounties) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
@@ -67,6 +93,33 @@ export default function BountyDetailsPage({
 
   const { data: bounty, isLoading } = trpc.bounty.getById.useQuery({ id });
   const [mainImage] = bounty?.images ?? [];
+  const totalUnitAmount = useMemo(() => {
+    if (!bounty) {
+      return 0;
+    }
+
+    return bounty.benefactors.reduce((acc, benefactor) => {
+      return acc + (benefactor.unitAmount || 0);
+    }, 0);
+  }, [bounty]);
+
+  const mainBenefactor = useMemo(() => {
+    if (!bounty) {
+      return null;
+    }
+
+    return bounty.benefactors.find((b) => b.user.id === bounty.user?.id);
+  }, [bounty]);
+
+  const currency = getBountyCurrency(bounty);
+
+  const isBenefactor = useMemo(() => {
+    if (!bounty || !currentUser) {
+      return false;
+    }
+
+    return bounty.benefactors.some((b) => b.user.id === currentUser.id);
+  }, [bounty, currentUser]);
 
   const meta = (
     <Meta
@@ -92,6 +145,14 @@ export default function BountyDetailsPage({
     );
   }
 
+  const defaultBadgeProps: BadgeProps = {
+    variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
+    radius: 'xl',
+    pl: 8,
+    pr: 12,
+    color: 'gray',
+  };
+
   return (
     <>
       {meta}
@@ -102,16 +163,25 @@ export default function BountyDetailsPage({
               {bounty.name}
             </Title>
           </Group>
+          <Group spacing={8} my="sm">
+            <CurrencyBadge currency={currency} unitAmount={totalUnitAmount} />
+            <Badge {...defaultBadgeProps} style={{ color: theme.colors.teal[6] }}>
+              <Countdown endTime={bounty.expiresAt} />
+            </Badge>
+          </Group>
           <Group spacing={8}>
             <UserAvatar user={bounty.user} withUsername linkToProfile />
             <Divider orientation="vertical" />
             <Text color="dimmed" size="sm">
-              {bounty.startsAt ? formatDate(bounty.startsAt) : 'Draft'}
+              {formatDate(bounty.startsAt)}
             </Text>
           </Group>
         </Stack>
         <Grid>
-          <Grid.Col xs={12} md={8}>
+          <Grid.Col xs={12} md={4} orderMd={2}>
+            <BountySidebar bounty={bounty} />
+          </Grid.Col>
+          <Grid.Col xs={12} md={8} orderMd={1}>
             <Stack spacing="xs">
               <ImageCarousel
                 images={bounty.images}
@@ -135,6 +205,211 @@ export default function BountyDetailsPage({
   );
 }
 
+const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
+  const { classes, theme } = useStyles();
+  const currentUser = useCurrentUser();
+  const router = useRouter();
+  const addToBountyEnabled =
+    bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser);
+  const isBenefactor = useMemo(() => {
+    if (!bounty || !currentUser) {
+      return false;
+    }
+
+    return bounty.benefactors.some((b) => b.user.id === currentUser.id);
+  }, [bounty, currentUser]);
+  const currency = getBountyCurrency(bounty);
+
+  const minUnitAmount = bounty.minBenefactorUnitAmount;
+  const Icon = CurrencyConfig[currency].icon;
+
+  const isFavorite = false;
+  const onFavoriteClick = () => {
+    console.log('is favorite');
+  };
+
+  const onAddToBounty = () => {
+    console.log('Add to bounty!');
+  };
+
+  const bountyDetails: DescriptionTableProps['items'] = [
+    {
+      label: 'Bounty Type',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="xl" color="gray">
+            {getDisplayName(bounty.type)}
+          </Badge>
+        </Group>
+      ),
+    },
+  ];
+
+  const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
+    label: (
+      <Group spacing={4}>
+        <UserAvatar user={b.user} withUsername linkToProfile />
+        {isMainBenefactor(bounty, b.user) && (
+          <IconStar
+            color={CurrencyConfig[currency].color(theme)}
+            fill={CurrencyConfig[currency].color(theme)}
+            size={12}
+          />
+        )}
+      </Group>
+    ),
+    value: (
+      <Group spacing={4} style={{ float: 'right' }}>
+        <Icon
+          color={CurrencyConfig[currency].color(theme)}
+          fill={CurrencyConfig[currency].color(theme)}
+          size={20}
+        />
+        <Text weight={590}>{formatCurrencyForDisplay(b.unitAmount, currency)}</Text>
+      </Group>
+    ),
+  }));
+
+  const files = bounty.files ?? [];
+  const filesCount = files.length;
+
+  return (
+    <Stack>
+      <Group>
+        {addToBountyEnabled && (
+          <Group color="gray" p={4} style={{ background: theme.colors.dark[6] }}>
+            <Group spacing={2}>
+              <Icon
+                color={CurrencyConfig[currency].color(theme)}
+                fill={CurrencyConfig[currency].color(theme)}
+                size={20}
+              />
+              <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
+            </Group>
+            <Button variant="filled">
+              {isBenefactor ? 'Add to bounty' : 'Become a benefactor'}
+            </Button>
+          </Group>
+        )}
+        <Tooltip label="Share" position="top" withArrow>
+          <div>
+            <ShareButton url={router.asPath} title={bounty.name}>
+              <Button
+                sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                color="gray"
+              >
+                <IconShare3 />
+              </Button>
+            </ShareButton>
+          </div>
+        </Tooltip>
+        <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+          <div>
+            <LoginRedirect reason="favorite-model">
+              <Button
+                onClick={onFavoriteClick}
+                color={isFavorite ? 'red' : 'gray'}
+                sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+              >
+                <IconHeart color="#fff" />
+              </Button>
+            </LoginRedirect>
+          </div>
+        </Tooltip>
+      </Group>
+
+      <Accordion
+        variant="separated"
+        multiple
+        defaultValue={['details']}
+        styles={(theme) => ({
+          content: { padding: 0 },
+          item: {
+            overflow: 'hidden',
+            borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+            boxShadow: theme.shadows.sm,
+          },
+          control: {
+            padding: theme.spacing.sm,
+          },
+        })}
+      >
+        <Accordion.Item value="details">
+          <Accordion.Control>
+            <Group position="apart">Overview</Group>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <DescriptionTable
+              items={bountyDetails}
+              labelWidth="30%"
+              withBorder
+              paperProps={{
+                sx: {
+                  borderLeft: 0,
+                  borderRight: 0,
+                  borderBottom: 0,
+                },
+                radius: 0,
+              }}
+            />
+          </Accordion.Panel>
+        </Accordion.Item>
+        <Accordion.Item value="benefactors">
+          <Accordion.Control>
+            <Group position="apart">Benefactors</Group>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <DescriptionTable
+              items={benefactorDetails}
+              labelWidth="70%"
+              withBorder
+              paperProps={{
+                sx: {
+                  borderLeft: 0,
+                  borderRight: 0,
+                  borderBottom: 0,
+                },
+                radius: 0,
+              }}
+            />
+          </Accordion.Panel>
+        </Accordion.Item>
+        <Accordion.Item
+          value="files"
+          sx={(theme) => ({
+            marginTop: theme.spacing.md,
+            marginBottom: theme.spacing.md,
+            borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
+          })}
+        >
+          <Accordion.Control>
+            <Group position="apart">
+              {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
+            </Group>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <Stack spacing={2}>
+              {filesCount > 0 ? (
+                <SimpleGrid cols={1} spacing={2}>
+                  {files.map((file) => (
+                    <AttachmentCard key={file.id} {...file} />
+                  ))}
+                </SimpleGrid>
+              ) : (
+                <Center p="xl">
+                  <Text size="md" color="dimmed">
+                    No files were provided for this bounty
+                  </Text>
+                </Center>
+              )}
+            </Stack>
+          </Accordion.Panel>
+        </Accordion.Item>
+      </Accordion>
+    </Stack>
+  );
+};
+
 const useStyles = createStyles((theme) => ({
   titleWrapper: {
     gap: theme.spacing.xs,
@@ -150,13 +425,6 @@ const useStyles = createStyles((theme) => ({
       fontSize: theme.fontSizes.xs * 2.4, // 24px
       width: '100%',
       paddingBottom: 0,
-    },
-  },
-
-  badgeText: {
-    fontSize: theme.fontSizes.md,
-    [theme.fn.smallerThan('md')]: {
-      fontSize: theme.fontSizes.sm,
     },
   },
 }));

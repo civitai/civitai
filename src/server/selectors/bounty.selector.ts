@@ -10,6 +10,7 @@ export const getBountyDetailsSelect = Prisma.validator<Prisma.BountySelect>()({
   type: true,
   expiresAt: true,
   startsAt: true,
+  minBenefactorUnitAmount: true,
   mode: true,
   user: { select: userWithCosmeticsSelect },
   tags: { select: { tag: { select: { id: true, name: true } } } },
