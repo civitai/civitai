@@ -35,19 +35,6 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
           to work.
         </AlertWithIcon>
       )}
-      {isLoCon && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          This is a LyCORIS (LoCon/LoHA) model, and requires an{' '}
-          <Anchor
-            href="https://github.com/KohakuBlueleaf/a1111-sd-webui-lycoris"
-            rel="nofollow"
-            target="_blank"
-          >
-            additional extension in Automatic 1111
-          </Anchor>{' '}
-          to work.
-        </AlertWithIcon>
-      )}
       {hasNegativeEmbed && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This Textual Inversion includes a{' '}
