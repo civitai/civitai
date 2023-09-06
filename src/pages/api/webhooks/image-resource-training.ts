@@ -87,9 +87,10 @@ export default WebhookEndpoint(async (req, res) => {
       }
 
       break;
-    // cannot do anything with Expire and Claim until we store the jobId
     case 'Expire':
     case 'Claim':
+      // TODO: handle these now that we have the job id
+      break;
     default:
       return res.status(400).json({ ok: false, error: 'type not supported' });
   }
@@ -115,21 +116,25 @@ async function updateRecords(
 
   modelFile.metadata = modelFileMetadataSchema.parse(modelFile.metadata) as Prisma.JsonObject;
 
-  const trainingResults = (modelFile.metadata.trainingResults as TrainingResults) || {};
+  const trainingResults = (modelFile.metadata?.trainingResults as TrainingResults) || {};
   const history = trainingResults.history || [];
 
-  let attempts = trainingResults.attempts || 0;
-  if (status !== TrainingStatus.Processing) {
-    // increment attempts
-    attempts += 1;
-
+  const last = history[history.length - 1];
+  if (!last || last.status != status) {
     // push to history
     history.push({
       jobId: jobId,
-      jobToken: history[history.length - 1]?.jobToken,
+      // last should always be present for new jobs and have a jobToken
+      jobToken: last?.jobToken,
       status,
       message,
     });
+  }
+
+  let attempts = trainingResults.attempts || 0;
+  if (status === TrainingStatus.Failed) {
+    // increment attempts
+    attempts += 1;
   }
 
   const metadata = {
@@ -139,13 +144,10 @@ async function updateRecords(
       epochs: epochs,
       attempts: attempts,
       history: history,
-      start_time: (trainingResults.start_time || new Date(start_time * 1000)).toISOString(),
+      start_time: trainingResults.start_time || new Date(start_time * 1000).toISOString(),
       end_time: end_time && new Date(end_time * 1000).toISOString(),
     },
   };
-
-  console.log('new metadata', metadata);
-  console.log('last token', history[history.length - 1]?.jobToken);
 
   await dbWrite.modelFile.update({
     where: { id: modelFile.id },

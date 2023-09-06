@@ -54,6 +54,7 @@ export const createTrainingRequest = async ({
     properties: { userId },
     model: modelMap[modelVersion.trainingDetails.baseModel!],
     trainingData: trainingUrl,
+    maxRetryAttempt: 0,
     params: {
       ...modelVersion.trainingDetails.params,
       modelFileId: modelVersion.fileId,
@@ -97,7 +98,7 @@ export const createTrainingRequest = async ({
             {
               // nb: this will overwrite if its ever rerun
               jobId: data.jobId as string,
-              jobToken: data.jobToken as string,
+              jobToken: data.token as string,
               status: TrainingStatus.Submitted,
             },
           ],
