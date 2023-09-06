@@ -180,12 +180,19 @@ export const createBounty = async ({
 };
 
 // TODO.bounty: handle details and tags
-export const updateBountyById = async ({ id, files, tags, ...data }: UpdateBountyInput) => {
+export const updateBountyById = async ({
+  id,
+  files,
+  tags,
+  details,
+  ...data
+}: UpdateBountyInput) => {
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.update({
       where: { id },
       data: {
         ...data,
+        details: (details as Prisma.JsonObject) ?? Prisma.JsonNull,
         tags: tags
           ? {
               deleteMany: {

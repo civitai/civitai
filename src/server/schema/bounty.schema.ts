@@ -7,6 +7,7 @@ import { tagSchema } from './tag.schema';
 import { infiniteQuerySchema } from './base.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { imageSchema } from '~/server/schema/image.schema';
+import { constants } from '~/server/common/constants';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -21,6 +22,11 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
   })
 );
 
+export type BountyDetailsSchema = z.infer<typeof bountyDetailsSchema>;
+export const bountyDetailsSchema = z.object({
+  baseModel: z.enum(constants.baseModels),
+});
+
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
@@ -29,13 +35,13 @@ export const createBountyInputSchema = z.object({
   }, 'Cannot be empty'),
   unitAmount: z.number().min(5000),
   currency: z.nativeEnum(Currency),
-  details: z.object({}).passthrough().optional(),
   expiresAt: z
     .date()
     .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
   startsAt: z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
   mode: z.nativeEnum(BountyMode),
   type: z.nativeEnum(BountyType),
+  details: bountyDetailsSchema.passthrough().optional(),
   entryMode: z.nativeEnum(BountyEntryMode),
   minBenefactorUnitAmount: z.number().min(1),
   maxBenefactorUnitAmount: z.number().optional(),
@@ -43,7 +49,7 @@ export const createBountyInputSchema = z.object({
   tags: z.array(tagSchema).optional(),
   nsfw: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
-  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded').optional(),
+  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;

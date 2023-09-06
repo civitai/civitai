@@ -43,6 +43,10 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
+import { getDisplayName } from '~/utils/string-helpers';
+import { constants } from '~/server/common/constants';
+import { TRPCClientError } from '@trpc/client';
+import { z } from 'zod';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -52,6 +56,10 @@ const tooltipProps: Partial<TooltipProps> = {
 };
 
 const MIN_CREATE_BOUNTY_AMOUNT = 5000;
+
+const formSchema = createBountyInputSchema.omit({
+  images: true,
+});
 
 export function BountyCreateForm() {
   const router = useRouter();
@@ -75,7 +83,7 @@ export function BountyCreateForm() {
   );
 
   const form = useForm({
-    schema: createBountyInputSchema,
+    schema: formSchema,
     defaultValues: {
       name: '',
       description: '',
@@ -91,16 +99,17 @@ export function BountyCreateForm() {
       files: [],
       expiresAt: dayjs().add(7, 'day').toDate(),
       startsAt: new Date(),
+      details: {},
     },
     shouldUnregister: false,
   });
 
   const clearStorage = useFormStorage({
-    schema: createBountyInputSchema,
+    schema: formSchema,
     form,
     timeout: 1000,
     key: `bounty_new`,
-    watch: ({ mode, name, nsfw, currency, description, entryMode, unitAmount }) => ({
+    watch: ({ mode, name, type, nsfw, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
       nsfw,
@@ -108,17 +117,24 @@ export function BountyCreateForm() {
       description,
       entryMode,
       unitAmount,
+      type,
     }),
   });
+  const type = form.watch('type');
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const entryMode = form.watch('entryMode');
   const unitAmount = form.watch('unitAmount');
   const [creating, setCreating] = useState(false);
+  const requireBaseModelSelection = [
+    BountyType.ModelCreation,
+    BountyType.LoraCreation,
+    BountyType.EmbedCreation,
+  ].some((t) => t === type);
 
   const bountyCreateMutation = trpc.bounty.create.useMutation();
 
-  const handleSubmit = ({ ...data }: CreateBountyInput) => {
+  const handleSubmit = ({ ...data }: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
       .filter((file) => file.status === 'success')
       .map(({ id, url, ...file }) => ({ ...file, url: id })); ///
@@ -131,10 +147,18 @@ export function BountyCreateForm() {
           clearStorage();
         },
         onError(error) {
-          showErrorNotification({
-            title: 'Failed to create bounty',
-            error: new Error(error.message),
-          });
+          if (error instanceof TRPCClientError) {
+            const parsedError = JSON.parse(error.message);
+            showErrorNotification({
+              title: 'Failed to create bounty',
+              error: new Error(parsedError[0].message),
+            });
+          } else {
+            showErrorNotification({
+              title: 'Failed to create bounty',
+              error: new Error(error.message),
+            });
+          }
         },
       }
     );
@@ -148,6 +172,29 @@ export function BountyCreateForm() {
           <Title>Create new Bounty</Title>
         </Group>
         <Divider label="Bounty details" />
+        <Group spacing="xs" grow>
+          <InputSelect
+            name="type"
+            label="Bounty Type"
+            placeholder="Please select a bounty type"
+            withAsterisk
+            style={{ flex: 1 }}
+            data={Object.values(BountyType).map((value) => ({
+              value,
+              label: getDisplayName(value),
+            }))}
+          />
+          {requireBaseModelSelection && (
+            <InputSelect
+              name="details.baseModel"
+              label="Base model"
+              placeholder="Please select a base model"
+              withAsterisk
+              style={{ flex: 1 }}
+              data={constants.baseModels.map((x) => ({ value: x, label: x }))}
+            />
+          )}
+        </Group>
         <InputText name="name" label="Name" placeholder="e.g.:LoRA for XYZ" withAsterisk />
         <InputCheckbox
           name="nsfw"
