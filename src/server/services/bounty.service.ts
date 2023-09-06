@@ -287,7 +287,6 @@ export const addBenefactorUnitAmount = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      console.log(account.balance, unitAmount);
       if (account.balance < unitAmount) {
         throw throwInsufficientFundsError();
       }

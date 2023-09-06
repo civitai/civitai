@@ -14,11 +14,9 @@ import {
   Accordion,
   Center,
   SimpleGrid,
-  Box,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo } from 'react';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -34,43 +32,35 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
-import { createModelFileDownloadUrl, isNsfwImage } from '~/server/common/model-helpers';
+import { isNsfwImage } from '~/server/common/model-helpers';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { BountyMode, CollectionType, Currency, ModelStatus } from '@prisma/client';
-import { Countdown } from '~/components/Countdown/Countdown';
+import { BountyMode } from '@prisma/client';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { IconCheck, IconDownload, IconHeart, IconShare3, IconStar } from '@tabler/icons-react';
+import { IconHeart, IconShare3, IconStar } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useRouter } from 'next/router';
-import { formatCurrencyForDisplay, formatKBytes } from '~/utils/number-helpers';
+import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { getBountyCurrency, isMainBenefactor } from '~/components/Bounty/bounties.util';
-import { CurrencyConfig, IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
+import { CurrencyConfig } from '~/server/common/constants';
 import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getDisplayName, removeTags } from '~/utils/string-helpers';
-import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
-import { getFileDisplayName } from '~/server/utils/model-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
-import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { useDisclosure } from '@mantine/hooks';
-import { SearchLayout } from '~/components/Search/SearchLayout';
-import ImageSearch from '~/pages/search/images';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 
 const querySchema = z.object({
-  id: z.preprocess(parseNumericString, z.number()),
+  id: z.coerce.number(),
   slug: z.array(z.string()).optional(),
 });
 
@@ -157,7 +147,7 @@ export default function BountyDetailsPage({
           <Group spacing={8} my="sm">
             <CurrencyBadge currency={currency} unitAmount={totalUnitAmount} />
             <Badge {...defaultBadgeProps} style={{ color: theme.colors.teal[6] }}>
-              <Countdown endTime={bounty.expiresAt} />
+              <DaysFromNow date={bounty.expiresAt} />
             </Badge>
           </Group>
           <Group spacing={8}>
@@ -243,7 +233,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       onSuccess: async (_, { unitAmount }) => {
         showSuccessNotification({
           title: isBenefactor
-            ? 'You have raised how much you contribute!'
+            ? 'Your contribution has increased!'
             : 'You have been added as a benefactor to the bounty!',
           message: `The amount of ${formatCurrencyForDisplay(
             unitAmount,
@@ -372,7 +362,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   return (
     <Stack>
-      <Group>
+      <Group noWrap>
         {addToBountyEnabled && (
           <Group color="gray" p={4} style={{ background: theme.colors.dark[6] }}>
             <Group spacing={2}>

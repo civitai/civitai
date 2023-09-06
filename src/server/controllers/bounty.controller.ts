@@ -26,6 +26,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
 import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
+import { getFilesByEntity } from '~/server/services/file.service';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -95,7 +96,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     const images = await getBountyImages({ id: bounty.id });
-    const files = await getBountyFiles({ id: bounty.id });
+    const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
       ...bounty,

@@ -340,8 +340,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
 export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ctx: Context }) => {
   try {
-    console.log(input);
-
     const result = await getImage({
       ...input,
       userId: ctx.user?.id,
