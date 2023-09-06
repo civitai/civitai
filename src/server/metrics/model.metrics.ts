@@ -184,7 +184,7 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
   const affectedModelVersionsDb = await db.$queryRaw<{ modelVersionId: number }[]>`
     SELECT DISTINCT "modelVersionId"
     FROM "ResourceReview"
-    WHERE "createdAt" > ${lastUpdate};
+    WHERE "createdAt" > ${lastUpdate} OR "updatedAt" > ${lastUpdate}
   `;
   affectedModelVersionsDb.forEach(({ modelVersionId }) => modelVersionIds.add(modelVersionId));
 
