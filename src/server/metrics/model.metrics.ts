@@ -194,10 +194,11 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
     await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
       SELECT
-          rr."modelVersionId",
+          mv.id,
           tf.timeframe,
           COALESCE(SUM(
               CASE
+                  WHEN rr."userId" IS NULL THEN 0
                   WHEN tf.timeframe = 'AllTime' THEN 1
                   WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
                   WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
@@ -207,6 +208,7 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
           ), 0),
           COALESCE(AVG(
               CASE
+                  WHEN rr."userId" IS NULL THEN 0
                   WHEN tf.timeframe = 'AllTime' THEN rating
                   WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', rating, NULL)
                   WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', rating, NULL)
@@ -214,7 +216,8 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
                   WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', rating, NULL)
               END
           ), 0)
-      FROM (
+      FROM "ModelVersion" mv
+      LEFT JOIN (
           SELECT
               r."userId",
               r."modelVersionId",
@@ -226,11 +229,12 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
           AND r."tosViolation" = FALSE
           AND r."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
           GROUP BY r."userId", r."modelVersionId"
-      ) rr
+      ) rr ON rr."modelVersionId" = mv.id
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
-      GROUP BY rr."modelVersionId", tf.timeframe
+      WHERE mv.id = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+      GROUP BY mv.id, tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
     `;
   }

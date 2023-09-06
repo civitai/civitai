@@ -36,6 +36,7 @@ export function ResourceReviewMenu({
     modelId: number;
     modelVersionId: number;
     exclude?: boolean;
+    metadata?: any;
   };
 } & MenuProps) {
   const currentUser = useCurrentUser();
@@ -139,14 +140,14 @@ export function ResourceReviewMenu({
               >
                 Exclude from average
               </Menu.Item>
-            ) : (
+            ) : review.metadata?.excludeReason !== 'reviewManipulation' ? (
               <Menu.Item
                 icon={<IconCalculator size={14} stroke={1.5} />}
                 onClick={handleUnexcludeReview}
               >
                 Unexclude from average
               </Menu.Item>
-            )}
+            ) : null}
             <ToggleLockComments entityId={reviewId} entityType="review">
               {({ toggle, locked, isLoading }) => {
                 return (
