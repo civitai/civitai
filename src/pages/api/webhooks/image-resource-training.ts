@@ -1,7 +1,6 @@
-import { Prisma, TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { TrainingResults, modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export type EpochSchema = z.infer<typeof epoch_schema>;
@@ -110,13 +109,8 @@ async function updateRecords(
     throw new Error('ModelFile not found');
   }
 
-  if (!modelFile.metadata) {
-    modelFile.metadata = {};
-  }
-
-  modelFile.metadata = modelFileMetadataSchema.parse(modelFile.metadata) as Prisma.JsonObject;
-
-  const trainingResults = (modelFile.metadata?.trainingResults as TrainingResults) || {};
+  const thisMetadata = (modelFile.metadata ?? {}) as FileMetadata;
+  const trainingResults = thisMetadata.trainingResults || {};
   const history = trainingResults.history || [];
 
   const last = history[history.length - 1];
@@ -125,7 +119,8 @@ async function updateRecords(
     history.push({
       jobId: jobId,
       // last should always be present for new jobs and have a jobToken
-      jobToken: last?.jobToken,
+      jobToken: last?.jobToken || '',
+      time: new Date().toISOString(),
       status,
       message,
     });
@@ -138,7 +133,7 @@ async function updateRecords(
   }
 
   const metadata = {
-    ...modelFile.metadata,
+    ...thisMetadata,
     trainingResults: {
       ...trainingResults,
       epochs: epochs,

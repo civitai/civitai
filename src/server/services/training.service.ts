@@ -54,7 +54,7 @@ export const createTrainingRequest = async ({
     properties: { userId },
     model: modelMap[modelVersion.trainingDetails.baseModel!],
     trainingData: trainingUrl,
-    maxRetryAttempt: 0,
+    maxRetryAttempt: 2,
     params: {
       ...modelVersion.trainingDetails.params,
       modelFileId: modelVersion.fileId,
@@ -62,7 +62,7 @@ export const createTrainingRequest = async ({
     },
   };
 
-  console.log(JSON.stringify(generationRequest));
+  // console.log(JSON.stringify(generationRequest));
 
   const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs`, {
     method: 'POST',
@@ -73,7 +73,7 @@ export const createTrainingRequest = async ({
     body: JSON.stringify(generationRequest),
   });
 
-  console.log(response);
+  // console.log(response);
 
   if (response.status === 429) {
     throw throwRateLimitError();
@@ -99,6 +99,7 @@ export const createTrainingRequest = async ({
               // nb: this will overwrite if its ever rerun
               jobId: data.jobId as string,
               jobToken: data.token as string,
+              time: new Date().toISOString(),
               status: TrainingStatus.Submitted,
             },
           ],

@@ -73,6 +73,7 @@ type ModalData = {
   id?: number;
   file?: TrainingFileData;
   params?: TrainingDetailsParams;
+  eta?: string;
 };
 
 const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; description: string }> = {
@@ -101,9 +102,13 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
   [TrainingStatus.Failed]: {
     color: 'red',
     description:
-      'Something went wrong with the training request. Retry the training job if you see this error.',
+      'Something went wrong with the training request. Recreate the training job if you see this error (or contact us for help).',
   },
 };
+
+const minsWait = 5 * 60 * 1000;
+const minsPerEpoch = 1 * 60 * 1000;
+const minsPerEpochSDXL = 5 * 60 * 1000;
 
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
@@ -187,13 +192,27 @@ export default function UserTrainingModels() {
                   | TrainingDetailsObj
                   | undefined;
                 const thisFile = thisModelVersion.files[0];
+                const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
 
                 const hasFiles = !!thisFile;
                 const hasTrainingParams = !!thisTrainingDetails?.params;
 
-                const startTime = modalData.file?.metadata?.trainingResults?.start_time;
+                const startTime = thisFileMetadata?.trainingResults?.history?.[0].time;
                 const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
-                // const eta
+                const baseModel = thisTrainingDetails?.baseModel;
+                const eta =
+                  !!startTime && !!numEpochs
+                    ? new Date(
+                        new Date(startTime).getTime() +
+                          minsWait +
+                          numEpochs * (baseModel === 'sdxl' ? minsPerEpochSDXL : minsPerEpoch)
+                      )
+                    : undefined;
+                const etaStr = isProcessing
+                  ? !!eta
+                    ? formatDate(eta, 'MMM D, YYYY hh:mm:ss A')
+                    : 'Unknown'
+                  : '-';
 
                 return (
                   <tr key={model.id}>
@@ -229,15 +248,47 @@ export default function UserTrainingModels() {
                               },
                               {
                                 label: 'ETA',
-                                value: 'UPDATE THIS',
+                                value: modalData.eta,
                               },
                               {
                                 label: 'Training Attempts',
-                                value: 'UPDATE THIS',
+                                value: `${
+                                  (modalData.file?.metadata?.trainingResults?.attempts || 0) + 1
+                                } / 3`,
                               },
                               {
                                 label: 'History',
-                                value: 'UPDATE THIS',
+                                value: (
+                                  <Stack spacing={5}>
+                                    {modalData.file?.metadata?.trainingResults?.history
+                                      ? (
+                                          modalData.file?.metadata?.trainingResults?.history || []
+                                        ).map((h) => (
+                                          <Group key={h.time}>
+                                            <Text inline>
+                                              {formatDate(
+                                                h.time as unknown as Date,
+                                                'MM/DD/YYYY hh:mm:ss A'
+                                              )}
+                                            </Text>
+                                            <Text inline>
+                                              <Badge
+                                                color={
+                                                  trainingStatusFields[h.status]?.color ?? 'gray'
+                                                }
+                                              >
+                                                {splitUppercase(
+                                                  h.status === TrainingStatus.InReview
+                                                    ? 'Ready'
+                                                    : h.status
+                                                )}
+                                              </Badge>
+                                            </Text>
+                                          </Group>
+                                        ))
+                                      : 'No history found'}
+                                  </Stack>
+                                ),
                               },
                               {
                                 label: 'Images',
@@ -308,6 +359,7 @@ export default function UserTrainingModels() {
                               id: thisModelVersion.id,
                               file: thisFile as TrainingFileData,
                               params: thisTrainingDetails?.params,
+                              eta: etaStr,
                             });
                             open();
                           }}
@@ -360,7 +412,7 @@ export default function UserTrainingModels() {
                         )}
                       </HoverCard>
                     </td>
-                    <td>UPDATE THIS</td>
+                    <td>{etaStr}</td>
                     <td>
                       <Group>
                         {!hasFiles || !hasTrainingParams ? (

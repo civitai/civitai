@@ -16,6 +16,7 @@ import { IconCheck, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import { NoContent } from '~/components/NoContent/NoContent';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/image-resource-training';
@@ -283,19 +284,25 @@ export default function TrainingSelectFile({
     (a, b) => b.epoch_number - a.epoch_number
   );
 
+  const inError = modelVersion.trainingStatus === TrainingStatus.Failed;
+  const noEpochs = !epochs || !epochs.length;
   const resultsLoading =
     (modelVersion.trainingStatus !== TrainingStatus.InReview &&
       modelVersion.trainingStatus !== TrainingStatus.Approved) ||
-    !epochs ||
-    !epochs.length;
+    noEpochs;
 
   return (
     <Stack>
-      {resultsLoading ? (
+      {inError ? (
+        <Center py="md">
+          <NoContent message="The training job failed. Please recreate this model and try again, or contact us for help." />
+        </Center>
+      ) : noEpochs ? (
         <PageLoader text="Models are currently training..." />
       ) : (
         <>
-          {/* download all button */}
+          {/* TODO [bw] download all button */}
+          {/* TODO [bw] models: epochs, state etc */}
           <Center>
             <Title order={4}>Recommended</Title>
           </Center>

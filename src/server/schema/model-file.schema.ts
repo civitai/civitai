@@ -12,6 +12,7 @@ export const trainingResultsSchema = z.object({
       z.object({
         jobId: z.string(),
         jobToken: z.string(),
+        time: z.string(),
         status: z.nativeEnum(TrainingStatus),
         message: z.string().nullish(),
       })
