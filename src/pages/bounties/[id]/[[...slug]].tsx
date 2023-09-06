@@ -14,6 +14,7 @@ import {
   Accordion,
   Center,
   SimpleGrid,
+  Paper,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useMemo } from 'react';
@@ -39,11 +40,11 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { BountyMode } from '@prisma/client';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { IconHeart, IconShare3, IconStar } from '@tabler/icons-react';
+import { IconHeart, IconMessage2, IconShare3, IconStar } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useRouter } from 'next/router';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
-import { getBountyCurrency, isMainBenefactor } from '~/components/Bounty/bounties.util';
+import { getBountyCurrency, isMainBenefactor } from '~/components/Bounty/bounty.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import {
   DescriptionTable,
@@ -134,6 +135,8 @@ export default function BountyDetailsPage({
     color: 'gray',
   };
 
+  const canDiscuss = !currentUser?.muted || currentUser.isModerator;
+
   return (
     <>
       {meta}
@@ -187,10 +190,62 @@ export default function BountyDetailsPage({
                   )}
                 </Stack>
               </article>
-              <Divider />
             </Stack>
           </Grid.Col>
         </Grid>
+        <Stack spacing="xl" py={32}>
+          <Group position="apart">
+            <Title order={2} size={28} weight={600}>
+              Hunters
+            </Title>
+            <Button size="xs">Submit</Button>
+          </Group>
+          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Stack spacing="sm" align="center">
+              <Text size={24} weight={600} align="center">
+                No submissions yet
+              </Text>
+              <Text color="dimmed" align="center">
+                Be the first to submit your solution.
+              </Text>
+              <Button size="sm" w="75%">
+                Submit
+              </Button>
+            </Stack>
+          </Paper>
+        </Stack>
+        <Stack spacing="xl" py={32}>
+          <Group position="apart">
+            <Title order={2} size={28} weight={600}>
+              Discussion
+            </Title>
+            {canDiscuss && (
+              <Button size="xs" variant="filled" color="gray">
+                <Group spacing={4} noWrap>
+                  <IconMessage2 size={16} />
+                  Add Comment
+                </Group>
+              </Button>
+            )}
+          </Group>
+          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Stack spacing="sm" align="center">
+              <Text size={24} weight={600} align="center">
+                No comments yet
+              </Text>
+              {canDiscuss && (
+                <>
+                  <Text color="dimmed" align="center">
+                    Be the first to start a discussion here.
+                  </Text>
+                  <Button size="sm" variant="filled" color="gray" w="75%">
+                    Add comment
+                  </Button>
+                </>
+              )}
+            </Stack>
+          </Paper>
+        </Stack>
       </Container>
     </>
   );
