@@ -218,7 +218,7 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
       width,
       height,
       // wait: true,
-      scans: [ImageScanType.Label, ImageScanType.Moderation],
+      scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
       callbackUrl,
     }),
   });

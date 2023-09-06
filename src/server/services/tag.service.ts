@@ -1,4 +1,10 @@
-import { NsfwLevel, Prisma, SearchIndexUpdateQueueAction, TagTarget } from '@prisma/client';
+import {
+  NsfwLevel,
+  Prisma,
+  SearchIndexUpdateQueueAction,
+  TagSource,
+  TagTarget,
+} from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { TagSort } from '~/server/common/enums';
@@ -217,7 +223,7 @@ export const getVotableTags = async ({
   } else if (type === 'image') {
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
     const tags = await dbRead.imageTag.findMany({
-      where: { imageId: id },
+      where: { imageId: id, source: { in: [TagSource.Rekognition, TagSource.User] } },
       select: imageTagCompositeSelect,
       orderBy: { score: 'desc' },
       // take,

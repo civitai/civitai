@@ -82,6 +82,7 @@ export enum ImageScanType {
   Moderation,
   Label,
   FaceDetection,
+  WD14,
 }
 
 export enum CommentV2Sort {
