@@ -43,7 +43,7 @@ export const createBountyInputSchema = z.object({
   tags: z.array(tagSchema).optional(),
   nsfw: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
-  images: z.array(imageSchema).min(1, 'At least one image must be uploaded').optional(),
+  images: z.array(imageSchema).min(1, 'At least one example image must be uploaded').optional(),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
@@ -55,3 +55,9 @@ export const updateBountyInputSchema = createBountyInputSchema
     files: true,
   })
   .merge(z.object({ id: z.number() }));
+
+export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUnitAmountInputSchema>;
+export const addBenefactorUnitAmountInputSchema = z.object({
+  unitAmount: z.number().min(1),
+  bountyId: z.number(),
+});

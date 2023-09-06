@@ -7,6 +7,7 @@ import {
   QuestionSort,
 } from './enums';
 import {
+  Currency,
   MetricTimeframe,
   ModelStatus,
   ModelType,
@@ -16,6 +17,8 @@ import {
 } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
+import { MantineTheme } from '@mantine/core';
 
 export const constants = {
   modelFilterDefaults: {
@@ -291,3 +294,11 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 };
 
 export const DEFAULT_CURRENCY = 'USD';
+
+export const CurrencyConfig: Record<
+  Currency,
+  { icon: (props: TablerIconsProps) => JSX.Element; color: (theme: MantineTheme) => string }
+> = {
+  [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
+  [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
+};

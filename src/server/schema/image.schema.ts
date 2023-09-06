@@ -238,6 +238,7 @@ export const getImagesByCategorySchema = z.object({
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),
+  withoutPost: z.boolean().optional(),
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
   // browsingMode: z.nativeEnum(BrowsingMode).optional(),

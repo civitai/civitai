@@ -4,6 +4,7 @@ import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
 import { getFilesByEntity } from './file.service';
 import { throwInsufficientFundsError, throwNotFoundError } from '../utils/errorHandling';
 import {
+  AddBenefactorUnitAmountInputSchema,
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
@@ -246,6 +247,86 @@ export const getBountyImages = async ({ id }: GetByIdInput) => {
   });
 
   return connections.map(({ image }) => image);
+};
+
+export const getBountyFiles = async ({ id }: GetByIdInput) => {
+  const files = await dbRead.file.findMany({
+    where: { entityId: id, entityType: 'Bounty' },
+    select: {
+      id: true,
+      url: true,
+      metadata: true,
+      sizeKB: true,
+      name: true,
+    },
+  });
+
+  return files;
+};
+
+export const addBenefactorUnitAmount = async ({
+  bountyId,
+  unitAmount,
+  userId,
+}: AddBenefactorUnitAmountInputSchema & { userId: number }) => {
+  const benefactor = await dbRead.bountyBenefactor.findUnique({
+    where: {
+      userId_bountyId: {
+        userId,
+        bountyId,
+      },
+    },
+    select: {
+      unitAmount: true,
+      currency: true,
+    },
+  });
+
+  const { currency } = benefactor || { currency: Currency.BUZZ };
+
+  switch (currency) {
+    case Currency.BUZZ:
+      const account = await getUserBuzzAccount({ accountId: userId });
+      if (account.balance < unitAmount) {
+        throw throwInsufficientFundsError();
+      }
+      break;
+    default: // Do no checks
+      break;
+  }
+
+  switch (currency) {
+    case Currency.BUZZ:
+      await createBuzzTransaction({
+        fromAccountId: userId,
+        toAccountId: 0,
+        amount: unitAmount,
+        type: TransactionType.Bounty,
+      });
+      break;
+    default: // Do no checks
+      break;
+  }
+
+  // Update benefactor record;
+  const updatedBenefactor = await dbWrite.bountyBenefactor.upsert({
+    update: {
+      unitAmount: unitAmount + (benefactor?.unitAmount ?? 0),
+    },
+    create: {
+      userId,
+      bountyId,
+      unitAmount,
+    },
+    where: {
+      userId_bountyId: {
+        userId,
+        bountyId,
+      },
+    },
+  });
+
+  return updatedBenefactor;
 };
 
 export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] }) => {

@@ -2,10 +2,12 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '../createContext';
 import { GetByIdInput } from '../schema/base.schema';
 import {
+  addBenefactorUnitAmount,
   createBounty,
   deleteBountyById,
   getAllBounties,
   getBountyById,
+  getBountyFiles,
   getBountyImages,
   getImagesForBounties,
   updateBountyById,
@@ -13,15 +15,18 @@ import {
 import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import {
+  AddBenefactorUnitAmountInputSchema,
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId } from '../services/bountyEntry.service';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
 import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
+import { getFilesByEntity } from '~/server/services/file.service';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -73,12 +78,34 @@ export const getInfiniteBountiesHandler = async ({
 
 export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
-    const bounty = await getBountyById({ ...input, select: getBountyDetailsSelect });
+    const bounty = await getBountyById({
+      ...input,
+      select: {
+        ...getBountyDetailsSelect,
+        benefactors: {
+          select: {
+            user: {
+              select: userWithCosmeticsSelect,
+            },
+            unitAmount: true,
+            currency: true,
+          },
+        },
+      },
+    });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
-    const images = await getImagesByEntity({ id: bounty.id, type: 'Bounty' });
+    const images = await getBountyImages({ id: bounty.id });
+    const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
-    return { ...bounty, images };
+    return {
+      ...bounty,
+      images: images.map((image) => ({
+        ...image,
+        meta: image?.meta as ImageMetaProps | null,
+      })),
+      files,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -173,6 +200,23 @@ export const deleteBountyHandler = async ({
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     return deleted;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const addBenefactorUnitAmountHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddBenefactorUnitAmountInputSchema;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const bountyBenefactor = await addBenefactorUnitAmount({ ...input, userId });
+    return bountyBenefactor;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
