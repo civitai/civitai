@@ -27,6 +27,7 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 
 import { NoContent } from '~/components/NoContent/NoContent';
+import { constants } from '~/server/common/constants';
 import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
@@ -254,7 +255,7 @@ export default function UserTrainingModels() {
                                 label: 'Training Attempts',
                                 value: `${
                                   (modalData.file?.metadata?.trainingResults?.attempts || 0) + 1
-                                } / 3`,
+                                } / ${constants.maxTrainingRetries + 1}`,
                               },
                               {
                                 label: 'History',

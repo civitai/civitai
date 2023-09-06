@@ -1,5 +1,6 @@
 import { TrainingStatus } from '@prisma/client';
 import { env } from '~/env/server.mjs';
+import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { CreateTrainingRequestInput } from '~/server/schema/training.schema';
@@ -54,7 +55,7 @@ export const createTrainingRequest = async ({
     properties: { userId },
     model: modelMap[modelVersion.trainingDetails.baseModel!],
     trainingData: trainingUrl,
-    maxRetryAttempt: 2,
+    maxRetryAttempt: constants.maxTrainingRetries,
     params: {
       ...modelVersion.trainingDetails.params,
       modelFileId: modelVersion.fileId,
