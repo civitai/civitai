@@ -225,7 +225,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 return b;
               });
             } else {
-              bounty.benefactors.push({ user: currentUser, unitAmount });
+              // No need to do anything, as the benefactor will be added to the list
+              // on invalidate
             }
           })
         );
