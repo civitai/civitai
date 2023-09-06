@@ -1,7 +1,7 @@
 import { Group, Stack } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
-import { BountiesInfinite } from '~/components/Bounties/Infinite/BountiesInfinite';
+import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite';
 import { SortFilter } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -9,7 +9,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { BountyFiltersDropdown } from '~/components/Bounties/Infinite/BountyFiltersDropdown';
+import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
