@@ -44,10 +44,10 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { trpc } from '~/utils/trpc';
 import { useHotkeys } from '@mantine/hooks';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { ImageGetById } from '~/types/router';
+import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 export function ImageDetailByProps({
   imageId,
@@ -55,14 +55,18 @@ export function ImageDetailByProps({
   onSetImage,
   nextImageId,
   prevImageId,
+  image: defaultImageItem,
+  entityId,
+  entityType,
 }: {
   imageId: number;
   onClose: () => void;
   nextImageId: number | null;
   prevImageId: number | null;
   onSetImage: (id: number | null) => void;
-}) {
-  const { data: image = null, isLoading } = trpc.image.get.useQuery(
+  image?: ImageProps | null;
+} & Partial<ImageGuardConnect>) {
+  const { data = null, isLoading } = trpc.image.get.useQuery(
     {
       id: imageId,
       withoutPost: true,
@@ -72,12 +76,23 @@ export function ImageDetailByProps({
     }
   );
 
+  const image = data || defaultImageItem || null;
+  const reactions = data?.reactions ?? [];
+  const stats: {
+    likeCountAllTime: number;
+    dislikeCountAllTime: number;
+    heartCountAllTime: number;
+    laughCountAllTime: number;
+    cryCountAllTime: number;
+  } | null = data?.stats ?? null;
+  const user = data?.user;
+
   const { classes, cx, theme } = useStyles();
 
   return (
     <>
       <Meta
-        title={image ? `Image posted by ${image.user.username}` : 'Loading image...'}
+        title={image ? `Image posted by ${user?.username}` : 'Loading image...'}
         image={!image || image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
       />
       {image && <TrackView entityId={image.id} entityType="Image" type="ImageView" />}
@@ -97,40 +112,52 @@ export function ImageDetailByProps({
             nextImageId={nextImageId}
             prevImageId={prevImageId}
             isLoading={isLoading}
+            entityId={entityId}
+            entityType={entityType}
           />
           <Card className={cx(classes.sidebar)}>
-            {isLoading || !image ? (
+            {!image ? (
               <Center>
                 <Loader variant="bars" />
               </Center>
             ) : (
               <>
                 <Card.Section py="xs" withBorder inheritPadding>
-                  <Group position="apart" spacing={8} noWrap>
-                    <UserAvatar
-                      user={image.user}
-                      avatarProps={{ size: 32 }}
-                      size="sm"
-                      subText={
-                        <Text size="xs" color="dimmed">
-                          Uploaded <DaysFromNow date={image.createdAt} />
-                        </Text>
-                      }
-                      subTextForce
-                      withUsername
-                      linkToProfile
-                    />
-                    <Group spacing="md">
-                      <FollowUserButton userId={image.user.id} size="md" compact />
-                      <CloseButton
-                        size="md"
-                        radius="xl"
-                        variant="transparent"
-                        iconSize={20}
-                        onClick={onClose}
+                  {!user ? (
+                    <Center>
+                      <Loader variant="bars" />
+                    </Center>
+                  ) : (
+                    <Group position="apart" spacing={8} noWrap>
+                      <UserAvatar
+                        user={user}
+                        avatarProps={{ size: 32 }}
+                        size="sm"
+                        subText={
+                          <>
+                            {image.createdAt && (
+                              <Text size="xs" color="dimmed">
+                                Uploaded <DaysFromNow date={image.createdAt} />
+                              </Text>
+                            )}
+                          </>
+                        }
+                        subTextForce
+                        withUsername
+                        linkToProfile
                       />
+                      <Group spacing="md">
+                        <FollowUserButton userId={user.id} size="md" compact />
+                        <CloseButton
+                          size="md"
+                          radius="xl"
+                          variant="transparent"
+                          iconSize={20}
+                          onClick={onClose}
+                        />
+                      </Group>
                     </Group>
-                  </Group>
+                  )}
                 </Card.Section>
                 <Card.Section
                   py="xs"
@@ -219,16 +246,16 @@ export function ImageDetailByProps({
                           <Reactions
                             entityId={image.id}
                             entityType="image"
-                            reactions={image.reactions}
+                            reactions={reactions}
                             metrics={{
-                              likeCount: image.stats?.likeCountAllTime,
-                              dislikeCount: image.stats?.dislikeCountAllTime,
-                              heartCount: image.stats?.heartCountAllTime,
-                              laughCount: image.stats?.laughCountAllTime,
-                              cryCount: image.stats?.cryCountAllTime,
+                              likeCount: stats?.likeCountAllTime,
+                              dislikeCount: stats?.dislikeCountAllTime,
+                              heartCount: stats?.heartCountAllTime,
+                              laughCount: stats?.laughCountAllTime,
+                              cryCount: stats?.cryCountAllTime,
                             }}
                           />
-                          <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                          {user?.id && <ImageDetailComments imageId={image.id} userId={user.id} />}
                         </Stack>
                       </Paper>
                     </div>
@@ -307,7 +334,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
 
 type GalleryCarouselProps = {
   isLoading: boolean;
-  image: ImageGetById | null;
+  image: ImageProps | null;
   className?: string;
   nextImageId: number | null;
   prevImageId: number | null;
@@ -321,7 +348,9 @@ export function ImageDetailCarousel({
   prevImageId,
   onSetImage,
   isLoading,
-}: GalleryCarouselProps) {
+  entityId,
+  entityType = 'post',
+}: GalleryCarouselProps & Partial<ImageGuardConnect>) {
   // const router = useRouter();
   const { classes, cx } = useCarrouselStyles();
 
@@ -363,7 +392,7 @@ export function ImageDetailCarousel({
           )}
         </>
       )}
-      {isLoading ? (
+      {isLoading && !current ? (
         <Center
           style={{
             position: 'relative',
@@ -376,7 +405,7 @@ export function ImageDetailCarousel({
       ) : (
         <ImageGuard
           images={[current]}
-          connect={{ entityId: current.postId, entityType: 'post' }}
+          connect={{ entityId: entityId || current?.postId || -1, entityType }}
           render={(image) => {
             return (
               <Center

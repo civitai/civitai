@@ -99,7 +99,7 @@ export default function BountyDetailsPage({
   const { data: bounty, isLoading } = trpc.bounty.getById.useQuery({ id });
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
-  const { setImages, onSetImage } = useImageViewerCtx({ images: [] });
+  const { setImages, onSetImage } = useImageViewerCtx();
   const totalUnitAmount = useMemo(() => {
     if (!bounty) {
       return 0;

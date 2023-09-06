@@ -3,31 +3,40 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import { NsfwLevel } from '@prisma/client';
+import { ImageGenerationProcess, MediaType, NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
+import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
-interface ImageProps {
+export interface ImageProps {
   id: number;
   nsfw: NsfwLevel;
+  url: string;
+  name: string | null;
+  meta: ImageMetaProps | null;
+  hash: string | null;
+  generationProcess: ImageGenerationProcess | null;
+  width: number | null;
+  height: number | null;
+  createdAt: Date | null;
+  type: MediaType;
   imageNsfw?: boolean;
   postId?: number | null;
-  width?: number | null;
-  height?: number | null;
   needsReview?: string | null;
   userId?: number;
   user?: SimpleUser;
-  url?: string | null;
-  name?: string | null;
 }
 
 type ImageViewerState = {
   imageId: number | null;
   images: ImageProps[];
-  setImages: (images: { id: number }[]) => void;
+  setImages: (images: ImageProps[]) => void;
   nextImageId: number | null;
   prevImageId: number | null;
   onClose: () => void;
   onSetImage: (imageId: number) => void;
+  setEntityId: (entityId: number | null) => void;
+  setEntityType: (entityType: ImageGuardConnect['entityType']) => void;
 };
 
 const ImageViewerCtx = createContext<ImageViewerState>({} as any);
@@ -47,6 +56,9 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
 
   const [activeImageId, setActiveImageId] = useState<number | null>(null);
   const [images, setImages] = useState<ImageProps[]>([]);
+  const [entityId, setEntityId] = useState<number | null>(null);
+  // Always default to post
+  const [entityType, setEntityType] = useState<ImageGuardConnect['entityType'] | null>(null);
 
   const nextImageId = useMemo(() => {
     if (!activeImageId) return null;
@@ -114,7 +126,6 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
   useEffect(() => {
     if (router) {
       const res = imageViewerQueryParams.safeParse(router.query);
-      console.log(res);
       if (!res.success || !res.data?.imageId) {
         setActiveImageId(null);
       } else {
@@ -132,6 +143,8 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
     }
   }, [router]);
 
+  const activeImageRecord = images.find((i) => i.id === activeImageId);
+
   return (
     <ImageViewerCtx.Provider
       value={{
@@ -142,6 +155,8 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
         setImages,
         onSetImage,
         onClose,
+        setEntityType,
+        setEntityId,
       }}
     >
       {activeImageId && (
@@ -157,6 +172,10 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
             nextImageId={nextImageId}
             prevImageId={prevImageId}
             onSetImage={onSetImage}
+            image={activeImageRecord}
+            // Attempts to have a few fallbacks to go to. Nothing major.
+            entityId={entityId || activeImageRecord?.postId || activeImageId}
+            entityType={entityType || 'post'}
           />
         </div>
       )}
