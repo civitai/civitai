@@ -1316,7 +1316,21 @@ export const getImagesByCategory = async ({
   const cache = await redis.get(cacheKey);
   if (cache) imagesRaw = JSON.parse(cache);
   else {
+    const exclusions =
+      (input.excludedImageIds?.length ?? 0) +
+      (input.excludedTagIds?.length ?? 0) +
+      (input.excludedUserIds?.length ?? 0);
+    const queryHeader = Object.entries({
+      exclusions,
+      cursor: input.cursor,
+      limit: input.limit,
+    })
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ');
+
     imagesRaw = await dbRead.$queryRaw<GetImageByCategoryRaw[]>`
+      -- ${Prisma.raw(queryHeader)}
       WITH targets AS (
         ${Prisma.join(targets, ' UNION ALL ')}
       )
