@@ -69,12 +69,6 @@ type ImageStore = {
 
 export const useImageStore = create<ImageStore>()(
   immer((set) => ({
-    imageList: [],
-    initialImageList: [],
-    ownRights: false,
-    shareDataset: false,
-    initialOwnRights: false,
-    initialShareDataset: false,
     updateImage: (modelId, { url, name, type, caption }) => {
       set((state) => {
         if (!state[modelId])

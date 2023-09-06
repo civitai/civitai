@@ -62,6 +62,9 @@ type TrainingSettingsType = {
   };
 };
 
+/**
+ * Computes the number of decimal points in a given input using magic math
+ */
 const getPrecision = (n: any) => {
   if (!isFinite(n)) return 0;
   const e = 1;

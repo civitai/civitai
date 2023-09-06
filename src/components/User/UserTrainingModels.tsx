@@ -211,7 +211,8 @@ export default function UserTrainingModels() {
                                 label: 'Training Start',
                                 value: modalData.file?.metadata?.trainingResults?.start_time
                                   ? formatDate(
-                                      modalData.file.metadata.trainingResults.start_time,
+                                      modalData.file.metadata.trainingResults
+                                        .start_time as unknown as Date,
                                       'MMM D, YYYY hh:mm:ss A'
                                     )
                                   : 'Unknown',
