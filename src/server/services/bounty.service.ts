@@ -1,4 +1,4 @@
-import { Currency, ImageIngestionStatus, Prisma } from '@prisma/client';
+import { Currency, ImageIngestionStatus, Prisma, TagTarget } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
 import { getFilesByEntity } from './file.service';
@@ -6,6 +6,7 @@ import { throwInsufficientFundsError, throwNotFoundError } from '../utils/errorH
 import {
   AddBenefactorUnitAmountInputSchema,
   CreateBountyInput,
+  GetInfiniteBountySchema,
   UpdateBountyInput,
 } from '../schema/bounty.schema';
 import { imageSelect } from '../selectors/image.selector';
@@ -13,19 +14,38 @@ import { getUserAccountHandler } from '~/server/controllers/buzz.controller';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { ingestImage } from '~/server/services/image.service';
-import { chunk } from 'lodash';
+import { chunk, groupBy } from 'lodash-es';
+import { BountySort, BountyStatus } from '../common/enums';
+import { isNotTag, isTag } from '../schema/tag.schema';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
-  input: { cursor, limit: take },
+  input: { cursor, limit: take, query, sort, types, status, mode },
   select,
 }: {
-  input: InfiniteQueryInput;
+  input: GetInfiniteBountySchema;
   select: TSelect;
 }) => {
+  const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
+  // TODO.bounty: handle sorting when metrics are in
+  if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
+  else orderBy.push({ createdAt: 'desc' });
+
   return dbRead.bounty.findMany({
     take,
     cursor: cursor ? { id: cursor } : undefined,
     select,
+    where: {
+      mode,
+      name: query ? { contains: query } : undefined,
+      type: types && !!types.length ? { in: types } : undefined,
+      expiresAt:
+        status === BountyStatus.Open
+          ? { gt: new Date() }
+          : status === BountyStatus.Expired
+          ? { lt: new Date() }
+          : undefined,
+    },
+    orderBy,
   });
 };
 
@@ -41,7 +61,6 @@ export const getBountyById = async <TSelect extends Prisma.BountySelect>({
   return { ...bounty, files };
 };
 
-// TODO.bounty: tags
 export const createBounty = async ({
   images,
   files,
@@ -54,7 +73,6 @@ export const createBounty = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      console.log(account.balance, unitAmount);
       if (account.balance < unitAmount) {
         throw throwInsufficientFundsError();
       }
@@ -64,7 +82,26 @@ export const createBounty = async ({
   }
 
   const bounty = await dbWrite.$transaction(async (tx) => {
-    const bounty = await tx.bounty.create({ data });
+    const bounty = await tx.bounty.create({
+      data: {
+        ...data,
+        tags: tags
+          ? {
+              create: tags.map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Bounty] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
 
     await tx.bountyBenefactor.create({
       data: {
@@ -143,15 +180,38 @@ export const createBounty = async ({
 };
 
 // TODO.bounty: handle details and tags
-export const updateBountyById = async ({
-  id,
-  files,
-  details,
-  tags,
-  ...data
-}: UpdateBountyInput) => {
+export const updateBountyById = async ({ id, files, tags, ...data }: UpdateBountyInput) => {
   const bounty = await dbWrite.$transaction(async (tx) => {
-    const bounty = await tx.bounty.update({ where: { id }, data });
+    const bounty = await tx.bounty.update({
+      where: { id },
+      data: {
+        ...data,
+        tags: tags
+          ? {
+              deleteMany: {
+                tagId: {
+                  notIn: tags.filter(isTag).map((x) => x.id),
+                },
+              },
+              connectOrCreate: tags.filter(isTag).map((tag) => ({
+                where: { tagId_bountyId: { tagId: tag.id, bountyId: id } },
+                create: { tagId: tag.id },
+              })),
+              create: tags.filter(isNotTag).map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Bounty] },
+                    },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
     if (!bounty) return null;
 
     if (files) {
@@ -268,4 +328,22 @@ export const addBenefactorUnitAmount = async ({
   });
 
   return updatedBenefactor;
+};
+
+export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] }) => {
+  // TODO.bounty: correctly handle image ingestion
+  const connections = await dbRead.imageConnection.findMany({
+    where: { entityType: 'Bounty', entityId: { in: bountyIds }, image: { ingestion: 'Pending' } },
+    select: {
+      entityId: true,
+      image: { select: imageSelect },
+    },
+  });
+
+  const groupedImages = groupBy(
+    connections.map(({ entityId, image }) => ({ ...image, entityId })),
+    'entityId'
+  );
+
+  return groupedImages;
 };

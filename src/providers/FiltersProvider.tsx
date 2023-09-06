@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import {
   ArticleSort,
+  BountySort,
   BrowsingMode,
   CollectionSort,
   ImageSort,
@@ -24,6 +25,7 @@ import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
@@ -89,6 +91,23 @@ const collectionFilterSchema = z.object({
   sort: z.nativeEnum(CollectionSort).default(constants.collectionFilterDefaults.sort),
 });
 
+type BountyFilterSchema = z.infer<typeof bountyFilterSchema>;
+const bountyFilterSchema = z
+  .object({
+    period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
+    periodMode: periodModeSchema,
+    sort: z.nativeEnum(BountySort).default(BountySort.EndingSoon),
+  })
+  .merge(
+    getInfiniteBountySchema.omit({
+      query: true,
+      period: true,
+      sort: true,
+      limit: true,
+      cursor: true,
+    })
+  );
+
 export type CookiesState = {
   browsingMode: BrowsingModeSchema;
 };
@@ -101,11 +120,12 @@ type StorageState = {
   posts: PostFilterSchema;
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
+  bounties: BountyFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
 
-const periodModeTypes = ['models', 'images', 'posts', 'articles'] as const;
+const periodModeTypes = ['models', 'images', 'posts', 'articles', 'bounties'] as const;
 export type PeriodModeType = (typeof periodModeTypes)[number];
 export const hasPeriodMode = (type: string) => periodModeTypes.includes(type as PeriodModeType);
 
@@ -121,6 +141,7 @@ type StoreState = FilterState & {
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
+  setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
 };
 
 type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
@@ -137,6 +158,7 @@ const localStorageSchemas: LocalStorageSchema = {
   posts: { key: 'post-filters', schema: postFilterSchema },
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
+  bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
 };
 
 export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
@@ -216,6 +238,8 @@ const createFilterStore = (initialValues: CookiesState) =>
         set((state) => handleLocalStorageChange({ key: 'articles', data, state })),
       setCollectionFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
+      setBountyFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
     }))
   );
 
@@ -272,6 +296,7 @@ export function useSetFilters(type: FilterSubTypes) {
           modelImages: state.setModelImageFilters,
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
+          bounties: state.setBountyFilters,
         }[type]),
       [type]
     )

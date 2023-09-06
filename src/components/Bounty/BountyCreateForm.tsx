@@ -43,7 +43,6 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
-import { z } from 'zod';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -54,7 +53,7 @@ const tooltipProps: Partial<TooltipProps> = {
 
 const MIN_CREATE_BOUNTY_AMOUNT = 5000;
 
-export function BountyCreateForm({}: Props) {
+export function BountyCreateForm() {
   const router = useRouter();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
@@ -75,25 +74,26 @@ export function BountyCreateForm({}: Props) {
     []
   );
 
-  const defaultValues: CreateBountyInput = {
-    name: '',
-    description: '',
-    unitAmount: MIN_CREATE_BOUNTY_AMOUNT,
-    currency: Currency.BUZZ,
-    tags: [],
-    nsfw: false,
-    type: BountyType.LoraCreation,
-    mode: BountyMode.Individual,
-    entryMode: BountyEntryMode.Open,
-    minBenefactorUnitAmount: MIN_CREATE_BOUNTY_AMOUNT,
-    entryLimit: 1,
-    files: [],
-    expiresAt: new Date(dayjs().add(7, 'day').toDate()),
-    startsAt: new Date(),
-    images: [],
-  };
-
-  const form = useForm({ schema: createBountyInputSchema, defaultValues, shouldUnregister: false });
+  const form = useForm({
+    schema: createBountyInputSchema,
+    defaultValues: {
+      name: '',
+      description: '',
+      tags: [],
+      unitAmount: MIN_CREATE_BOUNTY_AMOUNT,
+      nsfw: false,
+      currency: Currency.BUZZ,
+      type: BountyType.LoraCreation,
+      mode: BountyMode.Individual,
+      entryMode: BountyEntryMode.Open,
+      minBenefactorUnitAmount: MIN_CREATE_BOUNTY_AMOUNT,
+      entryLimit: 1,
+      files: [],
+      expiresAt: dayjs().add(7, 'day').toDate(),
+      startsAt: new Date(),
+    },
+    shouldUnregister: false,
+  });
 
   const clearStorage = useFormStorage({
     schema: createBountyInputSchema,
@@ -389,5 +389,3 @@ export function BountyCreateForm({}: Props) {
     </Form>
   );
 }
-
-type Props = {};

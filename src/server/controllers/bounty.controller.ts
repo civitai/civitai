@@ -9,6 +9,7 @@ import {
   getBountyById,
   getBountyFiles,
   getBountyImages,
+  getImagesForBounties,
   updateBountyById,
 } from '../services/bounty.service';
 import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
@@ -22,6 +23,9 @@ import {
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId } from '../services/bountyEntry.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
+import { getImagesByEntity } from '../services/image.service';
+import { isDefined } from '~/utils/type-guards';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -38,6 +42,7 @@ export const getInfiniteBountiesHandler = async ({
       select: {
         id: true,
         name: true,
+        createdAt: true,
         expiresAt: true,
         type: true,
         user: { select: userWithCosmeticsSelect },
@@ -50,7 +55,21 @@ export const getInfiniteBountiesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    return { nextCursor, items };
+    const bountIds = items.map((bounty) => bounty.id);
+    const images = await getImagesForBounties({ bountyIds: bountIds });
+
+    return {
+      nextCursor,
+      items: items
+        .map((item) => {
+          const itemImages = images[item.id];
+          // if there are no images, we don't want to show the bounty
+          if (!itemImages?.length) return null;
+
+          return { ...item, images: itemImages };
+        })
+        .filter(isDefined),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -106,6 +125,26 @@ export const getBountyEntriesHandler = async ({
     });
 
     return entries;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getBountyBenefactorsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    const benefactors = await getAllBenefactorsByBountyId({
+      input: { bountyId: input.id },
+      select: { unitAmount: true, user: { select: userWithCosmeticsSelect } },
+    });
+
+    return benefactors;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
