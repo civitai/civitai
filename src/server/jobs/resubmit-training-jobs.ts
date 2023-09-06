@@ -1,51 +1,42 @@
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { createTrainingRequest } from '~/server/services/training.service';
-import { createJob, UNRUNNABLE_JOB_CRON } from './job';
+import { createJob } from './job';
 
 export const resubmitTrainingJobs = createJob(
   'resubmit-training-jobs',
-  UNRUNNABLE_JOB_CRON,
+  '20,50 * * * *',
   async () => {
-    // Get the training jobs that have failed
+    // Get the training jobs that are potentially stuck
     // --------------------------------------------
     const failedTrainingJobs = await dbWrite.$queryRaw<
-      { id: number; trainingStatus: string; metadata: FileMetadata | null; userId: number }[]
+      { id: number; metadata: FileMetadata | null; userId: number }[]
     >`
-      SELECT
-        mv.id,
-        mv."trainingStatus",
-        mf.metadata,
-        m."userId"
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON m.id = mv."modelId"
-      JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-      WHERE mv."trainingStatus" in ('Failed', 'Processing', 'Submitted')
-      AND m.status != 'Deleted';
+        SELECT mv.id,
+               mf.metadata,
+               m."userId"
+        FROM "ModelVersion" mv
+                 JOIN "Model" m ON m.id = mv."modelId"
+                 JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+        WHERE mv."trainingStatus" in ('Processing', 'Submitted')
+          AND m.status != 'Deleted';
     `;
 
     // Resubmit the training jobs
     // --------------------------------------------
-    for (const { id, trainingStatus, metadata, userId } of failedTrainingJobs) {
-      if (trainingStatus === 'Failed') {
-        const attempts = metadata?.trainingResults?.attempts;
-        if (!!attempts && attempts < 3) {
+    for (const { id, metadata, userId } of failedTrainingJobs) {
+      const jobHistory = metadata?.trainingResults?.history?.slice(-1);
+      if (jobHistory && jobHistory.length) {
+        const jobToken = jobHistory[0].jobToken;
+        const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs/${jobToken}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+          },
+        });
+        if (response.status === 404) {
           await createTrainingRequest({ modelVersionId: id, userId });
-        }
-      } else {
-        const jobHistory = metadata?.trainingResults?.history?.slice(-1);
-        if (jobHistory && jobHistory.length) {
-          const jobToken = jobHistory[0].jobToken;
-          const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs/${jobToken}`, {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
-            },
-          });
-          if (response.status === 404) {
-            await createTrainingRequest({ modelVersionId: id, userId });
-          }
         }
       }
     }

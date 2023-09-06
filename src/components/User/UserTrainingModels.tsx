@@ -198,9 +198,16 @@ export default function UserTrainingModels() {
                 const hasFiles = !!thisFile;
                 const hasTrainingParams = !!thisTrainingDetails?.params;
 
-                const startTime = thisFileMetadata?.trainingResults?.history?.[0].time;
+                const startTime = thisFileMetadata?.trainingResults?.history
+                  ?.filter(
+                    (h) =>
+                      h.status === TrainingStatus.Submitted ||
+                      h.status === TrainingStatus.Processing
+                  )
+                  .slice(-1)?.[0]?.time;
                 const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
                 const baseModel = thisTrainingDetails?.baseModel;
+                // nb: so yeah...this estimate can be better.
                 const eta =
                   !!startTime && !!numEpochs
                     ? new Date(
@@ -253,9 +260,10 @@ export default function UserTrainingModels() {
                               },
                               {
                                 label: 'Training Attempts',
-                                value: `${
+                                value: `${Math.min(
+                                  constants.maxTrainingRetries + 1,
                                   (modalData.file?.metadata?.trainingResults?.attempts || 0) + 1
-                                } / ${constants.maxTrainingRetries + 1}`,
+                                )} / ${constants.maxTrainingRetries + 1}`,
                               },
                               {
                                 label: 'History',

@@ -4,6 +4,7 @@ import {
   createStyles,
   Group,
   Image,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -17,7 +18,6 @@ import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/image-resource-training';
 import { ModelFileType } from '~/server/common/constants';
@@ -298,11 +298,19 @@ export default function TrainingSelectFile({
           <NoContent message="The training job failed. Please recreate this model and try again, or contact us for help." />
         </Center>
       ) : noEpochs ? (
-        <PageLoader text="Models are currently training..." />
+        <Stack p="xl" align="center">
+          <Loader />
+          <Text>Models are currently training...</Text>
+        </Stack>
       ) : (
         <>
+          {modelVersion.trainingStatus === TrainingStatus.Processing && (
+            <Stack p="xl" align="center">
+              <Loader />
+              <Text>Models are currently training...</Text>
+            </Stack>
+          )}
           {/* TODO [bw] download all button */}
-          {/* TODO [bw] models: epochs, state etc */}
           <Center>
             <Title order={4}>Recommended</Title>
           </Center>
