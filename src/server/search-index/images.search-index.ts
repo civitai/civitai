@@ -442,7 +442,6 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     // Update offset to last index recorded.
     offset = indexReadyRecords[indexReadyRecords.length - 1].id;
-    break;
   }
 
   console.log('onIndexUpdate :: index update complete');
