@@ -151,7 +151,9 @@ export function BountyCreateForm() {
             const parsedError = JSON.parse(error.message);
             showErrorNotification({
               title: 'Failed to create bounty',
-              error: new Error(parsedError[0].message),
+              error: new Error(
+                Array.isArray(parsedError) ? parsedError[0].message : parsedError.message
+              ),
             });
           } else {
             showErrorNotification({

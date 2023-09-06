@@ -68,6 +68,8 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
+import { isDefined } from '~/utils/type-guards';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -224,7 +226,17 @@ export default function BountyDetailsPage({
             </Title>
             <Button size="xs">Submit</Button>
           </Group>
-          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Paper
+            p="xl"
+            radius="sm"
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background:
+                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+            }}
+          >
             <Stack spacing="sm" align="center">
               <Text size={24} weight={600} align="center">
                 No submissions yet
@@ -353,6 +365,9 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     addBenefactorUnitAmountMutation({ bountyId: bounty.id, unitAmount: amount });
   };
 
+  const meta = bounty.details as BountyDetailsSchema;
+  console.log(meta);
+
   const bountyDetails: DescriptionTableProps['items'] = [
     {
       label: 'Bounty Type',
@@ -364,6 +379,18 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Group>
       ),
     },
+    meta?.baseModel
+      ? {
+          label: 'Base Model',
+          value: (
+            <Group spacing={0} noWrap position="apart">
+              <Badge radius="xl" color="gray">
+                {meta.baseModel}
+              </Badge>
+            </Group>
+          ),
+        }
+      : null,
     {
       label: 'Bounty Mode',
       value: (
@@ -410,7 +437,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Group>
       ),
     },
-  ];
+  ].filter(isDefined);
 
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
@@ -444,7 +471,14 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     <Stack>
       <Group noWrap>
         {addToBountyEnabled && (
-          <Group color="gray" p={4} style={{ background: theme.colors.dark[6] }}>
+          <Group
+            color="gray"
+            p={4}
+            style={{
+              background:
+                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+            }}
+          >
             <Group spacing={2}>
               <Icon
                 color={CurrencyConfig[currency].color(theme)}
