@@ -1,7 +1,7 @@
 import { Prisma, TrainingStatus } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
+import { TrainingResults, modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export type EpochSchema = z.infer<typeof epoch_schema>;
@@ -81,7 +81,7 @@ export default WebhookEndpoint(async (req, res) => {
       }
 
       try {
-        await updateRecords(data.context, status as TrainingStatus);
+        await updateRecords({ ...data.context, jobId: data.jobId }, status as TrainingStatus);
       } catch (e: unknown) {
         return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }
@@ -98,7 +98,7 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 async function updateRecords(
-  { modelFileId, epochs, start_time, end_time }: ContextProps,
+  { modelFileId, message, epochs, start_time, end_time, jobId }: ContextProps & { jobId: string },
   status: TrainingStatus
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
@@ -113,21 +113,44 @@ async function updateRecords(
     modelFile.metadata = {};
   }
 
-  if (typeof modelFile.metadata === 'object') {
-    const metadata = modelFile.metadata as Prisma.JsonObject;
-    metadata['trainingResults'] = {
-      epochs,
-      start_time: new Date(start_time * 1000).toISOString(),
-      end_time: end_time && new Date(end_time * 1000).toISOString(),
-    };
+  modelFile.metadata = modelFileMetadataSchema.parse(modelFile.metadata) as Prisma.JsonObject;
+
+  const trainingResults = (modelFile.metadata.trainingResults as TrainingResults) || {};
+  const history = trainingResults.history || [];
+
+  let attempts = trainingResults.attempts || 0;
+  if (status !== TrainingStatus.Processing) {
+    // increment attempts
+    attempts += 1;
+
+    // push to history
+    history.push({
+      jobId: jobId,
+      jobToken: history[history.length - 1]?.jobToken,
+      status,
+      message,
+    });
   }
 
-  modelFile.metadata = modelFileMetadataSchema.parse(modelFile.metadata) as Prisma.JsonObject;
+  const metadata = {
+    ...modelFile.metadata,
+    trainingResults: {
+      ...trainingResults,
+      epochs: epochs,
+      attempts: attempts,
+      history: history,
+      start_time: (trainingResults.start_time || new Date(start_time * 1000)).toISOString(),
+      end_time: end_time && new Date(end_time * 1000).toISOString(),
+    },
+  };
+
+  console.log('new metadata', metadata);
+  console.log('last token', history[history.length - 1]?.jobToken);
 
   await dbWrite.modelFile.update({
     where: { id: modelFile.id },
     data: {
-      metadata: modelFile.metadata,
+      metadata,
     },
   });
 
