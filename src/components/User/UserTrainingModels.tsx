@@ -1,4 +1,5 @@
 import {
+  Accordion,
   ActionIcon,
   Anchor,
   Badge,
@@ -30,7 +31,7 @@ import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
 } from '~/server/common/model-helpers';
-import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import { TrainingDetailsObj, TrainingDetailsParams } from '~/server/schema/model-version.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -71,6 +72,7 @@ type TrainingFileData = {
 type ModalData = {
   id?: number;
   file?: TrainingFileData;
+  params?: TrainingDetailsParams;
 };
 
 const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; description: string }> = {
@@ -123,6 +125,7 @@ export default function UserTrainingModels() {
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
+      // TODO update instead of invalidate
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
   });
@@ -159,7 +162,7 @@ export default function UserTrainingModels() {
               <th>Type</th>
               <th>Training Status</th>
               <th>Created</th>
-              <th>Last Updated</th>
+              <th>ETA</th>
               <th>Missing info</th>
               <th />
             </tr>
@@ -176,6 +179,9 @@ export default function UserTrainingModels() {
               items.map((model) => {
                 if (!model.modelVersions.length) return null;
                 const thisModelVersion = model.modelVersions[0];
+                const isProcessing =
+                  thisModelVersion.trainingStatus === TrainingStatus.Submitted ||
+                  thisModelVersion.trainingStatus === TrainingStatus.Processing;
 
                 const thisTrainingDetails = thisModelVersion.trainingDetails as
                   | TrainingDetailsObj
@@ -184,6 +190,10 @@ export default function UserTrainingModels() {
 
                 const hasFiles = !!thisFile;
                 const hasTrainingParams = !!thisTrainingDetails?.params;
+
+                const startTime = modalData.file?.metadata?.trainingResults?.start_time;
+                const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
+                // const eta
 
                 return (
                   <tr key={model.id}>
@@ -218,6 +228,18 @@ export default function UserTrainingModels() {
                                   : 'Unknown',
                               },
                               {
+                                label: 'ETA',
+                                value: 'UPDATE THIS',
+                              },
+                              {
+                                label: 'Training Attempts',
+                                value: 'UPDATE THIS',
+                              },
+                              {
+                                label: 'History',
+                                value: 'UPDATE THIS',
+                              },
+                              {
                                 label: 'Images',
                                 value: modalData.file?.metadata?.numImages || 0,
                               },
@@ -228,7 +250,6 @@ export default function UserTrainingModels() {
                               {
                                 label: 'Dataset',
                                 value: modalData.file?.url ? (
-                                  // TODO [bw] wtf is happening when i click this? a subscribe button?
                                   <DownloadButton
                                     component="a"
                                     canDownload
@@ -246,6 +267,37 @@ export default function UserTrainingModels() {
                                   'None'
                                 ),
                               },
+                              {
+                                label: 'Training Params',
+                                value: modalData.params ? (
+                                  <Accordion
+                                    styles={(theme) => ({
+                                      content: {
+                                        padding: theme.spacing.xs,
+                                      },
+                                      item: {
+                                        // overflow: 'hidden',
+                                        border: 'none',
+                                        background: 'transparent',
+                                      },
+                                      control: {
+                                        padding: theme.spacing.xs,
+                                      },
+                                    })}
+                                  >
+                                    <Accordion.Item value="params">
+                                      <Accordion.Control>Expand</Accordion.Control>
+                                      <Accordion.Panel>
+                                        <pre style={{ margin: 0 }}>
+                                          {JSON.stringify(modalData.params, null, 2)}
+                                        </pre>
+                                      </Accordion.Panel>
+                                    </Accordion.Item>
+                                  </Accordion>
+                                ) : (
+                                  'No training params set'
+                                ),
+                              },
                             ]}
                           />
                         </Modal>
@@ -255,6 +307,7 @@ export default function UserTrainingModels() {
                             setModalData({
                               id: thisModelVersion.id,
                               file: thisFile as TrainingFileData,
+                              params: thisTrainingDetails?.params,
                             });
                             open();
                           }}
@@ -294,8 +347,20 @@ export default function UserTrainingModels() {
                         <Badge color="gray">N/A</Badge>
                       )}
                     </td>
-                    <td>{formatDate(model.createdAt)}</td>
-                    <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
+                    <td>
+                      <HoverCard openDelay={400} shadow="md" zIndex={100} withArrow>
+                        <HoverCard.Target>
+                          <Text>{formatDate(model.createdAt)}</Text>
+                        </HoverCard.Target>
+                        {new Date(model.createdAt).getTime() !==
+                          new Date(model.updatedAt).getTime() && (
+                          <HoverCard.Dropdown>
+                            <Text>Updated: {formatDate(model.updatedAt)}</Text>
+                          </HoverCard.Dropdown>
+                        )}
+                      </HoverCard>
+                    </td>
+                    <td>UPDATE THIS</td>
                     <td>
                       <Group>
                         {!hasFiles || !hasTrainingParams ? (
@@ -321,7 +386,8 @@ export default function UserTrainingModels() {
                           color="red"
                           variant="subtle"
                           size="sm"
-                          onClick={() => handleDeleteModel(model)}
+                          onClick={() => !isProcessing && handleDeleteModel(model)}
+                          disabled={isProcessing}
                         >
                           <IconTrash />
                         </ActionIcon>
