@@ -1,7 +1,7 @@
 import { Prisma, TrainingStatus } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
+import { TrainingResults, modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export type EpochSchema = z.infer<typeof epoch_schema>;
@@ -81,15 +81,16 @@ export default WebhookEndpoint(async (req, res) => {
       }
 
       try {
-        await updateRecords(data.context, status as TrainingStatus);
+        await updateRecords({ ...data.context, jobId: data.jobId }, status as TrainingStatus);
       } catch (e: unknown) {
         return res.status(500).json({ ok: false, error: (e as Error)?.message });
       }
 
       break;
-    // cannot do anything with Expire and Claim until we store the jobId
     case 'Expire':
     case 'Claim':
+      // TODO: handle these now that we have the job id
+      break;
     default:
       return res.status(400).json({ ok: false, error: 'type not supported' });
   }
@@ -98,7 +99,7 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 async function updateRecords(
-  { modelFileId, epochs, start_time, end_time }: ContextProps,
+  { modelFileId, message, epochs, start_time, end_time, jobId }: ContextProps & { jobId: string },
   status: TrainingStatus
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
@@ -113,21 +114,45 @@ async function updateRecords(
     modelFile.metadata = {};
   }
 
-  if (typeof modelFile.metadata === 'object') {
-    const metadata = modelFile.metadata as Prisma.JsonObject;
-    metadata['trainingResults'] = {
-      epochs,
-      start_time: new Date(start_time * 1000).toISOString(),
-      end_time: end_time && new Date(end_time * 1000).toISOString(),
-    };
+  modelFile.metadata = modelFileMetadataSchema.parse(modelFile.metadata) as Prisma.JsonObject;
+
+  const trainingResults = (modelFile.metadata?.trainingResults as TrainingResults) || {};
+  const history = trainingResults.history || [];
+
+  const last = history[history.length - 1];
+  if (!last || last.status != status) {
+    // push to history
+    history.push({
+      jobId: jobId,
+      // last should always be present for new jobs and have a jobToken
+      jobToken: last?.jobToken,
+      status,
+      message,
+    });
   }
 
-  modelFile.metadata = modelFileMetadataSchema.parse(modelFile.metadata) as Prisma.JsonObject;
+  let attempts = trainingResults.attempts || 0;
+  if (status === TrainingStatus.Failed) {
+    // increment attempts
+    attempts += 1;
+  }
+
+  const metadata = {
+    ...modelFile.metadata,
+    trainingResults: {
+      ...trainingResults,
+      epochs: epochs,
+      attempts: attempts,
+      history: history,
+      start_time: trainingResults.start_time || new Date(start_time * 1000).toISOString(),
+      end_time: end_time && new Date(end_time * 1000).toISOString(),
+    },
+  };
 
   await dbWrite.modelFile.update({
     where: { id: modelFile.id },
     data: {
-      metadata: modelFile.metadata,
+      metadata,
     },
   });
 
