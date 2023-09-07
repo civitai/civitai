@@ -24,6 +24,7 @@ import {
   isImageResource,
   ImageEntityType,
   UpdateImageInput,
+  ImageUploadProps,
 } from './../schema/image.schema';
 
 import { TRPCError } from '@trpc/server';
@@ -52,6 +53,7 @@ import { logToDb } from '~/utils/logging';
 import { imagesSearchIndex } from '~/server/search-index';
 import { getCosmeticsForUsers } from '~/server/services/user.service';
 import { imageSelect } from '../selectors/image.selector';
+import { chunk } from 'lodash-es';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1448,11 +1450,135 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
   return dictionary;
 };
 
-export const getImagesByEntity = async ({ id, type }: { id: number; type: ImageEntityType }) => {
-  const images = await dbRead.imageConnection.findMany({
-    where: { entityId: id, entityType: type },
-    select: { image: { select: imageSelect } },
+type GetImageConnectionRaw = {
+  id: number;
+  name: string;
+  url: string;
+  nsfw: NsfwLevel;
+  width: number;
+  height: number;
+  hash: string;
+  meta: ImageMetaProps;
+  hideMeta: boolean;
+  generationProcess: ImageGenerationProcess;
+  createdAt: Date;
+  mimeType: string;
+  scannedAt: Date;
+  needsReview: string | null;
+  userId: number;
+  index: number;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
+  entityId: number;
+};
+export const getImagesByEntity = async ({
+  id,
+  ids,
+  type,
+  imagesPerId = 4,
+}: {
+  id?: number;
+  ids?: number[];
+  type: ImageEntityType;
+  imagesPerId?: number;
+}) => {
+  if (!id && !ids) {
+    return [];
+  }
+
+  const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
+    WITH targets AS (
+      SELECT
+        id,
+        "entityId"
+      FROM (
+        SELECT
+          i.id,
+          ic."entityId",
+          row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num
+        FROM "Image" i        
+        JOIN "ImageConnection" ic ON ic."imageId" = i.id 
+            AND ic."entityType" = ${type} 
+            AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
+      ) ranked
+      WHERE ranked.row_num <= ${imagesPerId}
+    )
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      i.meta,
+      i."hideMeta",
+      i."generationProcess",
+      i."createdAt",
+      i."mimeType",
+      i.type,
+      i.metadata,
+      i."scannedAt",
+      i."needsReview",
+      i."userId",
+      i."index",
+      t."entityId"
+    FROM targets t 
+    JOIN "Image" i ON i.id = t.id`;
+
+  return images;
+};
+
+export const createEntityImages = async ({
+  tx,
+  entityId,
+  entityType,
+  images,
+  userId,
+}: {
+  tx: Prisma.TransactionClient;
+  entityId: number;
+  entityType: string;
+  images: ImageUploadProps[];
+  userId: number;
+}) => {
+  await tx.image.createMany({
+    data: images.map((image) => ({
+      ...image,
+      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      userId,
+      resources: undefined,
+    })),
   });
 
-  return images.map(({ image }) => image);
+  const imageRecords = await tx.image.findMany({
+    select: { id: true, ingestion: true, url: true },
+    where: {
+      url: {
+        in: images.map((i) => i.url),
+      },
+      userId,
+    },
+  });
+
+  const batches = chunk(imageRecords, 50);
+  for (const batch of batches) {
+    await Promise.all(
+      batch.map((image) => {
+        if (image.ingestion === ImageIngestionStatus.Pending) {
+          return ingestImage({ image });
+        }
+
+        return;
+      })
+    );
+  }
+
+  await tx.imageConnection.createMany({
+    data: imageRecords.map((image) => ({
+      imageId: image.id,
+      entityId,
+      entityType,
+    })),
+  });
 };
