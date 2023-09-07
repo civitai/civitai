@@ -1,12 +1,4 @@
 import {
-  ArticleSort,
-  BrowsingMode,
-  CollectionSort,
-  ImageSort,
-  PostSort,
-  QuestionSort,
-} from './enums';
-import {
   MetricTimeframe,
   ModelStatus,
   ModelType,
@@ -16,6 +8,14 @@ import {
 } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import {
+  ArticleSort,
+  BrowsingMode,
+  CollectionSort,
+  ImageSort,
+  PostSort,
+  QuestionSort,
+} from './enums';
 
 export const constants = {
   modelFilterDefaults: {
@@ -164,6 +164,7 @@ export const constants = {
     voteDuration: 1000 * 60 * 60 * 24,
     upvoteThreshold: 3,
   },
+  maxTrainingRetries: 2,
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

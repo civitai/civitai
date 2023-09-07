@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
+import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconClock,
   IconExclamationMark,
@@ -28,6 +28,7 @@ import {
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
+import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
@@ -49,31 +50,30 @@ import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
+import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
+import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { RunButton } from '~/components/RunStrategy/RunButton';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
-import { RoutedContextLink, openRoutedContext } from '~/providers/RoutedContextProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { openRoutedContext, RoutedContextLink } from '~/providers/RoutedContextProvider';
 import { baseModelLicenses, CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getPrimaryFile, getFileDisplayName } from '~/server/utils/model-helpers';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { TrackView } from '~/components/TrackView/TrackView';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
-import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
-import dayjs from 'dayjs';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
-import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 
 export function ModelVersionDetails({
   model,
@@ -97,6 +97,12 @@ export function ModelVersionDetails({
     metadata: user?.filePreferences,
   });
   const hashes = primaryFile?.hashes ?? [];
+
+  const filesCount = version.files.length;
+  const hasFiles = filesCount > 0;
+  const filesVisible = version.files.filter((f) => f.visibility === ModelFileVisibility.Public);
+  const filesVisibleCount = filesVisible.length;
+  const hasVisibleFiles = filesVisibleCount > 0;
 
   const displayCivitaiLink = civitaiLinked && version.hashes.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
@@ -257,7 +263,7 @@ export function ModelVersionDetails({
         </Text>
       ),
       visible:
-        !!version.files?.find((file) => (file.type as ModelFileType) === 'Training Data') &&
+        !!filesVisible.find((file) => (file.type as ModelFileType) === 'Training Data') &&
         !archived,
     },
     {
@@ -324,7 +330,7 @@ export function ModelVersionDetails({
       </Menu.Item>
     )
   );
-  const downloadFileItems = version.files.map((file) => (
+  const downloadFileItems = filesVisible.map((file) => (
     <Card
       key={file.id}
       radius={0}
@@ -363,8 +369,6 @@ export function ModelVersionDetails({
 
   const isOwner = model.user?.id === user?.id;
   const isOwnerOrMod = isOwner || user?.isModerator;
-  const filesCount = version.files.length;
-  const hasFiles = filesCount > 0;
   const hasPosts = !!version.posts?.length;
   const showPublishButton =
     isOwnerOrMod &&
@@ -650,7 +654,9 @@ export function ModelVersionDetails({
             >
               <Accordion.Control disabled={archived}>
                 <Group position="apart">
-                  {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
+                  {filesVisibleCount > 0
+                    ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
+                    : 'Files'}
                   {isOwnerOrMod && (
                     <RoutedContextLink
                       modal="filesEdit"
@@ -666,7 +672,7 @@ export function ModelVersionDetails({
               </Accordion.Control>
               <Accordion.Panel>
                 <Stack spacing={2}>
-                  {hasFiles ? (
+                  {hasVisibleFiles ? (
                     downloadFileItems
                   ) : (
                     <Center p="xl">

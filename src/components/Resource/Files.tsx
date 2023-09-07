@@ -393,7 +393,7 @@ function FileEditForm({
 
   const handleSave = () => {
     const valid = validationCheck();
-    if (valid) {
+    if (valid && versionFile.id) {
       mutate({
         id: versionFile.id,
         type: versionFile.type ?? undefined,

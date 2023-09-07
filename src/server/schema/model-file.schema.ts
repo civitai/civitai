@@ -1,10 +1,23 @@
-import { ModelFileVisibility } from '@prisma/client';
+import { ModelFileVisibility, TrainingStatus } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
+export type TrainingResults = z.infer<typeof trainingResultsSchema>;
 export const trainingResultsSchema = z.object({
   start_time: z.string().nullish(),
   end_time: z.string().nullish(),
+  attempts: z.number().nullish(),
+  history: z
+    .array(
+      z.object({
+        jobId: z.string(),
+        jobToken: z.string(),
+        time: z.string(),
+        status: z.nativeEnum(TrainingStatus),
+        message: z.string().nullish(),
+      })
+    )
+    .nullish(),
   epochs: z
     .array(
       z.object({
@@ -35,16 +48,16 @@ export const modelFileMetadataSchema = z.object({
   trainingResults: trainingResultsSchema.nullish(),
 });
 
+export type ModelFileInput = z.infer<typeof modelFileSchema>;
 export const modelFileSchema = z.object({
   id: z.number().optional(),
   name: z.string(),
   url: z.string().url().min(1, 'You must select a file'),
   sizeKB: z.number(),
   type: z.enum(constants.modelFileTypes),
+  visibility: z.nativeEnum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
 });
-
-export type ModelFileInput = z.infer<typeof modelFileSchema>;
 
 export type ModelFileCreateInput = z.infer<typeof modelFileCreateSchema>;
 export const modelFileCreateSchema = z.object({
@@ -59,14 +72,18 @@ export const modelFileCreateSchema = z.object({
 
 export type ModelFileUpdateInput = z.infer<typeof modelFileUpdateSchema>;
 export const modelFileUpdateSchema = z.object({
-  id: z.number().optional(),
+  id: z.number(),
+  name: z.string().optional(),
+  url: z.string().url().min(1, 'You must select a file').optional(),
+  sizeKB: z.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
-  modelVersionId: z.number().optional(),
+  modelVersionId: z.number().optional(), // nb: this should probably not be an option here
+  visibility: z.nativeEnum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
 });
 
-// export const modelFileUpdateSchema = z.object({
-//   id: z.number(),
-//   type: z.enum(constants.modelFileTypes).optional(),
-//   modelVersionId: z.number().optional(), // used when a user needs to reassign a file to another version
-// });
+export type ModelFileUpsertInput = z.infer<typeof modelFileUpsertSchema>;
+export const modelFileUpsertSchema = z.union([
+  modelFileCreateSchema.extend({ id: z.undefined() }),
+  modelFileUpdateSchema,
+]);
