@@ -19,7 +19,7 @@ export function BountyEntryCard({ data, currency }: Props) {
   const { setImages, onSetImage } = useImageViewerCtx();
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const { user, images, files } = data;
+  const { user, images, files, awardedUnitAmountTotal } = data;
   // TODO.bounty: applyUserPreferences on bounty entry image
   const cover = images?.[0];
 
@@ -34,7 +34,7 @@ export function BountyEntryCard({ data, currency }: Props) {
         onSetImage(cover.id);
       }}
     >
-      <div className={cx(classes.root, classes.withHeader)}>
+      <div className={cx(classes.root, classes.withHeader, classes.noHover)}>
         <Stack className={classes.header}>
           <Group position="apart">
             {user ? (
@@ -65,7 +65,7 @@ export function BountyEntryCard({ data, currency }: Props) {
             )}
 
             <Group>
-              <CurrencyBadge currency={currency} unitAmount={data.awardedUnitAmountTotal} />
+              <CurrencyBadge currency={currency} unitAmount={awardedUnitAmountTotal} />
             </Group>
           </Group>
         </Stack>
