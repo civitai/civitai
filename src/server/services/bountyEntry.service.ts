@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Currency, Prisma } from '@prisma/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { dbRead, dbWrite } from '../db/client';
 import { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
@@ -26,6 +26,26 @@ export const getAllEntriesByBountyId = <TSelect extends Prisma.BountyEntrySelect
     where: { bountyId: input.bountyId },
     select,
   });
+};
+
+export const getBountyEntryEarnedBuzz = async ({
+  ids,
+  currency = Currency.BUZZ,
+}: {
+  ids: number[];
+  currency?: Currency;
+}) => {
+  const data = await dbRead.$queryRaw<{ id: number; awardedUnitAmount: number }[]>`
+    SELECT
+        be.id,
+        COALESCE(SUM(bb."unitAmount"), 0) AS awardedUnitAmount
+    FROM "BountyEntry" be
+    LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
+    WHERE be.id IN (${Prisma.join(ids)})
+    GROUP BY be.id 
+  `;
+
+  return data;
 };
 
 export const upsertBountyEntry = async ({

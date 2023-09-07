@@ -609,6 +609,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const currentUser = useCurrentUser();
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
   const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
+  const currency = getBountyCurrency(bounty);
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
@@ -675,7 +676,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         style={{ width: '100%' }}
       >
         {entries.map((entry) => (
-          <BountyEntryCard key={entry.id} data={entry} />
+          <BountyEntryCard key={entry.id} data={entry} currency={currency} />
         ))}
       </SimpleGrid>
     </Wrapper>

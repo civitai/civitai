@@ -22,13 +22,14 @@ import {
   UpdateBountyInput,
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
-import { getAllEntriesByBountyId } from '../services/bountyEntry.service';
+import { getAllEntriesByBountyId, getBountyEntryEarnedBuzz } from '../services/bountyEntry.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
 import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
+import { Currency } from '@prisma/client';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -123,6 +124,7 @@ export const getBountyEntriesHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // TODO.Bounties = We should get the currency type via the main benefactor before getting the awarded amount per entry.
     const entries = await getAllEntriesByBountyId({
       input: { bountyId: input.id },
       select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
@@ -139,6 +141,11 @@ export const getBountyEntriesHandler = async ({
       type: 'BountyEntry',
     });
 
+    const awardedTotal = await getBountyEntryEarnedBuzz({
+      ids: entries.map((entry) => entry.id),
+      currency: Currency.BUZZ,
+    });
+
     return entries.map((entry) => ({
       ...entry,
       images: images
@@ -153,6 +160,7 @@ export const getBountyEntriesHandler = async ({
           ...f,
           metadata: f.metadata as BountyEntryFileMeta,
         })),
+      awardedUnitAmountTotal: awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0,
     }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;

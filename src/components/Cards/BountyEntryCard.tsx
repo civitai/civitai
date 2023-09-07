@@ -5,26 +5,17 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
-import { BountyEntryGetById, BountyGetAll } from '~/types/router';
+import { BountyEntryGetById } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import {
-  IconBolt,
-  IconClockHour4,
-  IconHeart,
-  IconMessage2,
-  IconViewfinder,
-} from '@tabler/icons-react';
-import dayjs from 'dayjs';
 import { useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 const IMAGE_CARD_WIDTH = 332;
 
-export function BountyEntryCard({ data }: Props) {
+export function BountyEntryCard({ data, currency }: Props) {
   const { setImages, onSetImage } = useImageViewerCtx();
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
@@ -45,32 +36,38 @@ export function BountyEntryCard({ data }: Props) {
     >
       <div className={cx(classes.root, classes.withHeader)}>
         <Stack className={classes.header}>
-          {user ? (
-            user?.id !== -1 && (
-              <UnstyledButton
-                sx={{ color: 'white' }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
+          <Group position="apart">
+            {user ? (
+              user?.id !== -1 && (
+                <UnstyledButton
+                  sx={{ color: 'white' }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
 
-                  router.push(`/user/${user.username}`);
-                }}
-              >
-                <UserAvatar
-                  user={user}
-                  avatarProps={{ radius: 'md', size: 32 }}
-                  withUsername
-                  subText={
-                    <Text size="xs" color="dimmed">
-                      <DaysFromNow date={data.createdAt} />
-                    </Text>
-                  }
-                />
-              </UnstyledButton>
-            )
-          ) : (
-            <UserAvatar user={user} />
-          )}
+                    router.push(`/user/${user.username}`);
+                  }}
+                >
+                  <UserAvatar
+                    user={user}
+                    avatarProps={{ radius: 'md', size: 32 }}
+                    withUsername
+                    subText={
+                      <Text size="xs" color="dimmed">
+                        <DaysFromNow date={data.createdAt} />
+                      </Text>
+                    }
+                  />
+                </UnstyledButton>
+              )
+            ) : (
+              <UserAvatar user={user} />
+            )}
+
+            <Group>
+              <CurrencyBadge currency={currency} unitAmount={data.awardedUnitAmountTotal} />
+            </Group>
+          </Group>
         </Stack>
         <ImageGuard
           images={cover ? [cover] : []}
@@ -115,4 +112,4 @@ export function BountyEntryCard({ data }: Props) {
   );
 }
 
-type Props = { data: BountyEntryGetById };
+type Props = { data: BountyEntryGetById; currency: Currency };
