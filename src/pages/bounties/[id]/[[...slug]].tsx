@@ -340,7 +340,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     addBenefactorUnitAmountMutation({ bountyId: bounty.id, unitAmount: amount });
   };
 
-  const meta = bounty.details as BountyDetailsSchema;
+  const meta = bounty.details;
 
   const bountyDetails: DescriptionTableProps['items'] = [
     {
@@ -646,7 +646,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         <Title order={2} size={28} weight={600}>
           Hunters
         </Title>
-        <Button size="xs">Submit</Button>
+        {!currentUser.isMuted && <Button size="xs">Submit</Button>}
       </Group>
       {children}
     </Stack>
@@ -665,7 +665,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   if (!entries?.length) {
     return (
       <Wrapper>
-        <Paper p="xl" radius="sm" sx={paperStyle} component={NextLink} href={entryCreateUrl}>
+        <Paper p="xl" radius="sm" sx={paperStyle}>
           <Stack spacing="sm" align="center">
             <Text size={24} weight={600} align="center">
               No submissions yet
@@ -673,9 +673,11 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             <Text color="dimmed" align="center">
               Be the first to submit your solution.
             </Text>
-            <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
-              Submit
-            </Button>
+            {!currentUser.isMuted && (
+              <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
+                Submit
+              </Button>
+            )}
           </Stack>
         </Paper>
       </Wrapper>

@@ -168,7 +168,7 @@ export function BountyCreateForm() {
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing="xl">
         <Group spacing={4}>
-          <BackButton url="/articles" />
+          <BackButton url="/bounties" />
           <Title>Create new Bounty</Title>
         </Group>
         <Divider label="Bounty details" />

@@ -102,7 +102,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing="xl">
         <Group spacing={4}>
-          <BackButton url="/articles" />
+          <BackButton url={`/bounties/${bounty.id}`} />
           <Title>Submit new entry</Title>
         </Group>
         <Divider label="Bounty Images" />

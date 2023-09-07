@@ -16,6 +16,7 @@ import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import {
   AddBenefactorUnitAmountInputSchema,
+  BountyDetailsSchema,
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
@@ -100,6 +101,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
 
     return {
       ...bounty,
+      details: bounty.details as BountyDetailsSchema,
       images: images.map((image) => ({
         ...image,
         meta: image?.meta as ImageMetaProps | null,

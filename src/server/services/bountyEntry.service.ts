@@ -38,7 +38,7 @@ export const upsertBountyEntry = async ({
   return await dbWrite.$transaction(async (tx) => {
     if (id) {
       // confirm it exists:
-      const entry = await dbRead.bountyEntry.findUniqueOrThrow({ where: { id } });
+      const entry = await tx.bountyEntry.findUniqueOrThrow({ where: { id } });
 
       if (files) {
         await updateEntityFiles({ tx, entityId: entry.id, entityType: 'BountyEntry', files });
