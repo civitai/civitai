@@ -86,7 +86,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     for (const part of parts) {
       const priorValueEnd = part.lastIndexOf(',');
       if (parts[parts.length - 1] === part) {
-        metadata[currentKey] = part.trim();
+        metadata[currentKey] = part.trim().replace(',', '');
       } else if (priorValueEnd !== -1) {
         metadata[currentKey] = part.slice(0, priorValueEnd).trim();
         currentKey = getSDKey(part.slice(priorValueEnd + 1));
