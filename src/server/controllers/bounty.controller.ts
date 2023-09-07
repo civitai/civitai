@@ -122,7 +122,7 @@ export const getBountyEntriesHandler = async ({
   try {
     const entries = await getAllEntriesByBountyId({
       input: { bountyId: input.id },
-      select: { id: true, user: { select: userWithCosmeticsSelect } },
+      select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
     });
 
     const images = await getImagesByEntity({
@@ -133,7 +133,7 @@ export const getBountyEntriesHandler = async ({
 
     return entries.map((entry) => ({
       ...entry,
-      images: images.find((i) => i.entityId === entry.id),
+      images: images.filter((i) => i.entityId === entry.id),
     }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;

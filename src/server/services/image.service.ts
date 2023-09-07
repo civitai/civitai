@@ -1486,7 +1486,7 @@ export const getImagesByEntity = async ({
     return [];
   }
 
-  const images = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+  const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
       SELECT
         id,
@@ -1494,12 +1494,12 @@ export const getImagesByEntity = async ({
       FROM (
         SELECT
           i.id,
-          ic."entityId"
+          ic."entityId",
           row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num
         FROM "Image" i        
         JOIN "ImageConnection" ic ON ic."imageId" = i.id 
             AND ic."entityType" = ${type} 
-            AND ic."entityId" ${Prisma.raw(ids ? `IN (${Prisma.join(ids)})` : `= ${id}`)}
+            AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
       ) ranked
       WHERE ranked.row_num <= ${imagesPerId}
     )

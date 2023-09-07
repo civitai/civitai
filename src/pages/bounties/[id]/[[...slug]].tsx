@@ -17,6 +17,8 @@ import {
   Paper,
   ActionIcon,
   useMantineTheme,
+  Loader,
+  Box,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useMemo } from 'react';
@@ -73,6 +75,7 @@ import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 import { isDefined } from '~/utils/type-guards';
 import { NextLink } from '@mantine/next';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -630,8 +633,14 @@ const useStyles = createStyles((theme) => ({
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const theme = useMantineTheme();
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
+  const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
+  const paperStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+  };
 
-  return (
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
       <Group position="apart">
         <Title order={2} size={28} weight={600}>
@@ -639,31 +648,56 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         </Title>
         <Button size="xs">Submit</Button>
       </Group>
-      <Paper
-        p="xl"
-        radius="sm"
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-        }}
-        component={NextLink}
-        href={entryCreateUrl}
-      >
-        <Stack spacing="sm" align="center">
-          <Text size={24} weight={600} align="center">
-            No submissions yet
-          </Text>
-          <Text color="dimmed" align="center">
-            Be the first to submit your solution.
-          </Text>
-          <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
-            Submit
-          </Button>
-        </Stack>
-      </Paper>
+      {children}
     </Stack>
+  );
+
+  if (isLoading) {
+    return (
+      <Wrapper>
+        <Center>
+          <Loader />
+        </Center>
+      </Wrapper>
+    );
+  }
+
+  if (!entries?.length) {
+    return (
+      <Wrapper>
+        <Paper p="xl" radius="sm" sx={paperStyle} component={NextLink} href={entryCreateUrl}>
+          <Stack spacing="sm" align="center">
+            <Text size={24} weight={600} align="center">
+              No submissions yet
+            </Text>
+            <Text color="dimmed" align="center">
+              Be the first to submit your solution.
+            </Text>
+            <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
+              Submit
+            </Button>
+          </Stack>
+        </Paper>
+      </Wrapper>
+    );
+  }
+
+  return (
+    <Wrapper>
+      <SimpleGrid
+        spacing="sm"
+        breakpoints={[
+          { minWidth: 'xs', cols: 1 },
+          { minWidth: 'sm', cols: 3 },
+          { minWidth: 'md', cols: 4 },
+        ]}
+        style={{ width: '100%' }}
+      >
+        {entries.map((entry) => (
+          <BountyEntryCard key={entry.id} data={entry} />
+        ))}
+      </SimpleGrid>
+    </Wrapper>
   );
 };
 
