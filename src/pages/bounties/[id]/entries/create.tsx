@@ -34,8 +34,6 @@ export const getServerSideProps = createServerSideProps({
 
     const result = querySchema.safeParse(ctx.query);
 
-    console.log(result);
-
     if (!result.success) return { notFound: true };
 
     if (ssg) await ssg.bounty.getById.prefetch({ id: result.data.id });
@@ -48,8 +46,6 @@ export default function BountyEntryCreate({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: bounty, isLoading } = trpc.bounty.getById.useQuery({ id });
-
-  console.log(id);
 
   if (isLoading) return <PageLoader />;
   if (!bounty) {

@@ -271,7 +271,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const { isLoading, mutate: addBenefactorUnitAmountMutation } =
     trpc.bounty.addBenefactorUnitAmount.useMutation({
       onMutate: async ({ unitAmount }) => {
-        console.log(unitAmount);
         await queryUtils.bounty.getById.setData(
           { id: bounty.id },
           produce((bounty) => {
@@ -339,7 +338,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   };
 
   const meta = bounty.details as BountyDetailsSchema;
-  console.log(meta);
 
   const bountyDetails: DescriptionTableProps['items'] = [
     {
