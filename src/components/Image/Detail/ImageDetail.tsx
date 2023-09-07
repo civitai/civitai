@@ -105,7 +105,10 @@ export function ImageDetail() {
                     variant="transparent"
                     ml="auto"
                     iconSize={20}
-                    onClick={close}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      close();
+                    }}
                   />
                 </Group>
               </Group>

@@ -1,6 +1,6 @@
 import { ActionIcon, createStyles } from '@mantine/core';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 type VideoProps = React.DetailedHTMLProps<
   React.VideoHTMLAttributes<HTMLVideoElement>,
@@ -18,6 +18,14 @@ export function EdgeVideo({
   const [muted, setMuted] = useState(initialMuted);
   const [showAudioControl, setShowAudioControl] = useState(false);
   const { classes } = useStyles();
+
+  useEffect(() => {
+    // Hard set the src for Safari because it doesn't support autoplay webm
+    const inSafari = typeof navigator !== 'undefined' && navigator.userAgent.match(/safari/i);
+    if (inSafari && ref.current && src) {
+      ref.current.src = src;
+    }
+  }, [src]);
 
   return (
     // extra div wrapper to prevent positioning errors of parent components that make their child absolute
@@ -50,7 +58,11 @@ export function EdgeVideo({
   );
 }
 
+// Using `any` here because mozHasAudio, webkitAudioDecodedByteCount, and audioTracks are not
+// standardized on the HTMLVideoElement type
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const hasAudio = (video: any): boolean => {
+  console.log('audio', video);
   return (
     video.mozHasAudio ||
     Boolean(video.webkitAudioDecodedByteCount) ||
