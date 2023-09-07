@@ -19,7 +19,7 @@ export const getBountyEntryHandler = async ({
   try {
     const entry = await getEntryById({
       input,
-      select: { id: true, user: { select: userWithCosmeticsSelect } },
+      select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
     });
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 

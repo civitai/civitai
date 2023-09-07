@@ -3,10 +3,14 @@ import { dbRead } from '../db/client';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { isDefined } from '~/utils/type-guards';
 
-export const getFilesByEntity = async ({ id, type }: GetFilesByEntitySchema) => {
+export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
+  if (!id && !ids) {
+    return [];
+  }
+
   const files = await dbRead.file.findMany({
-    where: { entityId: id, entityType: type },
-    select: { id: true, name: true, url: true, sizeKB: true, metadata: true },
+    where: { entityId: ids ? { in: ids } : id, entityType: type },
+    select: { id: true, name: true, url: true, sizeKB: true, metadata: true, entityId: true },
   });
 
   return files.map(({ metadata, ...file }) => ({

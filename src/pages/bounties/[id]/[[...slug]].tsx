@@ -632,13 +632,9 @@ const useStyles = createStyles((theme) => ({
 
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const theme = useMantineTheme();
+  const currentUser = useCurrentUser();
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
   const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
-  const paperStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-  };
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
@@ -646,7 +642,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         <Title order={2} size={28} weight={600}>
           Hunters
         </Title>
-        {!currentUser.isMuted && <Button size="xs">Submit</Button>}
+        {!currentUser?.muted && <Button size="xs">Submit</Button>}
       </Group>
       {children}
     </Stack>
@@ -665,7 +661,16 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   if (!entries?.length) {
     return (
       <Wrapper>
-        <Paper p="xl" radius="sm" sx={paperStyle}>
+        <Paper
+          p="xl"
+          radius="sm"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+          }}
+        >
           <Stack spacing="sm" align="center">
             <Text size={24} weight={600} align="center">
               No submissions yet
@@ -673,7 +678,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             <Text color="dimmed" align="center">
               Be the first to submit your solution.
             </Text>
-            {!currentUser.isMuted && (
+            {!currentUser?.muted && (
               <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
                 Submit
               </Button>

@@ -18,7 +18,7 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
   resolver: async ({ session, ctx, ssg, features }) => {
-    if (!features.bounties) return { notFound: true };
+    if (!features?.bounties) return { notFound: true };
 
     if (!session) {
       return {

@@ -28,6 +28,7 @@ import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.servic
 import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
+import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -133,9 +134,25 @@ export const getBountyEntriesHandler = async ({
       imagesPerId: 4,
     });
 
+    const files = await getFilesByEntity({
+      ids: entries.map((entry) => entry.id),
+      type: 'BountyEntry',
+    });
+
     return entries.map((entry) => ({
       ...entry,
-      images: images.filter((i) => i.entityId === entry.id),
+      images: images
+        .filter((i) => i.entityId === entry.id)
+        .map((i) => ({
+          ...i,
+          metadata: i.metadata as ImageMetaProps,
+        })),
+      files: files
+        .filter((f) => f.entityId === entry.id)
+        .map((f) => ({
+          ...f,
+          metadata: f.metadata as BountyEntryFileMeta,
+        })),
     }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
