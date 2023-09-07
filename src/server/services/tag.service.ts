@@ -223,7 +223,7 @@ export const getVotableTags = async ({
   } else if (type === 'image') {
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
     const tags = await dbRead.imageTag.findMany({
-      where: { imageId: id, source: { in: [TagSource.Rekognition, TagSource.User] } },
+      where: { imageId: id },
       select: imageTagCompositeSelect,
       orderBy: { score: 'desc' },
       // take,
