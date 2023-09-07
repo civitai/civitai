@@ -16,6 +16,7 @@ import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import {
   AddBenefactorUnitAmountInputSchema,
+  BountyDetailsSchema,
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
@@ -27,6 +28,7 @@ import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.servic
 import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
+import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -100,6 +102,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
 
     return {
       ...bounty,
+      details: bounty.details as BountyDetailsSchema,
       images: images.map((image) => ({
         ...image,
         meta: image?.meta as ImageMetaProps | null,
@@ -122,10 +125,35 @@ export const getBountyEntriesHandler = async ({
   try {
     const entries = await getAllEntriesByBountyId({
       input: { bountyId: input.id },
-      select: { id: true, user: { select: userWithCosmeticsSelect } },
+      select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
     });
 
-    return entries;
+    const images = await getImagesByEntity({
+      ids: entries.map((entry) => entry.id),
+      type: 'BountyEntry',
+      imagesPerId: 4,
+    });
+
+    const files = await getFilesByEntity({
+      ids: entries.map((entry) => entry.id),
+      type: 'BountyEntry',
+    });
+
+    return entries.map((entry) => ({
+      ...entry,
+      images: images
+        .filter((i) => i.entityId === entry.id)
+        .map((i) => ({
+          ...i,
+          metadata: i.metadata as ImageMetaProps,
+        })),
+      files: files
+        .filter((f) => f.entityId === entry.id)
+        .map((f) => ({
+          ...f,
+          metadata: f.metadata as BountyEntryFileMeta,
+        })),
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

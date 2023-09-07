@@ -302,3 +302,5 @@ export const CurrencyConfig: Record<
   [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
   [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
 };
+
+export const MIN_CREATE_BOUNTY_AMOUNT = 5000;

@@ -16,6 +16,9 @@ import {
   SimpleGrid,
   Paper,
   ActionIcon,
+  useMantineTheme,
+  Loader,
+  Box,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useMemo } from 'react';
@@ -68,6 +71,11 @@ import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageVi
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyDiscussion } from '~/components/Bounty/BountyDiscussion';
+import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
+import { isDefined } from '~/utils/type-guards';
+import { NextLink } from '@mantine/next';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -215,27 +223,7 @@ export default function BountyDetailsPage({
             </Stack>
           </Grid.Col>
         </Grid>
-        <Stack spacing="xl" py={32}>
-          <Group position="apart">
-            <Title order={2} size={28} weight={600}>
-              Hunters
-            </Title>
-            <Button size="xs">Submit</Button>
-          </Group>
-          <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Stack spacing="sm" align="center">
-              <Text size={24} weight={600} align="center">
-                No submissions yet
-              </Text>
-              <Text color="dimmed" align="center">
-                Be the first to submit your solution.
-              </Text>
-              <Button size="sm" w="75%">
-                Submit
-              </Button>
-            </Stack>
-          </Paper>
-        </Stack>
+        <BountyEntries bounty={bounty} />
         <Stack spacing="xl" py={32}>
           <Group position="apart">
             <Title order={2} size={28} weight={600}>
@@ -260,7 +248,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const { isLoading, mutate: addBenefactorUnitAmountMutation } =
     trpc.bounty.addBenefactorUnitAmount.useMutation({
       onMutate: async ({ unitAmount }) => {
-        console.log(unitAmount);
         await queryUtils.bounty.getById.setData(
           { id: bounty.id },
           produce((bounty) => {
@@ -327,6 +314,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     addBenefactorUnitAmountMutation({ bountyId: bounty.id, unitAmount: amount });
   };
 
+  const meta = bounty.details;
+
   const bountyDetails: DescriptionTableProps['items'] = [
     {
       label: 'Bounty Type',
@@ -338,6 +327,18 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Group>
       ),
     },
+    meta?.baseModel
+      ? {
+          label: 'Base Model',
+          value: (
+            <Group spacing={0} noWrap position="apart">
+              <Badge radius="xl" color="gray">
+                {meta.baseModel}
+              </Badge>
+            </Group>
+          ),
+        }
+      : null,
     {
       label: 'Bounty Mode',
       value: (
@@ -384,7 +385,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Group>
       ),
     },
-  ];
+  ].filter(isDefined);
 
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
@@ -401,11 +402,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     ),
     value: (
       <Group spacing={4} style={{ float: 'right' }}>
-        <Icon
-          color={CurrencyConfig[currency].color(theme)}
-          fill={CurrencyConfig[currency].color(theme)}
-          size={20}
-        />
+        <CurrencyIcon currency={currency} size={20} />
         <Text weight={590}>{formatCurrencyForDisplay(b.unitAmount, currency)}</Text>
       </Group>
     ),
@@ -418,13 +415,17 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     <Stack>
       <Group noWrap>
         {addToBountyEnabled && (
-          <Group color="gray" p={4} style={{ background: theme.colors.dark[6] }}>
+          <Group
+            color="gray"
+            p={4}
+            style={{
+              background:
+                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+            }}
+          >
             <Group spacing={2}>
-              <Icon
-                color={CurrencyConfig[currency].color(theme)}
-                fill={CurrencyConfig[currency].color(theme)}
-                size={20}
-              />
+              <CurrencyIcon currency={currency} size={20} />
+
               <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
             </Group>
             <PopConfirm
@@ -433,11 +434,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                   <Text size="sm">
                     Are you sure you want {isBenefactor ? 'add' : 'become a benefactor by adding'}{' '}
                     <Text component="span" weight={590}>
-                      <Icon
-                        color={CurrencyConfig[currency].color(theme)}
-                        fill={CurrencyConfig[currency].color(theme)}
-                        size={16}
-                      />{' '}
+                      <CurrencyIcon currency={currency} size={16} />{' '}
                       {formatCurrencyForDisplay(minUnitAmount, currency)}
                     </Text>{' '}
                     to this bounty?
@@ -606,6 +603,84 @@ const useStyles = createStyles((theme) => ({
     },
   },
 }));
+
+const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
+  const theme = useMantineTheme();
+  const currentUser = useCurrentUser();
+  const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
+  const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
+
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
+    <Stack spacing="xl" py={32}>
+      <Group position="apart">
+        <Title order={2} size={28} weight={600}>
+          Hunters
+        </Title>
+        {!currentUser?.muted && <Button size="xs">Submit</Button>}
+      </Group>
+      {children}
+    </Stack>
+  );
+
+  if (isLoading) {
+    return (
+      <Wrapper>
+        <Center>
+          <Loader />
+        </Center>
+      </Wrapper>
+    );
+  }
+
+  if (!entries?.length) {
+    return (
+      <Wrapper>
+        <Paper
+          p="xl"
+          radius="sm"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+          }}
+        >
+          <Stack spacing="sm" align="center">
+            <Text size={24} weight={600} align="center">
+              No submissions yet
+            </Text>
+            <Text color="dimmed" align="center">
+              Be the first to submit your solution.
+            </Text>
+            {!currentUser?.muted && (
+              <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
+                Submit
+              </Button>
+            )}
+          </Stack>
+        </Paper>
+      </Wrapper>
+    );
+  }
+
+  return (
+    <Wrapper>
+      <SimpleGrid
+        spacing="sm"
+        breakpoints={[
+          { minWidth: 'xs', cols: 1 },
+          { minWidth: 'sm', cols: 3 },
+          { minWidth: 'md', cols: 4 },
+        ]}
+        style={{ width: '100%' }}
+      >
+        {entries.map((entry) => (
+          <BountyEntryCard key={entry.id} data={entry} />
+        ))}
+      </SimpleGrid>
+    </Wrapper>
+  );
+};
 
 BountyDetailsPage.getLayout = function getLayout(page: React.ReactNode) {
   return (

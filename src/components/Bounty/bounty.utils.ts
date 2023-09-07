@@ -5,6 +5,7 @@ import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { MIN_CREATE_BOUNTY_AMOUNT } from '~/server/common/constants';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -61,4 +62,22 @@ export const useQueryBounties = (
   const bounties = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
   return { data, bounties, ...rest };
+};
+
+export const getMainBountyAmount = (bounty?: {
+  id: number;
+  user: { id: number } | null;
+  benefactors: { currency: Currency; user: { id: number }; unitAmount: number }[];
+}) => {
+  if (!bounty) {
+    return 0;
+  }
+
+  const mainBenefactor = bounty.benefactors.find((b) => isMainBenefactor(bounty, b.user));
+
+  if (mainBenefactor) {
+    return mainBenefactor.unitAmount;
+  }
+
+  return MIN_CREATE_BOUNTY_AMOUNT;
 };

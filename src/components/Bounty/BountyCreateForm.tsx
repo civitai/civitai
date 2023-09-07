@@ -44,7 +44,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
 import { getDisplayName } from '~/utils/string-helpers';
-import { constants } from '~/server/common/constants';
+import { constants, MIN_CREATE_BOUNTY_AMOUNT } from '~/server/common/constants';
 import { TRPCClientError } from '@trpc/client';
 import { z } from 'zod';
 
@@ -54,8 +54,6 @@ const tooltipProps: Partial<TooltipProps> = {
   position: 'bottom',
   withArrow: true,
 };
-
-const MIN_CREATE_BOUNTY_AMOUNT = 5000;
 
 const formSchema = createBountyInputSchema.omit({
   images: true,
@@ -151,7 +149,9 @@ export function BountyCreateForm() {
             const parsedError = JSON.parse(error.message);
             showErrorNotification({
               title: 'Failed to create bounty',
-              error: new Error(parsedError[0].message),
+              error: new Error(
+                Array.isArray(parsedError) ? parsedError[0].message : parsedError.message
+              ),
             });
           } else {
             showErrorNotification({
@@ -168,7 +168,7 @@ export function BountyCreateForm() {
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing="xl">
         <Group spacing={4}>
-          <BackButton url="/articles" />
+          <BackButton url="/bounties" />
           <Title>Create new Bounty</Title>
         </Group>
         <Divider label="Bounty details" />
@@ -418,7 +418,6 @@ export function BountyCreateForm() {
               'text/x-python-script': ['.py'],
             },
           }}
-          renderItem={(file) => file.name}
         />
 
         <Group mt="xl" position="right">
