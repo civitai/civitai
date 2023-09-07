@@ -419,6 +419,17 @@ const creditBuzzPurchases = async ({
 };
 
 export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
+  // Check if user exists and has a customerId
+  const user = await dbRead.user.findUnique({ where: { email: invoice.customer_email as string } });
+  if (user && !user.customerId) {
+    // Since we're handling an invoice, we assume that the user
+    // is already created in stripe. We just update in our records
+    await dbWrite.user.update({
+      where: { id: user.id },
+      data: { customerId: invoice.customer as string },
+    });
+  }
+
   const purchases = invoice.lines.data.map((data) => ({
     customerId: invoice.customer as string,
     priceId: data.price?.id,
