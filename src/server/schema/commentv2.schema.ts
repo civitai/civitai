@@ -13,6 +13,7 @@ export const commentConnectorSchema = z.object({
     'comment',
     'review',
     'article',
+    'bounty',
   ]),
 });
 
