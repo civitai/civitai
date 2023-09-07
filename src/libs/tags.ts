@@ -22,8 +22,10 @@ export type VotableTagModel = {
   lastUpvote?: Date | null;
 };
 
-const tagNameOverrides = {
+const tagNameOverrides: Record<string, string> = {
   ...moderationDisplayNames,
+  '1girl': 'woman',
+  '1boy': 'man',
 };
 export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;

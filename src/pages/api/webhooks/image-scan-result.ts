@@ -14,6 +14,7 @@ import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
 import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { logToDb } from '~/utils/logging';
+import { constants } from '~/server/common/constants';
 
 const tagCache: Record<string, number> = {};
 
@@ -242,7 +243,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     for (const { name, type } of tags) {
       if (type === TagType.Moderation) nsfw = true;
       if (tagsNeedingReview.includes(name)) hasMinorTag = true;
-      else if (['anime', 'cartoon', 'comics', 'manga'].includes(name)) hasAnimatedTag = true;
+      else if (constants.imageTags.styles.includes(name)) hasAnimatedTag = true;
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 

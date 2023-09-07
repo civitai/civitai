@@ -164,6 +164,9 @@ export const constants = {
     voteDuration: 1000 * 60 * 60 * 24,
     upvoteThreshold: 3,
   },
+  imageTags: {
+    styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
+  },
   maxTrainingRetries: 2,
 } as const;
 
