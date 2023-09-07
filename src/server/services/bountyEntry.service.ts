@@ -35,7 +35,7 @@ export const upsertBountyEntry = async ({
   images,
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
-  await dbWrite.$transaction(async (tx) => {
+  return await dbWrite.$transaction(async (tx) => {
     if (id) {
       // confirm it exists:
       const entry = await dbRead.bountyEntry.findUniqueOrThrow({ where: { id } });
@@ -53,6 +53,8 @@ export const upsertBountyEntry = async ({
           entityType: 'BountyEntry',
         });
       }
+
+      return entry;
     } else {
       const entry = await tx.bountyEntry.create({
         data: {
@@ -72,6 +74,8 @@ export const upsertBountyEntry = async ({
           entityType: 'BountyEntry',
         });
       }
+
+      return entry;
     }
   });
 };

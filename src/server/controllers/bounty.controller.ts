@@ -125,7 +125,16 @@ export const getBountyEntriesHandler = async ({
       select: { id: true, user: { select: userWithCosmeticsSelect } },
     });
 
-    return entries;
+    const images = await getImagesByEntity({
+      ids: entries.map((entry) => entry.id),
+      type: 'BountyEntry',
+      imagesPerId: 4,
+    });
+
+    return entries.map((entry) => ({
+      ...entry,
+      images: images.find((i) => i.entityId === entry.id),
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

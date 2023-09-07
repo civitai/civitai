@@ -1450,13 +1450,83 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
   return dictionary;
 };
 
-export const getImagesByEntity = async ({ id, type }: { id: number; type: ImageEntityType }) => {
-  const images = await dbRead.imageConnection.findMany({
-    where: { entityId: id, entityType: type },
-    select: { image: { select: imageSelect } },
-  });
+type GetImageConnectionRaw = {
+  id: number;
+  name: string;
+  url: string;
+  nsfw: NsfwLevel;
+  width: number;
+  height: number;
+  hash: string;
+  meta: ImageMetaProps;
+  hideMeta: boolean;
+  generationProcess: ImageGenerationProcess;
+  createdAt: Date;
+  mimeType: string;
+  scannedAt: Date;
+  needsReview: string | null;
+  userId: number;
+  index: number;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
+  entityId: number;
+};
+export const getImagesByEntity = async ({
+  id,
+  ids,
+  type,
+  imagesPerId = 4,
+}: {
+  id?: number;
+  ids?: number[];
+  type: ImageEntityType;
+  imagesPerId?: number;
+}) => {
+  if (!id && !ids) {
+    return [];
+  }
 
-  return images.map(({ image }) => image);
+  const images = await dbRead.$queryRaw<GetAllImagesRaw[]>`
+    WITH targets AS (
+      SELECT
+        id,
+        "entityId"
+      FROM (
+        SELECT
+          i.id,
+          ic."entityId"
+          row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num
+        FROM "Image" i        
+        JOIN "ImageConnection" ic ON ic."imageId" = i.id 
+            AND ic."entityType" = ${type} 
+            AND ic."entityId" ${Prisma.raw(ids ? `IN (${Prisma.join(ids)})` : `= ${id}`)}
+      ) ranked
+      WHERE ranked.row_num <= ${imagesPerId}
+    )
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      i.meta,
+      i."hideMeta",
+      i."generationProcess",
+      i."createdAt",
+      i."mimeType",
+      i.type,
+      i.metadata,
+      i."scannedAt",
+      i."needsReview",
+      i."userId",
+      i."index",
+      t."entityId"
+    FROM targets t 
+    JOIN "Image" i ON i.id = t.id`;
+
+  return images;
 };
 
 export const createEntityImages = async ({
