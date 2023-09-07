@@ -5,18 +5,19 @@ import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
-import EmailProvider from 'next-auth/providers/email';
+import EmailProvider, { SendVerificationRequestParams } from 'next-auth/providers/email';
 
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
-import { sendVerificationRequest } from '~/server/auth/verificationEmail';
 import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
 import { getSessionUser, updateAccountScope } from '~/server/services/user.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { isDev } from '~/env/other';
+import { verificationEmail } from '~/server/email/templates';
+import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -161,4 +162,17 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     }
   };
   return await NextAuth(req, res, customAuthOptions);
+}
+
+async function sendVerificationRequest({
+  identifier: to,
+  url,
+  theme,
+}: SendVerificationRequestParams) {
+  const emailDomain = to.split('@')[1];
+  if (blockedDomains.includes(emailDomain)) {
+    throw new Error(`Email domain ${emailDomain} is not allowed`);
+  }
+
+  await verificationEmail.send({ to, url, theme });
 }

@@ -1,6 +1,7 @@
 import { TrainingStatus } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
+import { trainingCompleteEmail } from '~/server/email/templates';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export type EpochSchema = z.infer<typeof epoch_schema>;
@@ -151,10 +152,32 @@ async function updateRecords(
     },
   });
 
-  await dbWrite.modelVersion.update({
+  const modelVersion = await dbWrite.modelVersion.update({
     where: { id: modelFile.modelVersionId },
     data: {
       trainingStatus: status,
     },
   });
+
+  if (status === 'InReview') {
+    const model = await dbWrite.model.findFirst({
+      where: { id: modelVersion.modelId },
+      select: {
+        id: true,
+        name: true,
+        user: {
+          select: {
+            email: true,
+            username: true,
+          },
+        },
+      },
+    });
+    if (!model || !model.user) return;
+
+    await trainingCompleteEmail.send({
+      model,
+      user: model.user,
+    });
+  }
 }

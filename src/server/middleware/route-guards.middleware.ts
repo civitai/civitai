@@ -13,6 +13,10 @@ addRouteGuard({
   matcher: ['/testing/:path*'],
   canAccess: () => !isProd,
 });
+addRouteGuard({
+  matcher: ['/api/testing/:path*'],
+  canAccess: () => !isProd,
+});
 //#region Logic
 
 type RouteGuard = {
