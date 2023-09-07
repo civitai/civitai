@@ -80,3 +80,7 @@ export type CollectionGetInfinite = CollectionRouter['getInfinite']['items'];
 type BountyRouter = RouterOutput['bounty'];
 export type BountyGetAll = BountyRouter['getInfinite']['items'];
 export type BountyGetById = BountyRouter['getById'];
+
+type BountyEntryRouter = RouterOutput['bountyEntry'];
+
+export type BountyEntryGetById = BountyEntryRouter['getById'];

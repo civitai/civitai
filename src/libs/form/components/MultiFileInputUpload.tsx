@@ -23,7 +23,11 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: BaseFileSchema[];
   onChange?: (value: BaseFileSchema[]) => void;
   dropzoneProps?: Omit<DropzoneProps, 'onDrop' | 'children'>;
-  renderItem?: (file: BaseFileSchema) => React.ReactNode;
+  renderItem?: (
+    file: BaseFileSchema,
+    onRemove: () => void,
+    onUpdate: (file: BaseFileSchema) => void
+  ) => React.ReactNode;
 };
 
 export function MultiFileInputUpload({
@@ -56,6 +60,7 @@ export function MultiFileInputUpload({
         url: upload.url as string,
         name: upload.name ?? '',
         sizeKB: upload.size ? bytesToKB(upload.size) : 0,
+        metadata: {},
       }));
     filesHandlers.append(...successUploads);
   };
@@ -63,6 +68,10 @@ export function MultiFileInputUpload({
   const handleRemove = (index: number) => {
     filesHandlers.remove(index);
     onChange?.(files.slice(0, index).concat(files.slice(index + 1)));
+  };
+
+  const handleUpdate = (file: BaseFileSchema, index: number) => {
+    filesHandlers.setItem(index, file);
   };
 
   useDidUpdate(() => {
@@ -141,22 +150,30 @@ export function MultiFileInputUpload({
         {files.map((file, index) => (
           <Group key={file.id ?? file.url} spacing={8} position="apart" noWrap>
             {renderItem ? (
-              renderItem(file)
+              renderItem(
+                file,
+                () => handleRemove(index),
+                (file) => {
+                  handleUpdate(file, index);
+                }
+              )
             ) : (
-              <Text size="sm" weight={500} lineClamp={1}>
-                {file.name}
-              </Text>
+              <>
+                <Text size="sm" weight={500} lineClamp={1}>
+                  {file.name}
+                </Text>
+                <Tooltip label="Remove">
+                  <ActionIcon
+                    size="sm"
+                    color="red"
+                    variant="transparent"
+                    onClick={() => handleRemove(index)}
+                  >
+                    <IconTrash />
+                  </ActionIcon>
+                </Tooltip>
+              </>
             )}
-            <Tooltip label="Remove">
-              <ActionIcon
-                size="sm"
-                color="red"
-                variant="transparent"
-                onClick={() => handleRemove(index)}
-              >
-                <IconTrash />
-              </ActionIcon>
-            </Tooltip>
           </Group>
         ))}
         {uploadingItems.map((file, index) => (

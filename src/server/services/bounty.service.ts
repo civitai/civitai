@@ -1,7 +1,7 @@
 import { Currency, ImageIngestionStatus, Prisma, TagTarget } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
-import { getFilesByEntity } from './file.service';
+import { getFilesByEntity, updateEntityFiles } from './file.service';
 import { throwInsufficientFundsError, throwNotFoundError } from '../utils/errorHandling';
 import {
   AddBenefactorUnitAmountInputSchema,
@@ -13,7 +13,7 @@ import { imageSelect } from '../selectors/image.selector';
 import { getUserAccountHandler } from '~/server/controllers/buzz.controller';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { ingestImage } from '~/server/services/image.service';
+import { createEntityImages, ingestImage } from '~/server/services/image.service';
 import { chunk, groupBy } from 'lodash-es';
 import { BountySort, BountyStatus } from '../common/enums';
 import { isNotTag, isTag } from '../schema/tag.schema';
@@ -85,6 +85,7 @@ export const createBounty = async ({
     const bounty = await tx.bounty.create({
       data: {
         ...data,
+        details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
         tags: tags
           ? {
               create: tags.map((tag) => {
@@ -113,50 +114,16 @@ export const createBounty = async ({
     });
 
     if (files) {
-      await tx.file.createMany({
-        data: files.map((file) => ({ ...file, entityId: bounty.id, entityType: 'Bounty' })),
-      });
+      await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
     }
 
     if (images) {
-      await tx.image.createMany({
-        data: images.map((image) => ({
-          ...image,
-          meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-          userId,
-          resources: undefined,
-        })),
-      });
-
-      const imageRecords = await tx.image.findMany({
-        select: { id: true, ingestion: true, url: true },
-        where: {
-          url: {
-            in: images.map((i) => i.url),
-          },
-          userId,
-        },
-      });
-
-      const batches = chunk(imageRecords, 50);
-      for (const batch of batches) {
-        await Promise.all(
-          batch.map((image) => {
-            if (image.ingestion === ImageIngestionStatus.Pending) {
-              return ingestImage({ image });
-            }
-
-            return;
-          })
-        );
-      }
-
-      await tx.imageConnection.createMany({
-        data: imageRecords.map((image) => ({
-          imageId: image.id,
-          entityId: bounty.id,
-          entityType: 'Bounty',
-        })),
+      await createEntityImages({
+        images,
+        tx,
+        userId,
+        entityId: bounty.id,
+        entityType: 'Bounty',
       });
     }
 
@@ -222,10 +189,7 @@ export const updateBountyById = async ({
     if (!bounty) return null;
 
     if (files) {
-      await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
-      await tx.file.createMany({
-        data: files.map((file) => ({ ...file, entityId: bounty.id, entityType: 'Bounty' })),
-      });
+      await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
     }
 
     return bounty;

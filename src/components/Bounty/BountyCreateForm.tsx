@@ -44,7 +44,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
 import { getDisplayName } from '~/utils/string-helpers';
-import { constants } from '~/server/common/constants';
+import { constants, MIN_CREATE_BOUNTY_AMOUNT } from '~/server/common/constants';
 import { TRPCClientError } from '@trpc/client';
 import { z } from 'zod';
 
@@ -54,8 +54,6 @@ const tooltipProps: Partial<TooltipProps> = {
   position: 'bottom',
   withArrow: true,
 };
-
-const MIN_CREATE_BOUNTY_AMOUNT = 5000;
 
 const formSchema = createBountyInputSchema.omit({
   images: true,
@@ -420,7 +418,6 @@ export function BountyCreateForm() {
               'text/x-python-script': ['.py'],
             },
           }}
-          renderItem={(file) => file.name}
         />
 
         <Group mt="xl" position="right">
