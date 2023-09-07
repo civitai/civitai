@@ -1,4 +1,4 @@
-import { NsfwLevel, TagEngagementType, TagType } from '@prisma/client';
+import { NsfwLevel, TagType } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbWrite } from '~/server/db/client';

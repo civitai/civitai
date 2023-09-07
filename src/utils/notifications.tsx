@@ -1,15 +1,17 @@
+import { Group, ThemeIcon } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconX } from '@tabler/icons-react';
-import { Group, ThemeIcon } from '@mantine/core';
 
 export function showErrorNotification({
   error,
   reason,
   title,
+  autoClose = 3000,
 }: {
   error: Error;
   reason?: string;
   title?: string;
+  autoClose?: number | false;
 }) {
   console.error(error);
   const message = reason ?? error.message;
@@ -19,6 +21,7 @@ export function showErrorNotification({
     color: 'red',
     message,
     title,
+    autoClose,
   });
 }
 

@@ -2,6 +2,7 @@
 
 import { FileWithPath } from '@mantine/dropzone';
 import { ImageAnalysisInput } from '~/server/schema/image.schema';
+import { TrainingResults } from '~/server/schema/model-file.schema';
 
 export {};
 
@@ -74,19 +75,6 @@ declare global {
     size: ModelFileSize;
     fp: ModelFileFp;
     imageFormat: ImageFormat;
-  };
-
-  type TrainingResults = {
-    start_time: date;
-    end_time: date;
-    epochs: Array<{
-      epoch_number: number;
-      model_url: string;
-      sample_images?: Array<{
-        image_url: string;
-        prompt: string;
-      }>;
-    }>;
   };
 
   type FileMetadata = {

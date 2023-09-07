@@ -25,25 +25,161 @@ import { IconAlertTriangle, IconCheck, IconTrash, IconX } from '@tabler/icons-re
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { ModelById } from '~/types/router';
+import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
-// zustand
-
-interface imageDataType {
+type ImageDataType = {
+  url: string;
   name: string;
   type: string;
-  url: string;
   caption: string;
-}
+};
+
+type UpdateImageDataType = Partial<Omit<ImageDataType, 'url'>> & { url: string };
+
+type TrainingDataState = {
+  imageList: ImageDataType[];
+  initialImageList: ImageDataType[];
+  ownRights: boolean;
+  initialOwnRights: boolean;
+  shareDataset: boolean;
+  initialShareDataset: boolean;
+};
+
+type ImageStore = {
+  [id: number]: TrainingDataState | undefined;
+  updateImage: (modelId: number, data: UpdateImageDataType) => void;
+  setImageList: (modelId: number, data: ImageDataType[]) => void;
+  setInitialImageList: (modelId: number, data: ImageDataType[]) => void;
+  setOwnRights: (modelId: number, data: boolean) => void;
+  setShareDataset: (modelId: number, data: boolean) => void;
+  setInitialOwnRights: (modelId: number, data: boolean) => void;
+  setInitialShareDataset: (modelId: number, data: boolean) => void;
+};
+
+export const useImageStore = create<ImageStore>()(
+  immer((set) => ({
+    updateImage: (modelId, { url, name, type, caption }) => {
+      set((state) => {
+        if (!state[modelId])
+          state[modelId] = {
+            imageList: [],
+            initialImageList: [],
+            ownRights: false,
+            shareDataset: false,
+            initialOwnRights: false,
+            initialShareDataset: false,
+          };
+        // TODO [bw] why is this not understanding the override I just did above?
+        state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
+          if (i.url === url) {
+            return {
+              url,
+              name: name ?? i.name,
+              type: type ?? i.type,
+              caption: caption ?? i.caption,
+            };
+          }
+          return i;
+        });
+      });
+    },
+    setImageList: (modelId, imgData) => {
+      set((state) => {
+        if (!state[modelId])
+          state[modelId] = {
+            imageList: [],
+            initialImageList: [],
+            ownRights: false,
+            shareDataset: false,
+            initialOwnRights: false,
+            initialShareDataset: false,
+          };
+        state[modelId]!.imageList = imgData;
+      });
+    },
+    setInitialImageList: (modelId, imgData) => {
+      set((state) => {
+        if (!state[modelId])
+          state[modelId] = {
+            imageList: [],
+            initialImageList: [],
+            ownRights: false,
+            shareDataset: false,
+            initialOwnRights: false,
+            initialShareDataset: false,
+          };
+        state[modelId]!.initialImageList = imgData;
+      });
+    },
+    setOwnRights: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId])
+          state[modelId] = {
+            imageList: [],
+            initialImageList: [],
+            ownRights: false,
+            shareDataset: false,
+            initialOwnRights: false,
+            initialShareDataset: false,
+          };
+        state[modelId]!.ownRights = v;
+      });
+    },
+    setShareDataset: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId])
+          state[modelId] = {
+            imageList: [],
+            initialImageList: [],
+            ownRights: false,
+            shareDataset: false,
+            initialOwnRights: false,
+            initialShareDataset: false,
+          };
+        state[modelId]!.shareDataset = v;
+      });
+    },
+    setInitialOwnRights: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId])
+          state[modelId] = {
+            imageList: [],
+            initialImageList: [],
+            ownRights: false,
+            shareDataset: false,
+            initialOwnRights: false,
+            initialShareDataset: false,
+          };
+        state[modelId]!.initialOwnRights = v;
+      });
+    },
+    setInitialShareDataset: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId])
+          state[modelId] = {
+            imageList: [],
+            initialImageList: [],
+            ownRights: false,
+            shareDataset: false,
+            initialOwnRights: false,
+            initialShareDataset: false,
+          };
+        state[modelId]!.initialShareDataset = v;
+      });
+    },
+  }))
+);
 
 const useStyles = createStyles(() => ({
   imgOverlay: {
@@ -70,21 +206,48 @@ const imageExts: { [key: string]: string } = {
   // webp: 'image/webp',
 };
 
-export const TrainingFormImages = ({ model }: { model: ModelById }) => {
-  const [imageList, setImageList] = useState<imageDataType[]>([]);
-  const [initialImageList, setInitialImageList] = useState<imageDataType[]>([]);
+export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
+  const {
+    updateImage,
+    setImageList,
+    setInitialImageList,
+    setOwnRights,
+    setShareDataset,
+    setInitialOwnRights,
+    setInitialShareDataset,
+  } = useImageStore();
+
+  const {
+    imageList,
+    initialImageList,
+    ownRights,
+    shareDataset,
+    initialOwnRights,
+    initialShareDataset,
+  } = useImageStore(
+    (state) =>
+      state[model.id] ?? {
+        imageList: [],
+        initialImageList: [],
+        ownRights: false,
+        shareDataset: false,
+        initialOwnRights: false,
+        initialShareDataset: false,
+      }
+  );
+
   const [page, setPage] = useState(1);
-  // TODO [bw] set this from model status
-  const [ownRights, setOwnRights] = useState<boolean>(false);
-  const [shareDataset, setShareDataset] = useState<boolean>(false);
   const [zipping, setZipping] = useState<boolean>(false);
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
+  const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
 
-  const thisModelVersion = model?.modelVersions[0];
+  const thisModelVersion = model.modelVersions[0];
+  const existingDataFile = thisModelVersion.files[0];
+  const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
 
   const notificationId = `${thisModelVersion.id}-uploading-data-notification`;
 
@@ -108,17 +271,36 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
       });
       return await handleZip(zipFile, false);
     }
-    const existingDataFile = thisModelVersion.files.find((f) => f.type === 'Training Data');
+
     if (existingDataFile) {
-      setLoadingZip(true);
-      parseExisting().then((files) => {
-        if (files) {
-          const flatFiles = files.flat();
-          setImageList(flatFiles);
-          setInitialImageList(flatFiles.map((d) => ({ ...d })));
-        }
-        setLoadingZip(false);
-      });
+      setModelFileId(existingDataFile.id);
+      const fileOwnRights = existingMetadata?.ownRights ?? false;
+      const fileShareDataset = existingMetadata?.shareDataset ?? false;
+      setOwnRights(model.id, fileOwnRights);
+      setInitialOwnRights(model.id, fileOwnRights);
+      setShareDataset(model.id, fileShareDataset);
+      setInitialShareDataset(model.id, fileShareDataset);
+
+      if (imageList.length === 0) {
+        setLoadingZip(true);
+        parseExisting()
+          .then((files) => {
+            if (files) {
+              const flatFiles = files.flat();
+              setImageList(model.id, flatFiles);
+              setInitialImageList(
+                model.id,
+                flatFiles.map((d) => ({ ...d }))
+              );
+            }
+          })
+          .catch((e) => {
+            showErrorNotification({
+              error: e ?? 'An error occurred while parsing the existing file.',
+            });
+          })
+          .finally(() => setLoadingZip(false));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -128,7 +310,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
 
   const handleZip = async (f: FileWithPath, showNotif = true) => {
     // could set loadingZip here too
-    const parsedFiles: imageDataType[] = [];
+    const parsedFiles: ImageDataType[] = [];
     const zipReader = new JSZip();
     // zipReader.loadAsync(f).then((zData) => {
     const zData = await zipReader.loadAsync(f);
@@ -179,12 +361,37 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
         }
       })
     );
-    setImageList(imageList.concat(newFiles.flat()));
+    setImageList(model.id, imageList.concat(newFiles.flat()));
   };
 
-  // TODO [bw] should this be doing an update if it exists instead?
-  const createFileMutation = trpc.modelFile.create.useMutation({
-    async onSuccess(result) {
+  const updateFileMutation = trpc.modelFile.update.useMutation({
+    async onSuccess(response, request) {
+      setInitialOwnRights(model.id, ownRights);
+      setInitialShareDataset(model.id, shareDataset);
+
+      queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+        if (!old) return old;
+
+        const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
+        if (!versionToUpdate) return old;
+        versionToUpdate.files[0].visibility = request.visibility!;
+        versionToUpdate.files[0].metadata = request.metadata!;
+
+        return {
+          ...old,
+          modelVersions: [
+            versionToUpdate,
+            ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+          ],
+        };
+      });
+      // TODO [bw] don't invalidate, just update
+      await queryUtils.model.getMyTrainingModels.invalidate();
+    },
+  });
+
+  const upsertFileMutation = trpc.modelFile.upsert.useMutation({
+    async onSuccess(response, request) {
       updateNotification({
         id: notificationId,
         icon: <IconCheck size={18} />,
@@ -195,11 +402,36 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
         disallowClose: false,
       });
 
-      await queryUtils.modelVersion.getById.invalidate({ id: result.modelVersion.id });
-      await queryUtils.model.getById.invalidate({ id: model.id });
+      setInitialImageList(model.id, imageList);
+
+      queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+        if (!old) return old;
+
+        const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
+        if (!versionToUpdate) return old;
+        versionToUpdate.files = [
+          {
+            id: response.id,
+            url: request.url!,
+            type: request.type!,
+            metadata: request.metadata!,
+            sizeKB: request.sizeKB!,
+            visibility: request.visibility!,
+          },
+        ];
+
+        return {
+          ...old,
+          modelVersions: [
+            versionToUpdate,
+            ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+          ],
+        };
+      });
+      // TODO [bw] don't invalidate, just update
+      await queryUtils.model.getMyTrainingModels.invalidate();
 
       setZipping(false);
-
       goNext(model.id, thisStep);
     },
     onError(error) {
@@ -233,7 +465,6 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
     // TODO [bw] handle error
     zip.generateAsync({ type: 'blob' }).then(async (content) => {
       // saveAs(content, 'example.zip');
-      // save to ModelFile with type training data
 
       const blobFile = new File([content], `${thisModelVersion.id}_training_data.zip`, {
         type: 'application/zip',
@@ -267,8 +498,9 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
             };
             if (versionId) {
               try {
-                await createFileMutation.mutateAsync({
+                await upsertFileMutation.mutateAsync({
                   ...result,
+                  ...(modelFileId && { id: modelFileId }),
                   sizeKB: bytesToKB(size),
                   modelVersionId: versionId,
                   type: 'Training Data',
@@ -291,6 +523,8 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
                   message: '',
                 });
               }
+            } else {
+              throw new Error('Missing version data.');
             }
           }
         );
@@ -307,8 +541,23 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
     });
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (isEqual(imageList, initialImageList) && imageList.length !== 0) {
+      if (!isEqual(shareDataset, initialShareDataset) || !isEqual(ownRights, initialOwnRights)) {
+        setZipping(true);
+        await updateFileMutation.mutateAsync({
+          id: modelFileId!,
+          metadata: { ...existingMetadata!, ownRights, shareDataset },
+          visibility:
+            ownRights && shareDataset
+              ? ModelFileVisibility.Public
+              : ownRights
+              ? ModelFileVisibility.Sensitive
+              : ModelFileVisibility.Private,
+        });
+        setZipping(false);
+      }
+
       return goNext(model.id, thisStep);
     }
 
@@ -367,7 +616,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
             label="Drag images (or a zip file) here or click to select files"
             description={
               <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
-                Changes made here are not saved until you hit &quot;Next&quot;
+                Changes made here are not permanently saved until you hit &quot;Next&quot;
               </Text>
             }
             max={1000}
@@ -381,7 +630,7 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
           <Group mt="md" position="apart">
             <Group>
               {/*perhaps open a modal here to confirm*/}
-              <Button compact color="red" onClick={() => setImageList([])}>
+              <Button compact color="red" onClick={() => setImageList(model.id, [])}>
                 <IconTrash size={16} />
                 <Text inline ml={4}>
                   Clear All
@@ -435,7 +684,10 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
                         size="md"
                         onClick={() => {
                           const newLen = imageList.length - 1;
-                          setImageList(imageList.filter((i) => i.url !== imgData.url));
+                          setImageList(
+                            model.id,
+                            imageList.filter((i) => i.url !== imgData.url)
+                          );
                           if (
                             page === Math.ceil(imageList.length / maxImgPerPage) &&
                             newLen % maxImgPerPage === 0
@@ -467,10 +719,11 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
                       minRows={1}
                       maxRows={4}
                       value={imgData.caption}
-                      // onChange={(event) => setImageList(imageList.map((i) => i.url === imgData.url ? {...i, caption: event.currentTarget.value} : i))}
                       onChange={(event) => {
-                        imgData.caption = event.currentTarget.value;
-                        setImageList([...imageList]);
+                        updateImage(model.id, {
+                          url: imgData.url,
+                          caption: event.currentTarget.value,
+                        });
                       }}
                     />
                   </Stack>
@@ -500,21 +753,20 @@ export const TrainingFormImages = ({ model }: { model: ModelById }) => {
                 label="I own the rights to all these images"
                 checked={ownRights}
                 onChange={(event) => {
-                  setOwnRights(event.currentTarget.checked);
-                  !event.currentTarget.checked && setShareDataset(false);
+                  setOwnRights(model.id, event.currentTarget.checked);
+                  !event.currentTarget.checked && setShareDataset(model.id, false);
                 }}
               />
               <Checkbox
                 label="I want to share my dataset"
                 disabled={!ownRights}
                 checked={shareDataset}
-                onChange={(event) => setShareDataset(event.currentTarget.checked)}
+                onChange={(event) => setShareDataset(model.id, event.currentTarget.checked)}
               />
             </Stack>
           </Paper>
         )}
       </Stack>
-      {/* TODO [bw] add a warning here, because state will disappear. optionally use a context manager to preserve this, and extra optionally use webdb or the like */}
       <Group position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back

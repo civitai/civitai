@@ -782,12 +782,8 @@ export const getMyTrainingModelsHandler = async ({
               },
               where: { type: { equals: 'Training Data' } },
             },
-            _count: {
-              select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
-            },
           },
         },
-        _count: { select: { modelVersions: true } },
       },
     });
   } catch (error) {

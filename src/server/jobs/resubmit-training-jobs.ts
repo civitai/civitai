@@ -1,26 +1,44 @@
-import { createJob, UNRUNNABLE_JOB_CRON } from './job';
+import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
-import { createTrainingRequestSecure } from '~/server/services/training.service';
+import { createTrainingRequest } from '~/server/services/training.service';
+import { createJob } from './job';
 
 export const resubmitTrainingJobs = createJob(
   'resubmit-training-jobs',
-  UNRUNNABLE_JOB_CRON,
+  '20,50 * * * *',
   async () => {
-    // Get the training jobs that have failed
+    // Get the training jobs that are potentially stuck
     // --------------------------------------------
-    const failedTrainingJobs = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-      SELECT
-        mv.id,
-        mv.*
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv."trainingStatus" IN ('Submitted', 'Failed') AND m.status != 'Deleted';
+    const failedTrainingJobs = await dbWrite.$queryRaw<
+      { id: number; metadata: FileMetadata | null; userId: number }[]
+    >`
+        SELECT mv.id,
+               mf.metadata,
+               m."userId"
+        FROM "ModelVersion" mv
+                 JOIN "Model" m ON m.id = mv."modelId"
+                 JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+        WHERE mv."trainingStatus" in ('Processing', 'Submitted')
+          AND m.status != 'Deleted';
     `;
 
     // Resubmit the training jobs
     // --------------------------------------------
-    for (const { id, userId } of failedTrainingJobs) {
-      await createTrainingRequestSecure({ modelVersionId: id, userId });
+    for (const { id, metadata, userId } of failedTrainingJobs) {
+      const jobHistory = metadata?.trainingResults?.history?.slice(-1);
+      if (jobHistory && jobHistory.length) {
+        const jobToken = jobHistory[0].jobToken;
+        const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs/${jobToken}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+          },
+        });
+        if (response.status === 404) {
+          await createTrainingRequest({ modelVersionId: id, userId });
+        }
+      }
     }
   }
 );
