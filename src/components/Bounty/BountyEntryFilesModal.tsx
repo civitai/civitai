@@ -75,7 +75,13 @@ function BountyEntryFiles({ bountyEntry }: Props) {
                   <Group position="apart">
                     <Group>
                       {isLocked ? (
-                        <Tooltip label="This file has not been unlocked yet">
+                        <Tooltip
+                          label="This file has not been unlocked yet"
+                          maw={200}
+                          multiline
+                          withArrow
+                          withinPortal
+                        >
                           <IconLock />
                         </Tooltip>
                       ) : (
@@ -104,7 +110,13 @@ function BountyEntryFiles({ bountyEntry }: Props) {
 
                     <Group spacing={0}>
                       {file.metadata.benefactorsOnly && (
-                        <Tooltip label="Only users who award this entry will have access to this file">
+                        <Tooltip
+                          label="Only users who award this entry will have access to this file"
+                          maw={200}
+                          multiline
+                          withArrow
+                          withinPortal
+                        >
                           <ThemeIcon color="yellow.6" radius="xl" size="sm" variant="light">
                             <IconStar size={12} />
                           </ThemeIcon>
