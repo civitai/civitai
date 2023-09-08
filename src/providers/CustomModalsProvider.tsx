@@ -11,6 +11,9 @@ import { openAddToCollectionModal } from '~/components/Collections/AddToCollecti
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
+import BountyEntryFilesModal, {
+  openBountyEntryFilesModal,
+} from '~/components/Bounty/BountyEntryFilesModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -89,6 +92,10 @@ const registry = {
   sendTip: {
     Component: SendTipModal,
     fn: openSendTipModal,
+  },
+  bountyEntryFiles: {
+    Component: BountyEntryFilesModal,
+    fn: openBountyEntryFilesModal,
   },
 };
 

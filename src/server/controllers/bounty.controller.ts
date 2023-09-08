@@ -155,12 +155,7 @@ export const getBountyEntriesHandler = async ({
           ...i,
           metadata: i.metadata as ImageMetaProps,
         })),
-      files: files
-        .filter((f) => f.entityId === entry.id)
-        .map((f) => ({
-          ...f,
-          metadata: f.metadata as BountyEntryFileMeta,
-        })),
+      fileCount: files.length,
       awardedUnitAmountTotal: awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0,
     }));
   } catch (error) {

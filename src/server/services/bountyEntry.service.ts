@@ -1,8 +1,8 @@
 import { Currency, Prisma } from '@prisma/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { dbRead, dbWrite } from '../db/client';
-import { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
-import { updateEntityFiles } from '~/server/services/file.service';
+import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
+import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -138,4 +138,68 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
   });
 
   return benefactor;
+};
+
+export const getBountyEntryFilteredFiles = async ({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId?: number;
+  isModerator?: boolean;
+}) => {
+  const bountyEntry = await dbRead.bountyEntry.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      userId: true,
+      bountyId: true,
+    },
+  });
+
+  const files = await getFilesByEntity({ id: bountyEntry.id, type: 'BountyEntry' });
+
+  if (bountyEntry.userId === userId || isModerator) {
+    // Owner can see all files.
+    return files.map((f) => ({
+      ...f,
+      metadata: f.metadata as BountyEntryFileMeta,
+    }));
+  }
+  const benefactor = !userId
+    ? null
+    : await dbRead.bountyBenefactor.findUnique({
+        where: {
+          userId_bountyId: {
+            userId,
+            bountyId: bountyEntry.bountyId,
+          },
+        },
+        select: {
+          awardedToId: true,
+          currency: true,
+        },
+      });
+
+  const [awardedBounty] = await getBountyEntryEarnedBuzz({
+    ids: [bountyEntry.id],
+    currency: benefactor?.currency ?? Currency.BUZZ,
+  });
+
+  return files.map((f) => {
+    const details = f.metadata as BountyEntryFileMeta;
+    // TODO: Once we support Tipping entries - we need to check if a tipConnection is created
+    let hasFullAccess = details.benefactorsOnly ? benefactor?.awardedToId === bountyEntry.id : true;
+
+    if (awardedBounty.awardedUnitAmount < (details.unlockAmount ?? 0)) {
+      hasFullAccess = false;
+    }
+
+    return {
+      ...f,
+      url: hasFullAccess ? f.url : null,
+      metadata: f.metadata as BountyEntryFileMeta,
+    };
+  });
 };

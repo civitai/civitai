@@ -12,6 +12,10 @@ import { useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { openConfirmModal } from '@mantine/modals';
+import { IconAward, IconFile, IconFiles } from '@tabler/icons-react';
+import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -19,7 +23,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { setImages, onSetImage } = useImageViewerCtx();
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const { user, images, files, awardedUnitAmountTotal } = data;
+  const { user, images, awardedUnitAmountTotal } = data;
   // TODO.bounty: applyUserPreferences on bounty entry image
   const cover = images?.[0];
 
@@ -91,7 +95,25 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       <ImageGuard.ToggleConnect position="static" />
                     </Group>
 
-                    {renderActions && <Stack>{renderActions(data)}</Stack>}
+                    <Stack>
+                      <HoverActionButton
+                        label="Files"
+                        size={30}
+                        color="gray.6"
+                        variant="filled"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openBountyEntryFilesModal({
+                            bountyEntry: data,
+                          });
+                        }}
+                        keepIconOnHover
+                      >
+                        <IconFiles stroke={2.5} size={16} />
+                      </HoverActionButton>
+                      {renderActions && <>{renderActions(data)} </>}
+                    </Stack>
                   </Group>
                   {image ? (
                     safe ? (
@@ -120,7 +142,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
 }
 
 type Props = {
-  data: BountyEntryGetById;
+  data: Omit<BountyEntryGetById, 'files'>;
   currency: Currency;
-  renderActions?: (bountyEntry: BountyEntryGetById) => React.ReactNode;
+  renderActions?: (bountyEntry: Omit<BountyEntryGetById, 'files'>) => React.ReactNode;
 };
