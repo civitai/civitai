@@ -85,11 +85,13 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
   },
   [TrainingStatus.Submitted]: {
     color: 'blue',
-    description: 'A request to train has been submitted, and will soon be actively processing.',
+    description:
+      'A request to train has been submitted, and will soon be actively processing. You will be emailed when it is complete.',
   },
   [TrainingStatus.Processing]: {
     color: 'teal',
-    description: 'The training is actively processing. In other words: the model is baking.',
+    description:
+      'The training is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
   },
   [TrainingStatus.InReview]: {
     color: 'green',
@@ -156,8 +158,8 @@ export default function UserTrainingModels() {
   return (
     <Stack>
       <ScrollArea
-        // TODO [bw] should do something like calc(100vh - 400px)
-        style={{ height: 400 }}
+        // TODO [bw] this 600px here should be autocalced via a css var, to capture the top nav, user info section, and bottom bar
+        style={{ height: 'max(400px, calc(100vh - 600px))' }}
         onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
       >
         <Table verticalSpacing="md" fontSize="md" striped={hasTraining}>
