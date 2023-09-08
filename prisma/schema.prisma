@@ -1159,6 +1159,7 @@ enum TagSource {
   User
   Rekognition
   WD14
+  Computed
 }
 
 model TagsOnImage {

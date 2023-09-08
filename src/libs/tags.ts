@@ -38,6 +38,8 @@ const tagNameOverrides: Record<string, string> = {
   '5boys': 'men',
   '6+boys': 'men',
   'multiple boys': 'men',
+  pussy: 'vagina',
+  ass: 'butt',
 };
 export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;

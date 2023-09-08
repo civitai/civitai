@@ -58,7 +58,7 @@ export default ModEndpoint(
           t.id "tagId",
           true "automated",
           70 "confidence",
-          'WD14' "source"
+          'Computed' "source"
         FROM image_tags it
         JOIN "Tag" t ON t.name = it.tag
         ON CONFLICT ("imageId", "tagId") DO NOTHING;

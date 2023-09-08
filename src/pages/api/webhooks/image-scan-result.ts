@@ -82,6 +82,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   }
 });
 
+type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps) {
   if (!incomingTags?.length) return;
 
@@ -95,14 +96,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   for (const tag of incomingTags) {
     if (!tagMap[tag.tag] || tagMap[tag.tag].confidence < tag.confidence) tagMap[tag.tag] = tag;
   }
-  const tags = Object.values(tagMap);
+  const tags: Tag[] = Object.values(tagMap);
 
   // Add computed tags
   const computedTags = getComputedTags(
     tags.map((x) => x.tag),
     source
   );
-  tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70 })));
+  tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70, source: TagSource.Computed })));
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
@@ -167,7 +168,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
         .filter((x) => x.id)
         .map(
           (x) =>
-            `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)}, '${source}')`
+            `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)}, '${
+              x.source ?? source
+            }')`
         )
         .join(', ')}
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
