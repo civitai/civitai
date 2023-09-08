@@ -18,6 +18,7 @@ import {
 } from '~/libs/form';
 import { BaseModel } from '~/server/common/constants';
 import {
+  ModelVersionUpsertInput,
   TrainingDetailsBaseModel,
   trainingDetailsBaseModels,
   TrainingDetailsObj,
@@ -91,7 +92,7 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'numRepeats',
     label: 'Num Repeats',
-    hint: 'Num Repeats defines how many times each individual image gets put into VRAM. As opposed to batch size, which is how many images you shove into your VRAM at once.',
+    hint: 'Num Repeats defines how many times each individual image gets put into VRAM. As opposed to batch size, which is how many images are placed into VRAM at once.',
     type: 'int',
     default: (n: number) => Math.max(1, Math.min(1000, Math.ceil(200 / n))),
     min: 1,
@@ -100,13 +101,13 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'trainBatchSize',
     label: 'Train Batch Size',
-    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously. To avoid OOM errors, please limit batch counts to the following by resolution: 512 -> 9, 768 -> 6, 1024 -> 4',
+    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously.',
     type: 'int',
     // TODO [bw] this should have a default/max driven by the resolution they've selected (e.g. 512 -> 9, 768 -> 6, 1024 -> 4 basically cap lower than 4700)
     default: 6,
     min: 4,
     max: 9,
-    overrides: { sdxl: { max: 4, min: 2, default: 4 } },
+    overrides: { realistic: { default: 2, min: 2, max: 2 }, sdxl: { max: 4, min: 2, default: 4 } },
   },
   {
     name: 'targetSteps',
@@ -128,7 +129,7 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'resolution',
     label: 'Resolution',
-    hint: 'Specify the maximum resolution of training images in the order of "width, height". If the training images exceed the resolution specified here, they will be scaled down to this resolution.',
+    hint: 'Specify the maximum resolution of training images. If the training images exceed the resolution specified here, they will be scaled down to this resolution.',
     type: 'int',
     default: 512,
     min: 512,
@@ -175,6 +176,23 @@ const trainingSettings: TrainingSettingsType[] = [
     default: 0,
     min: 0,
     max: 1,
+  },
+  {
+    name: 'clipSkip',
+    label: 'Clip Skip',
+    hint: 'Determines which layer\'s vector output will be used. There are 12 layers, and setting the skip will select "xth from the end" of the total layers. For anime, we use 2. For everything else, 1.',
+    type: 'int',
+    default: 1,
+    min: 1,
+    max: 4,
+    overrides: { anime: { default: 2 } },
+  },
+  {
+    name: 'flipAugmentation',
+    label: 'Flip Augmentation',
+    hint: 'If this option is turned on, the image will be horizontally flipped randomly. It can learn left and right angles, which is useful when you want to learn symmetrical people and objects.',
+    type: 'bool',
+    default: false,
   },
   {
     name: 'unetLR',
@@ -424,15 +442,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       const baseModelConvert: BaseModel =
         baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
 
-      const versionMutateData = {
-        // these 4 appear to be required for upsert, but aren't actually being updated.
+      const versionMutateData: ModelVersionUpsertInput = {
+        // these top vars appear to be required for upsert, but aren't actually being updated.
         // only ID should technically be necessary
         id: thisModelVersion.id,
         name: thisModelVersion.name,
         modelId: model.id,
+        trainedWords: [],
+        // ---
         baseModel: baseModelConvert,
         epochs: paramData.maxTrainEpochs,
         steps: paramData.targetSteps,
+        clipSkip: paramData.clipSkip,
         trainingStatus: TrainingStatus.Submitted,
         trainingDetails: {
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
@@ -470,7 +491,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 setAwaitInvalidate(false);
                 showSuccessNotification({
                   title: 'Successfully submitted for training!',
-                  message: 'You will be notified when training is complete.',
+                  message: 'You will be emailed when training is complete.',
                 });
                 await router.replace(userTrainingDashboardURL);
               },

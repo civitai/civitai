@@ -115,7 +115,7 @@ async function updateRecords(
   const history = trainingResults.history || [];
 
   const last = history[history.length - 1];
-  if (!last || last.status != status) {
+  if (!last || last.status !== status) {
     // push to history
     history.push({
       jobId: jobId,
@@ -129,7 +129,6 @@ async function updateRecords(
 
   let attempts = trainingResults.attempts || 0;
   if (status === TrainingStatus.Failed) {
-    // increment attempts
     attempts += 1;
   }
 

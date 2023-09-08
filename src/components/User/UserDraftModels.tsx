@@ -87,7 +87,11 @@ export function UserDraftModels() {
 
   return (
     <Stack>
-      <ScrollArea style={{ height: 400 }} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
+      <ScrollArea
+        // TODO [bw] this 600px here should be autocalced via a css var, to capture the top nav, user info section, and bottom bar
+        style={{ height: 'max(400px, calc(100vh - 600px))' }}
+        onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
+      >
         <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>

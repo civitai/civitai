@@ -48,6 +48,8 @@ export const trainingDetailsParams = z.object({
   loraType: z.string(), // TODO actually an enum
   enableBucket: z.boolean(),
   keepTokens: z.number(),
+  clipSkip: z.number(),
+  flipAugmentation: z.boolean(),
   lrSchedulerNumCycles: z.number(),
   trainBatchSize: z.number(),
   minSnrGamma: z.number(),
@@ -55,7 +57,6 @@ export const trainingDetailsParams = z.object({
   shuffleCaption: z.boolean(),
   targetSteps: z.number(),
   // lrWarmupSteps: z.number(),
-  // clipSkip: 2,
   // seed: null,
   // gradientAccumulationSteps: 1,
 });
