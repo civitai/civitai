@@ -64,6 +64,12 @@ export default ModEndpoint(
         ON CONFLICT ("imageId", "tagId") DO NOTHING;
       `;
 
+      // Recompute the nsfw level
+      const imageIds = batch.map((x) => x.imageId);
+      await dbWrite.$executeRawUnsafe(
+        `SELECT update_nsfw_levels('{${imageIds.join(',')}}'::int[]);`
+      );
+
       i += batchSize;
     }
     console.log('Done adding computed tags!');
