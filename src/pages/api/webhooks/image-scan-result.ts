@@ -1,20 +1,13 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import {
-  ImageIngestionStatus,
-  Prisma,
-  SearchIndexUpdateQueueAction,
-  TagSource,
-  TagTarget,
-  TagType,
-} from '@prisma/client';
+import { ImageIngestionStatus, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
 import { auditMetaData } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { logToDb } from '~/utils/logging';
 import { constants } from '~/server/common/constants';
+import { getComputedTags } from '~/server/utils/tag-computation';
 
 const tagCache: Record<string, number> = {};
 
@@ -89,42 +82,6 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   }
 });
 
-type ComputedTagTester = {
-  includesAll?: string[];
-  includesSome?: string[];
-  excludes?: string[];
-  includesSource?: TagSource[];
-};
-const computedTagCombos: Record<string, ComputedTagTester> = {
-  'female swimwear or underwear': {
-    includesAll: ['female'],
-    includesSome: ['swimwear', 'underwear', 'lingerie', 'bikini'],
-    excludes: [
-      'dress',
-      'nudity',
-      'illustrated explicit nudity',
-      'partial nudity',
-      'sexual activity',
-      'graphic female nudity',
-    ],
-    includesSource: [TagSource.Rekognition],
-  },
-  'male swimwear or underwear': {
-    includesAll: ['male'],
-    includesSome: ['swimwear', 'underwear', 'lingerie'],
-    excludes: [
-      'dress',
-      'nudity',
-      'illustrated explicit nudity',
-      'partial nudity',
-      'sexual activity',
-      'graphic male nudity',
-    ],
-    includesSource: [TagSource.Rekognition],
-  },
-};
-
-const computedTagsCombosArray = Object.entries(computedTagCombos);
 async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps) {
   if (!incomingTags?.length) return;
 
@@ -141,17 +98,11 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   const tags = Object.values(tagMap);
 
   // Add computed tags
-  for (const [
-    toAdd,
-    { includesAll, includesSome, excludes, includesSource },
-  ] of computedTagsCombosArray) {
-    if (includesSource && !includesSource.includes(source)) continue;
-    if (tags.some((x) => x.tag === toAdd)) continue;
-    if (includesAll && !includesAll.every((x) => tags.some((y) => y.tag === x))) continue;
-    if (includesSome && !includesSome.some((x) => tags.some((y) => y.tag === x))) continue;
-    if (excludes && excludes.some((x) => tags.some((y) => y.tag === x))) continue;
-    tags.push({ tag: toAdd, confidence: 70 });
-  }
+  const computedTags = getComputedTags(
+    tags.map((x) => x.tag),
+    source
+  );
+  tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70 })));
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
@@ -228,6 +179,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
   // For now, only update the scanned state if we got the result from Rekognition
   if (source === TagSource.WD14) {
+    // However we can still update the nsfw level, as it will only go up...
+    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
     return;
   }
 
@@ -243,17 +196,17 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     let hasAdultTag = false,
       hasMinorTag = false,
-      hasAnimatedTag = false,
+      hasCartoonTag = false,
       nsfw = false;
     for (const { name, type } of tags) {
       if (type === TagType.Moderation) nsfw = true;
       if (tagsNeedingReview.includes(name)) hasMinorTag = true;
-      else if (constants.imageTags.styles.includes(name)) hasAnimatedTag = true;
+      else if (constants.imageTags.styles.includes(name)) hasCartoonTag = true;
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
     let reviewKey: string | null = null;
-    if (hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw)) reviewKey = 'minor';
+    if (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) reviewKey = 'minor';
     else if (nsfw) {
       const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
         SELECT

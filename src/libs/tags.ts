@@ -25,7 +25,19 @@ export type VotableTagModel = {
 const tagNameOverrides: Record<string, string> = {
   ...moderationDisplayNames,
   '1girl': 'woman',
+  '2girls': 'women',
+  '3girls': 'women',
+  '4girls': 'women',
+  '5girls': 'women',
+  '6+girls': 'women',
+  'multiple girls': 'women',
   '1boy': 'man',
+  '2boys': 'men',
+  '3boys': 'men',
+  '4boys': 'men',
+  '5boys': 'men',
+  '6+boys': 'men',
+  'multiple boys': 'men',
 };
 export function getTagDisplayName(name: string) {
   return tagNameOverrides[name] || name;
