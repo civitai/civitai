@@ -476,7 +476,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         <Group spacing={8} noWrap>
           <Tooltip label={isTracked ? 'Stop tracking' : 'Track'} position="top">
             <div>
-              <LoginRedirect reason="favorite-model">
+              <LoginRedirect reason="perform-action">
                 <ActionIcon
                   size={42}
                   onClick={() => handleEngagementClick('Track')}
@@ -493,7 +493,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           </Tooltip>
           <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top">
             <div>
-              <LoginRedirect reason="favorite-model">
+              <LoginRedirect reason="perform-action">
                 <ActionIcon
                   size={42}
                   onClick={() => handleEngagementClick('Favorite')}
