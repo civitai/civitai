@@ -39,7 +39,7 @@ export const getBountyEntryEarnedBuzz = async ({
   const data = await dbRead.$queryRaw<{ id: number; awardedUnitAmount: number }[]>`
     SELECT
         be.id,
-        COALESCE(SUM(bb."unitAmount"), 0) AS awardedUnitAmount
+        COALESCE(SUM(bb."unitAmount"), 0) AS "awardedUnitAmount"
     FROM "BountyEntry" be
     LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
     WHERE be.id IN (${Prisma.join(ids)})

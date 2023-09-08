@@ -667,7 +667,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         await queryUtils.bounty.getEntries.setData(
           { id: bounty.id },
           produce((entries) => {
-            if (!entries) {
+            if (!entries || !benefactorItem) {
               return entries;
             }
 
@@ -790,7 +790,6 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
                 <>
                   {benefactorItem && !benefactorItem.awardedToId && (
                     <HoverActionButton
-                      disabled={isAwardingBountyEntry}
                       label="Award"
                       size={30}
                       color="yellow.7"
