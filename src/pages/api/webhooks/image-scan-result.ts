@@ -226,6 +226,11 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error(e.message);
   }
 
+  // For now, only update the scanned state if we got the result from Rekognition
+  if (source === TagSource.WD14) {
+    return;
+  }
+
   try {
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
     const tags =
@@ -262,7 +267,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     }
     const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
 
-    // Set scannedAt and needsReview
     const data: Prisma.ImageUpdateInput = {
       scannedAt: new Date(),
       needsReview: reviewKey,
