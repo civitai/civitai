@@ -67,7 +67,7 @@ export async function prepareModelVersionResponse(
     },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl
-      ? castedFiles.map(({ hashes, ...file }) => ({
+      ? castedFiles.map(({ hashes, url, visibility, ...file }) => ({
           ...file,
           hashes: hashesAsObject(hashes),
           name: getDownloadFilename({ model, modelVersion: version, file }),

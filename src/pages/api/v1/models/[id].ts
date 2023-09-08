@@ -67,6 +67,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
                     primary: primaryFile.id === file.id,
                   })}`,
                   primary: primaryFile.id === file.id ? true : undefined,
+                  url: undefined,
+                  visibility: undefined,
                 }))
               : [],
             images: includeImages

@@ -10,7 +10,7 @@ const schema = z
       .refine((hash) => hash.length === 64, { message: 'Invalid hash' })
       .transform((hash) => hash.toUpperCase())
   )
-  .max(100, { message: 'Too many hashes' });
+  .max(10000, { message: 'Too many hashes' });
 
 export default PublicEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse) {
