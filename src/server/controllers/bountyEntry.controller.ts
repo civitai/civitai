@@ -4,7 +4,12 @@ import { GetByIdInput } from '../schema/base.schema';
 import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
-import { getEntryById, upsertBountyEntry } from '../services/bountyEntry.service';
+import {
+  awardBountyEntry,
+  getBountyEntryEarnedBuzz,
+  getEntryById,
+  upsertBountyEntry,
+} from '../services/bountyEntry.service';
 import { getFilesByEntity } from '../services/file.service';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
@@ -25,6 +30,7 @@ export const getBountyEntryHandler = async ({
 
     const images = await getImagesByEntity({ id: entry.id, type: 'BountyEntry' });
     const files = await getFilesByEntity({ id: entry.id, type: 'BountyEntry' });
+    const awardedTotal = await getBountyEntryEarnedBuzz({ ids: [entry.id] });
 
     return {
       ...entry,
@@ -36,6 +42,7 @@ export const getBountyEntryHandler = async ({
         ...f,
         metadata: f.metadata as BountyEntryFileMeta,
       })),
+      awardedUnitAmountTotal: awardedTotal[0]?.awardedUnitAmount ?? 0,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -57,6 +64,26 @@ export const upsertBountyEntryHandler = async ({
     });
 
     return entry;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const awardBountyEntryHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const benefactor = await awardBountyEntry({
+      ...input,
+      userId: ctx.user.id,
+    });
+
+    return benefactor;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

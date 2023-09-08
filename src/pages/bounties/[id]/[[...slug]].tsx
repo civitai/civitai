@@ -19,6 +19,7 @@ import {
   useMantineTheme,
   Loader,
   Box,
+  ThemeIcon,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useMemo } from 'react';
@@ -45,16 +46,24 @@ import { BountyMode } from '@prisma/client';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
+  IconArrowRight,
+  IconAward,
+  IconBrush,
   IconClockHour4,
   IconDotsVertical,
   IconHeart,
   IconShare3,
   IconStar,
+  IconTrophy,
 } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useRouter } from 'next/router';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
-import { getBountyCurrency, isMainBenefactor } from '~/components/Bounty/bounty.utils';
+import {
+  getBountyCurrency,
+  isBenefactor,
+  isMainBenefactor,
+} from '~/components/Bounty/bounty.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import {
   DescriptionTable,
@@ -76,6 +85,9 @@ import { isDefined } from '~/utils/type-guards';
 import { NextLink } from '@mantine/next';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
+import { generationPanel } from '~/store/generation.store';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { openConfirmModal } from '@mantine/modals';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -242,9 +254,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const queryUtils = trpc.useContext();
+  const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
 
   const addToBountyEnabled =
-    bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser);
+    !benefactor?.awardedToId &&
+    (bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser));
   const { isLoading, mutate: addBenefactorUnitAmountMutation } =
     trpc.bounty.addBenefactorUnitAmount.useMutation({
       onMutate: async ({ unitAmount }) => {
@@ -398,12 +412,23 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             size={12}
           />
         )}
+        {b.awardedToId && (
+          <Tooltip label={'This benefactor has already awarded an entry'}>
+            <IconTrophy
+              color={CurrencyConfig[currency].color(theme)}
+              fill={CurrencyConfig[currency].color(theme)}
+              size={12}
+            />
+          </Tooltip>
+        )}
       </Group>
     ),
     value: (
       <Group spacing={4} style={{ float: 'right' }}>
         <CurrencyIcon currency={currency} size={20} />
-        <Text weight={590}>{formatCurrencyForDisplay(b.unitAmount, currency)}</Text>
+        <Text weight={590} td={b.awardedToId ? 'line-through' : undefined}>
+          {formatCurrencyForDisplay(b.unitAmount, currency)}
+        </Text>
       </Group>
     ),
   }));
@@ -608,7 +633,88 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
+  const queryUtils = trpc.useContext();
   const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
+  const { isLoading: isAwardingBountyEntry, mutate: awardBountyEntryMutation } =
+    trpc.bountyEntry.award.useMutation({
+      onMutate: async ({ id }) => {
+        if (!currentUser) {
+          return;
+        }
+
+        const benefactorItem = bounty.benefactors.find((b) => b.user.id === currentUser.id);
+
+        await queryUtils.bounty.getById.setData(
+          { id: bounty.id },
+          produce((bounty) => {
+            if (!bounty || !currentUser) {
+              return bounty;
+            }
+
+            return {
+              ...bounty,
+              benefactors: bounty.benefactors.map((b) => {
+                if (b.user.id === currentUser?.id) {
+                  return { ...b, awardedToId: id };
+                }
+
+                return b;
+              }),
+            };
+          })
+        );
+
+        await queryUtils.bounty.getEntries.setData(
+          { id: bounty.id },
+          produce((entries) => {
+            if (!entries || !benefactorItem) {
+              return entries;
+            }
+
+            return entries.map((entry) => {
+              if (entry.id === id) {
+                return {
+                  ...entry,
+                  awardedUnitAmountTotal:
+                    (entry.awardedUnitAmountTotal ?? 0) + benefactorItem.unitAmount,
+                };
+              }
+
+              return entry;
+            });
+          })
+        );
+
+        return {
+          prevBounty: bounty,
+          prevEntries: entries,
+        };
+      },
+      onSuccess: async (_) => {
+        showSuccessNotification({
+          title: 'You have awarded an entry!',
+          message: `Your selected entry has been awarded!`,
+        });
+      },
+      onError: async (error, _variables, context) => {
+        showErrorNotification({
+          title: 'There was an error awarding the entry',
+          error: new Error(error.message),
+        });
+
+        if (context?.prevBounty) {
+          await queryUtils.bounty.getById.setData({ id: bounty.id }, context.prevBounty);
+        }
+
+        if (context?.prevEntries) {
+          await queryUtils.bounty.getEntries.setData({ id: bounty.id }, context.prevEntries);
+        }
+      },
+    });
+  const currency = getBountyCurrency(bounty);
+  const benefactorItem = !currentUser
+    ? null
+    : bounty.benefactors.find((b) => b.user.id === currentUser.id);
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
@@ -669,13 +775,76 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         spacing="sm"
         breakpoints={[
           { minWidth: 'xs', cols: 1 },
-          { minWidth: 'sm', cols: 3 },
+          { minWidth: 'sm', cols: 2 },
           { minWidth: 'md', cols: 4 },
         ]}
         style={{ width: '100%' }}
       >
         {entries.map((entry) => (
-          <BountyEntryCard key={entry.id} data={entry} />
+          <BountyEntryCard
+            key={entry.id}
+            data={entry}
+            currency={currency}
+            renderActions={() => {
+              return (
+                <>
+                  {benefactorItem && !benefactorItem.awardedToId && (
+                    <HoverActionButton
+                      label="Award"
+                      size={30}
+                      color="yellow.7"
+                      variant="filled"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        openConfirmModal({
+                          title: 'Award this entry?',
+                          children: (
+                            <Stack>
+                              <Text>
+                                Are you sure you want to award{' '}
+                                {
+                                  <CurrencyBadge
+                                    currency={currency}
+                                    unitAmount={benefactorItem.unitAmount}
+                                  />
+                                }{' '}
+                                to this entry?
+                              </Text>
+                              <Text>
+                                You will gain access to the files whose unlock amount have been
+                                reached after awarding.
+                              </Text>
+                              <Text color="red.4" size="sm">
+                                This action is non refundable.
+                              </Text>
+                            </Stack>
+                          ),
+                          centered: true,
+                          labels: { confirm: 'Award this entry', cancel: 'No, go back' },
+                          confirmProps: { color: 'yellow.7', rightIcon: <IconAward size={20} /> },
+                          onConfirm: () => {
+                            awardBountyEntryMutation({ id: entry.id });
+                          },
+                        });
+                      }}
+                      keepIconOnHover
+                    >
+                      <IconAward stroke={2.5} size={16} />
+                    </HoverActionButton>
+                  )}
+                  {benefactorItem && benefactorItem.awardedToId === entry.id && (
+                    <Tooltip label="You awarded this entry">
+                      <ThemeIcon color={'yellow.7'} radius="xl" size={30} variant={'filled'}>
+                        <IconTrophy size={16} stroke={2.5} />
+                      </ThemeIcon>
+                    </Tooltip>
+                  )}
+                </>
+              );
+            }}
+          />
         ))}
       </SimpleGrid>
     </Wrapper>

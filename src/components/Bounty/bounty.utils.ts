@@ -45,6 +45,21 @@ export const isMainBenefactor = (
   );
 };
 
+export const isBenefactor = (
+  bounty?: {
+    id: number;
+    user: { id: number } | null;
+    benefactors: { currency: Currency; user: { id: number } }[];
+  },
+  user?: { id: number } | null
+) => {
+  if (!bounty || !user) {
+    return false;
+  }
+
+  return !!bounty.benefactors.find((b) => b.user.id === bounty.user?.id);
+};
+
 export const useBountyFilters = () => {
   const storeFilters = useFiltersContext((state) => state.bounties);
   return removeEmpty(storeFilters);

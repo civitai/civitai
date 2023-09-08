@@ -52,7 +52,7 @@ export function CurrencyBadge({
           formatter(unitAmount)
         ) : (
           <>
-            {value} {displayCurrency ? currency : ''}
+            {value || 0} {displayCurrency ? currency : ''}
           </>
         )}
       </Group>
