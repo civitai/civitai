@@ -36,7 +36,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
     >
       <div className={cx(classes.root, classes.withHeader, classes.noHover)}>
         <Stack className={classes.header}>
-          <Group position="apart">
+          <Group position="apart" noWrap>
             {user ? (
               user?.id !== -1 && (
                 <UnstyledButton
@@ -65,7 +65,12 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             )}
 
             <Group>
-              <CurrencyBadge currency={currency} unitAmount={awardedUnitAmountTotal} />
+              <CurrencyBadge
+                currency={currency}
+                unitAmount={awardedUnitAmountTotal}
+                size="sm"
+                p={0}
+              />
             </Group>
           </Group>
         </Stack>

@@ -254,9 +254,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const queryUtils = trpc.useContext();
+  const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
 
   const addToBountyEnabled =
-    bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser);
+    !benefactor?.awardedToId &&
+    (bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser));
   const { isLoading, mutate: addBenefactorUnitAmountMutation } =
     trpc.bounty.addBenefactorUnitAmount.useMutation({
       onMutate: async ({ unitAmount }) => {
@@ -773,7 +775,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         spacing="sm"
         breakpoints={[
           { minWidth: 'xs', cols: 1 },
-          { minWidth: 'sm', cols: 3 },
+          { minWidth: 'sm', cols: 2 },
           { minWidth: 'md', cols: 4 },
         ]}
         style={{ width: '100%' }}

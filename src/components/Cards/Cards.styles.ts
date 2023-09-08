@@ -40,13 +40,13 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         justifyContent: 'flex-start',
 
         [`& .${headerRef}`]: {
-          height: '20%',
+          height: '60px',
         },
         [`& .${imageRef}`]: {
-          height: '80%',
+          height: 'calc(100% - 60px)',
         },
         [`& .${topRef}`]: {
-          top: '20%',
+          top: '60px',
         },
       },
 
