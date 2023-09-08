@@ -4,7 +4,7 @@ import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.sch
 import { isDefined } from '~/utils/type-guards';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
-  if (!id && !ids) {
+  if (!id && (!ids || ids.length === 0)) {
     return [];
   }
 
