@@ -29,6 +29,7 @@ import {
   IconFileText,
   IconFlag,
   IconFolder,
+  IconInfoCircle,
   IconLayoutList,
   IconMicrophone,
   IconMicrophoneOff,
@@ -74,6 +75,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { formatDate } from '~/utils/date-helpers';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -459,6 +461,16 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                 <>
                                   {isMod && (
                                     <>
+                                      {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
+                                        <Menu.Item
+                                          component="a"
+                                          target="_blank"
+                                          icon={<IconInfoCircle size={14} stroke={1.5} />}
+                                          href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
+                                        >
+                                          Lookup User
+                                        </Menu.Item>
+                                      )}
                                       <Menu.Item
                                         color={user.bannedAt ? 'green' : 'red'}
                                         icon={
