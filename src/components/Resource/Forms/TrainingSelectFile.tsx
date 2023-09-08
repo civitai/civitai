@@ -132,11 +132,9 @@ export default function TrainingSelectFile({
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const modelVersion = model?.modelVersions?.[0];
-  // TODO [bw] need to worry about multiple files? which one will this grab?
   const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
   const existingModelFile = modelVersion?.files.find((f) => f.type === 'Model');
 
-  // TODO [bw] possibly autoselect the first one
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
   );

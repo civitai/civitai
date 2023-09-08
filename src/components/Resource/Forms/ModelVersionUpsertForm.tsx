@@ -1,7 +1,10 @@
 import { Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { ModelVersionMonetizationType } from '@prisma/client';
+import { IconCurrencyDollar, IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import {
@@ -29,9 +32,6 @@ import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IconCurrencyDollar, IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { ModelVersionMonetizationType } from '@prisma/client';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -102,7 +102,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
   };
-  console.log('monetization', defaultValues.monetization);
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
 
@@ -135,7 +134,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         vaeId: hasVAE ? data.vaeId : undefined,
         monetization: data.monetization,
       });
-      console.log('monetization', data.monetization);
 
       await queryUtils.modelVersion.getById.invalidate();
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
