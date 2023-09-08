@@ -4,6 +4,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
   (theme, params, getRef) => {
     const imageRef = getRef('image');
     const headerRef = getRef('header');
+    const topRef = getRef('top');
     const { aspectRatio } = params;
 
     return {
@@ -44,6 +45,9 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         [`& .${imageRef}`]: {
           height: '80%',
         },
+        [`& .${topRef}`]: {
+          top: '20%',
+        },
       },
 
       noImage: {
@@ -79,7 +83,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         padding: theme.spacing.sm,
       },
 
-      top: { top: 0 },
+      top: { top: 0, ref: topRef },
       bottom: { bottom: 0 },
 
       iconBadge: { color: 'white', backgroundColor: theme.fn.rgba('#000', 0.31) },

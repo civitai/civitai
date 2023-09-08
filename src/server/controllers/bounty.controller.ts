@@ -90,6 +90,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             user: {
               select: userWithCosmeticsSelect,
             },
+            awardedToId: true,
             unitAmount: true,
             currency: true,
           },

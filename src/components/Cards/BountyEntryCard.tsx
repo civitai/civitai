@@ -15,7 +15,7 @@ import { Currency } from '@prisma/client';
 
 const IMAGE_CARD_WIDTH = 332;
 
-export function BountyEntryCard({ data, currency }: Props) {
+export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { setImages, onSetImage } = useImageViewerCtx();
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
@@ -85,6 +85,8 @@ export function BountyEntryCard({ data, currency }: Props) {
                     <Group spacing={4}>
                       <ImageGuard.ToggleConnect position="static" />
                     </Group>
+
+                    {renderActions && <Stack>{renderActions(data)}</Stack>}
                   </Group>
                   {image ? (
                     safe ? (
@@ -112,4 +114,8 @@ export function BountyEntryCard({ data, currency }: Props) {
   );
 }
 
-type Props = { data: BountyEntryGetById; currency: Currency };
+type Props = {
+  data: BountyEntryGetById;
+  currency: Currency;
+  renderActions?: (bountyEntry: BountyEntryGetById) => React.ReactNode;
+};

@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -98,4 +99,42 @@ export const upsertBountyEntry = async ({
       return entry;
     }
   });
+};
+
+export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
+  const benefactor = await dbWrite.$transaction(async (tx) => {
+    const entry = await tx.bountyEntry.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, bountyId: true },
+    });
+
+    const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
+      where: {
+        userId_bountyId: {
+          userId,
+          bountyId: entry.bountyId,
+        },
+      },
+    });
+
+    if (benefactor.awardedToId) {
+      throw throwBadRequestError('Benefactor has already awarded an entry.');
+    }
+
+    const updatedBenefactor = await tx.bountyBenefactor.update({
+      where: {
+        userId_bountyId: {
+          userId,
+          bountyId: entry.bountyId,
+        },
+      },
+      data: {
+        awardedToId: entry.id,
+      },
+    });
+
+    return updatedBenefactor;
+  });
+
+  return benefactor;
 };

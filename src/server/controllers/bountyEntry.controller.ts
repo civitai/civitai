@@ -5,6 +5,7 @@ import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
 import {
+  awardBountyEntry,
   getBountyEntryEarnedBuzz,
   getEntryById,
   upsertBountyEntry,
@@ -63,6 +64,26 @@ export const upsertBountyEntryHandler = async ({
     });
 
     return entry;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const awardBountyEntryHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const benefactor = await awardBountyEntry({
+      ...input,
+      userId: ctx.user.id,
+    });
+
+    return benefactor;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

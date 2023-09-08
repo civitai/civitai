@@ -1,6 +1,7 @@
 import { getByIdSchema } from '../schema/base.schema';
 import { protectedProcedure, publicProcedure, router } from '../trpc';
 import {
+  awardBountyEntryHandler,
   getBountyEntryHandler,
   upsertBountyEntryHandler,
 } from '~/server/controllers/bountyEntry.controller';
@@ -9,4 +10,5 @@ import { upsertBountyEntryInputSchema } from '~/server/schema/bounty-entry.schem
 export const bountyEntryRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getBountyEntryHandler),
   create: protectedProcedure.input(upsertBountyEntryInputSchema).mutation(upsertBountyEntryHandler),
+  award: protectedProcedure.input(getByIdSchema).mutation(awardBountyEntryHandler),
 });
