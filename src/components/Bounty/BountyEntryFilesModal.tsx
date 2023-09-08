@@ -26,8 +26,8 @@ const { openModal: openBountyEntryFilesModal, Modal } = createContextModal<Props
   name: 'bountyEntryFiles',
   title: 'Files',
   size: 'md',
-  Element: ({ context, props }) => {
-    return <BountyEntryFiles {...props} onClose={() => context.close()} />;
+  Element: ({ props }) => {
+    return <BountyEntryFiles {...props} />;
   },
 });
 
@@ -113,7 +113,7 @@ function BountyEntryFiles({ bountyEntry }: Props) {
                       {(file.metadata.unlockAmount ?? 0) > 0 && (
                         <CurrencyBadge
                           currency={file.metadata.currency ?? Currency.BUZZ}
-                          unitAmount={file.metadata.unlockAmount}
+                          unitAmount={file.metadata.unlockAmount ?? 0}
                         />
                       )}
                     </Group>
@@ -127,22 +127,3 @@ function BountyEntryFiles({ bountyEntry }: Props) {
     </Stack>
   );
 }
-
-const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
-  ({ label, description, icon: Icon, ...otherProps }, ref) => {
-    return (
-      <div ref={ref} {...otherProps}>
-        <Group align="center" noWrap>
-          <Icon size={18} />
-          <div>
-            <Text size="sm">{label}</Text>
-            <Text size="xs" sx={{ opacity: 0.7 }}>
-              {description}
-            </Text>
-          </div>
-        </Group>
-      </div>
-    );
-  }
-);
-SelectItem.displayName = 'SelectItem';
