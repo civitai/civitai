@@ -682,6 +682,11 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             });
           })
         );
+
+        return {
+          prevBounty: bounty,
+          prevEntries: entries,
+        };
       },
       onSuccess: async (_) => {
         showSuccessNotification({
@@ -695,9 +700,12 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
           error: new Error(error.message),
         });
 
-        if (context?.prev) {
-          await queryUtils.bounty.getById.setData({ id: bounty.id }, context.prev);
-          await queryUtils.bounty.getEntries.setData({ id: bounty.id }, context.prev);
+        if (context?.prevBounty) {
+          await queryUtils.bounty.getById.setData({ id: bounty.id }, context.prevBounty);
+        }
+
+        if (context?.prevEntries) {
+          await queryUtils.bounty.getEntries.setData({ id: bounty.id }, context.prevEntries);
         }
       },
     });

@@ -1482,7 +1482,7 @@ export const getImagesByEntity = async ({
   type: ImageEntityType;
   imagesPerId?: number;
 }) => {
-  if (!id && !ids) {
+  if (!id && (!ids || ids.lenght === 0)) {
     return [];
   }
 

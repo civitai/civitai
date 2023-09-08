@@ -130,6 +130,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       },
       data: {
         awardedToId: entry.id,
+        awardedAt: new Date(),
       },
     });
 
