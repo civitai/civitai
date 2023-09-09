@@ -321,8 +321,8 @@ export const addTagVotes = async ({
     isCreator = creator?.userId === userId;
   }
   let voteWeight = 1;
-  if (isCreator) voteWeight = CREATOR_VOTE_WEIGHT;
-  else if (isModerator) voteWeight = MODERATOR_VOTE_WEIGHT;
+  if (isModerator) voteWeight = MODERATOR_VOTE_WEIGHT;
+  else if (isCreator) voteWeight = CREATOR_VOTE_WEIGHT;
 
   vote *= voteWeight;
   const isTagIds = typeof tags[0] === 'number';
