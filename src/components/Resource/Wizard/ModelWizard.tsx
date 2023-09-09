@@ -88,7 +88,10 @@ export function ModelWizard() {
     // redirect to correct step if missing values
     if (!isNew) {
       // don't redirect for Trained type
-      if (model?.uploadType === ModelUploadType.Trained) return;
+      if (model?.uploadType === ModelUploadType.Trained) {
+        // TODO [bw] we could possibly redirect here to step 3 if status == InReview
+        return;
+      }
       if (!hasVersions) router.replace(`/models/${id}/wizard?step=2`, undefined, { shallow: true });
       else if (!hasFiles)
         router.replace(`/models/${id}/wizard?step=3`, undefined, { shallow: true });
