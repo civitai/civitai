@@ -39,7 +39,8 @@ const context = z.object({
     .optional(),
 });
 
-const schema = z.object({
+type OrchestratorEvent = z.infer<typeof OrchestratorEventSchema>;
+export const OrchestratorEventSchema = z.object({
   type: z.string(),
   jobId: z.string(),
   date: z.string(),
@@ -55,36 +56,42 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const bodyResults = schema.safeParse(req.body);
+  const bodyResults = OrchestratorEventSchema.safeParse(req.body);
   if (!bodyResults.success) {
     return res.status(400).json({ ok: false, errors: bodyResults.error });
   }
 
-  const data = bodyResults.data;
+  if (!bodyResults.data.context) {
+    return res.status(400).json({ ok: false, error: 'context is undefined' });
+  }
 
+  await handleOrchestratorEvent(bodyResults.data);
+});
+
+export async function handleOrchestratorEvent({
+  jobId,
+  type: eventType,
+  context,
+}: OrchestratorEvent) {
   const status = {
     Success: TrainingStatus.InReview,
     Update: TrainingStatus.Processing,
     Fail: TrainingStatus.Failed,
     Reject: TrainingStatus.Failed,
     LateReject: TrainingStatus.Failed,
-  }[data.type];
+  }[eventType];
 
-  switch (data.type) {
+  switch (eventType) {
     case 'Success':
     case 'Fail':
     case 'Reject':
     case 'LateReject':
     case 'Update':
-      if (!data.context) {
-        return res.status(400).json({ ok: false, error: 'context is undefined' });
+      if (!context) {
+        throw new Error('context is undefined');
       }
 
-      try {
-        await updateRecords({ ...data.context, jobId: data.jobId }, status as TrainingStatus);
-      } catch (e: unknown) {
-        return res.status(500).json({ ok: false, error: (e as Error)?.message });
-      }
+      await updateRecords({ ...context, jobId: jobId }, status as TrainingStatus);
 
       break;
     case 'Expire':
@@ -92,11 +99,9 @@ export default WebhookEndpoint(async (req, res) => {
       // TODO: handle these now that we have the job id
       break;
     default:
-      return res.status(400).json({ ok: false, error: 'type not supported' });
+      throw new Error(`Unknown event type: ${eventType}`);
   }
-
-  return res.status(200).json({ ok: true });
-});
+}
 
 async function updateRecords(
   { modelFileId, message, epochs, start_time, end_time, jobId }: ContextProps & { jobId: string },
