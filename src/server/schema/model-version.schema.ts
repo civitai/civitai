@@ -48,8 +48,9 @@ export const trainingDetailsParams = z.object({
   loraType: z.string(), // TODO actually an enum
   enableBucket: z.boolean(),
   keepTokens: z.number(),
-  clipSkip: z.number(),
-  flipAugmentation: z.boolean(),
+  // nb: these bottom two are not actually optional, but because we added them later, old versions will not have them causing the schema check to fail
+  clipSkip: z.number().optional(),
+  flipAugmentation: z.boolean().optional(),
   lrSchedulerNumCycles: z.number(),
   trainBatchSize: z.number(),
   minSnrGamma: z.number(),
