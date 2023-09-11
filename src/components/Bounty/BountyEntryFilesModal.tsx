@@ -61,7 +61,8 @@ function BountyEntryFiles({ bountyEntry }: Props) {
     <Stack>
       {hasLockedFiles && (
         <Text>
-          Some of the files in this entry are still because they have not reached the unlock amount.
+          Some of the files in this entry are still not available because they have not reached the
+          unlock amount.
         </Text>
       )}
       <ScrollArea.Autosize maxHeight={400}>

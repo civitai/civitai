@@ -11,9 +11,7 @@ import { openAddToCollectionModal } from '~/components/Collections/AddToCollecti
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
-import BountyEntryFilesModal, {
-  openBountyEntryFilesModal,
-} from '~/components/Bounty/BountyEntryFilesModal';
+import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -47,6 +45,7 @@ const ManageHomeBlocksModal = dynamic(
 );
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
+const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 
 const registry = {
   blockModelTags: {
