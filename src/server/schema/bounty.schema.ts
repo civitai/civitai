@@ -57,6 +57,8 @@ export const updateBountyInputSchema = createBountyInputSchema
   .pick({
     description: true,
     details: true,
+    startsAt: true,
+    expiresAt: true,
     tags: true,
     files: true,
   })

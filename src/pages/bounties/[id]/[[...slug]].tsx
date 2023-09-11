@@ -50,7 +50,6 @@ import {
   IconAward,
   IconBrush,
   IconClockHour4,
-  IconDotsVertical,
   IconHeart,
   IconShare3,
   IconStar,
@@ -89,6 +88,7 @@ import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 import { generationPanel } from '~/store/generation.store';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { openConfirmModal } from '@mantine/modals';
+import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -188,13 +188,7 @@ export default function BountyDetailsPage({
                 <DaysFromNow date={bounty.expiresAt} withoutSuffix />
               </IconBadge>
             </Group>
-            <ActionIcon
-              radius="xl"
-              color="gray"
-              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            >
-              <IconDotsVertical size={16} />
-            </ActionIcon>
+            <BountyContextMenu bounty={bounty} position="bottom-end" />
           </Group>
           <Group spacing={8}>
             <UserAvatar user={bounty.user} withUsername linkToProfile />

@@ -19,6 +19,7 @@ import {
   IconViewfinder,
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
+import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -76,7 +77,12 @@ export function BountyCard({ data }: Props) {
                         {dayjs(expiresAt).toNow(true)}
                       </Text>
                     </IconBadge>
-                    {/* <ArticleContextMenu article={data} ml="auto" /> */}
+                    <BountyContextMenu
+                      bounty={data}
+                      buttonProps={{ ml: 'auto', variant: 'transparent' }}
+                      position="bottom-end"
+                      withinPortal
+                    />
                   </Group>
                   {image ? (
                     safe ? (

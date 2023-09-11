@@ -2,7 +2,11 @@ import { Currency, ImageIngestionStatus, Prisma, TagTarget } from '@prisma/clien
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
 import { getFilesByEntity, updateEntityFiles } from './file.service';
-import { throwInsufficientFundsError, throwNotFoundError } from '../utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwNotFoundError,
+} from '../utils/errorHandling';
 import {
   AddBenefactorUnitAmountInputSchema,
   CreateBountyInput,
@@ -199,7 +203,18 @@ export const updateBountyById = async ({
 };
 
 export const deleteBountyById = async ({ id }: GetByIdInput) => {
-  const bounty = await dbWrite.$transaction(async (tx) => {
+  const bounty = await getBountyById({ id, select: { userId: true } });
+  if (!bounty) throw throwNotFoundError('Bounty not found');
+
+  const benefactorsCount = await dbWrite.bountyBenefactor.count({
+    where: { bountyId: id, userId: bounty.userId ? { not: bounty.userId } : undefined },
+  });
+  const entriesCount = await dbWrite.bountyEntry.count({ where: { bountyId: id } });
+
+  if (benefactorsCount !== 0 || entriesCount !== 0)
+    throw throwBadRequestError('Cannot delete bounty because it has benefactors and/or entries');
+
+  const deletedBounty = await dbWrite.$transaction(async (tx) => {
     const deletedBounty = await tx.bounty.delete({ where: { id } });
     if (!deletedBounty) return null;
 
@@ -208,7 +223,7 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
     return deletedBounty;
   });
 
-  return bounty;
+  return deletedBounty;
 };
 
 export const getBountyImages = async ({ id }: GetByIdInput) => {
