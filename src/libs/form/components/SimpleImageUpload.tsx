@@ -10,7 +10,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
+import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import { MediaType } from '@prisma/client';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
@@ -19,7 +19,6 @@ import { useEffect, useState } from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import imageUpload from '~/pages/api/image-upload';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { formatBytes } from '~/utils/number-helpers';

@@ -31,6 +31,7 @@ export const MEDIA_TYPE: Record<string, MediaType> = {
 } as const;
 
 export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.webp];
+export type IMAGE_MIME_TYPE = (typeof IMAGE_MIME_TYPE)[number];
 export const VIDEO_MIME_TYPE = [MIME_TYPES.mp4, MIME_TYPES.webm];
 export const AUDIO_MIME_TYPE = [MIME_TYPES.mp3, MIME_TYPES.wav];
 export const ZIP_MIME_TYPE = [MIME_TYPES.zip, MIME_TYPES.xZipCompressed, MIME_TYPES.xZipMultipart];
