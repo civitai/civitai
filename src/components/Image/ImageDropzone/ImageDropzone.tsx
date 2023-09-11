@@ -78,7 +78,7 @@ export function ImageDropzone({
             {description}
             <Text size="sm" color="dimmed" inline mt={7}>
               {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
-              {`, each file should not exceed ${formatBytes(maxSize)}`}
+              {`, image files should not exceed ${formatBytes(maxSize)}`}
               {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
             </Text>
           </div>
