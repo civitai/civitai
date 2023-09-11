@@ -1,10 +1,11 @@
-import { Button, Group, Stack, Title } from '@mantine/core';
+import { Button, Group, Stack, Title, ActionIcon, Text, Tooltip, Anchor } from '@mantine/core';
 import { getMinMaxDates, useQueryBounty } from '~/components/Bounty/bounty.utils';
 import { Form, InputDatePicker, InputRTE, useForm, InputMultiFileUpload } from '~/libs/form';
 import { UpdateBountyInput, updateBountyInputSchema } from '~/server/schema/bounty.schema';
 import { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
 import { useRouter } from 'next/router';
+import { IconTrash } from '@tabler/icons-react';
 
 export function BountyEditForm({ bounty }: Props) {
   const router = useRouter();
@@ -80,9 +81,40 @@ export function BountyEditForm({ bounty }: Props) {
               'text/x-python-script': ['.py'],
             },
           }}
+          renderItem={(file, onRemove) => (
+            <>
+              {file.id ? (
+                <Anchor
+                  href={`/api/download/attachments/${file.id}`}
+                  size="sm"
+                  weight={500}
+                  lineClamp={1}
+                  download
+                >
+                  {file.name}
+                </Anchor>
+              ) : (
+                <Text size="sm" weight={500} lineClamp={1}>
+                  {file.name}
+                </Text>
+              )}
+              {!file.id && (
+                <Tooltip label="Remove">
+                  <ActionIcon
+                    size="sm"
+                    color="red"
+                    variant="transparent"
+                    onClick={() => onRemove()}
+                  >
+                    <IconTrash />
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </>
+          )}
         />
         <Group position="right">
-          <Button type="submit" disabled={updating}>
+          <Button type="submit" loading={updating}>
             Save
           </Button>
         </Group>

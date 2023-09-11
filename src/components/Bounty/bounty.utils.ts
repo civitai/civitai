@@ -175,6 +175,9 @@ export const useQueryBounty = (opts?: { bountyId?: number }) => {
     },
   });
   const updateBountyMutation = trpc.bounty.update.useMutation({
+    async onSuccess(_, { id }) {
+      await queryUtils.bounty.getById.invalidate({ id });
+    },
     onError(error) {
       showErrorNotification({
         title: 'Failed to update bounty',

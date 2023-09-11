@@ -18,7 +18,6 @@ export function BountyContextMenu({
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === bounty.user?.id || isModerator;
 
-  // TODO.bounty: a bounty can only be deleted if it has no submissions, no benefactors and is not expired
   const { deleteBounty } = useQueryBounty({ bountyId: bounty.id });
 
   const menuItems: React.ReactElement<MenuItemProps>[] = [

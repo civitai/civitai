@@ -1,6 +1,6 @@
 import { Currency, ImageIngestionStatus, Prisma, TagTarget } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
-import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
+import { GetByIdInput } from '../schema/base.schema';
 import { getFilesByEntity, updateEntityFiles } from './file.service';
 import {
   throwBadRequestError,
@@ -150,20 +150,12 @@ export const createBounty = async ({
   return bounty;
 };
 
-// TODO.bounty: handle details and tags
-export const updateBountyById = async ({
-  id,
-  files,
-  tags,
-  details,
-  ...data
-}: UpdateBountyInput) => {
+export const updateBountyById = async ({ id, files, tags, ...data }: UpdateBountyInput) => {
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.update({
       where: { id },
       data: {
         ...data,
-        details: (details as Prisma.JsonObject) ?? Prisma.JsonNull,
         tags: tags
           ? {
               deleteMany: {

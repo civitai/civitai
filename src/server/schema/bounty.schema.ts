@@ -56,13 +56,10 @@ export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
 export const updateBountyInputSchema = createBountyInputSchema
   .pick({
     description: true,
-    details: true,
-    startsAt: true,
-    expiresAt: true,
     tags: true,
     files: true,
   })
-  .merge(z.object({ id: z.number() }));
+  .merge(z.object({ id: z.number(), startsAt: z.date(), expiresAt: z.date() }));
 
 export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUnitAmountInputSchema>;
 export const addBenefactorUnitAmountInputSchema = z.object({
