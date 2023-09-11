@@ -34,7 +34,7 @@ export function ImageDropzone({
     const hasLargeImageFiles = files.some(
       (file) => IMAGE_MIME_TYPE.includes(file.type as IMAGE_MIME_TYPE) && file.size > maxSize
     );
-    if (hasLargeImageFiles) return setError(`Files should not exceed ${formatBytes(maxSize)}`);
+    if (hasLargeImageFiles) return setError(`Images should not exceed ${formatBytes(maxSize)}`);
 
     setError('');
     onDrop?.(files.slice(0, max - count));
