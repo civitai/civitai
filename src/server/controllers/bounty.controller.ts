@@ -128,7 +128,12 @@ export const getBountyEntriesHandler = async ({
     // TODO.Bounties = We should get the currency type via the main benefactor before getting the awarded amount per entry.
     const entries = await getAllEntriesByBountyId({
       input: { bountyId: input.id },
-      select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
+      select: {
+        id: true,
+        createdAt: true,
+        bountyId: true,
+        user: { select: userWithCosmeticsSelect },
+      },
     });
 
     const images = await getImagesByEntity({

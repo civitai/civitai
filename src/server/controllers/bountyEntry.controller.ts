@@ -11,7 +11,6 @@ import {
   getEntryById,
   upsertBountyEntry,
 } from '../services/bountyEntry.service';
-import { getFilesByEntity } from '../services/file.service';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
@@ -25,7 +24,12 @@ export const getBountyEntryHandler = async ({
   try {
     const entry = await getEntryById({
       input,
-      select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
+      select: {
+        id: true,
+        createdAt: true,
+        bountyId: true,
+        user: { select: userWithCosmeticsSelect },
+      },
     });
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 

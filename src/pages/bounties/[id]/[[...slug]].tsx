@@ -22,7 +22,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -144,6 +144,12 @@ export default function BountyDetailsPage({
     />
   );
 
+  useEffect(() => {
+    if (bounty?.id) {
+      setImages(bounty.images);
+    }
+  }, [bounty?.id]);
+
   if (isLoading) return <PageLoader />;
   if (!bounty) return <NotFound />;
 
@@ -216,7 +222,6 @@ export default function BountyDetailsPage({
                 entityType="bounty"
                 mobile={mobile}
                 onClick={(image) => {
-                  setImages(bounty.images);
                   onSetImage(image.id);
                 }}
               />

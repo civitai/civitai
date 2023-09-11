@@ -1,4 +1,4 @@
-import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -8,36 +8,24 @@ import { useRouter } from 'next/router';
 import { BountyEntryGetById } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { openConfirmModal } from '@mantine/modals';
-import { IconAward, IconFile, IconFiles } from '@tabler/icons-react';
+import { IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 
 const IMAGE_CARD_WIDTH = 332;
 
 export function BountyEntryCard({ data, currency, renderActions }: Props) {
-  const { setImages, onSetImage } = useImageViewerCtx();
-  const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
+  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { user, images, awardedUnitAmountTotal } = data;
   // TODO.bounty: applyUserPreferences on bounty entry image
   const cover = images?.[0];
 
   return (
-    <FeedCard
-      aspectRatio="square"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        setImages(images ?? []);
-        onSetImage(cover.id);
-      }}
-    >
+    <FeedCard aspectRatio="square" href={`/bounties/${data.bountyId}/entries/${data.id}`}>
       <div className={cx(classes.root, classes.withHeader, classes.noHover)}>
         <Stack className={classes.header}>
           <Group position="apart" noWrap>
