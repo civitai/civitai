@@ -168,6 +168,9 @@ export const constants = {
     styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
   },
   maxTrainingRetries: 2,
+  imageUpload: {
+    maxFileSize: 32 * 1024 ** 2, // 32MB
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;
