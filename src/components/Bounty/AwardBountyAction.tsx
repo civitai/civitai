@@ -46,6 +46,8 @@ export const AwardBountyAction = ({
         const benefactorItem = bounty.benefactors.find((b) => b.user.id === currentUser.id);
 
         if (prevBounty) {
+          console.log('prevBounty', prevBounty);
+
           await queryUtils.bounty.getById.setData(
             { id: bounty.id },
             produce((bounty) => {
@@ -68,6 +70,8 @@ export const AwardBountyAction = ({
         }
 
         if (prevEntries) {
+          console.log('prevEntries', prevEntries);
+
           await queryUtils.bounty.getEntries.setData(
             { id: bounty.id },
             produce((entries) => {
@@ -91,6 +95,7 @@ export const AwardBountyAction = ({
         }
 
         if (prevEntry) {
+          console.log('prevEntry', prevEntry);
           await queryUtils.bountyEntry.getById.setData(
             { id: prevEntry.id },
             produce((entry) => {
@@ -117,6 +122,8 @@ export const AwardBountyAction = ({
           title: 'You have awarded an entry!',
           message: `Your selected entry has been awarded!`,
         });
+
+        await queryUtils.bountyEntry.getFiles.invalidate({ id: bountyEntryId });
       },
       onError: async (error, _variables, context) => {
         showErrorNotification({

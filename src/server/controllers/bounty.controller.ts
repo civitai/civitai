@@ -161,7 +161,9 @@ export const getBountyEntriesHandler = async ({
           metadata: i.metadata as ImageMetaProps,
         })),
       fileCount: files.length,
-      awardedUnitAmountTotal: awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0,
+      awardedUnitAmountTotal: Number(
+        awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0
+      ),
     }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;

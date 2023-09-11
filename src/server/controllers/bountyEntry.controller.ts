@@ -49,7 +49,7 @@ export const getBountyEntryHandler = async ({
       })),
       files,
       fileCount: files.length,
-      awardedUnitAmountTotal: awardedTotal[0]?.awardedUnitAmount ?? 0,
+      awardedUnitAmountTotal: Number(awardedTotal[0]?.awardedUnitAmount ?? 0),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
