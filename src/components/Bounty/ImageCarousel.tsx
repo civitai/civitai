@@ -173,7 +173,7 @@ export function ImageCarousel({
         render={(image) => {
           return (
             <Carousel.Slide>
-              <Box sx={{ cursor: 'pointer' }} onClick={() => onClick(image)}>
+              <Box sx={{ cursor: 'pointer' }} onClick={onClick ? () => onClick(image) : undefined}>
                 <ImageGuard.Content>
                   {({ safe }) => (
                     <Center style={{ height: '100%', width: '100%' }}>
@@ -217,5 +217,5 @@ type Props = {
   images: ImageProps[];
   nsfw: boolean;
   mobile?: boolean;
-  onClick: (image: ImageProps) => void;
+  onClick?: (image: ImageProps) => void;
 } & ImageGuardConnect;

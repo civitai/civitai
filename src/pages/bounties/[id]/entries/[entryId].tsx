@@ -13,6 +13,8 @@ import {
   Accordion,
   Alert,
   Anchor,
+  Box,
+  Button,
   Card,
   Center,
   CloseButton,
@@ -46,11 +48,14 @@ import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useHotkeys } from '@mantine/hooks';
 import {
   IconAlertCircle,
+  IconAward,
   IconChevronLeft,
   IconChevronRight,
   IconLock,
   IconLockOpen,
+  IconShare3,
   IconStar,
+  IconTrophy,
 } from '@tabler/icons-react';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -61,6 +66,11 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { useRouter } from 'next/router';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -96,6 +106,10 @@ const useStyles = createStyles((theme, _props, getRef) => {
       display: 'flex',
       position: 'relative',
       overflow: 'hidden',
+
+      [isMobile]: {
+        overflow: 'scroll',
+      },
     },
     carousel: {
       flex: 1,
@@ -145,6 +159,7 @@ export default function BountyEntryDetailsPage({
   id,
   entryId,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const router = useRouter();
   const { classes, theme } = useStyles();
   const { data: bounty, isLoading: isLoadingBounty } = trpc.bounty.getById.useQuery({ id });
   const { data: bountyEntry, isLoading: isLoadingEntry } = trpc.bountyEntry.getById.useQuery({
@@ -155,6 +170,9 @@ export default function BountyEntryDetailsPage({
   });
   const [mainImage] = bountyEntry?.images ?? [];
   const user = bountyEntry?.user;
+  const mobile = useIsMobile({ breakpoint: 'md' });
+  const currentUser = useCurrentUser();
+  const benefactor = (bounty?.benefactors ?? []).find((b) => b.user.id === currentUser?.id);
 
   const meta = (
     <Meta
@@ -186,6 +204,262 @@ export default function BountyEntryDetailsPage({
   //   cryCountAllTime: number;
   // } | null = bountyEntry?.stats ?? null;
 
+  const userSection = (
+    <>
+      {user && (
+        <Card.Section py="xs" withBorder inheritPadding>
+          <Group position="apart" spacing={8} noWrap px="xs">
+            <UserAvatar
+              user={user}
+              avatarProps={{ size: 32 }}
+              size="sm"
+              subText={
+                <>
+                  {bountyEntry.createdAt && (
+                    <Text size="xs" color="dimmed">
+                      Added on <DaysFromNow date={bountyEntry.createdAt} />
+                    </Text>
+                  )}
+                </>
+              }
+              subTextForce
+              withUsername
+              linkToProfile
+            />
+            <Group spacing="md">
+              <FollowUserButton userId={user.id} size="md" compact />
+              <NavigateBack url={`/bounties/${bounty.id}`}>
+                {({ onClick }) => (
+                  <CloseButton
+                    size="md"
+                    radius="xl"
+                    variant="transparent"
+                    iconSize={20}
+                    onClick={onClick}
+                  />
+                )}
+              </NavigateBack>
+            </Group>
+          </Group>
+        </Card.Section>
+      )}
+    </>
+  );
+
+  const awardSection = (
+    <>
+      {benefactor && benefactor.awardedToId === bountyEntry.id && (
+        <Alert color="yellow">
+          <Group spacing="xs">
+            <ThemeIcon
+              // @ts-ignore: transparent variant does work
+              variant="transparent"
+              color="yellow.6"
+            >
+              <IconTrophy size={20} fill="currentColor" />
+            </ThemeIcon>
+            <Text>You awarded this entry</Text>
+          </Group>
+        </Alert>
+      )}
+    </>
+  );
+
+  const shareSection = (
+    <Group noWrap>
+      <AwardBountyAction bounty={bounty} bountyEntryId={bountyEntry.id || entryId}>
+        {({ onClick, isLoading }) => (
+          <Button
+            disabled={isLoading}
+            size="md"
+            radius="xl"
+            color="gray"
+            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            compact
+            fullWidth
+            onClick={onClick}
+          >
+            <Group spacing={4}>
+              <ThemeIcon
+                // @ts-ignore: transparent variant does work
+                variant="transparent"
+                color="yellow.6"
+              >
+                <IconTrophy size={14} fill="currentColor" />
+              </ThemeIcon>
+              <Text size="xs">Award bounty</Text>
+            </Group>
+          </Button>
+        )}
+      </AwardBountyAction>
+      <ShareButton url={router.asPath} title={bounty.name}>
+        <Button
+          size="md"
+          radius="xl"
+          color="gray"
+          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          compact
+          fullWidth
+        >
+          <Group spacing={4}>
+            <IconShare3 size={14} />
+            <Text size="xs">Share</Text>
+          </Group>
+        </Button>
+      </ShareButton>
+    </Group>
+  );
+
+  const filesSection = (
+    <Accordion
+      variant="separated"
+      multiple
+      defaultValue={['files']}
+      my={0}
+      styles={(theme) => ({
+        content: { padding: 0 },
+        item: {
+          overflow: 'hidden',
+          borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+          boxShadow: theme.shadows.sm,
+        },
+        control: {
+          padding: theme.spacing.sm,
+        },
+      })}
+    >
+      <Accordion.Item
+        value="files"
+        sx={(theme) => ({
+          borderColor:
+            !isLoadingFiles && !filesCount ? `${theme.colors.red[4]} !important` : undefined,
+        })}
+      >
+        <Accordion.Control>
+          <Group position="apart">
+            {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
+          </Group>
+        </Accordion.Control>
+        <Accordion.Panel>
+          <Stack spacing={2}>
+            {isLoadingFiles ? (
+              <Center p="md">
+                <Loader size="md" variant="bars" />
+              </Center>
+            ) : filesCount > 0 ? (
+              <SimpleGrid cols={1} spacing={2}>
+                {files.map((file) => {
+                  const isLocked =
+                    (file.metadata.unlockAmount ?? 0) > bountyEntry.awardedUnitAmountTotal;
+
+                  return (
+                    <Paper key={file.id} radius={0} p={8} w="100%" bg="dark.4">
+                      <Stack>
+                        <Group position="apart" noWrap>
+                          <Group>
+                            {isLocked ? (
+                              <Tooltip
+                                label="This file has not been unlocked yet"
+                                maw={200}
+                                multiline
+                                withArrow
+                                withinPortal
+                              >
+                                <IconLock />
+                              </Tooltip>
+                            ) : (
+                              <IconLockOpen />
+                            )}
+                            <Stack spacing={0}>
+                              {file.url && !isLocked ? (
+                                <Anchor
+                                  href={`/api/download/attachments/${file.id}`}
+                                  lineClamp={1}
+                                  download
+                                  size="sm"
+                                >
+                                  {file.name}
+                                </Anchor>
+                              ) : (
+                                <Text size="sm" weight={500} lineClamp={1}>
+                                  {file.name}
+                                </Text>
+                              )}
+                              <Text color="dimmed" size="xs">
+                                {formatKBytes(file.sizeKB)}
+                              </Text>
+                            </Stack>
+                          </Group>
+
+                          <Group spacing={0}>
+                            {file.metadata.benefactorsOnly && (
+                              <Tooltip
+                                label="Only users who award this entry will have access to this file"
+                                maw={200}
+                                multiline
+                                withArrow
+                                withinPortal
+                              >
+                                <ThemeIcon color="yellow.6" radius="xl" size="sm" variant="light">
+                                  <IconStar size={12} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                            {(file.metadata.unlockAmount ?? 0) > 0 && (
+                              <CurrencyBadge
+                                currency={file.metadata.currency ?? Currency.BUZZ}
+                                unitAmount={file.metadata.unlockAmount ?? 0}
+                              />
+                            )}
+                          </Group>
+                        </Group>
+                      </Stack>
+                    </Paper>
+                  );
+                })}
+              </SimpleGrid>
+            ) : (
+              <Center p="xl">
+                <Text size="md" color="dimmed">
+                  No files were provided for this bounty
+                </Text>
+              </Center>
+            )}
+          </Stack>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
+  );
+
+  if (mobile) {
+    return (
+      <>
+        {meta}
+        <Paper className={classes.root}>
+          <Stack w="100%">
+            {userSection}
+            <Stack px="sm" pb="lg">
+              {awardSection}
+              {shareSection}
+              {filesSection}
+              <ImageCarousel
+                images={bountyEntry.images}
+                nsfw={bounty.nsfw}
+                entityId={bountyEntry.id}
+                entityType="bountyEntry"
+                mobile={true}
+              />
+              <Divider label="Discussion" labelPosition="center" />
+              {user?.id && (
+                <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
+              )}
+            </Stack>
+          </Stack>
+        </Paper>
+      </>
+    );
+  }
+
   return (
     <>
       {meta}{' '}
@@ -204,173 +478,11 @@ export default function BountyEntryDetailsPage({
         <BountyEntryCarousel bountyEntry={bountyEntry} className={classes.carousel} />
 
         <Card className={classes.sidebar} pt={0}>
-          <>
-            {user && (
-              <Card.Section py="xs" withBorder inheritPadding>
-                <Group position="apart" spacing={8} noWrap>
-                  <UserAvatar
-                    user={user}
-                    avatarProps={{ size: 32 }}
-                    size="sm"
-                    subText={
-                      <>
-                        {bountyEntry.createdAt && (
-                          <Text size="xs" color="dimmed">
-                            Added on <DaysFromNow date={bountyEntry.createdAt} />
-                          </Text>
-                        )}
-                      </>
-                    }
-                    subTextForce
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group spacing="md">
-                    <FollowUserButton userId={user.id} size="md" compact />
-                    <NavigateBack url={`/bounties/${bounty.id}`}>
-                      {({ onClick }) => (
-                        <CloseButton
-                          size="md"
-                          radius="xl"
-                          variant="transparent"
-                          iconSize={20}
-                          onClick={onClick}
-                        />
-                      )}
-                    </NavigateBack>
-                  </Group>
-                </Group>
-              </Card.Section>
-            )}
-            <Accordion
-              variant="separated"
-              multiple
-              defaultValue={['files']}
-              styles={(theme) => ({
-                content: { padding: 0 },
-                item: {
-                  overflow: 'hidden',
-                  borderColor:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-                  boxShadow: theme.shadows.sm,
-                },
-                control: {
-                  padding: theme.spacing.sm,
-                },
-              })}
-            >
-              <Accordion.Item
-                value="files"
-                sx={(theme) => ({
-                  marginTop: theme.spacing.md,
-                  marginBottom: theme.spacing.md,
-                  borderColor:
-                    !isLoadingFiles && !filesCount
-                      ? `${theme.colors.red[4]} !important`
-                      : undefined,
-                })}
-              >
-                <Accordion.Control>
-                  <Group position="apart">
-                    {filesCount
-                      ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}`
-                      : 'Files'}
-                  </Group>
-                </Accordion.Control>
-                <Accordion.Panel>
-                  <Stack spacing={2}>
-                    {isLoadingFiles ? (
-                      <Center p="md">
-                        <Loader size="md" variant="bars" />
-                      </Center>
-                    ) : filesCount > 0 ? (
-                      <SimpleGrid cols={1} spacing={2}>
-                        {files.map((file) => {
-                          const isLocked =
-                            (file.metadata.unlockAmount ?? 0) > bountyEntry.awardedUnitAmountTotal;
-
-                          return (
-                            <Paper key={file.id} radius={0} p={8} w="100%" bg="dark.4">
-                              <Stack>
-                                <Group position="apart" noWrap>
-                                  <Group>
-                                    {isLocked ? (
-                                      <Tooltip
-                                        label="This file has not been unlocked yet"
-                                        maw={200}
-                                        multiline
-                                        withArrow
-                                        withinPortal
-                                      >
-                                        <IconLock />
-                                      </Tooltip>
-                                    ) : (
-                                      <IconLockOpen />
-                                    )}
-                                    <Stack spacing={0}>
-                                      {file.url && !isLocked ? (
-                                        <Anchor
-                                          href={`/api/download/attachments/${file.id}`}
-                                          lineClamp={1}
-                                          download
-                                          size="sm"
-                                        >
-                                          {file.name}
-                                        </Anchor>
-                                      ) : (
-                                        <Text size="sm" weight={500} lineClamp={1}>
-                                          {file.name}
-                                        </Text>
-                                      )}
-                                      <Text color="dimmed" size="xs">
-                                        {formatKBytes(file.sizeKB)}
-                                      </Text>
-                                    </Stack>
-                                  </Group>
-
-                                  <Group spacing={0}>
-                                    {file.metadata.benefactorsOnly && (
-                                      <Tooltip
-                                        label="Only users who award this entry will have access to this file"
-                                        maw={200}
-                                        multiline
-                                        withArrow
-                                        withinPortal
-                                      >
-                                        <ThemeIcon
-                                          color="yellow.6"
-                                          radius="xl"
-                                          size="sm"
-                                          variant="light"
-                                        >
-                                          <IconStar size={12} />
-                                        </ThemeIcon>
-                                      </Tooltip>
-                                    )}
-                                    {(file.metadata.unlockAmount ?? 0) > 0 && (
-                                      <CurrencyBadge
-                                        currency={file.metadata.currency ?? Currency.BUZZ}
-                                        unitAmount={file.metadata.unlockAmount ?? 0}
-                                      />
-                                    )}
-                                  </Group>
-                                </Group>
-                              </Stack>
-                            </Paper>
-                          );
-                        })}
-                      </SimpleGrid>
-                    ) : (
-                      <Center p="xl">
-                        <Text size="md" color="dimmed">
-                          No files were provided for this bounty
-                        </Text>
-                      </Center>
-                    )}
-                  </Stack>
-                </Accordion.Panel>
-              </Accordion.Item>
-            </Accordion>
+          <Stack>
+            {userSection}
+            {awardSection}
+            {shareSection}
+            {filesSection}
             <Card.Section
               component={ScrollArea}
               style={{ flex: 1, position: 'relative' }}
@@ -411,7 +523,7 @@ export default function BountyEntryDetailsPage({
                 </div>
               </Stack>
             </Card.Section>
-          </>
+          </Stack>
         </Card>
       </Paper>
     </>
