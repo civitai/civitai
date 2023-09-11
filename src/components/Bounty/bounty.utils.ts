@@ -15,6 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import dayjs from 'dayjs';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { hideNotification, showNotification } from '@mantine/notifications';
+import { TRPCClientError } from '@trpc/client';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -167,11 +168,24 @@ export const useQueryBounty = (opts?: { bountyId?: number }) => {
   );
 
   const createBountyMutation = trpc.bounty.create.useMutation({
+    async onSuccess() {
+      await queryUtils.bounty.getInfinite.invalidate();
+    },
     onError(error) {
-      showErrorNotification({
-        title: 'Failed to create bounty',
-        error: new Error(error.message),
-      });
+      if (error instanceof TRPCClientError) {
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to create bounty',
+          error: new Error(
+            Array.isArray(parsedError) ? parsedError[0].message : parsedError.message
+          ),
+        });
+      } else {
+        showErrorNotification({
+          title: 'Failed to create bounty',
+          error: new Error(error.message),
+        });
+      }
     },
   });
   const updateBountyMutation = trpc.bounty.update.useMutation({
@@ -211,16 +225,16 @@ export const useQueryBounty = (opts?: { bountyId?: number }) => {
     },
   });
 
-  const handleCreateBounty = async (data: CreateBountyInput) => {
-    await createBountyMutation.mutateAsync(data);
+  const handleCreateBounty = (data: CreateBountyInput) => {
+    return createBountyMutation.mutateAsync(data);
   };
 
-  const handleUpdateBounty = async (data: UpdateBountyInput) => {
-    await updateBountyMutation.mutateAsync(data);
+  const handleUpdateBounty = (data: UpdateBountyInput) => {
+    return updateBountyMutation.mutateAsync(data);
   };
 
-  const handleDeleteBounty = async () => {
-    await deleteBountyMutation.mutateAsync({ id: bountyId as number });
+  const handleDeleteBounty = () => {
+    return deleteBountyMutation.mutateAsync({ id: bountyId as number });
   };
 
   return {
