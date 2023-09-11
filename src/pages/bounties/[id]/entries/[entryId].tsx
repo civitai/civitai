@@ -564,8 +564,6 @@ export function BountyEntryCarousel({
     setCurrentIdx(Math.min(currentIdx + 1, images.length - 1));
   };
 
-  console.log(current);
-
   // #region [navigation]
   useHotkeys([
     ['ArrowLeft', onPrevImage],
