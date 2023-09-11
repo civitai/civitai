@@ -44,12 +44,15 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
+import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { formatBytes } from '~/utils/number-helpers';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
   max?: number;
+  maxSize?: number;
   value?: Array<CustomFile>;
   onChange?: (value: Array<CustomFile>) => void;
   loading?: boolean;
@@ -66,6 +69,7 @@ export function ImageUpload({
   label,
   extra,
   max = 10,
+  maxSize = constants.imageUpload.maxFileSize,
   hasPrimaryImage,
   withMeta = true,
   sortable = true,
@@ -91,6 +95,7 @@ export function ImageUpload({
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const [files, filesHandler] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
+  const [error, setError] = useState('');
 
   useDidUpdate(() => {
     if (reset > 0) filesHandler.setState(value);
@@ -104,6 +109,10 @@ export function ImageUpload({
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
     if (files.length + droppedFiles.length > max) return;
 
+    const hasLargeFile = droppedFiles.some((file) => file.size > maxSize);
+    if (hasLargeFile) return setError(`Files should not exceed ${formatBytes(maxSize)}`);
+
+    setError('');
     const toUpload = droppedFiles.map((file) => ({ url: URL.createObjectURL(file), file }));
     filesHandler.setState((current) => [
       ...current,
@@ -136,6 +145,7 @@ export function ImageUpload({
         </Group>
       }
       {...inputWrapperProps}
+      error={inputWrapperProps.error ?? error}
     >
       <Stack my={5}>
         <Dropzone
@@ -144,12 +154,13 @@ export function ImageUpload({
           maxFiles={max - files.length}
           className={cx({ [classes.disabled]: dropzoneDisabled })}
           styles={(theme) => ({
-            root: !!inputWrapperProps.error
-              ? {
-                  borderColor: theme.colors.red[6],
-                  marginBottom: theme.spacing.xs / 2,
-                }
-              : undefined,
+            root:
+              !!inputWrapperProps.error || !!error
+                ? {
+                    borderColor: theme.colors.red[6],
+                    marginBottom: theme.spacing.xs / 2,
+                  }
+                : undefined,
           })}
           disabled={dropzoneDisabled}
           // loading={loading}
@@ -179,6 +190,7 @@ export function ImageUpload({
               </Text>
               <Text size="sm" color="dimmed" inline mt={7}>
                 {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+                {`, each file should not exceed ${formatBytes(maxSize)}`}
               </Text>
             </div>
           </Group>
