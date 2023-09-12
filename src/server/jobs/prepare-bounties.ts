@@ -24,8 +24,6 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
     },
   });
 
-  console.log(bounties);
-
   // Get latest results for date
   for (const { id, userId } of bounties) {
     log(`Started bounty ${id}`);
@@ -82,8 +80,7 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
 
     const awardedAmount = benefactors.reduce((acc, { unitAmount }) => acc + unitAmount, 0);
 
-    console.log(benefactors);
-    console.log(
+    log(
       `A total of ${awardedAmount} ${currency} will be awarded in this bounty to the entry ${winnerEntryId}`
     );
 
