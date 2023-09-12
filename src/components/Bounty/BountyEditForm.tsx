@@ -1,16 +1,26 @@
 import { Button, Group, Stack, Title, ActionIcon, Text, Tooltip, Anchor } from '@mantine/core';
+import { TagTarget } from '@prisma/client';
+import { IconCalendarDue, IconTrash } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { getMinMaxDates, useQueryBounty } from '~/components/Bounty/bounty.utils';
-import { Form, InputDatePicker, InputRTE, useForm, InputMultiFileUpload } from '~/libs/form';
+import {
+  Form,
+  InputDatePicker,
+  InputRTE,
+  useForm,
+  InputMultiFileUpload,
+  InputTags,
+} from '~/libs/form';
 import { UpdateBountyInput, updateBountyInputSchema } from '~/server/schema/bounty.schema';
 import { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
-import { useRouter } from 'next/router';
-import { IconTrash } from '@tabler/icons-react';
+import { IconCalendar } from '@tabler/icons-react';
 
 export function BountyEditForm({ bounty }: Props) {
   const router = useRouter();
 
   const defaultValues = {
+    ...bounty,
     id: bounty.id,
     description: bounty.description,
     startsAt: bounty.startsAt,
@@ -32,7 +42,7 @@ export function BountyEditForm({ bounty }: Props) {
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing="xl">
-        <Group spacing={4}>
+        <Group spacing="md" noWrap>
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title>Editing {bounty.name} Bounty</Title>
         </Group>
@@ -45,25 +55,28 @@ export function BountyEditForm({ bounty }: Props) {
           stickyToolbar
         />
         {!alreadyStarted && (
-          <Group spacing="xs" grow>
+          <Group spacing="xl" grow>
             <InputDatePicker
               name="startsAt"
               label="Start Date"
               placeholder="Select a starts date"
+              icon={<IconCalendar size={16} />}
               withAsterisk
               minDate={minStartDate}
               maxDate={maxStartDate}
             />
             <InputDatePicker
               name="expiresAt"
-              label="Expiration Date"
+              label="Deadline"
               placeholder="Select an end date"
+              icon={<IconCalendarDue size={16} />}
               withAsterisk
               minDate={minExpiresDate}
               maxDate={maxExpiresDate}
             />
           </Group>
         )}
+        <InputTags name="tags" label="Tags" target={[TagTarget.Bounty]} />
         <InputMultiFileUpload
           name="files"
           label="Attachments"

@@ -109,6 +109,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         ...image,
         meta: image?.meta as ImageMetaProps | null,
       })),
+      tags: bounty.tags.map(({ tag }) => tag),
       files,
     };
   } catch (error) {
