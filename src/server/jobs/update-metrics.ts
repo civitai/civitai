@@ -5,6 +5,7 @@ const metricSets = {
   models: [metrics.modelMetrics],
   users: [metrics.userMetrics],
   images: [metrics.imageMetrics],
+  bounties: [metrics.bountyMetrics],
   other: [
     metrics.answerMetrics,
     metrics.articleMetrics,

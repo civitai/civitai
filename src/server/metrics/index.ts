@@ -7,3 +7,4 @@ export { questionMetrics } from '~/server/metrics/question.metrics';
 export { tagMetrics } from '~/server/metrics/tag.metrics';
 export { userMetrics } from '~/server/metrics/user.metrics';
 export { collectionMetrics } from '~/server/metrics/collection.metrics';
+export { bountyMetrics } from '~/server/metrics/bounty.metrics';
