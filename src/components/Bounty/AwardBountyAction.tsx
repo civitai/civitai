@@ -94,7 +94,6 @@ export const AwardBountyAction = ({
         }
 
         if (prevEntry) {
-          console.log('prevEntry', prevEntry);
           await queryUtils.bountyEntry.getById.setData(
             { id: prevEntry.id },
             produce((entry) => {
