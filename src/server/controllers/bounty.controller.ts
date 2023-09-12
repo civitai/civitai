@@ -125,7 +125,6 @@ export const getBountyEntriesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    // TODO.Bounties = We should get the currency type via the main benefactor before getting the awarded amount per entry.
     const entries = await getAllEntriesByBountyId({
       input: { bountyId: input.id },
       select: {
@@ -147,6 +146,7 @@ export const getBountyEntriesHandler = async ({
       type: 'BountyEntry',
     });
 
+    // TODO.Bounties = We should get the currency type via the main benefactor before getting the awarded amount per entry.
     const awardedTotal = await getBountyEntryEarnedBuzz({
       ids: entries.map((entry) => entry.id),
       currency: Currency.BUZZ,

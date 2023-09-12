@@ -694,12 +694,14 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const benefactorItem = !currentUser
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
+  const expired = bounty.expiresAt < new Date();
+  const displaySubmitAction = !currentUser?.muted && !bounty.complete && !expired;
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
       {bounty.complete && !isLoading && (
         <Alert color="yellow">
-          {entries?.length > 0 ? (
+          {(entries?.length ?? 0) > 0 ? (
             <Text>
               This bounty has been completed and prizes have been awarded to winner entries
             </Text>
@@ -713,7 +715,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         <Title order={2} size={28} weight={600}>
           Hunters
         </Title>
-        {!currentUser?.muted && !bounty.complete && (
+        {displaySubmitAction && (
           <Button component={NextLink} href={entryCreateUrl} size="xs">
             Submit
           </Button>
@@ -753,7 +755,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             <Text color="dimmed" align="center">
               Be the first to submit your solution.
             </Text>
-            {!currentUser?.muted && (
+            {displaySubmitAction && (
               <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
                 Submit
               </Button>
