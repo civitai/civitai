@@ -42,6 +42,10 @@ export const getBountyEntryEarnedBuzz = async ({
   ids: number[];
   currency?: Currency;
 }) => {
+  if (!ids.length) {
+    return [];
+  }
+
   const data = await dbRead.$queryRaw<{ id: number; awardedUnitAmount: number }[]>`
     SELECT
         be.id,
