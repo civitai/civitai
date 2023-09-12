@@ -36,7 +36,7 @@ type State = {
   selectedModel: ModelGetAllPagedSimple['items'][number] | null;
 };
 
-export default function ModeratorModels() {
+export default function ModeratorModels( {
   const queryUtils = trpc.useContext();
   const [state, setState] = useState<State>({
     declineReason: 'Insufficient changes',

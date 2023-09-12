@@ -7,10 +7,10 @@ import { getImagesByEntity } from '~/server/services/image.service';
 import {
   awardBountyEntry,
   getBountyEntryEarnedBuzz,
+  getBountyEntryFilteredFiles,
   getEntryById,
   upsertBountyEntry,
 } from '../services/bountyEntry.service';
-import { getFilesByEntity } from '../services/file.service';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
@@ -24,12 +24,21 @@ export const getBountyEntryHandler = async ({
   try {
     const entry = await getEntryById({
       input,
-      select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
+      select: {
+        id: true,
+        createdAt: true,
+        bountyId: true,
+        user: { select: userWithCosmeticsSelect },
+      },
     });
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
     const images = await getImagesByEntity({ id: entry.id, type: 'BountyEntry' });
-    const files = await getFilesByEntity({ id: entry.id, type: 'BountyEntry' });
+    const files = await getBountyEntryFilteredFiles({
+      id: entry.id,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
     const awardedTotal = await getBountyEntryEarnedBuzz({ ids: [entry.id] });
 
     return {
@@ -38,11 +47,9 @@ export const getBountyEntryHandler = async ({
         ...i,
         metadata: i.metadata as ImageMetaProps,
       })),
-      files: files.map((f) => ({
-        ...f,
-        metadata: f.metadata as BountyEntryFileMeta,
-      })),
-      awardedUnitAmountTotal: awardedTotal[0]?.awardedUnitAmount ?? 0,
+      files,
+      fileCount: files.length,
+      awardedUnitAmountTotal: Number(awardedTotal[0]?.awardedUnitAmount ?? 0),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -84,6 +91,27 @@ export const awardBountyEntryHandler = async ({
     });
 
     return benefactor;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getBountyEntryFilteredFilesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    const files = await getBountyEntryFilteredFiles({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
+
+    return files;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

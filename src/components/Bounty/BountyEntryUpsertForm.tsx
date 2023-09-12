@@ -59,7 +59,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const form = useForm({
     schema: formSchema,
     defaultValues: {
-      files: bountyEntry?.files ?? [],
+      files: (bountyEntry?.files ?? []).map((f) => ({ ...f, url: f.url || '' })),
     },
     shouldUnregister: false,
   });

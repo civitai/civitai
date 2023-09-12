@@ -128,7 +128,12 @@ export const getBountyEntriesHandler = async ({
     // TODO.Bounties = We should get the currency type via the main benefactor before getting the awarded amount per entry.
     const entries = await getAllEntriesByBountyId({
       input: { bountyId: input.id },
-      select: { id: true, createdAt: true, user: { select: userWithCosmeticsSelect } },
+      select: {
+        id: true,
+        createdAt: true,
+        bountyId: true,
+        user: { select: userWithCosmeticsSelect },
+      },
     });
 
     const images = await getImagesByEntity({
@@ -155,13 +160,10 @@ export const getBountyEntriesHandler = async ({
           ...i,
           metadata: i.metadata as ImageMetaProps,
         })),
-      files: files
-        .filter((f) => f.entityId === entry.id)
-        .map((f) => ({
-          ...f,
-          metadata: f.metadata as BountyEntryFileMeta,
-        })),
-      awardedUnitAmountTotal: awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0,
+      fileCount: files.length,
+      awardedUnitAmountTotal: Number(
+        awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0
+      ),
     }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
