@@ -19,6 +19,7 @@ import {
   IconViewfinder,
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
+import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -28,6 +29,7 @@ export function BountyCard({ data }: Props) {
   const { id, name, images, user, type, expiresAt } = data;
   // TODO.bounty: applyUserPreferences on bounty image
   const cover = images?.[0];
+  const expired = expiresAt < new Date();
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
@@ -64,19 +66,26 @@ export function BountyCard({ data }: Props) {
                         </Badge>
                       )}
                     </Group>
-                    <IconBadge
-                      radius="xl"
-                      color="dark"
-                      variant="filled"
-                      px={8}
-                      h={26}
-                      icon={<IconClockHour4 size={14} color={theme.colors.success[5]} />}
-                    >
-                      <Text color="success.5" size="xs">
-                        {dayjs(expiresAt).toNow(true)}
-                      </Text>
-                    </IconBadge>
-                    {/* <ArticleContextMenu article={data} ml="auto" /> */}
+                    {!expired && (
+                      <IconBadge
+                        radius="xl"
+                        color="dark"
+                        variant="filled"
+                        px={8}
+                        h={26}
+                        icon={<IconClockHour4 size={14} color={theme.colors.success[5]} />}
+                      >
+                        <Text color="success.5" size="xs">
+                          {dayjs(expiresAt).toNow(true)}
+                        </Text>
+                      </IconBadge>
+                    )}
+                    <BountyContextMenu
+                      bounty={data}
+                      buttonProps={{ ml: 'auto', variant: 'transparent' }}
+                      position="bottom-end"
+                      withinPortal
+                    />
                   </Group>
                   {image ? (
                     safe ? (

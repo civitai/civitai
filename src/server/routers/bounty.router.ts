@@ -8,7 +8,7 @@ import {
   addBenefactorUnitAmountHandler,
   getBountyBenefactorsHandler,
 } from '../controllers/bounty.controller';
-import { protectedProcedure, publicProcedure, router } from '../trpc';
+import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addBenefactorUnitAmountInputSchema,
@@ -16,6 +16,29 @@ import {
   getInfiniteBountySchema,
   updateBountyInputSchema,
 } from '~/server/schema/bounty.schema';
+import { dbWrite } from '~/server/db/client';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+
+const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
+  if (!ctx.user) throw throwAuthorizationError();
+
+  const { id } = input as { id: number };
+
+  const userId = ctx.user.id;
+  const isModerator = ctx?.user?.isModerator;
+  if (!isModerator && !!id) {
+    const ownerId = (await dbWrite.bounty.findUnique({ where: { id }, select: { userId: true } }))
+      ?.userId;
+    if (ownerId !== userId) throw throwAuthorizationError();
+  }
+
+  return next({
+    ctx: {
+      // infers the `user` as non-nullable
+      user: ctx.user,
+    },
+  });
+});
 
 export const bountyRouter = router({
   getInfinite: publicProcedure.input(getInfiniteBountySchema).query(getInfiniteBountiesHandler),
@@ -23,8 +46,14 @@ export const bountyRouter = router({
   getEntries: publicProcedure.input(getByIdSchema).query(getBountyEntriesHandler),
   getBenefactors: publicProcedure.input(getByIdSchema).query(getBountyBenefactorsHandler),
   create: protectedProcedure.input(createBountyInputSchema).mutation(createBountyHandler),
-  update: protectedProcedure.input(updateBountyInputSchema).mutation(updateBountyHandler),
-  delete: protectedProcedure.input(getByIdSchema).mutation(deleteBountyHandler),
+  update: protectedProcedure
+    .input(updateBountyInputSchema)
+    .use(isOwnerOrModerator)
+    .mutation(updateBountyHandler),
+  delete: protectedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(deleteBountyHandler),
   addBenefactorUnitAmount: protectedProcedure
     .input(addBenefactorUnitAmountInputSchema)
     .mutation(addBenefactorUnitAmountHandler),
