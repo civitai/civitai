@@ -4,7 +4,9 @@ import { dbRead, dbWrite } from '../db/client';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { TransactionType } from '~/server/schema/buzz.schema';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -105,8 +107,12 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
   const benefactor = await dbWrite.$transaction(async (tx) => {
     const entry = await tx.bountyEntry.findUniqueOrThrow({
       where: { id },
-      select: { id: true, bountyId: true },
+      select: { id: true, bountyId: true, userId: true },
     });
+
+    if (!entry.userId) {
+      throw throwBadRequestError('Entry has no user.');
+    }
 
     const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
       where: {
@@ -133,6 +139,41 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         awardedAt: new Date(),
       },
     });
+
+    switch (updatedBenefactor.currency) {
+      case Currency.BUZZ:
+        await createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: entry.userId,
+          amount: updatedBenefactor.unitAmount,
+          type: TransactionType.Bounty,
+          description: 'Reason: Bounty entry has been awarded!',
+        });
+
+        break;
+      default: // Do no checks
+        break;
+    }
+
+    const unawardedBountyBenefactors = await dbRead.bountyBenefactor.findFirst({
+      select: { userId: true },
+      where: {
+        awardedToId: null,
+        bountyId: entry.bountyId,
+      },
+    });
+
+    if (!unawardedBountyBenefactors) {
+      // Update bounty as completed:
+      await tx.bounty.update({
+        where: {
+          id: entry.bountyId,
+        },
+        data: {
+          complete: true,
+        },
+      });
+    }
 
     return updatedBenefactor;
   });
