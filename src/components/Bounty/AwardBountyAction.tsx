@@ -46,7 +46,6 @@ export const AwardBountyAction = ({
         const benefactorItem = bounty.benefactors.find((b) => b.user.id === currentUser.id);
 
         if (prevBounty) {
-          console.log('prevBounty', prevBounty);
 
           await queryUtils.bounty.getById.setData(
             { id: bounty.id },
