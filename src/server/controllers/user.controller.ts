@@ -22,6 +22,7 @@ import {
   toggleUserArticleEngagement,
   updateLeaderboardRank,
   toggleBan,
+  toggleUserBountyEngagement,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -37,6 +38,7 @@ import {
   ToggleModelEngagementInput,
   GetUserCosmeticsSchema,
   ToggleUserArticleEngagementsInput,
+  ToggleUserBountyEngagementsInput,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -786,6 +788,23 @@ export const toggleArticleEngagementHandler = async ({
   try {
     const on = await toggleUserArticleEngagement({ ...input, userId: ctx.user.id });
     if (on) await ctx.track.articleEngagement(input);
+    return on;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleBountyEngagementHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleUserBountyEngagementsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const on = await toggleUserBountyEngagement({ ...input, userId: ctx.user.id });
+    // TODO.bounty: track event on clickhouse/posthog?
+    // if (on) await ctx.track.articleEngagement(input);
     return on;
   } catch (error) {
     throw throwDbError(error);

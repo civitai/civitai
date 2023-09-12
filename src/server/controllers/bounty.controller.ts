@@ -227,13 +227,7 @@ export const updateBountyHandler = async ({
   }
 };
 
-export const deleteBountyHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
+export const deleteBountyHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const deleted = await deleteBountyById(input);
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);

@@ -1,8 +1,12 @@
 import { Currency, ImageIngestionStatus, Prisma, TagTarget } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
-import { GetByIdInput, InfiniteQueryInput } from '../schema/base.schema';
+import { GetByIdInput } from '../schema/base.schema';
 import { getFilesByEntity, updateEntityFiles } from './file.service';
-import { throwInsufficientFundsError, throwNotFoundError } from '../utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwNotFoundError,
+} from '../utils/errorHandling';
 import {
   AddBenefactorUnitAmountInputSchema,
   CreateBountyInput,
@@ -146,20 +150,12 @@ export const createBounty = async ({
   return bounty;
 };
 
-// TODO.bounty: handle details and tags
-export const updateBountyById = async ({
-  id,
-  files,
-  tags,
-  details,
-  ...data
-}: UpdateBountyInput) => {
+export const updateBountyById = async ({ id, files, tags, ...data }: UpdateBountyInput) => {
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.update({
       where: { id },
       data: {
         ...data,
-        details: (details as Prisma.JsonObject) ?? Prisma.JsonNull,
         tags: tags
           ? {
               deleteMany: {
@@ -199,7 +195,18 @@ export const updateBountyById = async ({
 };
 
 export const deleteBountyById = async ({ id }: GetByIdInput) => {
-  const bounty = await dbWrite.$transaction(async (tx) => {
+  const bounty = await getBountyById({ id, select: { userId: true } });
+  if (!bounty) throw throwNotFoundError('Bounty not found');
+
+  const benefactorsCount = await dbWrite.bountyBenefactor.count({
+    where: { bountyId: id, userId: bounty.userId ? { not: bounty.userId } : undefined },
+  });
+  const entriesCount = await dbWrite.bountyEntry.count({ where: { bountyId: id } });
+
+  if (benefactorsCount !== 0 || entriesCount !== 0)
+    throw throwBadRequestError('Cannot delete bounty because it has benefactors and/or entries');
+
+  const deletedBounty = await dbWrite.$transaction(async (tx) => {
     const deletedBounty = await tx.bounty.delete({ where: { id } });
     if (!deletedBounty) return null;
 
@@ -207,8 +214,31 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
 
     return deletedBounty;
   });
+  if (!deletedBounty) return null;
 
-  return bounty;
+  // Refund the bounty creator
+  if (bounty.userId) {
+    const bountyCreator = await dbRead.bountyBenefactor.findUnique({
+      where: { userId_bountyId: { userId: bounty.userId, bountyId: id } },
+      select: { unitAmount: true, currency: true },
+    });
+
+    switch (bountyCreator?.currency) {
+      case Currency.BUZZ:
+        await createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: bounty.userId,
+          amount: bountyCreator.unitAmount,
+          type: TransactionType.Refund,
+          description: 'Refund reason: owner deleted bounty',
+        });
+        break;
+      default: // Do no checks
+        break;
+    }
+  }
+
+  return deletedBounty;
 };
 
 export const getBountyImages = async ({ id }: GetByIdInput) => {

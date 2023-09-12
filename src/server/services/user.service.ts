@@ -2,6 +2,7 @@ import { ToggleUserArticleEngagementsInput } from './../schema/user.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   ArticleEngagementType,
+  BountyEngagementType,
   ModelEngagementType,
   Prisma,
   SearchIndexUpdateQueueAction,
@@ -14,9 +15,9 @@ import {
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
-  GetUserArticleEngagementsInput,
   GetUserCosmeticsSchema,
   ToggleBlockedTagSchema,
+  ToggleUserBountyEngagementsInput,
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
@@ -695,3 +696,38 @@ export const toggleUserArticleEngagement = async ({
   return !exists;
 };
 // #endregion
+
+//#region [bounty engagement]
+export const getUserBountyEngagements = async ({ userId }: { userId: number }) => {
+  const engagements = await dbRead.bountyEngagement.findMany({
+    where: { userId },
+    select: { bountyId: true, type: true },
+  });
+
+  return engagements.reduce<Partial<Record<BountyEngagementType, number[]>>>(
+    (acc, { bountyId, type }) => ({ ...acc, [type]: [...(acc[type] ?? []), bountyId] }),
+    {}
+  );
+};
+
+export const toggleUserBountyEngagement = async ({
+  type,
+  bountyId,
+  userId,
+}: ToggleUserBountyEngagementsInput & { userId: number }) => {
+  const engagement = await dbRead.bountyEngagement.findUnique({
+    where: { userId_bountyId_type: { userId, bountyId, type } },
+    select: { type: true },
+  });
+
+  if (!engagement) {
+    await dbWrite.bountyEngagement.create({ data: { userId, bountyId, type } });
+    return true;
+  } else {
+    await dbWrite.bountyEngagement.delete({
+      where: { userId_bountyId_type: { userId, bountyId, type } },
+    });
+    return false;
+  }
+};
+//#endregion

@@ -41,17 +41,17 @@ import { trpc } from '~/utils/trpc';
 import { isNsfwImage } from '~/server/common/model-helpers';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { BountyMode } from '@prisma/client';
+import { BountyEngagementType, BountyMode } from '@prisma/client';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconAward,
   IconClockHour4,
-  IconDotsVertical,
   IconHeart,
   IconShare3,
   IconStar,
   IconTrophy,
+  IconViewfinder,
 } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useRouter } from 'next/router';
@@ -60,6 +60,7 @@ import {
   getBountyCurrency,
   isBenefactor,
   isMainBenefactor,
+  useBountyEngagement,
 } from '~/components/Bounty/bounty.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import {
@@ -78,7 +79,6 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyDiscussion } from '~/components/Bounty/BountyDiscussion';
 import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
-import { isDefined } from '~/utils/type-guards';
 import { NextLink } from '@mantine/next';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
@@ -86,6 +86,7 @@ import { generationPanel } from '~/store/generation.store';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { openConfirmModal } from '@mantine/modals';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
+import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -191,13 +192,7 @@ export default function BountyDetailsPage({
                 <DaysFromNow date={bounty.expiresAt} withoutSuffix />
               </IconBadge>
             </Group>
-            <ActionIcon
-              radius="xl"
-              color="gray"
-              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            >
-              <IconDotsVertical size={16} />
-            </ActionIcon>
+            <BountyContextMenu bounty={bounty} position="bottom-end" />
           </Group>
           <Group spacing={8}>
             <UserAvatar user={bounty.user} withUsername linkToProfile />
@@ -207,7 +202,7 @@ export default function BountyDetailsPage({
             </Text>
           </Group>
         </Stack>
-        <Grid>
+        <Grid gutterMd={32} gutterLg={64}>
           <Grid.Col xs={12} md={4} orderMd={2}>
             <BountySidebar bounty={bounty} />
           </Grid.Col>
@@ -265,7 +260,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const { isLoading, mutate: addBenefactorUnitAmountMutation } =
     trpc.bounty.addBenefactorUnitAmount.useMutation({
       onMutate: async ({ unitAmount }) => {
-        await queryUtils.bounty.getById.setData(
+        await queryUtils.bounty.getById.cancel();
+        queryUtils.bounty.getById.setData(
           { id: bounty.id },
           produce((bounty) => {
             if (!bounty || !currentUser) {
@@ -288,7 +284,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           })
         );
       },
-      onSuccess: async (_, { unitAmount }) => {
+      onSuccess: (_, { unitAmount }) => {
         showSuccessNotification({
           title: isBenefactor
             ? 'Your contribution has increased!'
@@ -298,14 +294,14 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             currency
           )} ${currency} has been added to the bounty`,
         });
-        await queryUtils.bounty.getById.invalidate({ id: bounty.id });
       },
-      onError: async (error) => {
+      onError: (error) => {
         showErrorNotification({
           title: 'There was an error adding to the bounty.',
           error: new Error(error.message),
         });
-
+      },
+      onSettled: async () => {
         await queryUtils.bounty.getById.invalidate({ id: bounty.id });
       },
     });
@@ -320,11 +316,13 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const currency = getBountyCurrency(bounty);
 
   const minUnitAmount = bounty.minBenefactorUnitAmount;
-  const Icon = CurrencyConfig[currency].icon;
 
-  const isFavorite = false;
-  const onFavoriteClick = () => {
-    console.log('is favorite');
+  const { toggle, engagements, toggling } = useBountyEngagement({ bountyId: bounty.id });
+
+  const isFavorite = !!engagements?.Favorite?.find((id) => id === bounty.id);
+  const isTracked = !!engagements?.Track?.find((id) => id === bounty.id);
+  const handleEngagementClick = async (type: BountyEngagementType) => {
+    await toggle({ type, bountyId: bounty.id });
   };
 
   const onAddToBounty = (amount: number) => {
@@ -344,18 +342,17 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Group>
       ),
     },
-    meta?.baseModel
-      ? {
-          label: 'Base Model',
-          value: (
-            <Group spacing={0} noWrap position="apart">
-              <Badge radius="xl" color="gray">
-                {meta.baseModel}
-              </Badge>
-            </Group>
-          ),
-        }
-      : null,
+    {
+      label: 'Base Model',
+      value: (
+        <Group spacing={0} noWrap position="apart">
+          <Badge radius="xl" color="gray">
+            {meta?.baseModel}
+          </Badge>
+        </Group>
+      ),
+      visible: !!meta?.baseModel,
+    },
     {
       label: 'Bounty Mode',
       value: (
@@ -402,7 +399,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Group>
       ),
     },
-  ].filter(isDefined);
+  ];
 
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
@@ -440,16 +437,19 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const filesCount = files.length;
 
   return (
-    <Stack>
-      <Group noWrap>
+    <Stack spacing="md">
+      <Group spacing={8}>
         {addToBountyEnabled && (
           <Group
             color="gray"
+            position="apart"
             p={4}
-            style={{
+            sx={{
               background:
                 theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+              flexGrow: 1,
             }}
+            noWrap
           >
             <Group spacing={2}>
               <CurrencyIcon currency={currency} size={20} />
@@ -493,31 +493,58 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             </PopConfirm>
           </Group>
         )}
-        <Tooltip label="Share" position="top" withArrow>
-          <div>
-            <ShareButton url={router.asPath} title={bounty.name}>
-              <Button
-                sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                color="gray"
-              >
-                <IconShare3 />
-              </Button>
-            </ShareButton>
-          </div>
-        </Tooltip>
-        <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-          <div>
-            <LoginRedirect reason="favorite-model">
-              <Button
-                onClick={onFavoriteClick}
-                color={isFavorite ? 'red' : 'gray'}
-                sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-              >
-                <IconHeart color="#fff" />
-              </Button>
-            </LoginRedirect>
-          </div>
-        </Tooltip>
+        <Group spacing={8} noWrap>
+          <Tooltip label={isTracked ? 'Stop tracking' : 'Track'} position="top">
+            <div>
+              <LoginRedirect reason="perform-action">
+                <ActionIcon
+                  size={42}
+                  onClick={() => handleEngagementClick('Track')}
+                  color={isTracked ? 'green' : theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
+                  variant="filled"
+                >
+                  <IconViewfinder
+                    size={20}
+                    color={theme.colorScheme === 'light' ? theme.black : 'currentColor'}
+                  />
+                </ActionIcon>
+              </LoginRedirect>
+            </div>
+          </Tooltip>
+          <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top">
+            <div>
+              <LoginRedirect reason="perform-action">
+                <ActionIcon
+                  size={42}
+                  onClick={() => handleEngagementClick('Favorite')}
+                  color={isFavorite ? 'red' : theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
+                  variant="filled"
+                >
+                  <IconHeart
+                    size={20}
+                    color={theme.colorScheme === 'light' ? theme.black : 'currentColor'}
+                  />
+                </ActionIcon>
+              </LoginRedirect>
+            </div>
+          </Tooltip>
+          <Tooltip label="Share" position="top">
+            <div style={{ marginLeft: 'auto' }}>
+              <ShareButton url={router.asPath} title={bounty.name}>
+                <ActionIcon
+                  size={42}
+                  color={theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
+                  variant="filled"
+                >
+                  <IconShare3
+                    size={20}
+                    color={theme.colorScheme === 'light' ? theme.black : 'currentColor'}
+                  />
+                </ActionIcon>
+              </ShareButton>
+            </div>
+          </Tooltip>
+        </Group>
       </Group>
 
       <Accordion
@@ -649,7 +676,11 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         <Title order={2} size={28} weight={600}>
           Hunters
         </Title>
-        {!currentUser?.muted && <Button size="xs">Submit</Button>}
+        {!currentUser?.muted && (
+          <Button component={NextLink} href={entryCreateUrl} size="xs">
+            Submit
+          </Button>
+        )}
       </Group>
       {children}
     </Stack>

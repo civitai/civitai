@@ -1,5 +1,6 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
 import { BareNotification, NotificationProcessor } from '~/server/notifications/base.notifications';
+import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
@@ -21,6 +22,7 @@ const notificationProcessors = {
   ...unpublishNotifications,
   ...articleNotifications,
   ...reportNotifications,
+  ...bountyNotifications,
 };
 
 // Sort notifications by priority and group them by priority

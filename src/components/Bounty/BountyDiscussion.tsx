@@ -53,7 +53,7 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
                   alignItems: 'center',
                   justifyContent: 'center',
                   backgroundColor:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                    theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
                 })}
               >
                 <Stack spacing="sm" align="center">

@@ -13,10 +13,10 @@ import {
   Progress,
   Divider,
 } from '@mantine/core';
-import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@prisma/client';
+import { BountyEntryMode, BountyMode, BountyType, Currency } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
@@ -32,9 +32,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import { CreateBountyInput, createBountyInputSchema } from '~/server/schema/bounty.schema';
+import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
@@ -45,8 +43,8 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
 import { getDisplayName } from '~/utils/string-helpers';
 import { constants, MIN_CREATE_BOUNTY_AMOUNT } from '~/server/common/constants';
-import { TRPCClientError } from '@trpc/client';
 import { z } from 'zod';
+import { getMinMaxDates, useQueryBounty } from './bounty.utils';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -70,15 +68,7 @@ export function BountyCreateForm() {
     }
   };
 
-  const { minStartDate, maxStartDate, minExpiresDate, maxExpiresDate } = useMemo(
-    () => ({
-      minStartDate: dayjs().startOf('day').toDate(),
-      maxStartDate: dayjs().add(1, 'month').toDate(),
-      minExpiresDate: dayjs().add(1, 'day').toDate(),
-      maxExpiresDate: dayjs().add(1, 'day').add(1, 'month').toDate(),
-    }),
-    []
-  );
+  const { minStartDate, maxStartDate, minExpiresDate, maxExpiresDate } = getMinMaxDates();
 
   const form = useForm({
     schema: formSchema,
@@ -130,38 +120,20 @@ export function BountyCreateForm() {
     BountyType.EmbedCreation,
   ].some((t) => t === type);
 
-  const bountyCreateMutation = trpc.bounty.create.useMutation();
+  const { createBounty, creating: creatingBounty } = useQueryBounty();
 
-  const handleSubmit = ({ ...data }: z.infer<typeof formSchema>) => {
+  const handleSubmit = async ({ ...data }: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
       .filter((file) => file.status === 'success')
-      .map(({ id, url, ...file }) => ({ ...file, url: id })); ///
+      .map(({ id, url, ...file }) => ({ ...file, url: id }));
 
-    bountyCreateMutation.mutate(
-      { ...data, images: filteredImages },
-      {
-        async onSuccess(result) {
-          await router.push(`/bounties/${result.id}`);
-          clearStorage();
-        },
-        onError(error) {
-          if (error instanceof TRPCClientError) {
-            const parsedError = JSON.parse(error.message);
-            showErrorNotification({
-              title: 'Failed to create bounty',
-              error: new Error(
-                Array.isArray(parsedError) ? parsedError[0].message : parsedError.message
-              ),
-            });
-          } else {
-            showErrorNotification({
-              title: 'Failed to create bounty',
-              error: new Error(error.message),
-            });
-          }
-        },
-      }
-    );
+    try {
+      const result = await createBounty({ ...data, images: filteredImages });
+      await router.push(`/bounties/${result.id}`);
+      clearStorage();
+    } catch (error) {
+      // Do nothing since the query event will show an error notification
+    }
   };
 
   return (
@@ -422,8 +394,7 @@ export function BountyCreateForm() {
 
         <Group mt="xl" position="right">
           <Button
-            loading={bountyCreateMutation.isLoading && !creating}
-            disabled={bountyCreateMutation.isLoading}
+            loading={creatingBounty && !creating}
             onClick={() => setCreating(false)}
             type="submit"
             fullWidth
