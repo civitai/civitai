@@ -43,6 +43,7 @@ export type ResourceType =
   | 'Checkpoint'
   | 'CheckpointConfig'
   | 'TextualInversion'
+  | 'MotionModule'
   | 'Hypernetwork'
   | 'AestheticGradient'
   | 'VAE'

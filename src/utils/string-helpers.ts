@@ -23,6 +23,7 @@ const nameOverrides: Record<string, string> = {
   LORA: 'LoRA',
   scheduler: 'Sampler',
   TextualInversion: 'Embedding',
+  MotionModule: 'Motion',
 };
 export function getDisplayName(value: string) {
   return nameOverrides[value] ?? splitUppercase(value);

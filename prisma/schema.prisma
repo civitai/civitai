@@ -256,6 +256,7 @@ enum ModelType {
   LoCon
   Controlnet
   Upscaler
+  MotionModule
   VAE
   Poses
   Wildcards

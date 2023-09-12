@@ -101,6 +101,7 @@ export enum ArticleSort {
 export enum ModelType {
   Checkpoint = 'Checkpoint',
   TextualInversion = 'TextualInversion',
+  MotionModule = 'MotionModule',
   Hypernetwork = 'Hypernetwork',
   AestheticGradient = 'AestheticGradient',
   LORA = 'LORA',
