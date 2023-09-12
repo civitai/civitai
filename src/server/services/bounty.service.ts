@@ -214,6 +214,29 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
 
     return deletedBounty;
   });
+  if (!deletedBounty) return null;
+
+  // Refund the bounty creator
+  if (bounty.userId) {
+    const bountyCreator = await dbRead.bountyBenefactor.findUnique({
+      where: { userId_bountyId: { userId: bounty.userId, bountyId: id } },
+      select: { unitAmount: true, currency: true },
+    });
+
+    switch (bountyCreator?.currency) {
+      case Currency.BUZZ:
+        await createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: bounty.userId,
+          amount: bountyCreator.unitAmount,
+          type: TransactionType.Refund,
+          description: 'Refund reason: owner deleted bounty',
+        });
+        break;
+      default: // Do no checks
+        break;
+    }
+  }
 
   return deletedBounty;
 };
