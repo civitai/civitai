@@ -2028,6 +2028,7 @@ model Bounty {
   benefactors BountyBenefactor[]
   engagements BountyEngagement[]
   thread      Thread?
+  metrics     BountyMetric[]
 }
 
 model BountyEntry {
@@ -2043,6 +2044,7 @@ model BountyEntry {
   benefactors BountyBenefactor[]
   thread      Thread?
   reactions   BountyEntryReaction[]
+  metrics     BountyEntryMetric[]
 }
 
 model BountyEntryReaction {
@@ -2095,6 +2097,33 @@ model TipConnection {
   entityType    String
 
   @@id([entityId, entityType, transactionId])
+}
+
+model BountyMetric {
+  bounty          Bounty          @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId        Int
+  timeframe       MetricTimeframe
+  favoriteCount   Int             @default(0)
+  trackCount      Int             @default(0)
+  entryCount      Int             @default(0)
+  benefactorCount Int             @default(0)
+  unitAmountCount Int             @default(0)
+
+  @@id([bountyId, timeframe])
+}
+
+model BountyEntryMetric {
+  bountyEntry     BountyEntry     @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  bountyEntryId   Int
+  timeframe       MetricTimeframe
+  likeCount       Int             @default(0)
+  dislikeCount    Int             @default(0)
+  laughCount      Int             @default(0)
+  cryCount        Int             @default(0)
+  heartCount      Int             @default(0)
+  unitAmountCount Int             @default(0)
+
+  @@id([bountyEntryId, timeframe])
 }
 
 /// @view
