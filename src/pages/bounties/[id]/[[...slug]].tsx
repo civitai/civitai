@@ -60,7 +60,6 @@ import { useRouter } from 'next/router';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import {
   getBountyCurrency,
-  isBenefactor,
   isMainBenefactor,
   useBountyEngagement,
 } from '~/components/Bounty/bounty.utils';
@@ -71,7 +70,6 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName } from '~/utils/string-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
-import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -80,11 +78,9 @@ import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageVi
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyDiscussion } from '~/components/Bounty/BountyDiscussion';
-import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 import { NextLink } from '@mantine/next';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
-import { generationPanel } from '~/store/generation.store';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { openConfirmModal } from '@mantine/modals';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
@@ -482,41 +478,48 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
               <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
             </Group>
-            <PopConfirm
-              message={
-                <Stack spacing={0}>
-                  <Text size="sm">
-                    Are you sure you want {isBenefactor ? 'add' : 'become a benefactor by adding'}{' '}
-                    <Text component="span" weight={590}>
-                      <CurrencyIcon currency={currency} size={16} />{' '}
-                      {formatCurrencyForDisplay(minUnitAmount, currency)}
-                    </Text>{' '}
-                    to this bounty?
-                  </Text>
-                  <Text color="red.4" size="sm">
-                    This action is non refundable.
-                  </Text>
+            <Button
+              variant="filled"
+              disabled={isLoading}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
 
-                  {!isBenefactor && (
-                    <Text size="sm" mt="sm">
-                      <strong>Note:</strong> As a benefactor, you will be unable to add entries to
-                      this bounty
-                    </Text>
-                  )}
-                </Stack>
-              }
-              position="bottom-end"
-              onConfirm={() => onAddToBounty(minUnitAmount)}
-              withArrow
+                openConfirmModal({
+                  title: isBenefactor ? 'Add to bounty' : 'Become a benefactor',
+                  children: (
+                    <Stack spacing={0}>
+                      <Text size="sm">
+                        Are you sure you want{' '}
+                        {isBenefactor ? 'add' : 'become a benefactor by adding'}{' '}
+                        <Text component="span" weight={590}>
+                          <CurrencyIcon currency={currency} size={16} />{' '}
+                          {formatCurrencyForDisplay(minUnitAmount, currency)}
+                        </Text>{' '}
+                        to this bounty?
+                      </Text>
+                      <Text color="red.4" size="sm">
+                        This action is non refundable.
+                      </Text>
+
+                      {!isBenefactor && (
+                        <Text size="sm" mt="sm">
+                          <strong>Note:</strong> As a benefactor, you will be{' '}
+                          <strong>unable</strong> to add entries to this bounty
+                        </Text>
+                      )}
+                    </Stack>
+                  ),
+                  centered: true,
+                  labels: { confirm: 'Confirm', cancel: 'No, go back' },
+                  onConfirm: () => {
+                    onAddToBounty(minUnitAmount);
+                  },
+                });
+              }}
             >
-              <Button variant="filled" disabled={isLoading}>
-                {isLoading
-                  ? 'Processing...'
-                  : isBenefactor
-                  ? 'Add to bounty'
-                  : 'Become a benefactor'}
-              </Button>
-            </PopConfirm>
+              {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Become a benefactor'}
+            </Button>
           </Group>
         )}
         <Group spacing={8} noWrap>
@@ -701,6 +704,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
   const expired = bounty.expiresAt < new Date();
   const displaySubmitAction =
+    !benefactorItem &&
     !isLoadingOwnedEntries &&
     ownedEntries.length < bounty.entryLimit &&
     !currentUser?.muted &&
