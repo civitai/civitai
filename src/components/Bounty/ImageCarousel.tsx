@@ -173,7 +173,29 @@ export function ImageCarousel({
         render={(image) => {
           return (
             <Carousel.Slide>
-              <Box sx={{ cursor: 'pointer' }} onClick={onClick ? () => onClick(image) : undefined}>
+              <Box
+                sx={{ cursor: 'pointer' }}
+                onClick={onClick ? () => onClick(image) : undefined}
+                tabIndex={0}
+                role="button"
+                onKeyDown={
+                  onClick
+                    ? (e) => {
+                        const keyDown = e.key !== undefined ? e.key : e.keyCode;
+                        if (
+                          keyDown === 'Enter' ||
+                          keyDown === 13 ||
+                          ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
+                          keyDown === 32
+                        ) {
+                          // (prevent default so the page doesn't scroll when pressing space)
+                          e.preventDefault();
+                          onClick(image);
+                        }
+                      }
+                    : undefined
+                }
+              >
                 <ImageGuard.Content>
                   {({ safe }) => (
                     <Center style={{ height: '100%', width: '100%' }}>
