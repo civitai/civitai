@@ -26,11 +26,11 @@ export const getAllEntriesByBountyId = <TSelect extends Prisma.BountyEntrySelect
   input,
   select,
 }: {
-  input: { bountyId: number };
+  input: { bountyId: number; userId?: number };
   select: TSelect;
 }) => {
   return dbRead.bountyEntry.findMany({
-    where: { bountyId: input.bountyId },
+    where: { bountyId: input.bountyId, userId: input.userId },
     select,
   });
 };

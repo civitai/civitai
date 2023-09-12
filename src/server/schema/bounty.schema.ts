@@ -66,3 +66,9 @@ export const addBenefactorUnitAmountInputSchema = z.object({
   unitAmount: z.number().min(1),
   bountyId: z.number(),
 });
+
+export type GetBountyEntriesInputSchema = z.infer<typeof getBountyEntriesInputSchema>;
+export const getBountyEntriesInputSchema = z.object({
+  id: z.number(),
+  owned: z.boolean().optional(),
+});

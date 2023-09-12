@@ -49,6 +49,7 @@ import {
   IconAward,
   IconClockHour4,
   IconHeart,
+  IconInfoCircle,
   IconShare3,
   IconStar,
   IconTrophy,
@@ -687,15 +688,24 @@ const useStyles = createStyles((theme) => ({
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const theme = useMantineTheme();
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
-  const queryUtils = trpc.useContext();
   const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
+  const { data: ownedEntries = [], isLoading: isLoadingOwnedEntries } =
+    trpc.bounty.getEntries.useQuery({
+      id: bounty.id,
+      owned: true,
+    });
   const currentUser = useCurrentUser();
   const currency = getBountyCurrency(bounty);
   const benefactorItem = !currentUser
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
   const expired = bounty.expiresAt < new Date();
-  const displaySubmitAction = !currentUser?.muted && !bounty.complete && !expired;
+  const displaySubmitAction =
+    !isLoadingOwnedEntries &&
+    ownedEntries.length < bounty.entryLimit &&
+    !currentUser?.muted &&
+    !bounty.complete &&
+    !expired;
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
@@ -715,11 +725,16 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
         <Title order={2} size={28} weight={600}>
           Hunters
         </Title>
-        {displaySubmitAction && (
-          <Button component={NextLink} href={entryCreateUrl} size="xs">
-            Submit
-          </Button>
-        )}
+        <Group>
+          <Tooltip label={`Max entries per user: ${bounty.entryLimit}`}>
+            <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+          </Tooltip>
+          {displaySubmitAction && (
+            <Button component={NextLink} href={entryCreateUrl} size="xs">
+              Submit
+            </Button>
+          )}
+        </Group>
       </Group>
       {children}
     </Stack>

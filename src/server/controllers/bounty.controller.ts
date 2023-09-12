@@ -18,6 +18,7 @@ import {
   AddBenefactorUnitAmountInputSchema,
   BountyDetailsSchema,
   CreateBountyInput,
+  GetBountyEntriesInputSchema,
   GetInfiniteBountySchema,
   UpdateBountyInput,
 } from '../schema/bounty.schema';
@@ -121,12 +122,12 @@ export const getBountyEntriesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: GetBountyEntriesInputSchema;
   ctx: Context;
 }) => {
   try {
     const entries = await getAllEntriesByBountyId({
-      input: { bountyId: input.id },
+      input: { bountyId: input.id, userId: input.owned ? ctx.user?.id : undefined },
       select: {
         id: true,
         createdAt: true,
