@@ -19,6 +19,7 @@ import {
   useMantineTheme,
   Loader,
   ThemeIcon,
+  Alert,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo } from 'react';
@@ -169,6 +170,8 @@ export default function BountyDetailsPage({
     color: 'gray',
   };
 
+  const expired = bounty.expiresAt < new Date();
+
   return (
     <>
       {meta}
@@ -179,18 +182,37 @@ export default function BountyDetailsPage({
               <Title weight="bold" className={classes.title} mr={14} lineClamp={2}>
                 {bounty.name}
               </Title>
+              {bounty.complete && (
+                <Tooltip
+                  label={'This bounty has been completed and entries have been awarded'}
+                  maw={250}
+                  multiline
+                  withArrow
+                  withinPortal
+                >
+                  <ThemeIcon color="yellow.7" radius="xl" variant="light">
+                    <IconTrophy size={20} stroke={2.5} fill="currentColor" />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
               <CurrencyBadge
                 {...defaultBadgeProps}
                 currency={currency}
                 unitAmount={totalUnitAmount}
               />
-              <IconBadge
-                {...defaultBadgeProps}
-                icon={<IconClockHour4 size={14} />}
-                style={{ color: theme.colors.success[5] }}
-              >
-                <DaysFromNow date={bounty.expiresAt} withoutSuffix />
-              </IconBadge>
+              {expired ? (
+                <Badge {...defaultBadgeProps} color="red" variant="filled" radius="xl">
+                  Expired
+                </Badge>
+              ) : (
+                <IconBadge
+                  {...defaultBadgeProps}
+                  icon={<IconClockHour4 size={14} />}
+                  style={{ color: theme.colors.success[5] }}
+                >
+                  <DaysFromNow date={bounty.expiresAt} withoutSuffix />
+                </IconBadge>
+              )}
             </Group>
             <BountyContextMenu bounty={bounty} position="bottom-end" />
           </Group>
@@ -253,8 +275,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
+  const expired = bounty.expiresAt < new Date();
 
   const addToBountyEnabled =
+    !expired &&
+    !bounty.complete &&
     !benefactor?.awardedToId &&
     (bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser));
   const { isLoading, mutate: addBenefactorUnitAmountMutation } =
@@ -672,11 +697,23 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
+      {bounty.complete && !isLoading && (
+        <Alert color="yellow">
+          {entries?.length > 0 ? (
+            <Text>
+              This bounty has been completed and prizes have been awarded to winner entries
+            </Text>
+          ) : (
+            <Text>This bounty has been marked as completed with no entries.</Text>
+          )}
+          <Text></Text>
+        </Alert>
+      )}
       <Group position="apart">
         <Title order={2} size={28} weight={600}>
           Hunters
         </Title>
-        {!currentUser?.muted && (
+        {!currentUser?.muted && !bounty.complete && (
           <Button component={NextLink} href={entryCreateUrl} size="xs">
             Submit
           </Button>

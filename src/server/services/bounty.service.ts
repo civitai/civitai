@@ -270,6 +270,19 @@ export const addBenefactorUnitAmount = async ({
   unitAmount,
   userId,
 }: AddBenefactorUnitAmountInputSchema & { userId: number }) => {
+  const bounty = await dbRead.bounty.findUnique({
+    where: { id: bountyId },
+    select: { complete: true },
+  });
+
+  if (!bounty) {
+    throw throwNotFoundError('Bounty not found');
+  }
+
+  if (bounty.complete) {
+    throw throwBadRequestError('Bounty is already complete');
+  }
+
   const benefactor = await dbRead.bountyBenefactor.findUnique({
     where: {
       userId_bountyId: {

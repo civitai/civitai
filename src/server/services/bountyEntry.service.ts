@@ -4,7 +4,11 @@ import { dbRead, dbWrite } from '../db/client';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
-import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 
@@ -58,6 +62,19 @@ export const upsertBountyEntry = async ({
   images,
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
+  const bounty = await dbRead.bounty.findUnique({
+    where: { id: bountyId },
+    select: { complete: true },
+  });
+
+  if (!bounty) {
+    throw throwNotFoundError('Bounty not found');
+  }
+
+  if (bounty.complete) {
+    throw throwBadRequestError('Bounty is already complete');
+  }
+
   return await dbWrite.$transaction(async (tx) => {
     if (id) {
       // confirm it exists:
@@ -107,11 +124,24 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
   const benefactor = await dbWrite.$transaction(async (tx) => {
     const entry = await tx.bountyEntry.findUniqueOrThrow({
       where: { id },
-      select: { id: true, bountyId: true, userId: true },
+      select: {
+        id: true,
+        bountyId: true,
+        userId: true,
+        bounty: {
+          select: {
+            complete: true,
+          },
+        },
+      },
     });
 
     if (!entry.userId) {
       throw throwBadRequestError('Entry has no user.');
+    }
+
+    if (entry.bounty.complete) {
+      throw throwBadRequestError('Bounty is already complete.');
     }
 
     const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
