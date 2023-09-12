@@ -1,4 +1,5 @@
 import {
+  Currency,
   MetricTimeframe,
   ModelStatus,
   ModelType,
