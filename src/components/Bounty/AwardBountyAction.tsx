@@ -70,7 +70,6 @@ export const AwardBountyAction = ({
         }
 
         if (prevEntries) {
-          console.log('prevEntries', prevEntries);
 
           await queryUtils.bounty.getEntries.setData(
             { id: bounty.id },
