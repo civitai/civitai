@@ -1,4 +1,5 @@
 import {
+  Accordion,
   ActionIcon,
   Anchor,
   Badge,
@@ -26,11 +27,12 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 
 import { NoContent } from '~/components/NoContent/NoContent';
+import { constants } from '~/server/common/constants';
 import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
 } from '~/server/common/model-helpers';
-import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import { TrainingDetailsObj, TrainingDetailsParams } from '~/server/schema/model-version.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -71,6 +73,8 @@ type TrainingFileData = {
 type ModalData = {
   id?: number;
   file?: TrainingFileData;
+  params?: TrainingDetailsParams;
+  eta?: string;
 };
 
 const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; description: string }> = {
@@ -81,11 +85,13 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
   },
   [TrainingStatus.Submitted]: {
     color: 'blue',
-    description: 'A request to train has been submitted, and will soon be actively processing.',
+    description:
+      'A request to train has been submitted, and will soon be actively processing. You will be emailed when it is complete.',
   },
   [TrainingStatus.Processing]: {
     color: 'teal',
-    description: 'The training is actively processing. In other words: the model is baking.',
+    description:
+      'The training is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
   },
   [TrainingStatus.InReview]: {
     color: 'green',
@@ -99,9 +105,13 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
   [TrainingStatus.Failed]: {
     color: 'red',
     description:
-      'Something went wrong with the training request. Retry the training job if you see this error.',
+      'Something went wrong with the training request. Recreate the training job if you see this error (or contact us for help).',
   },
 };
+
+const minsWait = 5 * 60 * 1000;
+const minsPerEpoch = 1 * 60 * 1000;
+const minsPerEpochSDXL = 5 * 60 * 1000;
 
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
@@ -123,6 +133,7 @@ export default function UserTrainingModels() {
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
+      // TODO update instead of invalidate
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
   });
@@ -146,7 +157,11 @@ export default function UserTrainingModels() {
 
   return (
     <Stack>
-      <ScrollArea style={{ height: 400 }} onScrollPositionChange={({ y }) => setScrolled(y !== 0)}>
+      <ScrollArea
+        // TODO [bw] this 600px here should be autocalced via a css var, to capture the top nav, user info section, and bottom bar
+        style={{ height: 'max(400px, calc(100vh - 600px))' }}
+        onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
+      >
         <Table verticalSpacing="md" fontSize="md" striped={hasTraining}>
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
@@ -155,7 +170,7 @@ export default function UserTrainingModels() {
               <th>Type</th>
               <th>Training Status</th>
               <th>Created</th>
-              <th>Last Updated</th>
+              <th>ETA</th>
               <th>Missing info</th>
               <th />
             </tr>
@@ -172,16 +187,42 @@ export default function UserTrainingModels() {
               items.map((model) => {
                 if (!model.modelVersions.length) return null;
                 const thisModelVersion = model.modelVersions[0];
+                const isProcessing =
+                  thisModelVersion.trainingStatus === TrainingStatus.Submitted ||
+                  thisModelVersion.trainingStatus === TrainingStatus.Processing;
 
-                // TODO why do I have to do this?
                 const thisTrainingDetails = thisModelVersion.trainingDetails as
                   | TrainingDetailsObj
                   | undefined;
                 const thisFile = thisModelVersion.files[0];
+                const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
 
-                const hasVersion = model._count.modelVersions > 0;
                 const hasFiles = !!thisFile;
                 const hasTrainingParams = !!thisTrainingDetails?.params;
+
+                const startTime = thisFileMetadata?.trainingResults?.history
+                  ?.filter(
+                    (h) =>
+                      h.status === TrainingStatus.Submitted ||
+                      h.status === TrainingStatus.Processing
+                  )
+                  .slice(-1)?.[0]?.time;
+                const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
+                const baseModel = thisTrainingDetails?.baseModel;
+                // nb: so yeah...this estimate can be better.
+                const eta =
+                  !!startTime && !!numEpochs
+                    ? new Date(
+                        new Date(startTime).getTime() +
+                          minsWait +
+                          numEpochs * (baseModel === 'sdxl' ? minsPerEpochSDXL : minsPerEpoch)
+                      )
+                    : undefined;
+                const etaStr = isProcessing
+                  ? !!eta
+                    ? formatDate(eta, 'MMM D, YYYY hh:mm:ss A')
+                    : 'Unknown'
+                  : '-';
 
                 return (
                   <tr key={model.id}>
@@ -209,10 +250,56 @@ export default function UserTrainingModels() {
                                 label: 'Training Start',
                                 value: modalData.file?.metadata?.trainingResults?.start_time
                                   ? formatDate(
-                                      modalData.file.metadata.trainingResults.start_time,
-                                      'MMM DD, YYYY HH:mm:ss'
+                                      modalData.file.metadata.trainingResults
+                                        .start_time as unknown as Date,
+                                      'MMM D, YYYY hh:mm:ss A'
                                     )
                                   : 'Unknown',
+                              },
+                              {
+                                label: 'ETA',
+                                value: modalData.eta,
+                              },
+                              {
+                                label: 'Training Attempts',
+                                value: `${Math.min(
+                                  constants.maxTrainingRetries + 1,
+                                  (modalData.file?.metadata?.trainingResults?.attempts || 0) + 1
+                                )} / ${constants.maxTrainingRetries + 1}`,
+                              },
+                              {
+                                label: 'History',
+                                value: (
+                                  <Stack spacing={5}>
+                                    {modalData.file?.metadata?.trainingResults?.history
+                                      ? (
+                                          modalData.file?.metadata?.trainingResults?.history || []
+                                        ).map((h) => (
+                                          <Group key={h.time}>
+                                            <Text inline>
+                                              {formatDate(
+                                                h.time as unknown as Date,
+                                                'MM/DD/YYYY hh:mm:ss A'
+                                              )}
+                                            </Text>
+                                            <Text inline>
+                                              <Badge
+                                                color={
+                                                  trainingStatusFields[h.status]?.color ?? 'gray'
+                                                }
+                                              >
+                                                {splitUppercase(
+                                                  h.status === TrainingStatus.InReview
+                                                    ? 'Ready'
+                                                    : h.status
+                                                )}
+                                              </Badge>
+                                            </Text>
+                                          </Group>
+                                        ))
+                                      : 'No history found'}
+                                  </Stack>
+                                ),
                               },
                               {
                                 label: 'Images',
@@ -225,7 +312,6 @@ export default function UserTrainingModels() {
                               {
                                 label: 'Dataset',
                                 value: modalData.file?.url ? (
-                                  // TODO [bw] wtf is happening when i click this? a subscribe button?
                                   <DownloadButton
                                     component="a"
                                     canDownload
@@ -243,6 +329,37 @@ export default function UserTrainingModels() {
                                   'None'
                                 ),
                               },
+                              {
+                                label: 'Training Params',
+                                value: modalData.params ? (
+                                  <Accordion
+                                    styles={(theme) => ({
+                                      content: {
+                                        padding: theme.spacing.xs,
+                                      },
+                                      item: {
+                                        // overflow: 'hidden',
+                                        border: 'none',
+                                        background: 'transparent',
+                                      },
+                                      control: {
+                                        padding: theme.spacing.xs,
+                                      },
+                                    })}
+                                  >
+                                    <Accordion.Item value="params">
+                                      <Accordion.Control>Expand</Accordion.Control>
+                                      <Accordion.Panel>
+                                        <pre style={{ margin: 0 }}>
+                                          {JSON.stringify(modalData.params, null, 2)}
+                                        </pre>
+                                      </Accordion.Panel>
+                                    </Accordion.Item>
+                                  </Accordion>
+                                ) : (
+                                  'No training params set'
+                                ),
+                              },
                             ]}
                           />
                         </Modal>
@@ -252,6 +369,8 @@ export default function UserTrainingModels() {
                             setModalData({
                               id: thisModelVersion.id,
                               file: thisFile as TrainingFileData,
+                              params: thisTrainingDetails?.params,
+                              eta: etaStr,
                             });
                             open();
                           }}
@@ -291,26 +410,36 @@ export default function UserTrainingModels() {
                         <Badge color="gray">N/A</Badge>
                       )}
                     </td>
-                    <td>{formatDate(model.createdAt)}</td>
-                    <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
+                    <td>
+                      <HoverCard openDelay={400} shadow="md" zIndex={100} withArrow>
+                        <HoverCard.Target>
+                          <Text>{formatDate(model.createdAt)}</Text>
+                        </HoverCard.Target>
+                        {new Date(model.createdAt).getTime() !==
+                          new Date(model.updatedAt).getTime() && (
+                          <HoverCard.Dropdown>
+                            <Text>Updated: {formatDate(model.updatedAt)}</Text>
+                          </HoverCard.Dropdown>
+                        )}
+                      </HoverCard>
+                    </td>
+                    <td>{etaStr}</td>
                     <td>
                       <Group>
-                        {!hasVersion || !hasFiles || !hasTrainingParams ? (
+                        {!hasFiles || !hasTrainingParams ? (
                           <IconAlertCircle size={16} color="orange" />
                         ) : (
                           <IconCircleCheck size={16} color="green" />
                         )}
                         <Stack spacing={4}>
                           {/* technically this step 1 alert should never happen */}
-                          {!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}
+                          {/*{!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}*/}
                           {!hasFiles && <Text inherit>Needs training files (Step 2)</Text>}
                           {!hasTrainingParams && (
                             <Text inherit>Needs training parameters (Step 3)</Text>
                           )}
                           {/* TODO [bw] we should probably include the model related fields here after training is done */}
-                          {hasVersion && hasFiles && hasTrainingParams && (
-                            <Text inherit>All good!</Text>
-                          )}
+                          {hasFiles && hasTrainingParams && <Text inherit>All good!</Text>}
                         </Stack>
                       </Group>
                     </td>
@@ -320,7 +449,8 @@ export default function UserTrainingModels() {
                           color="red"
                           variant="subtle"
                           size="sm"
-                          onClick={() => handleDeleteModel(model)}
+                          onClick={() => !isProcessing && handleDeleteModel(model)}
+                          disabled={isProcessing}
                         >
                           <IconTrash />
                         </ActionIcon>
@@ -329,7 +459,7 @@ export default function UserTrainingModels() {
                   </tr>
                 );
               })
-            ) : (
+            ) : !isLoading ? (
               <tr>
                 <td colSpan={7}>
                   <Center py="md">
@@ -337,6 +467,8 @@ export default function UserTrainingModels() {
                   </Center>
                 </td>
               </tr>
+            ) : (
+              <></>
             )}
           </tbody>
         </Table>

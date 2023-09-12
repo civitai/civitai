@@ -1,4 +1,4 @@
-import exifr from 'exifr';
+import ExifReader from 'exifreader';
 import { v4 as uuidv4 } from 'uuid';
 import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
@@ -14,14 +14,16 @@ const parsers = {
 };
 
 export async function getMetadata(file: File) {
-  let exif: any; //eslint-disable-line
-  try {
-    exif = await exifr.parse(file, {
-      userComment: true,
-    });
-    if (!exif) return {};
-  } catch (e: any) { //eslint-disable-line
-    return {};
+  const tags = await ExifReader.load(file, { includeUnknown: true });
+  delete tags['MakerNote'];
+  const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+    acc[key] = value.value;
+    return acc;
+  }, {} as Record<string, any>); //eslint-disable-line
+
+  if (exif.UserComment) {
+    // @ts-ignore - this is a hack to not have to rework our downstream code
+    exif.userComment = Int32Array.from(exif.UserComment);
   }
 
   let metadata = {};

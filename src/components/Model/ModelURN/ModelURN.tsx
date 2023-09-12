@@ -10,6 +10,7 @@ const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.Checkpoint]: 'checkpoint',
   [ModelType.Hypernetwork]: 'hypernet',
   [ModelType.TextualInversion]: 'embedding',
+  [ModelType.MotionModule]: 'motion',
   [ModelType.Upscaler]: 'upscaler',
   [ModelType.VAE]: 'vae',
   [ModelType.LORA]: 'lora',

@@ -87,13 +87,18 @@ export function ModelWizard() {
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
+      // don't redirect for Trained type
+      if (model?.uploadType === ModelUploadType.Trained) {
+        // TODO [bw] we could possibly redirect here to step 3 if status == InReview
+        return;
+      }
       if (!hasVersions) router.replace(`/models/${id}/wizard?step=2`, undefined, { shallow: true });
       else if (!hasFiles)
         router.replace(`/models/${id}/wizard?step=3`, undefined, { shallow: true });
       else router.replace(`/models/${id}/wizard?step=4`, undefined, { shallow: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, hasVersions, id, isNew]);
+  }, [hasFiles, hasVersions, id, isNew, model]);
 
   useEffect(() => {
     // set current step based on query param

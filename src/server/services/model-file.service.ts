@@ -1,8 +1,8 @@
-import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ModelFileUpdateInput, ModelFileCreateInput } from '~/server/schema/model-file.schema';
+import { ModelFileCreateInput, ModelFileUpdateInput } from '~/server/schema/model-file.schema';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { prepareFile } from '~/utils/file-helpers';
 
 export const getByVersionId = ({ modelVersionId }: { modelVersionId: number }) => {
@@ -21,17 +21,16 @@ export const createFile = <TSelect extends Prisma.ModelFileSelect>({
   });
 };
 
-export const updateFile = async ({ id, type, modelVersionId, metadata }: ModelFileUpdateInput) => {
+export const updateFile = async ({ id, metadata, ...inputData }: ModelFileUpdateInput) => {
   const modelFile = await dbRead.modelFile.findUnique({
     where: { id },
     select: { id: true, metadata: true },
   });
   if (!modelFile) throw throwNotFoundError();
-  return await dbWrite.modelFile.update({
+  return dbWrite.modelFile.update({
     where: { id },
     data: {
-      type,
-      modelVersionId,
+      ...inputData,
       metadata: metadata
         ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata }
         : undefined,

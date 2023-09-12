@@ -16,14 +16,16 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
+import { BaseModel } from '~/server/common/constants';
 import {
+  ModelVersionUpsertInput,
   TrainingDetailsBaseModel,
   trainingDetailsBaseModels,
   TrainingDetailsObj,
   TrainingDetailsParams,
   trainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import { ModelById } from '~/types/router';
+import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -61,6 +63,21 @@ type TrainingSettingsType = {
   };
 };
 
+/**
+ * Computes the number of decimal points in a given input using magic math
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getPrecision = (n: any) => {
+  if (!isFinite(n)) return 0;
+  const e = 1;
+  let p = 0;
+  while (Math.round(n * e) / e !== n) {
+    n *= 10;
+    p++;
+  }
+  return p;
+};
+
 const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'maxTrainEpochs',
@@ -75,7 +92,7 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'numRepeats',
     label: 'Num Repeats',
-    hint: 'Num Repeats defines how many times each individual image gets put into VRAM. As opposed to batch size, which is how many images you shove into your VRAM at once.',
+    hint: 'Num Repeats defines how many times each individual image gets put into VRAM. As opposed to batch size, which is how many images are placed into VRAM at once.',
     type: 'int',
     default: (n: number) => Math.max(1, Math.min(1000, Math.ceil(200 / n))),
     min: 1,
@@ -84,13 +101,13 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'trainBatchSize',
     label: 'Train Batch Size',
-    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously. To avoid OOM errors, please limit batch counts to the following by resolution: 512 -> 9, 768 -> 6, 1024 -> 4',
+    hint: 'Batch size is the number of images that will be placed into VRAM at once. A batch size of 2 will train two images at a time, simultaneously.',
     type: 'int',
     // TODO [bw] this should have a default/max driven by the resolution they've selected (e.g. 512 -> 9, 768 -> 6, 1024 -> 4 basically cap lower than 4700)
     default: 6,
     min: 4,
     max: 9,
-    overrides: { sdxl: { max: 4, min: 2, default: 4 } },
+    overrides: { realistic: { default: 2, min: 2, max: 2 }, sdxl: { max: 4, min: 2, default: 4 } },
   },
   {
     name: 'targetSteps',
@@ -112,7 +129,7 @@ const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'resolution',
     label: 'Resolution',
-    hint: 'Specify the maximum resolution of training images in the order of "width, height". If the training images exceed the resolution specified here, they will be scaled down to this resolution.',
+    hint: 'Specify the maximum resolution of training images. If the training images exceed the resolution specified here, they will be scaled down to this resolution.',
     type: 'int',
     default: 512,
     min: 512,
@@ -161,11 +178,29 @@ const trainingSettings: TrainingSettingsType[] = [
     max: 1,
   },
   {
+    name: 'clipSkip',
+    label: 'Clip Skip',
+    hint: 'Determines which layer\'s vector output will be used. There are 12 layers, and setting the skip will select "xth from the end" of the total layers. For anime, we use 2. For everything else, 1.',
+    type: 'int',
+    default: 1,
+    min: 1,
+    max: 4,
+    overrides: { anime: { default: 2 } },
+  },
+  {
+    name: 'flipAugmentation',
+    label: 'Flip Augmentation',
+    hint: 'If this option is turned on, the image will be horizontally flipped randomly. It can learn left and right angles, which is useful when you want to learn symmetrical people and objects.',
+    type: 'bool',
+    default: false,
+  },
+  {
     name: 'unetLR',
     label: 'Unet LR',
     hint: 'Sets the learning rate for U-Net. This is the learning rate when performing additional learning on each attention block (and other blocks depending on the setting) in U-Net.',
     type: 'number',
     default: 0.0005,
+    step: 0.0001,
     min: 0,
     max: 1,
   },
@@ -174,7 +209,8 @@ const trainingSettings: TrainingSettingsType[] = [
     label: 'Text Encoder LR',
     hint: 'Sets the learning rate for the text encoder. The effect of additional training on text encoders affects the entire U-Net.',
     type: 'number',
-    default: 0.0001,
+    default: 0.00005,
+    step: 0.00001,
     min: 0,
     max: 1,
   },
@@ -260,10 +296,11 @@ const trainingSettings: TrainingSettingsType[] = [
   },
 ];
 
-export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
+export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
-  const thisFile = thisModelVersion.files.find((f) => f.type === 'Training Data');
+  const thisFile = thisModelVersion.files[0];
+  const thisMetadata = thisFile?.metadata as FileMetadata | null;
 
   const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
     thisTrainingDetails?.baseModel ?? undefined
@@ -300,9 +337,9 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
       b: number
     ) => number;
 
-    defaultValues.numRepeats = numRepeatsFnc(thisFile?.metadata['numImages'] || 1);
+    defaultValues.numRepeats = numRepeatsFnc(thisMetadata?.numImages || 1);
     defaultValues.targetSteps = targetStepsFnc(
-      thisFile?.metadata['numImages'] || 1,
+      thisMetadata?.numImages || 1,
       defaultValues.numRepeats,
       defaultValues.maxTrainEpochs,
       defaultValues.trainBatchSize
@@ -341,7 +378,7 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
     const trainBatchSize = form.getValues('trainBatchSize');
 
     const newSteps = Math.ceil(
-      ((thisFile?.metadata['numImages'] || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
+      ((thisMetadata?.numImages || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
     );
 
     // if (newSteps > 10000) {
@@ -402,13 +439,21 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
 
       const { baseModel, ...paramData } = rest;
 
-      const versionMutateData = {
-        // these 4 appear to be required for upsert, but aren't actually being updated.
+      const baseModelConvert: BaseModel =
+        baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
+
+      const versionMutateData: ModelVersionUpsertInput = {
+        // these top vars appear to be required for upsert, but aren't actually being updated.
         // only ID should technically be necessary
         id: thisModelVersion.id,
         name: thisModelVersion.name,
         modelId: model.id,
-        baseModel: thisModelVersion.baseModel,
+        trainedWords: [],
+        // ---
+        baseModel: baseModelConvert,
+        epochs: paramData.maxTrainEpochs,
+        steps: paramData.targetSteps,
+        clipSkip: paramData.clipSkip,
         trainingStatus: TrainingStatus.Submitted,
         trainingDetails: {
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
@@ -418,31 +463,45 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
       };
 
       upsertVersionMutation.mutate(versionMutateData, {
-        onSuccess: () => {
+        async onSuccess(response, request) {
+          queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+            if (!old) return old;
+
+            const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
+            if (!versionToUpdate) return old;
+
+            versionToUpdate.trainingStatus = request.trainingStatus!;
+            versionToUpdate.trainingDetails = request.trainingDetails!;
+
+            return {
+              ...old,
+              modelVersions: [
+                versionToUpdate,
+                ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+              ],
+            };
+          });
+          // TODO [bw] don't invalidate, just update
+          await queryUtils.model.getMyTrainingModels.invalidate();
+
           doTraining.mutate(
-            {
-              model: baseModel,
-              trainingData: thisFile.url,
-              params: {
-                ...paramData,
-                modelFileId: thisFile.id,
-                loraName: model.name,
-              },
-            },
+            { modelVersionId: thisModelVersion.id },
             {
               onSuccess: async () => {
-                // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
-                await queryUtils.modelVersion.getById.invalidate({ id: thisModelVersion.id });
-                await queryUtils.model.getById.invalidate({ id: model.id });
                 setAwaitInvalidate(false);
                 showSuccessNotification({
                   title: 'Successfully submitted for training!',
-                  message: 'You will be notified when training is complete.',
+                  message: 'You will be emailed when training is complete.',
                 });
                 await router.replace(userTrainingDashboardURL);
               },
-              onError: () => {
+              onError: (error) => {
+                // TODO [bw] set status back to pending
                 setAwaitInvalidate(false);
+                showErrorNotification({
+                  error: new Error(error.message),
+                  title: 'Failed to submit.',
+                });
               },
             }
           );
@@ -495,17 +554,11 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                   { label: 'Type', value: thisTrainingDetails?.type },
                   {
                     label: 'Images',
-                    value:
-                      thisModelVersion.files.find((f) => f.type === 'Training Data')?.metadata[
-                        'numImages'
-                      ] || 0,
+                    value: thisMetadata?.numImages || 0,
                   },
                   {
                     label: 'Captions',
-                    value:
-                      thisModelVersion.files.find((f) => f.type === 'Training Data')?.metadata[
-                        'numCaptions'
-                      ] || 0,
+                    value: thisMetadata?.numCaptions || 0,
                   },
                 ]}
               />
@@ -582,8 +635,10 @@ export const TrainingFormSubmit = ({ model }: { model: ModelById }) => {
                           name={ts.name}
                           min={override?.min ?? ts.min}
                           max={override?.max ?? ts.max}
-                          precision={ts.type === 'number' ? 4 : undefined}
-                          step={ts.step ?? ts.type === 'int' ? 1 : 0.0001}
+                          precision={
+                            ts.type === 'number' ? getPrecision(ts.default) || 4 : undefined
+                          }
+                          step={ts.step}
                           sx={{ flexGrow: 1 }}
                           disabled={ts.disabled === true}
                           format="default"

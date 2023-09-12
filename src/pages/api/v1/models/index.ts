@@ -81,6 +81,8 @@ export default MixedAuthEndpoint(async function handler(
                       primary: primaryFile.id === file.id,
                     })}`,
                     primary: primaryFile.id === file.id ? true : undefined,
+                    url: undefined,
+                    visibility: undefined,
                   }))
                 : [],
               images: includeImages

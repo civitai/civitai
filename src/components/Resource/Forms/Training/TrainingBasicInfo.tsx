@@ -4,9 +4,9 @@ import React, { useState } from 'react';
 import { z } from 'zod';
 import { goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
-import { constants } from '~/server/common/constants';
+import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { ModelById } from '~/types/router';
+import { TrainingModelData } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -72,10 +72,17 @@ const RadioImg = ({
   />
 );
 
-export function TrainingFormBasic({ model }: { model?: ModelById }) {
+export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const queryUtils = trpc.useContext();
-  const [trainingModelType, setTrainingModelType] = useState<tmTypes | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+
+  const thisModelVersion = model?.modelVersions[0];
+  const thisTrainingDetails = thisModelVersion?.trainingDetails as TrainingDetailsObj | undefined;
+  const existingTrainingModelType = thisTrainingDetails?.type ?? undefined;
+
+  const [trainingModelType, setTrainingModelType] = useState<tmTypes | undefined>(
+    existingTrainingModelType
+  );
 
   const { classes } = useStyles();
 
@@ -89,16 +96,12 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
     }),
   });
 
-  const thisTrainingDetails = model?.modelVersions[0].trainingDetails as
-    | TrainingDetailsObj
-    | undefined;
-
   const defaultValues: Omit<z.infer<typeof schema>, 'trainingModelType'> & {
     trainingModelType: tmTypes | undefined;
   } = {
     ...model,
     name: model?.name ?? '',
-    trainingModelType: thisTrainingDetails?.type ?? undefined,
+    trainingModelType: existingTrainingModelType,
   };
   const form = useForm({
     schema,
@@ -107,51 +110,107 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
     shouldUnregister: false,
   });
 
-  const { isDirty, errors } = form.formState;
-  if (errors) console.log('errors', errors);
+  const { isDirty } = form.formState;
 
-  // const editing = !!model;
-
-  const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
-    onError(error) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Failed to saved model version',
-      });
-    },
-  });
-
+  const upsertVersionMutation = trpc.modelVersion.upsert.useMutation();
   const upsertModelMutation = trpc.model.upsert.useMutation({
-    onSuccess: async (data, payload) => {
-      if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
+    onSuccess: async (response, request) => {
+      const modelId = response.id;
+      const modelName = request.name;
+      const versionId = thisModelVersion?.id;
 
-      const modelId = data.id;
-      const modelName = payload.name;
-      const versionId = model?.modelVersions[0].id;
+      queryUtils.training.getModelBasic.setData({ id: modelId }, (old) => {
+        if (!old)
+          return {
+            id: response.id,
+            name: modelName,
+            status: request.status,
+            type: request.type,
+            uploadType: request.uploadType,
+            modelVersions: [],
+          };
+
+        return {
+          ...old,
+          name: request.name,
+        };
+      });
+
+      // TODO [bw] don't invalidate, just update
+      await queryUtils.model.getMyTrainingModels.invalidate();
+      // queryUtils.model.getMyTrainingModels.setData({}, (old) => {
+      //   if (!old) return old;
+      //
+      //   return {};
+      // });
 
       const versionMutateData = {
         ...(versionId && { id: versionId }),
         modelId: modelId,
         name: modelName,
-        baseModel: 'SD 1.5' as const, // this is not really correct, but it needs something there
+        baseModel: thisModelVersion
+          ? (thisModelVersion.baseModel as BaseModel)
+          : ('SD 1.5' as const), // TODO [bw] this is not really correct, but it needs something there
         trainingStatus: TrainingStatus.Pending,
         trainingDetails: { type: trainingModelType as tmTypes },
       };
 
       upsertVersionMutation.mutate(versionMutateData, {
-        onSuccess: async (vData) => {
-          // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
-          await queryUtils.modelVersion.getById.invalidate({ id: vData.id });
-          await queryUtils.model.getById.invalidate({ id: data.id });
+        onSuccess: async (vResponse) => {
+          queryUtils.training.getModelBasic.setData({ id: modelId }, (old) => {
+            if (!old) return old;
+
+            const versionToUpdate = versionId
+              ? old.modelVersions.find((mv) => mv.id === versionId)
+              : undefined;
+            if (versionToUpdate) {
+              return {
+                ...old,
+                modelVersions: [
+                  {
+                    ...versionToUpdate,
+                    name: modelName,
+                    trainingDetails: {
+                      ...((versionToUpdate.trainingDetails as
+                        | TrainingDetailsObj
+                        | undefined
+                        | null) || {}),
+                      type: trainingModelType,
+                    },
+                  },
+                  ...old.modelVersions.filter((mv) => mv.id !== versionId),
+                ],
+              };
+            } else {
+              return {
+                ...old,
+                modelVersions: [
+                  {
+                    id: vResponse.id,
+                    name: vResponse.name,
+                    baseModel: vResponse.baseModel,
+                    trainingDetails: vResponse.trainingDetails,
+                    trainingStatus: vResponse.trainingStatus,
+                    files: [],
+                  },
+                  ...old.modelVersions,
+                ],
+              };
+            }
+          });
+
+          // TODO [bw] don't invalidate, just update
           await queryUtils.model.getMyTrainingModels.invalidate();
           setAwaitInvalidate(false);
           goNext(modelId, thisStep);
         },
         onError: (error) => {
+          // should we "roll back" the model creation here?
           setAwaitInvalidate(false);
           showErrorNotification({
             error: new Error(error.message),
             title: 'Failed to save model version',
+            autoClose: false,
           });
         },
       });
@@ -161,6 +220,7 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
       showErrorNotification({
         error: new Error(error.message),
         title: 'Failed to save model',
+        autoClose: false,
       });
     },
   });
@@ -168,14 +228,16 @@ export function TrainingFormBasic({ model }: { model?: ModelById }) {
   const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
     if (isDirty) {
       setAwaitInvalidate(true);
-      // TODO [bw]: status draft is maybe wrong here
+      // TODO [bw]: status draft is maybe wrong here if they can come back later
+      // nb: if updating, update setData above
       upsertModelMutation.mutate({
         ...rest,
         status: ModelStatus.Draft,
         type: ModelType.LORA,
         uploadType: ModelUploadType.Trained,
-        // TODO [bw] we can set the tag here based on type so category is filled out
-        // tagsOnModels:
+        ...(trainingModelType
+          ? { tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }] }
+          : {}),
       });
     } else {
       goNext(model?.id, thisStep);

@@ -9,8 +9,8 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
-  const isLoCon = modelType === ModelType.LoCon;
   const isWildcards = modelType === ModelType.Wildcards;
+  const isMotion = modelType === ModelType.MotionModule;
   if (files) {
     for (const file of files) {
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
@@ -35,11 +35,15 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
           to work.
         </AlertWithIcon>
       )}
-      {isLoCon && (
+      {isMotion && (
         <AlertWithIcon icon={<IconAlertCircle />}>
-          This is a LyCORIS (LoCon/LoHA) model, and requires an{' '}
+          This is a Motion Module for{' '}
+          <Anchor href="https://github.com/guoyww/AnimateDiff/" rel="nofollow" target="_blank">
+            AnimateDiff
+          </Anchor>
+          , it requires an{' '}
           <Anchor
-            href="https://github.com/KohakuBlueleaf/a1111-sd-webui-lycoris"
+            href="https://github.com/continue-revolution/sd-webui-animatediff"
             rel="nofollow"
             target="_blank"
           >

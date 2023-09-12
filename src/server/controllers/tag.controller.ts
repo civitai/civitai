@@ -1,4 +1,6 @@
 import { constants } from '~/server/common/constants';
+import { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import {
   AddTagVotesSchema,
   AdjustTagsSchema,
@@ -10,24 +12,22 @@ import {
   ModerateTagsSchema,
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
-import {
-  addTags,
-  disableTags,
-  moderateTags,
-  addTagVotes,
-  getTags,
-  getTagWithModelCount,
-  getVotableTags,
-  removeTagVotes,
-  deleteTags,
-} from '~/server/services/tag.service';
-import { throwDbError } from '~/server/utils/errorHandling';
-import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHomeExcludedTags } from '~/server/services/system-cache';
+import {
+  addTags,
+  addTagVotes,
+  deleteTags,
+  disableTags,
+  getTags,
+  getTagWithModelCount,
+  getVotableTags,
+  moderateTags,
+  removeTagVotes,
+} from '~/server/services/tag.service';
+import { throwDbError } from '~/server/utils/errorHandling';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getTagWithModelCountHandler = ({ input: { name } }: { input: GetTagByNameInput }) => {
   try {

@@ -451,6 +451,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     acceptedModelFiles: ['Model', 'Config', 'Training Data'],
     maxFiles: 11,
   },
+  MotionModule: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.onnx'],
+    acceptedModelFiles: ['Model'],
+    maxFiles: 2,
+  },
   LORA: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],

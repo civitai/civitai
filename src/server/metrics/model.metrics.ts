@@ -164,33 +164,41 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
 
 async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
   // Disabled clickhouse as it seems to be missing resource reviews somehow...
-  // const clickhouseSince = dayjs(lastUpdate).toISOString();
-  // const affectedModelVersionsResponse = await ch.query({
-  //   query: `
-  //     SELECT DISTINCT modelVersionId
-  //     FROM resourceReviews
-  //     WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-  //   `,
-  //   format: 'JSONEachRow',
-  // });
+  const clickhouseSince = dayjs(lastUpdate).toISOString();
+  const affectedModelVersionsResponse = await ch.query({
+    query: `
+      SELECT DISTINCT modelVersionId
+      FROM resourceReviews
+      WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+    `,
+    format: 'JSONEachRow',
+  });
 
-  const affectedModelVersions = await db.$queryRaw<{ modelVersionId: number }[]>`
+  const affectedModelVersionsClickhouse = (await affectedModelVersionsResponse?.json()) as [
+    {
+      modelVersionId: number;
+    }
+  ];
+  const modelVersionIds = new Set(affectedModelVersionsClickhouse.map((x) => x.modelVersionId));
+
+  const affectedModelVersionsDb = await db.$queryRaw<{ modelVersionId: number }[]>`
     SELECT DISTINCT "modelVersionId"
     FROM "ResourceReview"
-    WHERE "createdAt" > ${lastUpdate};
+    WHERE "createdAt" > ${lastUpdate} OR "updatedAt" > ${lastUpdate}
   `;
+  affectedModelVersionsDb.forEach(({ modelVersionId }) => modelVersionIds.add(modelVersionId));
 
-  const modelVersionIds = affectedModelVersions.map((x) => x.modelVersionId);
-  const batches = chunk(modelVersionIds, 500);
+  const batches = chunk([...modelVersionIds], 500);
   for (const batch of batches) {
     const batchJson = JSON.stringify(batch);
     await db.$executeRaw`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
       SELECT
-          rr."modelVersionId",
+          mv.id,
           tf.timeframe,
           COALESCE(SUM(
               CASE
+                  WHEN rr."userId" IS NULL THEN 0
                   WHEN tf.timeframe = 'AllTime' THEN 1
                   WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
                   WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
@@ -200,6 +208,7 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
           ), 0),
           COALESCE(AVG(
               CASE
+                  WHEN rr."userId" IS NULL THEN 0
                   WHEN tf.timeframe = 'AllTime' THEN rating
                   WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', rating, NULL)
                   WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', rating, NULL)
@@ -207,7 +216,8 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
                   WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', rating, NULL)
               END
           ), 0)
-      FROM (
+      FROM "ModelVersion" mv
+      LEFT JOIN (
           SELECT
               r."userId",
               r."modelVersionId",
@@ -219,19 +229,19 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
           AND r."tosViolation" = FALSE
           AND r."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
           GROUP BY r."userId", r."modelVersionId"
-      ) rr
+      ) rr ON rr."modelVersionId" = mv.id
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
-      GROUP BY rr."modelVersionId", tf.timeframe
+      WHERE mv.id = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+      GROUP BY mv.id, tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating;
     `;
   }
 
-  if (affectedModelVersions.length > 0) {
+  if (modelVersionIds.size > 0) {
     // Get affected models from version IDs:
-    const versionIds = affectedModelVersions.map(({ modelVersionId }) => modelVersionId);
-    return getModelIdFromVersions({ versionIds, db });
+    return getModelIdFromVersions({ versionIds: [...modelVersionIds], db });
   }
 
   return [];

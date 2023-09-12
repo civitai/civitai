@@ -35,4 +35,5 @@ export const imageTagCompositeSelect = Prisma.validator<Prisma.ImageTagSelect>()
   needsReview: true,
   concrete: true,
   lastUpvote: true,
+  source: true,
 });

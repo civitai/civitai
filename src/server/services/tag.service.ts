@@ -1,4 +1,11 @@
-import { NsfwLevel, Prisma, SearchIndexUpdateQueueAction, TagTarget } from '@prisma/client';
+import {
+  NsfwLevel,
+  Prisma,
+  SearchIndexUpdateQueueAction,
+  TagSource,
+  TagTarget,
+  TagType,
+} from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { TagSort } from '~/server/common/enums';
@@ -222,14 +229,24 @@ export const getVotableTags = async ({
       orderBy: { score: 'desc' },
       // take,
     });
+    const hasWDTags = tags.some((x) => x.source === TagSource.WD14);
     results.push(
-      ...tags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
-        ...tag,
-        id: tagId,
-        type: tagType,
-        nsfw: tagNsfw,
-        name: tagName,
-      }))
+      ...tags
+        .filter((x) => {
+          if (x.source === TagSource.Rekognition && hasWDTags) {
+            if (x.tagType === TagType.Moderation) return true;
+            if (constants.imageTags.styles.includes(x.tagName)) return true;
+            return false;
+          }
+          return true;
+        })
+        .map(({ tagId, tagName, tagType, tagNsfw, source, ...tag }) => ({
+          ...tag,
+          id: tagId,
+          type: tagType,
+          nsfw: tagNsfw,
+          name: tagName,
+        }))
     );
     if (userId) {
       const userVotes = await dbRead.tagsOnImageVote.findMany({
@@ -304,8 +321,8 @@ export const addTagVotes = async ({
     isCreator = creator?.userId === userId;
   }
   let voteWeight = 1;
-  if (isCreator) voteWeight = CREATOR_VOTE_WEIGHT;
-  else if (isModerator) voteWeight = MODERATOR_VOTE_WEIGHT;
+  if (isModerator) voteWeight = MODERATOR_VOTE_WEIGHT;
+  else if (isCreator) voteWeight = CREATOR_VOTE_WEIGHT;
 
   vote *= voteWeight;
   const isTagIds = typeof tags[0] === 'number';

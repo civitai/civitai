@@ -82,6 +82,7 @@ export enum ImageScanType {
   Moderation,
   Label,
   FaceDetection,
+  WD14,
 }
 
 export enum CommentV2Sort {
@@ -100,6 +101,7 @@ export enum ArticleSort {
 export enum ModelType {
   Checkpoint = 'Checkpoint',
   TextualInversion = 'TextualInversion',
+  MotionModule = 'MotionModule',
   Hypernetwork = 'Hypernetwork',
   AestheticGradient = 'AestheticGradient',
   LORA = 'LORA',

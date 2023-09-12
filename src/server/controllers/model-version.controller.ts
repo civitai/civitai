@@ -79,6 +79,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
                 pickleScanMessage: true,
                 virusScanResult: true,
                 scannedAt: true,
+                visibility: true,
                 hashes: {
                   select: {
                     type: true,

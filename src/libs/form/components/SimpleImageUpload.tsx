@@ -19,21 +19,34 @@ import { useEffect, useState } from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { formatBytes } from '~/utils/number-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: string | { url: string };
   onChange?: (value: CustomFile | null) => void;
   previewWidth?: number;
+  maxSize?: number;
 };
 
-export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUploadProps) {
+export function SimpleImageUpload({
+  value,
+  onChange,
+  maxSize = constants.imageUpload.maxFileSize,
+  ...props
+}: SimpleImageUploadProps) {
   const theme = useMantineTheme();
   const { uploadToCF, files: imageFiles } = useCFImageUpload();
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
   const [image, setImage] = useState<CustomFile | undefined>();
+  const [error, setError] = useState('');
 
   const handleDrop = async (droppedFiles: FileWithPath[]) => {
+    const hasLargeFile = droppedFiles.some((file) => file.size > maxSize);
+    if (hasLargeFile) return setError(`Files should not exceed ${formatBytes(maxSize)}`);
+
+    setError('');
     const [file] = droppedFiles;
     const toUpload = { url: URL.createObjectURL(file), file };
     setImage((current) => ({
@@ -74,7 +87,7 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
   const showLoading = match && match.progress < 100 && !image?.url;
 
   return (
-    <Input.Wrapper {...props}>
+    <Input.Wrapper {...props} error={props.error ?? error}>
       {showLoading ? (
         <Paper
           style={{ position: 'relative', marginTop: 5, width: '100%', height: 200 }}
@@ -118,14 +131,16 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
           onDrop={handleDrop}
           accept={IMAGE_MIME_TYPE}
           maxFiles={1}
+          // maxSize={maxSize}
           mt={5}
           styles={(theme) => ({
-            root: !!props.error
-              ? {
-                  borderColor: theme.colors.red[6],
-                  marginBottom: theme.spacing.xs / 2,
-                }
-              : undefined,
+            root:
+              !!props.error || !!error
+                ? {
+                    borderColor: theme.colors.red[6],
+                    marginBottom: theme.spacing.xs / 2,
+                  }
+                : undefined,
           })}
         >
           <Dropzone.Accept>
@@ -151,7 +166,9 @@ export function SimpleImageUpload({ value, onChange, ...props }: SimpleImageUplo
           <Dropzone.Idle>
             <Group position="center" spacing="xs">
               <IconPhoto size={32} stroke={1.5} />
-              <Text color="dimmed">Drop image here</Text>
+              <Text color="dimmed">{`Drop image here, should not exceed ${formatBytes(
+                maxSize
+              )}`}</Text>
             </Group>
           </Dropzone.Idle>
         </Dropzone>

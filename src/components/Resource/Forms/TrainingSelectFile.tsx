@@ -4,6 +4,7 @@ import {
   createStyles,
   Group,
   Image,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -16,7 +17,7 @@ import { IconCheck, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { NoContent } from '~/components/NoContent/NoContent';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/image-resource-training';
 import { ModelFileType } from '~/server/common/constants';
@@ -131,11 +132,9 @@ export default function TrainingSelectFile({
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const modelVersion = model?.modelVersions?.[0];
-  // TODO [bw] need to worry about multiple files? which one will this grab?
   const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
   const existingModelFile = modelVersion?.files.find((f) => f.type === 'Model');
 
-  // TODO [bw] possibly autoselect the first one
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
   );
@@ -283,19 +282,33 @@ export default function TrainingSelectFile({
     (a, b) => b.epoch_number - a.epoch_number
   );
 
+  const inError = modelVersion.trainingStatus === TrainingStatus.Failed;
+  const noEpochs = !epochs || !epochs.length;
   const resultsLoading =
     (modelVersion.trainingStatus !== TrainingStatus.InReview &&
       modelVersion.trainingStatus !== TrainingStatus.Approved) ||
-    !epochs ||
-    !epochs.length;
+    noEpochs;
 
   return (
     <Stack>
-      {resultsLoading ? (
-        <PageLoader text="Models are currently training..." />
+      {inError ? (
+        <Center py="md">
+          <NoContent message="The training job failed. Please recreate this model and try again, or contact us for help." />
+        </Center>
+      ) : noEpochs ? (
+        <Stack p="xl" align="center">
+          <Loader />
+          <Text>Models are currently training...</Text>
+        </Stack>
       ) : (
         <>
-          {/* download all button */}
+          {modelVersion.trainingStatus === TrainingStatus.Processing && (
+            <Stack p="xl" align="center">
+              <Loader />
+              <Text>Models are currently training...</Text>
+            </Stack>
+          )}
+          {/* TODO [bw] download all button */}
           <Center>
             <Title order={4}>Recommended</Title>
           </Center>

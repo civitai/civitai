@@ -12,6 +12,7 @@ const instructions: Partial<Record<ModelType, string>> = {
   [ModelType.Controlnet]: '#controlnet',
   [ModelType.Poses]: '#poses',
   [ModelType.Wildcards]: '#wildcards',
+  [ModelType.MotionModule]: '#motion-module',
 };
 
 export const HowToUseModel = ({ type }: ModelFileAlertProps) => {

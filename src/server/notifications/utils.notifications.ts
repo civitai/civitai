@@ -2,6 +2,7 @@ import { articleNotifications } from '~/server/notifications/article.notificatio
 import { BareNotification, NotificationProcessor } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
+import { featuredNotifications } from '~/server/notifications/featured.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { reactionNotifications } from '~/server/notifications/reaction.notifications';
@@ -22,6 +23,7 @@ const notificationProcessors = {
   ...unpublishNotifications,
   ...articleNotifications,
   ...reportNotifications,
+  ...featuredNotifications,
   ...bountyNotifications,
 };
 

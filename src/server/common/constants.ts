@@ -1,13 +1,4 @@
 import {
-  ArticleSort,
-  BrowsingMode,
-  CollectionSort,
-  ImageSort,
-  PostSort,
-  QuestionSort,
-} from './enums';
-import {
-  Currency,
   MetricTimeframe,
   ModelStatus,
   ModelType,
@@ -19,6 +10,14 @@ import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
 import { MantineTheme } from '@mantine/core';
+import {
+  ArticleSort,
+  BrowsingMode,
+  CollectionSort,
+  ImageSort,
+  PostSort,
+  QuestionSort,
+} from './enums';
 
 export const constants = {
   modelFilterDefaults: {
@@ -167,6 +166,13 @@ export const constants = {
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
     upvoteThreshold: 3,
+  },
+  imageTags: {
+    styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
+  },
+  maxTrainingRetries: 2,
+  imageUpload: {
+    maxFileSize: 32 * 1024 ** 2, // 32MB
   },
 } as const;
 

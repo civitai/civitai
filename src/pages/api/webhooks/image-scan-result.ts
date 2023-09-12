@@ -1,18 +1,13 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import {
-  ImageIngestionStatus,
-  Prisma,
-  SearchIndexUpdateQueueAction,
-  TagTarget,
-  TagType,
-} from '@prisma/client';
+import { ImageIngestionStatus, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
 import { auditMetaData } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { logToDb } from '~/utils/logging';
+import { constants } from '~/server/common/constants';
+import { getComputedTags } from '~/server/utils/tag-computation';
 
 const tagCache: Record<string, number> = {};
 
@@ -21,6 +16,10 @@ enum Status {
   NotFound = 1, // image not found at url
   Unscannable = 2,
 }
+const pendingStates: ImageIngestionStatus[] = [
+  ImageIngestionStatus.Pending,
+  ImageIngestionStatus.Error,
+];
 
 type IncomingTag = z.infer<typeof tagSchema>;
 const tagSchema = z.object({
@@ -33,7 +32,9 @@ const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
   tags: tagSchema.array().nullish(),
+  vectors: z.array(z.number().array()).nullish(),
   status: z.nativeEnum(Status),
+  source: z.nativeEnum(TagSource),
 });
 
 function isModerationCategory(tag: string) {
@@ -55,14 +56,14 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   try {
     switch (bodyResults.data.status) {
       case Status.NotFound:
-        await dbWrite.image.update({
-          where: { id: data.id },
+        await dbWrite.image.updateMany({
+          where: { id: data.id, ingestion: { in: pendingStates } },
           data: { ingestion: ImageIngestionStatus.NotFound },
         });
         break;
       case Status.Unscannable:
-        await dbWrite.image.update({
-          where: { id: data.id },
+        await dbWrite.image.updateMany({
+          where: { id: data.id, ingestion: { in: pendingStates } },
           data: { ingestion: ImageIngestionStatus.Error },
         });
         break;
@@ -81,57 +82,28 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   }
 });
 
-type ComputedTagTester = {
-  includesAll?: string[];
-  includesSome?: string[];
-  excludes?: string[];
-};
-const computedTagCombos: Record<string, ComputedTagTester> = {
-  'female swimwear or underwear': {
-    includesAll: ['female'],
-    includesSome: ['swimwear', 'underwear', 'lingerie', 'bikini'],
-    excludes: [
-      'dress',
-      'nudity',
-      'illustrated explicit nudity',
-      'partial nudity',
-      'sexual activity',
-      'graphic female nudity',
-    ],
-  },
-  'male swimwear or underwear': {
-    includesAll: ['male'],
-    includesSome: ['swimwear', 'underwear', 'lingerie'],
-    excludes: [
-      'dress',
-      'nudity',
-      'illustrated explicit nudity',
-      'partial nudity',
-      'sexual activity',
-      'graphic male nudity',
-    ],
-  },
-};
-
-const computedTagsCombosArray = Object.entries(computedTagCombos);
-async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
+type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
+async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps) {
   if (!incomingTags?.length) return;
+
+  // Handle underscores coming out of WD14
+  if (source === TagSource.WD14) {
+    for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
+  }
 
   // De-dupe incoming tags and keep tag with highest confidence
   const tagMap: Record<string, IncomingTag> = {};
   for (const tag of incomingTags) {
     if (!tagMap[tag.tag] || tagMap[tag.tag].confidence < tag.confidence) tagMap[tag.tag] = tag;
   }
-  const tags = Object.values(tagMap);
+  const tags: Tag[] = Object.values(tagMap);
 
   // Add computed tags
-  for (const [toAdd, { includesAll, includesSome, excludes }] of computedTagsCombosArray) {
-    if (tags.some((x) => x.tag === toAdd)) continue;
-    if (includesAll && !includesAll.every((x) => tags.some((y) => y.tag === x))) continue;
-    if (includesSome && !includesSome.some((x) => tags.some((y) => y.tag === x))) continue;
-    if (excludes && excludes.some((x) => tags.some((y) => y.tag === x))) continue;
-    tags.push({ tag: toAdd, confidence: 70 });
-  }
+  const computedTags = getComputedTags(
+    tags.map((x) => x.tag),
+    source
+  );
+  tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70, source: TagSource.Computed })));
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
@@ -159,7 +131,10 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
       data: newTags.map((x) => ({
         name: x.tag,
         type: TagType.Label,
-        target: [TagTarget.Image, TagTarget.Post, TagTarget.Model],
+        target:
+          source === TagSource.WD14
+            ? [TagTarget.Image]
+            : [TagTarget.Image, TagTarget.Post, TagTarget.Model],
       })),
     });
     const newFoundTags = await dbWrite.tag.findMany({
@@ -188,21 +163,28 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
 
   try {
     await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled")
+      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source")
       VALUES ${tags
         .filter((x) => x.id)
-        .map((x) => `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)})`)
+        .map(
+          (x) =>
+            `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)}, '${
+              x.source ?? source
+            }')`
+        )
         .join(', ')}
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
     `);
-    // TODO.justin - how do we want to handle an image receiving the same tag multiple times with different confidence levels
-    // track the number of times a tag has been submitted for an image in order to calc confidence levels?
-    // from Koen: ((currentConfidence * timesWeGotTheTag) + newConfidence) / (timesWeGotTheTag + 1)
-    // simply take the highest confidence score?
-    // how do we want to handle tags from the different providers? (rekognition, salad)
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
+  }
+
+  // For now, only update the scanned state if we got the result from Rekognition
+  if (source === TagSource.WD14) {
+    // However we can still update the nsfw level, as it will only go up...
+    await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
+    return;
   }
 
   try {
@@ -217,17 +199,17 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
 
     let hasAdultTag = false,
       hasMinorTag = false,
-      hasAnimatedTag = false,
+      hasCartoonTag = false,
       nsfw = false;
     for (const { name, type } of tags) {
       if (type === TagType.Moderation) nsfw = true;
       if (tagsNeedingReview.includes(name)) hasMinorTag = true;
-      else if (['anime', 'cartoon', 'comics', 'manga'].includes(name)) hasAnimatedTag = true;
+      else if (constants.imageTags.styles.includes(name)) hasCartoonTag = true;
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
     let reviewKey: string | null = null;
-    if (hasMinorTag && !hasAdultTag && (!hasAnimatedTag || nsfw)) reviewKey = 'minor';
+    if (hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) reviewKey = 'minor';
     else if (nsfw) {
       const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
         SELECT
@@ -241,7 +223,6 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
     }
     const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
 
-    // Set scannedAt and needsReview
     const data: Prisma.ImageUpdateInput = {
       scannedAt: new Date(),
       needsReview: reviewKey,
@@ -264,14 +245,6 @@ async function handleSuccess({ id, tags: incomingTags = [] }: BodyProps) {
       where: { id },
       data,
     });
-
-    // add model to searchIndex queue since new image has been scanned
-    // if (image.imagesOnModels && data.ingestion === ImageIngestionStatus.Scanned) {
-    //   const modelId = image.imagesOnModels.modelVersion.modelId;
-    //   await modelsSearchIndex.queueUpdate([
-    //     { id: modelId, action: SearchIndexUpdateQueueAction.Update },
-    //   ]);
-    // }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);

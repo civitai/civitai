@@ -237,7 +237,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
 
     if (!permissions.read) {
-      return { items: [] };
+      return { items: [], isPrivate: true };
     }
 
     const collectionItemModelsAND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> =

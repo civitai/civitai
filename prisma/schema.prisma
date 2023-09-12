@@ -261,6 +261,7 @@ enum ModelType {
   LoCon
   Controlnet
   Upscaler
+  MotionModule
   VAE
   Poses
   Wildcards
@@ -1172,6 +1173,13 @@ model TagsOnQuestions {
   @@index([questionId], type: Hash)
 }
 
+enum TagSource {
+  User
+  Rekognition
+  WD14
+  Computed
+}
+
 model TagsOnImage {
   imageId     Int
   image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -1183,10 +1191,12 @@ model TagsOnImage {
   disabled    Boolean   @default(false)
   disabledAt  DateTime?
   needsReview Boolean   @default(false)
+  source      TagSource @default(User)
 
   @@id([tagId, imageId])
   @@index([imageId], type: Hash)
   @@index([automated])
+  @@index([source])
   @@index([disabled])
 }
 
@@ -2862,6 +2872,7 @@ model ImageTag {
   needsReview Boolean
   concrete    Boolean
   lastUpvote  DateTime?
+  source      TagSource
 
   @@id([imageId, tagId])
 }
