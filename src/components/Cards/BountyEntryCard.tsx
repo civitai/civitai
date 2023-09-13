@@ -12,10 +12,8 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { IconFiles, IconHeart, IconViewfinder } from '@tabler/icons-react';
+import { IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { Reactions } from '~/components/Reaction/Reactions';
 
 const IMAGE_CARD_WIDTH = 332;
@@ -27,13 +25,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   // TODO.bounty: applyUserPreferences on bounty entry image
   const cover = images?.[0];
   const reactions = data?.reactions ?? [];
-  const stats: {
-    likeCountAllTime: number;
-    dislikeCountAllTime: number;
-    heartCountAllTime: number;
-    laughCountAllTime: number;
-    cryCountAllTime: number;
-  } | null = data?.stats ?? null;
+  const stats = data?.stats ?? null;
 
   return (
     <FeedCard aspectRatio="square" href={`/bounties/${data.bountyId}/entries/${data.id}`}>
