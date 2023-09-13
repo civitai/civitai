@@ -18,6 +18,7 @@ import {
   IconDotsVertical,
   IconBrush,
   IconPlaylistAdd,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -52,6 +53,7 @@ import { InView } from 'react-intersection-observer';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToCollectionDropdown } from '~/components/Collections/AddToCollectionDropdown';
 import { StarRating } from '../StartRating/StarRating';
+import { env } from '~/env/client.mjs';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -142,6 +144,24 @@ export function ModelCard({ data }: Props) {
       reportImageOption,
     ]);
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
+
+  if (currentUser?.isModerator && env.NEXT_PUBLIC_MODEL_LOOKUP_URL) {
+    contextMenuItems.unshift(
+      <Menu.Item
+        component="a"
+        target="_blank"
+        icon={<IconInfoCircle size={14} stroke={1.5} />}
+        href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
+        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`, '_blank');
+        }}
+      >
+        Lookup Model
+      </Menu.Item>
+    );
+  }
 
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
@@ -336,7 +356,7 @@ export function ModelCard({ data }: Props) {
                 >
                   {data.user.id !== -1 && (
                     <UnstyledButton
-                      sx={{ color: 'white' }}
+                      sx={{ color: 'white', alignSelf: 'flex-start' }}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();

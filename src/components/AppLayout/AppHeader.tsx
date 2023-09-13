@@ -303,7 +303,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconPlaylistAdd stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            <IconPlaylistAdd stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             My collections
           </Group>
         ),
