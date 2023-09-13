@@ -400,8 +400,7 @@ export default function BountyEntryDetailsPage({
             ) : filesCount > 0 ? (
               <SimpleGrid cols={1} spacing={2}>
                 {files.map((file) => {
-                  const isLocked =
-                    (file.metadata.unlockAmount ?? 0) > bountyEntry.awardedUnitAmountTotal;
+                  const isLocked = !file.url;
 
                   return (
                     <Paper key={file.id} radius={0} p={8} w="100%" bg="dark.4">

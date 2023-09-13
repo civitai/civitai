@@ -54,7 +54,7 @@ function BountyEntryFiles({ bountyEntry }: Props) {
   }
 
   const hasLockedFiles = files.find(
-    (file) => (file.metadata.unlockAmount ?? 0) > bountyEntry.awardedUnitAmountTotal
+    (file) => (file.metadata.unlockAmount ?? 0) > bountyEntry.awardedUnitAmountTotal && !file.url
   );
 
   return (
@@ -68,7 +68,7 @@ function BountyEntryFiles({ bountyEntry }: Props) {
       <ScrollArea.Autosize maxHeight={400}>
         <Stack spacing="md">
           {files.map((file) => {
-            const isLocked = (file.metadata.unlockAmount ?? 0) > bountyEntry.awardedUnitAmountTotal;
+            const isLocked = !file.url;
 
             return (
               <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
