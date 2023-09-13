@@ -722,7 +722,6 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
           ) : (
             <Text>This bounty has been marked as completed with no entries.</Text>
           )}
-          <Text></Text>
         </Alert>
       )}
       <Group position="apart">
