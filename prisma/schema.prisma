@@ -2030,6 +2030,7 @@ model Bounty {
   thread      Thread?
   metrics     BountyMetric[]
   rank        BountyRank?
+  stats       BountyStat?
 }
 
 model BountyEntry {
@@ -2047,6 +2048,7 @@ model BountyEntry {
   reactions   BountyEntryReaction[]
   metrics     BountyEntryMetric[]
   rank        BountyEntryRank?
+  stats       BountyEntryStat?
 }
 
 model BountyEntryReaction {
@@ -3019,6 +3021,37 @@ model GenerationCoverage {
 }
 
 /// @view
+model BountyStat {
+  bountyId                   Int    @id
+  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
+  favoriteCountDayRank       Int
+  favoriteCountWeekRank      Int
+  favoriteCountMonthRank     Int
+  favoriteCountYearRank      Int
+  favoriteCountAllTimeRank   Int
+  trackCountDayRank          Int
+  trackCountWeekRank         Int
+  trackCountMonthRank        Int
+  trackCountYearRank         Int
+  trackCountAllTimeRank      Int
+  entryCountDayRank          Int
+  entryCountWeekRank         Int
+  entryCountMonthRank        Int
+  entryCountYearRank         Int
+  entryCountAllTimeRank      Int
+  benefactorCountDayRank     Int
+  benefactorCountWeekRank    Int
+  benefactorCountMonthRank   Int
+  benefactorCountYearRank    Int
+  benefactorCountAllTimeRank Int
+  unitAmountCountDayRank     Int
+  unitAmountCountWeekRank    Int
+  unitAmountCountMonthRank   Int
+  unitAmountCountYearRank    Int
+  unitAmountCountAllTimeRank Int
+}
+
+/// @view
 model BountyRank {
   bountyId                   Int    @id
   Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
@@ -3047,6 +3080,47 @@ model BountyRank {
   unitAmountCountMonthRank   Int    @default(0)
   unitAmountCountYearRank    Int    @default(0)
   unitAmountCountAllTimeRank Int    @default(0)
+}
+
+/// @view
+model BountyEntryStat {
+  bountyEntryId              Int         @id
+  BountyEntry                BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
+  cryCountDayRank            Int
+  cryCountWeekRank           Int
+  cryCountMonthRank          Int
+  cryCountYearRank           Int
+  cryCountAllTimeRank        Int
+  dislikeCountDayRank        Int
+  dislikeCountWeekRank       Int
+  dislikeCountMonthRank      Int
+  dislikeCountYearRank       Int
+  dislikeCountAllTimeRank    Int
+  heartCountDayRank          Int
+  heartCountWeekRank         Int
+  heartCountMonthRank        Int
+  heartCountYearRank         Int
+  heartCountAllTimeRank      Int
+  laughCountDayRank          Int
+  laughCountWeekRank         Int
+  laughCountMonthRank        Int
+  laughCountYearRank         Int
+  laughCountAllTimeRank      Int
+  likeCountDayRank           Int
+  likeCountWeekRank          Int
+  likeCountMonthRank         Int
+  likeCountYearRank          Int
+  likeCountAllTimeRank       Int
+  reactionCountDayRank       Int
+  reactionCountWeekRank      Int
+  reactionCountMonthRank     Int
+  reactionCountYearRank      Int
+  reactionCountAllTimeRank   Int
+  unitAmountCountDayRank     Int
+  unitAmountCountWeekRank    Int
+  unitAmountCountMonthRank   Int
+  unitAmountCountYearRank    Int
+  unitAmountCountAllTimeRank Int
 }
 
 /// @view

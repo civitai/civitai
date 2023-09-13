@@ -195,14 +195,14 @@ export default function BountyEntryDetailsPage({
   }
 
   const filesCount = files?.length ?? 0;
-  // const reactions = bountyEntry?.reactions ?? [];
-  // const stats: {
-  //   likeCountAllTime: number;
-  //   dislikeCountAllTime: number;
-  //   heartCountAllTime: number;
-  //   laughCountAllTime: number;
-  //   cryCountAllTime: number;
-  // } | null = bountyEntry?.stats ?? null;
+  const reactions = bountyEntry?.reactions ?? [];
+  const stats: {
+    likeCountAllTime: number;
+    dislikeCountAllTime: number;
+    heartCountAllTime: number;
+    laughCountAllTime: number;
+    cryCountAllTime: number;
+  } | null = bountyEntry?.stats ?? null;
 
   const userSection = (
     <>

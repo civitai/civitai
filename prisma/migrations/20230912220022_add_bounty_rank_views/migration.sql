@@ -1,3 +1,48 @@
+-- Bounty Stats View
+DROP VIEW IF EXISTS "BountyStat";
+CREATE VIEW "BountyStat" AS
+WITH stats_timeframe AS (
+	SELECT
+	  m."bountyId",
+	  m.timeframe,
+	  coalesce(m."favoriteCount", 0) AS "favoriteCount",
+	  coalesce(m."trackCount", 0) AS "trackCount",
+	  coalesce(m."entryCount", 0) AS "entryCount",
+	  coalesce(m."benefactorCount", 0) AS "benefactorCount",
+	  coalesce(m."unitAmountCount", 0) AS "unitAmountCount"
+	FROM "BountyMetric" m
+	GROUP BY m."bountyId", m.timeframe
+)
+SELECT
+"bountyId",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "favoriteCount", NULL)) AS "favoriteCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "favoriteCount", NULL)) AS "favoriteCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "favoriteCount", NULL)) AS "favoriteCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "favoriteCount", NULL)) AS "favoriteCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "favoriteCount", NULL)) AS "favoriteCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "trackCount", NULL)) AS "trackCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "trackCount", NULL)) AS "trackCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "trackCount", NULL)) AS "trackCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "trackCount", NULL)) AS "trackCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "trackCount", NULL)) AS "trackCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "entryCount", NULL)) AS "entryCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "entryCount", NULL)) AS "entryCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "entryCount", NULL)) AS "entryCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "entryCount", NULL)) AS "entryCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "entryCount", NULL)) AS "entryCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "benefactorCount", NULL)) AS "benefactorCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "benefactorCount", NULL)) AS "benefactorCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "benefactorCount", NULL)) AS "benefactorCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "benefactorCount", NULL)) AS "benefactorCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "benefactorCount", NULL)) AS "benefactorCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountAllTime"
+from stats_timeframe
+GROUP BY "bountyId";
+
 -- Bounty Rank View
 drop view if exists "BountyRank_Live";
 create or replace view "BountyRank_Live" as
@@ -52,6 +97,61 @@ SELECT
 	MAX(iif(timeframe = 'AllTime', "unitAmountCountRank", NULL)) AS "unitAmountCountAllTimeRank"
 FROM timeframe_rank
 GROUP BY "bountyId";
+
+-- Bounty Entry Stats View
+DROP VIEW IF EXISTS "BountyEntryStat";
+CREATE VIEW "BountyEntryStat" AS
+WITH stats_timeframe AS (
+	SELECT
+	  m."bountyEntryId",
+	  m.timeframe,
+	  COALESCE(m."heartCount", 0) AS "heartCount",
+    COALESCE(m."likeCount", 0) AS "likeCount",
+    COALESCE(m."dislikeCount", 0) AS "dislikeCount",
+    COALESCE(m."laughCount", 0) AS "laughCount",
+    COALESCE(m."cryCount", 0) AS "cryCount",
+	  coalesce(m."unitAmountCount", 0) AS "unitAmountCount"
+	FROM "BountyEntryMetric" m
+	GROUP BY m."bountyEntryId", m.timeframe
+)
+SELECT
+"bountyEntryId",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountYear",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountAllTime",
+MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountDay",
+MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountWeek",
+MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountMonth",
+MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountYear",
+MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "unitAmountCount", NULL)) AS "unitAmountCountAllTime"
+from stats_timeframe
+GROUP BY "bountyEntryId";
 
 -- Bounty Rank View
 drop view if exists "BountyEntryRank_Live";
