@@ -12,11 +12,20 @@ import {
   ActionIcon,
   Progress,
   Divider,
+  Input,
+  Radio,
+  createStyles,
 } from '@mantine/core';
-import { BountyEntryMode, BountyMode, BountyType, Currency } from '@prisma/client';
-import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
+import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@prisma/client';
+import {
+  IconCalendar,
+  IconCalendarDue,
+  IconInfoCircle,
+  IconQuestionMark,
+  IconTrash,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import { useState } from 'react';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
@@ -28,7 +37,11 @@ import {
   InputMultiFileUpload,
   InputNumber,
   InputRTE,
+  InputRadioGroup,
+  InputSegmentedControl,
   InputSelect,
+  InputSwitch,
+  InputTags,
   InputText,
   useForm,
 } from '~/libs/form';
@@ -39,12 +52,12 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import dayjs from 'dayjs';
 import { getDisplayName } from '~/utils/string-helpers';
-import { constants, MIN_CREATE_BOUNTY_AMOUNT } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { z } from 'zod';
 import { getMinMaxDates, useQueryBounty } from './bounty.utils';
+import { CurrencyIcon } from '../Currency/CurrencyIcon';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -53,12 +66,57 @@ const tooltipProps: Partial<TooltipProps> = {
   withArrow: true,
 };
 
+const bountyModeDescription: Record<BountyMode, string> = {
+  [BountyMode.Individual]:
+    'Only you will be the benefactor of this bounty. This is great if you are offering a good reward for a really specific resource that you want tailored for your specific needs. The number of entries might be limited if the reward you are offering is not enticing enough.',
+  [BountyMode.Split]:
+    'Other users can become a benefactor in your bounty and select other entries to support. This is great for incentivizing a large number of people to contribute to submit entries to your bounty.',
+};
+const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
+  [BountyEntryMode.Open]:
+    'Any user, at any time, can support an entry and gain access to its files.',
+  [BountyEntryMode.BenefactorsOnly]:
+    'Only people who become benefactors in your bounty can support an entry and gain access to the files. Each benefactor can only select 1 entry they support. So at best, each benefactor will have access to 1 set of files.',
+};
+
 const formSchema = createBountyInputSchema.omit({
   images: true,
 });
 
+const useStyles = createStyles((theme) => ({
+  radioItem: {
+    border: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+    }`,
+    borderRadius: theme.radius.sm,
+    padding: theme.spacing.xs,
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
+    width: '100%',
+
+    '& > .mantine-Radio-body, & .mantine-Radio-label': {
+      width: '100%',
+    },
+
+    '& > .mantine-Switch-body, & .mantine-Switch-labelWrapper, & .mantine-Switch-label': {
+      width: '100%',
+    },
+  },
+
+  root: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
+  },
+  label: {
+    textTransform: 'capitalize',
+  },
+  active: {
+    border: `2px solid ${theme.colors.blue[5]}`,
+    backgroundColor: 'transparent',
+  },
+}));
+
 export function BountyCreateForm() {
   const router = useRouter();
+  const { classes } = useStyles();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
@@ -76,18 +134,18 @@ export function BountyCreateForm() {
       name: '',
       description: '',
       tags: [],
-      unitAmount: MIN_CREATE_BOUNTY_AMOUNT,
+      unitAmount: constants.bounties.minCreateAmount,
       nsfw: false,
       currency: Currency.BUZZ,
       type: BountyType.LoraCreation,
       mode: BountyMode.Individual,
       entryMode: BountyEntryMode.Open,
-      minBenefactorUnitAmount: MIN_CREATE_BOUNTY_AMOUNT,
+      minBenefactorUnitAmount: constants.bounties.minCreateAmount,
       entryLimit: 1,
       files: [],
       expiresAt: dayjs().add(7, 'day').toDate(),
       startsAt: new Date(),
-      details: {},
+      details: { baseModel: 'SD 1.5' },
     },
     shouldUnregister: false,
   });
@@ -111,7 +169,6 @@ export function BountyCreateForm() {
   const type = form.watch('type');
   const mode = form.watch('mode');
   const currency = form.watch('currency');
-  const entryMode = form.watch('entryMode');
   const unitAmount = form.watch('unitAmount');
   const [creating, setCreating] = useState(false);
   const requireBaseModelSelection = [
@@ -138,266 +195,299 @@ export function BountyCreateForm() {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing="xl">
-        <Group spacing={4}>
+      <Stack spacing={48}>
+        <Group spacing="md">
           <BackButton url="/bounties" />
-          <Title>Create new Bounty</Title>
+          <Title>Create a new bounty</Title>
         </Group>
-        <Divider label="Bounty details" />
-        <Group spacing="xs" grow>
-          <InputSelect
-            name="type"
-            label="Bounty Type"
-            placeholder="Please select a bounty type"
+        <Stack spacing="xl">
+          <Title order={2}>Details</Title>
+          <InputText name="name" label="Bounty Name" placeholder="e.g.:LoRA for XYZ" withAsterisk />
+          <InputRTE
+            name="description"
+            label="About your bounty"
+            editorSize="xl"
+            includeControls={['heading', 'formatting', 'list', 'link', 'media', 'polls', 'colors']}
             withAsterisk
-            style={{ flex: 1 }}
-            data={Object.values(BountyType).map((value) => ({
-              value,
-              label: getDisplayName(value),
-            }))}
+            stickyToolbar
           />
-          {requireBaseModelSelection && (
+          <Input.Wrapper
+            label="Example Images"
+            description="Please add at least 1 reference image to your bounty. This will serve as a reference point for Hunters and will also be used as your cover image."
+            descriptionProps={{ mb: 5 }}
+            withAsterisk
+          >
+            <ImageDropzone
+              label="Drag & drop images here or click to browse"
+              onDrop={handleDropImages}
+              count={imageFiles.length}
+              accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+            />
+          </Input.Wrapper>
+          {imageFiles.length > 0 && (
+            <SimpleGrid
+              spacing="sm"
+              breakpoints={[
+                { minWidth: 'xs', cols: 1 },
+                { minWidth: 'sm', cols: 3 },
+                { minWidth: 'md', cols: 4 },
+              ]}
+            >
+              {imageFiles
+                .slice()
+                .reverse()
+                .map((file) => (
+                  <Paper
+                    key={file.id}
+                    radius="sm"
+                    p={0}
+                    sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
+                    withBorder
+                  >
+                    {file.status === 'success' ? (
+                      <>
+                        <EdgeMedia
+                          placeholder="empty"
+                          src={file.id}
+                          alt={file.name ?? undefined}
+                          style={{ objectFit: 'cover', height: '100%' }}
+                        />
+                        <div style={{ position: 'absolute', top: 12, right: 12 }}>
+                          <ActionIcon
+                            variant="filled"
+                            size="lg"
+                            color="red"
+                            onClick={() => removeImage(file.id)}
+                          >
+                            <IconTrash size={26} strokeWidth={2.5} />
+                          </ActionIcon>
+                        </div>
+                        {file.type === 'image' && (
+                          <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
+                            <ImageMetaPopover meta={file.meta}>
+                              <ActionIcon variant="light" color="dark" size="lg">
+                                <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                              </ActionIcon>
+                            </ImageMetaPopover>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <MediaHash {...file} />
+                        <Progress
+                          size="xl"
+                          value={file.progress}
+                          label={`${Math.floor(file.progress)}%`}
+                          color={file.progress < 100 ? 'blue' : 'green'}
+                          striped
+                          animate
+                        />
+                      </>
+                    )}
+                  </Paper>
+                ))}
+            </SimpleGrid>
+          )}
+          <Group spacing="xl" grow>
+            <InputDatePicker
+              name="startsAt"
+              label="Start Date"
+              placeholder="Select a start date"
+              icon={<IconCalendar size={16} />}
+              withAsterisk
+              minDate={minStartDate}
+              maxDate={maxStartDate}
+            />
+            <InputDatePicker
+              name="expiresAt"
+              label="Deadline"
+              placeholder="Select an end date"
+              icon={<IconCalendarDue size={16} />}
+              withAsterisk
+              minDate={minExpiresDate}
+              maxDate={maxExpiresDate}
+            />
+          </Group>
+
+          <Divider label="Bounty rewards" />
+          <InputRadioGroup name="mode" label="Award Mode" withAsterisk>
+            {Object.values(BountyMode).map((value) => (
+              <Radio
+                key={value}
+                className={classes.radioItem}
+                value={value}
+                label={
+                  <RadioItem
+                    label={getDisplayName(value)}
+                    description={bountyModeDescription[value]}
+                  />
+                }
+              />
+            ))}
+          </InputRadioGroup>
+          <Group spacing="xs" grow>
+            <InputNumber
+              name="unitAmount"
+              label="Bounty Amount"
+              placeholder="How much are you willing to reward for this bounty"
+              min={constants.bounties.minCreateAmount}
+              max={100000}
+              step={100}
+              sx={{ flexGrow: 1 }}
+              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+              format={currency !== Currency.BUZZ ? 'currency' : undefined}
+              withAsterisk
+            />
+            <InputNumber
+              name="entryLimit"
+              label="Max entries per hunter"
+              placeholder="How many entries can a hunter submit to your bounty"
+              min={1}
+              max={100000}
+              sx={{ flexGrow: 1 }}
+              withAsterisk
+            />
+            {mode === BountyMode.Split && (
+              <InputNumber
+                name="minBenefactorUnitAmount"
+                label="Minimum Benefactor Amount"
+                placeholder="How much does a benefactor need to contribute to your bounty to become a benefactor"
+                min={0}
+                max={unitAmount}
+                sx={{ flexGrow: 1 }}
+                format={currency !== Currency.BUZZ ? 'currency' : undefined}
+              />
+            )}
+          </Group>
+        </Stack>
+        <Stack spacing="xl">
+          <Title order={2}>Properties</Title>
+          <Group spacing="xl" grow>
             <InputSelect
-              name="details.baseModel"
-              label="Base model"
-              placeholder="Please select a base model"
+              name="type"
+              label="Bounty Type"
+              placeholder="Please select a bounty type"
               withAsterisk
               style={{ flex: 1 }}
-              data={constants.baseModels.map((x) => ({ value: x, label: x }))}
+              data={Object.values(BountyType).map((value) => ({
+                value,
+                label: getDisplayName(value),
+              }))}
+              onChange={(value) => {
+                switch (value) {
+                  case BountyType.ModelCreation:
+                    form.setValue('details.baseModel', 'SD 1.5');
+                    form.setValue('details.modelFormat', 'SafeTensor');
+                    form.setValue('details.modelSize', 'full');
+                    break;
+                  case BountyType.LoraCreation:
+                  case BountyType.EmbedCreation:
+                    form.setValue('details.baseModel', 'SD 1.5');
+                    form.setValue('details.modelFormat', undefined);
+                    form.setValue('details.modelSize', undefined);
+                    break;
+                  default:
+                    form.setValue('details', undefined);
+                    break;
+                }
+              }}
             />
-          )}
-        </Group>
-        <InputText name="name" label="Name" placeholder="e.g.:LoRA for XYZ" withAsterisk />
-        <InputCheckbox
-          name="nsfw"
-          label={
-            <Group spacing={4}>
-              Mature
-              <Tooltip label={matureLabel} {...tooltipProps}>
-                <ThemeIcon radius="xl" size="xs" color="gray">
-                  <IconQuestionMark />
-                </ThemeIcon>
-              </Tooltip>
+            {requireBaseModelSelection && (
+              <InputSelect
+                name="details.baseModel"
+                label="Base model"
+                placeholder="Please select a base model"
+                withAsterisk
+                style={{ flex: 1 }}
+                data={[...constants.baseModels]}
+              />
+            )}
+          </Group>
+
+          {type === 'ModelCreation' && (
+            <Group spacing="xl" grow>
+              <Input.Wrapper label="Preferred model format" labelProps={{ w: '100%' }} withAsterisk>
+                <InputSegmentedControl
+                  classNames={classes}
+                  name="details.modelFormat"
+                  radius="xl"
+                  data={[...constants.modelFileFormats]}
+                  fullWidth
+                />
+              </Input.Wrapper>
+              <Input.Wrapper label="Preferred model size" labelProps={{ w: '100%' }} withAsterisk>
+                <InputSegmentedControl
+                  classNames={classes}
+                  name="details.modelSize"
+                  radius="xl"
+                  data={[...constants.modelFileSizes]}
+                  fullWidth
+                />
+              </Input.Wrapper>
             </Group>
-          }
-        />
-        <InputRTE
-          name="description"
-          label="Description"
-          editorSize="xl"
-          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'polls', 'colors']}
-          withAsterisk
-          stickyToolbar
-        />
-        <Stack>
-          <InputSelect
-            name="mode"
-            label="Bounty Mode"
-            placeholder="Please select a bounty mode"
-            withAsterisk
-            style={{ flex: 1 }}
-            data={Object.values(BountyMode)}
-          />
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
-            {mode === BountyMode.Individual && (
-              <Text>
-                Only you will be the benefactor of this bounty. This is great if you are offering a
-                good reward for a really specific resource that you want tailored for your specific
-                needs. The number of entries might be limited if the reward you are offering is not
-                enticing enough.
-              </Text>
-            )}
-            {mode === BountyMode.Split && (
-              <Text>
-                Other users can become a benefactor in your bounty and select other entries to
-                support. This is great for incentivizing a large number of people to contribute to
-                submit entries to your bounty.
-              </Text>
-            )}
-          </AlertWithIcon>
-        </Stack>
-        <Stack>
-          <InputSelect
-            name="entryMode"
-            label="Entry Mode"
-            placeholder="Please select an entry mode"
-            withAsterisk
-            style={{ flex: 1 }}
-            data={Object.values(BountyEntryMode)}
-          />
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
-            <Text>Entry mode affects how we treat entries in your bounty.</Text>
-            {entryMode === BountyEntryMode.Open && (
-              <Text>
-                By selecting the Open entry mode, any user, at any time, can support an entry and
-                gain access to its files.
-              </Text>
-            )}
-            {entryMode === BountyEntryMode.BenefactorsOnly && (
-              <Text>
-                By selecting the Benefactors Only entry mode, only people who become benefactors in
-                your bounty can support an entry and gain access to the files. Each benefactor can
-                only select 1 entry they support. So at best, each benefactor will have access to 1
-                set of files.
-              </Text>
-            )}
-          </AlertWithIcon>
-        </Stack>
-        <Divider label="Bounty rewards" />
-        <Group spacing="xs" grow>
-          <InputNumber
-            name="unitAmount"
-            label="Bounty Amount"
-            placeholder="How much are you willing to reward for this bounty"
-            min={MIN_CREATE_BOUNTY_AMOUNT}
-            max={100000}
-            sx={{ flexGrow: 1 }}
-            format={currency !== Currency.BUZZ ? 'currency' : undefined}
-            withAsterisk
-          />
-
-          <InputNumber
-            name="entryLimit"
-            label="Max entries per hunter"
-            placeholder="How many entries can a hunter submit to your bounty"
-            min={1}
-            max={100000}
-            sx={{ flexGrow: 1 }}
-            withAsterisk
-          />
-
-          {mode === BountyMode.Split && (
-            <InputNumber
-              name="minBenefactorUnitAmount"
-              label="Minimum Benefactor Amount"
-              placeholder="How much does a benefactor need to contribute to your bounty to become a benefactor"
-              min={0}
-              max={unitAmount}
-              sx={{ flexGrow: 1 }}
-              format={currency !== Currency.BUZZ ? 'currency' : undefined}
-            />
           )}
-        </Group>
-        <Divider label="Dates" />
-        <Group spacing="xs" grow>
-          <InputDatePicker
-            name="startsAt"
-            label="Start Date"
-            placeholder="Select a starts date"
-            withAsterisk
-            minDate={minStartDate}
-            maxDate={maxStartDate}
-          />
-          <InputDatePicker
-            name="expiresAt"
-            label="Expiration Date"
-            placeholder="Select an end date"
-            withAsterisk
-            minDate={minExpiresDate}
-            maxDate={maxExpiresDate}
-          />
-        </Group>
+          <InputRadioGroup name="entryMode" label="Entry Mode" withAsterisk>
+            {Object.values(BountyEntryMode).map((value) => (
+              <Radio
+                key={value}
+                className={classes.radioItem}
+                value={value}
+                label={
+                  <RadioItem
+                    label={getDisplayName(value)}
+                    description={bountyEntryModeDescription[value]}
+                  />
+                }
+              />
+            ))}
+          </InputRadioGroup>
 
-        <Divider label="Bounty Images" />
-        <Text>
-          Please add at least 1 reference image to your bounty. This will serve as a reference point
-          for Hunters and will also be used as your cover image.
-        </Text>
-        <ImageDropzone
-          label="Drag & drop images here or click to browse"
-          onDrop={handleDropImages}
-          count={imageFiles.length}
-          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
-        />
-        {imageFiles.length > 0 && (
-          <SimpleGrid
-            spacing="sm"
-            breakpoints={[
-              { minWidth: 'xs', cols: 1 },
-              { minWidth: 'sm', cols: 3 },
-              { minWidth: 'md', cols: 4 },
-            ]}
-          >
-            {imageFiles
-              .slice()
-              .reverse()
-              .map((file) => (
-                <Paper
-                  key={file.id}
-                  radius="sm"
-                  p={0}
-                  sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
-                  withBorder
-                >
-                  {file.status === 'success' ? (
-                    <>
-                      <EdgeMedia
-                        placeholder="empty"
-                        src={file.id}
-                        alt={file.name ?? undefined}
-                        style={{ objectFit: 'cover', height: '100%' }}
-                      />
-                      <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                        <ActionIcon
-                          variant="filled"
-                          size="lg"
-                          color="red"
-                          onClick={() => removeImage(file.id)}
-                        >
-                          <IconTrash size={26} strokeWidth={2.5} />
-                        </ActionIcon>
-                      </div>
-                      {file.type === 'image' && (
-                        <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
-                          <ImageMetaPopover meta={file.meta}>
-                            <ActionIcon variant="light" color="dark" size="lg">
-                              <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                            </ActionIcon>
-                          </ImageMetaPopover>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <MediaHash {...file} />
-                      <Progress
-                        size="xl"
-                        value={file.progress}
-                        label={`${Math.floor(file.progress)}%`}
-                        color={file.progress < 100 ? 'blue' : 'green'}
-                        striped
-                        animate
-                      />
-                    </>
-                  )}
-                </Paper>
-              ))}
-          </SimpleGrid>
-        )}
-        <InputMultiFileUpload
-          name="files"
-          label="Attachments"
-          dropzoneProps={{
-            maxSize: 100 * 1024 ** 2, // 100MB
-            maxFiles: 10,
-            accept: {
-              'application/pdf': ['.pdf'],
-              'application/zip': ['.zip'],
-              'application/json': ['.json'],
-              'application/x-yaml': ['.yaml', '.yml'],
-              'text/plain': ['.txt'],
-              'text/markdown': ['.md'],
-              'text/x-python-script': ['.py'],
-            },
-          }}
-        />
+          <Divider label="Additional information" />
+          <InputTags name="tags" label="Tags" target={[TagTarget.Bounty]} />
+          <InputSwitch
+            className={classes.radioItem}
+            name="nsfw"
+            label={
+              <Stack spacing={4}>
+                <Group spacing={4}>
+                  <Text inline>Mature theme</Text>
+                  <Tooltip label={matureLabel} {...tooltipProps}>
+                    <ThemeIcon radius="xl" size="xs" color="gray">
+                      <IconQuestionMark />
+                    </ThemeIcon>
+                  </Tooltip>
+                </Group>
+                <Text size="xs" color="dimmed">
+                  This bounty is intended to produce mature content.
+                </Text>
+              </Stack>
+            }
+          />
+          <InputMultiFileUpload
+            name="files"
+            label="Attachments"
+            dropzoneProps={{
+              maxSize: 100 * 1024 ** 2, // 100MB
+              maxFiles: 10,
+              accept: {
+                'application/pdf': ['.pdf'],
+                'application/zip': ['.zip'],
+                'application/json': ['.json'],
+                'application/x-yaml': ['.yaml', '.yml'],
+                'text/plain': ['.txt'],
+                'text/markdown': ['.md'],
+                'text/x-python-script': ['.py'],
+              },
+            }}
+          />
+        </Stack>
 
-        <Group mt="xl" position="right">
+        <Group position="right">
           <Button
             loading={creatingBounty && !creating}
             onClick={() => setCreating(false)}
             type="submit"
-            fullWidth
           >
             Save
           </Button>
@@ -406,3 +496,13 @@ export function BountyCreateForm() {
     </Form>
   );
 }
+
+type RadioItemProps = { label: string; description: string };
+const RadioItem = ({ label, description }: RadioItemProps) => (
+  <Stack spacing={4}>
+    <Text inline>{label}</Text>
+    <Text size="xs" color="dimmed">
+      {description}
+    </Text>
+  </Stack>
+);

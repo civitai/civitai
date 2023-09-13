@@ -85,6 +85,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { openConfirmModal } from '@mantine/modals';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
+import { Collection } from '~/components/Collection/Collection';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -357,69 +358,77 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     {
       label: 'Bounty Type',
       value: (
-        <Group spacing={0} noWrap position="apart">
-          <Badge radius="xl" color="gray">
-            {getDisplayName(bounty.type)}
-          </Badge>
-        </Group>
+        <Badge radius="xl" color="gray">
+          {getDisplayName(bounty.type)}
+        </Badge>
       ),
     },
     {
       label: 'Base Model',
       value: (
-        <Group spacing={0} noWrap position="apart">
-          <Badge radius="xl" color="gray">
-            {meta?.baseModel}
-          </Badge>
-        </Group>
+        <Badge radius="xl" color="gray">
+          {meta?.baseModel}
+        </Badge>
       ),
       visible: !!meta?.baseModel,
     },
     {
+      label: 'Model Preferences',
+      value: (
+        <Group spacing={8}>
+          {meta?.modelFormat && (
+            <Badge radius="xl" color="gray">
+              {meta?.modelFormat}
+            </Badge>
+          )}
+          {meta?.modelSize && (
+            <Badge radius="xl" color="gray">
+              {meta?.modelSize}
+            </Badge>
+          )}
+        </Group>
+      ),
+      visible: !!meta?.modelFormat || !!meta?.modelSize,
+    },
+    {
       label: 'Bounty Mode',
       value: (
-        <Group spacing={0} noWrap position="apart">
-          <Badge radius="xl" color="gray">
-            {getDisplayName(bounty.mode)}
-          </Badge>
-        </Group>
+        <Badge radius="xl" color="gray">
+          {getDisplayName(bounty.mode)}
+        </Badge>
       ),
     },
     {
       label: 'Entry Mode',
       value: (
-        <Group spacing={0} noWrap position="apart">
-          <Badge radius="xl" color="gray">
-            {getDisplayName(bounty.entryMode)}
-          </Badge>
-        </Group>
+        <Badge radius="xl" color="gray">
+          {getDisplayName(bounty.entryMode)}
+        </Badge>
       ),
     },
     {
       label: 'Date started',
-      value: (
-        <Group spacing={0} noWrap position="apart">
-          <Text>{formatDate(bounty.startsAt)}</Text>
-        </Group>
-      ),
+      value: <Text>{formatDate(bounty.startsAt)}</Text>,
     },
     {
       label: 'Deadline',
-      value: (
-        <Group spacing={0} noWrap position="apart">
-          <Text>{formatDate(bounty.expiresAt)}</Text>
-        </Group>
-      ),
+      value: <Text>{formatDate(bounty.expiresAt)}</Text>,
     },
     {
       label: 'Tags',
       value: (
-        <Group spacing={0} noWrap position="apart">
-          <Badge radius="xl" color="gray">
-            TODO.bounties
-          </Badge>
-        </Group>
+        <Collection
+          items={bounty.tags}
+          limit={3}
+          renderItem={(tag) => (
+            <Badge radius="xl" color="gray">
+              {tag.name}
+            </Badge>
+          )}
+          grouped
+        />
       ),
+      visible: !!bounty.tags?.length,
     },
   ];
 
