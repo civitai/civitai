@@ -131,6 +131,7 @@
     "react-instantsearch-router-nextjs": "^7.0.1",
     "react-intersection-observer": "^9.4.0",
     "react-markdown": "^8.0.3",
+    "react-social-media-embed": "^2.3.5",
     "react-virtuoso": "^4.3.11",
     "redis": "^4.6.4",
     "rehype-raw": "^6.1.1",

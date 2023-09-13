@@ -30,6 +30,7 @@ import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -99,11 +100,25 @@ export default function Home() {
           {homeBlocks.map((homeBlock) => {
             switch (homeBlock.type) {
               case HomeBlockType.Collection:
-                return <CollectionHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+                return (
+                  <CollectionHomeBlock
+                    key={homeBlock.id}
+                    homeBlockId={homeBlock.id}
+                    metadata={homeBlock.metadata}
+                  />
+                );
               case HomeBlockType.Announcement:
                 return <AnnouncementHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
               case HomeBlockType.Leaderboard:
-                return <LeaderboardsHomeBlock key={homeBlock.id} homeBlockId={homeBlock.id} />;
+                return (
+                  <LeaderboardsHomeBlock
+                    key={homeBlock.id}
+                    homeBlockId={homeBlock.id}
+                    metadata={homeBlock.metadata}
+                  />
+                );
+              case HomeBlockType.Social:
+                return <SocialHomeBlock key={homeBlock.id} metadata={homeBlock.metadata} />;
             }
           })}
 

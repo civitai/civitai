@@ -1,6 +1,4 @@
 import {
-  ActionIcon,
-  ActionIconProps,
   Anchor,
   Button,
   ButtonProps,
@@ -13,15 +11,8 @@ import {
 } from '@mantine/core';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import {
-  IconBrandDiscord,
-  IconBrandGithub,
-  IconBrandInstagram,
-  IconBrandReddit,
-  IconBrandTiktok,
-  IconBrandTwitter,
-} from '@tabler/icons-react';
 import { useState } from 'react';
+import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -32,11 +23,6 @@ const buttonProps: ButtonProps = {
   variant: 'subtle',
   color: 'gray',
   px: 'xs',
-};
-
-const actionIconProps: ActionIconProps = {
-  size: 'lg',
-  radius: 'xl',
 };
 
 const hash = env.NEXT_PUBLIC_GIT_HASH;
@@ -133,24 +119,7 @@ export function AppFooter() {
           <Button component="a" href="https://status.civitai.com" {...buttonProps} target="_blank">
             Status
           </Button>
-          <ActionIcon component="a" href="/github" target="_blank" {...actionIconProps}>
-            <IconBrandGithub size={20} />
-          </ActionIcon>
-          <ActionIcon component="a" href="/discord" target="_blank" {...actionIconProps}>
-            <IconBrandDiscord size={20} />
-          </ActionIcon>
-          <ActionIcon component="a" href="/twitter" target="_blank" {...actionIconProps}>
-            <IconBrandTwitter size={20} />
-          </ActionIcon>
-          <ActionIcon component="a" href="/instagram" target="_blank" {...actionIconProps}>
-            <IconBrandInstagram size={20} />
-          </ActionIcon>
-          <ActionIcon component="a" href="/tiktok" target="_blank" {...actionIconProps}>
-            <IconBrandTiktok strokeWidth={2} size={20} />
-          </ActionIcon>
-          <ActionIcon component="a" href="/reddit" target="_blank" {...actionIconProps}>
-            <IconBrandReddit size={20} />
-          </ActionIcon>
+          <SocialLinks />
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
           <Button component="a" href="/bugs" {...buttonProps} target="_blank" pl={4} pr="xs">

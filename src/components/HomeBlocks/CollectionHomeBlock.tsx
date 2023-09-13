@@ -9,6 +9,8 @@ import {
   Box,
   Popover,
   Anchor,
+  AspectRatio,
+  Skeleton,
 } from '@mantine/core';
 import { Fragment, useMemo } from 'react';
 import {
@@ -26,76 +28,73 @@ import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
-import { CollectionHomeBlockSkeleton } from '~/components/HomeBlocks/CollectionHomeBlockSkeleton';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
-import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
 import ReactMarkdown from 'react-markdown';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
+import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 
-const useStyles = createStyles<string, { count: number; columnCount: number }>(
-  (theme, { count, columnCount }) => {
-    return {
-      grid: {
-        display: 'grid',
-        gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
-        columnGap: theme.spacing.md,
+const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
+  return {
+    grid: {
+      display: 'grid',
+      gridTemplateColumns: `repeat(auto-fit, minmax(320px, 1fr))`,
+      columnGap: theme.spacing.md,
+      gridTemplateRows: `repeat(2, auto)`,
+      gridAutoRows: 0,
+      overflow: 'hidden',
+      marginTop: -theme.spacing.md,
+
+      '& > *': {
+        marginTop: theme.spacing.md,
+      },
+
+      [theme.fn.smallerThan('md')]: {
+        gridAutoFlow: 'column',
+        gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
         gridTemplateRows: `repeat(2, auto)`,
-        gridAutoRows: 0,
-        overflow: 'hidden',
-        marginTop: -theme.spacing.md,
-
-        '& > *': {
-          marginTop: theme.spacing.md,
-        },
-
-        [theme.fn.smallerThan('md')]: {
-          gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
-          gridTemplateRows: `repeat(2, auto)`,
-          scrollSnapType: 'x mandatory',
-          overflowX: 'auto',
-        },
-
-        [theme.fn.smallerThan('sm')]: {
-          gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count}, 280px)`,
-          gridTemplateRows: 'auto',
-          scrollSnapType: 'x mandatory',
-          overflowX: 'auto',
-          marginRight: -theme.spacing.md,
-          marginLeft: -theme.spacing.md,
-          paddingLeft: theme.spacing.md,
-
-          '& > *': {
-            scrollSnapAlign: 'center',
-          },
-        },
+        scrollSnapType: 'x mandatory',
+        overflowX: 'auto',
       },
 
-      meta: {
+      [theme.fn.smallerThan('sm')]: {
+        gridAutoFlow: 'column',
+        gridTemplateColumns: `repeat(${count}, 280px)`,
+        gridTemplateRows: 'auto',
+        scrollSnapType: 'x mandatory',
+        overflowX: 'auto',
+        marginRight: -theme.spacing.md,
+        marginLeft: -theme.spacing.md,
+        paddingLeft: theme.spacing.md,
+
+        '& > *': {
+          scrollSnapAlign: 'center',
+        },
+      },
+    },
+
+    meta: {
+      display: 'none',
+      [theme.fn.smallerThan('md')]: {
+        display: 'block',
+      },
+    },
+
+    gridMeta: {
+      gridColumn: '1 / span 2',
+      display: 'flex',
+      flexDirection: 'column',
+
+      '& > *': {
+        flex: 1,
+      },
+
+      [theme.fn.smallerThan('md')]: {
         display: 'none',
-        [theme.fn.smallerThan('md')]: {
-          display: 'block',
-        },
       },
-
-      gridMeta: {
-        gridColumn: '1 / span 2',
-        display: 'flex',
-        flexDirection: 'column',
-
-        '& > *': {
-          flex: 1,
-        },
-
-        [theme.fn.smallerThan('md')]: {
-          display: 'none',
-        },
-      },
-    };
-  }
-);
+    },
+  };
+});
 
 const icons = {
   model: IconCategory,
@@ -112,33 +111,19 @@ export const CollectionHomeBlock = ({ ...props }: Props) => {
   );
 };
 
-const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
-  const { columnCount } = useMasonryContainerContext();
+const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
   const { classes, cx } = useStyles({
     count: homeBlock?.collection?.items.length ?? 0,
-    columnCount,
   });
   const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
 
-  const { collection } = homeBlock || {};
+  const { collection } = homeBlock ?? {};
   const items = useMemo(() => shuffle(collection?.items ?? []).slice(0, 14), [collection?.items]);
 
-  // Masonry provider takes a sec to calculate
-  // columns, causing the grid view to go full page for a
-  // sec there. Instead, let's just show a skeleton.
-  if (isLoading || !columnCount) {
-    return <CollectionHomeBlockSkeleton />;
-  }
-
-  if (!homeBlock || !collection) {
-    return null;
-  }
-
-  const { metadata } = homeBlock;
-  if (!metadata.link) metadata.link = `/collections/${collection.id}`;
-  const itemType = collection.items?.[0]?.type || 'model';
+  if (!metadata.link) metadata.link = `/collections/${collection?.id}`;
+  const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
 
   const MetaDataTop = (
@@ -146,7 +131,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
       <Group spacing="xs" position="apart" className={homeBlockClasses.header}>
         <Group noWrap>
           <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
-            {metadata.title ?? collection.name}{' '}
+            {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
           {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
             <Popover withArrow width={380}>
@@ -161,7 +146,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
               </Popover.Target>
               <Popover.Dropdown maw="100%">
                 <Text weight={500} size="lg" mb="xs">
-                  {metadata.title ?? collection.name}
+                  {metadata.title ?? collection?.name ?? 'Collection'}
                 </Text>
                 {metadata.description && (
                   <Text size="sm" mb="xs">
@@ -220,7 +205,7 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
           </ThemeIcon>
         )}
         <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
-          {metadata.title ?? collection.name}
+          {metadata.title ?? collection?.name ?? 'Collection'}
         </Title>
       </Group>
       {metadata.description && (
@@ -260,19 +245,27 @@ const CollectionHomeBlockContent = ({ homeBlockId }: Props) => {
       </Box>
       <div className={classes.grid}>
         {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-        {items.map((item) => (
-          <Fragment key={item.id}>
-            {item.type === 'model' && (
-              <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
-            )}
-            {item.type === 'image' && <ImageCard data={item.data} collectionId={collection?.id} />}
-            {item.type === 'post' && <PostCard data={item.data} />}
-            {item.type === 'article' && <ArticleCard data={item.data} />}
-          </Fragment>
-        ))}
+        {isLoading
+          ? Array.from({ length: 14 }).map((_, index) => (
+              <AspectRatio ratio={7 / 9} key={index}>
+                <Skeleton width="100%" />
+              </AspectRatio>
+            ))
+          : items.map((item) => (
+              <Fragment key={item.id}>
+                {item.type === 'model' && (
+                  <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
+                )}
+                {item.type === 'image' && (
+                  <ImageCard data={item.data} collectionId={collection?.id} />
+                )}
+                {item.type === 'post' && <PostCard data={item.data} />}
+                {item.type === 'article' && <ArticleCard data={item.data} />}
+              </Fragment>
+            ))}
       </div>
     </>
   );
 };
 
-type Props = { homeBlockId: number };
+type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
