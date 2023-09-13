@@ -1,7 +1,7 @@
 import { Currency, ImageIngestionStatus, Prisma, TagTarget } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
-import { getFilesByEntity, updateEntityFiles } from './file.service';
+import { updateEntityFiles } from './file.service';
 import {
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -66,16 +66,11 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   });
 };
 
-export const getBountyById = async <TSelect extends Prisma.BountySelect>({
+export const getBountyById = <TSelect extends Prisma.BountySelect>({
   id,
   select,
 }: GetByIdInput & { select: TSelect }) => {
-  const bounty = await dbRead.bounty.findUnique({ where: { id }, select });
-  if (!bounty) throw throwNotFoundError(`No bounty with id ${id}`);
-
-  const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
-
-  return { ...bounty, files };
+  return dbRead.bounty.findUnique({ where: { id }, select });
 };
 
 export const createBounty = async ({
@@ -283,6 +278,19 @@ export const addBenefactorUnitAmount = async ({
   unitAmount,
   userId,
 }: AddBenefactorUnitAmountInputSchema & { userId: number }) => {
+  const bounty = await dbRead.bounty.findUnique({
+    where: { id: bountyId },
+    select: { complete: true },
+  });
+
+  if (!bounty) {
+    throw throwNotFoundError('Bounty not found');
+  }
+
+  if (bounty.complete) {
+    throw throwBadRequestError('Bounty is already complete');
+  }
+
   const benefactor = await dbRead.bountyBenefactor.findUnique({
     where: {
       userId_bountyId: {

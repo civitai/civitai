@@ -106,6 +106,7 @@ export const bountyNotifications = createNotificationProcessor({
         SELECT DISTINCT
           be."userId",
           jsonb_build_object(
+            'bountyEntryId', be.id,
             'bountyId', be."bountyId",
             'bountyName', b.name,
             'benefactorUsername', bene.username,
@@ -134,7 +135,7 @@ export const bountyNotifications = createNotificationProcessor({
     displayName: 'Bounty entry reaction milestones',
     prepareMessage: ({ details }) => ({
       message: `Your bounty entry on "${details.bountyName}" has reached ${details.reactionCount} reactions`,
-      url: `/bounties/${details.bountyId}`, // TODO.luis - link to bounty entry
+      url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH milestones AS (
@@ -181,7 +182,7 @@ export const bountyNotifications = createNotificationProcessor({
     displayName: 'New entry on bounty you are involved in',
     prepareMessage: ({ details }) => ({
       message: `${details.hunterUsername} has submitted an entry to the bounty "${details.bountyName}"`,
-      url: `/bounties/${details.bountyId}`, // TODO.luis - link to bounty entry
+      url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,
     }),
     prepareQuery: async ({ lastSent }) => `
       WITH affected AS (
@@ -213,7 +214,7 @@ export const bountyNotifications = createNotificationProcessor({
             'bountyName', b.name,
             'bountyId', b.id,
             'hunterUsername', u.username,
-            'entryId', be.id
+            'bountyEntryId', be.id
           ) details,
           be.id "bountyEntryId"
         FROM target_users tu

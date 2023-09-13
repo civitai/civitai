@@ -177,7 +177,9 @@ export const constants = {
   },
   bounties: {
     engagementTypes: ['favorite', 'tracking', 'benefactor', 'awarded'],
+    minCreateAmount: 5000,
   },
+  defaultCurrency: 'USD',
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;
@@ -303,8 +305,6 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
   [ModelVersionSponsorshipSettingsType.Bidding]: 'Bidding',
 };
 
-export const DEFAULT_CURRENCY = 'USD';
-
 export const CurrencyConfig: Record<
   Currency,
   { icon: (props: TablerIconsProps) => JSX.Element; color: (theme: MantineTheme) => string }
@@ -312,5 +312,3 @@ export const CurrencyConfig: Record<
   [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
   [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
 };
-
-export const MIN_CREATE_BOUNTY_AMOUNT = 5000;

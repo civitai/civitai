@@ -27,6 +27,8 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
 export type BountyDetailsSchema = z.infer<typeof bountyDetailsSchema>;
 export const bountyDetailsSchema = z.object({
   baseModel: z.enum(constants.baseModels),
+  modelSize: z.enum(constants.modelFileSizes),
+  modelFormat: z.enum(constants.modelFileFormats),
 });
 
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
@@ -43,7 +45,7 @@ export const createBountyInputSchema = z.object({
   startsAt: z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
   mode: z.nativeEnum(BountyMode),
   type: z.nativeEnum(BountyType),
-  details: bountyDetailsSchema.passthrough().optional(),
+  details: bountyDetailsSchema.passthrough().partial().optional(),
   entryMode: z.nativeEnum(BountyEntryMode),
   minBenefactorUnitAmount: z.number().min(1),
   maxBenefactorUnitAmount: z.number().optional(),
@@ -67,4 +69,10 @@ export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUni
 export const addBenefactorUnitAmountInputSchema = z.object({
   unitAmount: z.number().min(1),
   bountyId: z.number(),
+});
+
+export type GetBountyEntriesInputSchema = z.infer<typeof getBountyEntriesInputSchema>;
+export const getBountyEntriesInputSchema = z.object({
+  id: z.number(),
+  owned: z.boolean().optional(),
 });

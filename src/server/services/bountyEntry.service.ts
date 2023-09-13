@@ -4,7 +4,13 @@ import { dbRead, dbWrite } from '../db/client';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { TransactionType } from '~/server/schema/buzz.schema';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -20,11 +26,11 @@ export const getAllEntriesByBountyId = <TSelect extends Prisma.BountyEntrySelect
   input,
   select,
 }: {
-  input: { bountyId: number };
+  input: { bountyId: number; userId?: number };
   select: TSelect;
 }) => {
   return dbRead.bountyEntry.findMany({
-    where: { bountyId: input.bountyId },
+    where: { bountyId: input.bountyId, userId: input.userId },
     select,
   });
 };
@@ -36,6 +42,10 @@ export const getBountyEntryEarnedBuzz = async ({
   ids: number[];
   currency?: Currency;
 }) => {
+  if (!ids.length) {
+    return [];
+  }
+
   const data = await dbRead.$queryRaw<{ id: number; awardedUnitAmount: number }[]>`
     SELECT
         be.id,
@@ -56,6 +66,19 @@ export const upsertBountyEntry = async ({
   images,
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
+  const bounty = await dbRead.bounty.findUnique({
+    where: { id: bountyId },
+    select: { complete: true },
+  });
+
+  if (!bounty) {
+    throw throwNotFoundError('Bounty not found');
+  }
+
+  if (bounty.complete) {
+    throw throwBadRequestError('Bounty is already complete');
+  }
+
   return await dbWrite.$transaction(async (tx) => {
     if (id) {
       // confirm it exists:
@@ -105,8 +128,25 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
   const benefactor = await dbWrite.$transaction(async (tx) => {
     const entry = await tx.bountyEntry.findUniqueOrThrow({
       where: { id },
-      select: { id: true, bountyId: true },
+      select: {
+        id: true,
+        bountyId: true,
+        userId: true,
+        bounty: {
+          select: {
+            complete: true,
+          },
+        },
+      },
     });
+
+    if (!entry.userId) {
+      throw throwBadRequestError('Entry has no user.');
+    }
+
+    if (entry.bounty.complete) {
+      throw throwBadRequestError('Bounty is already complete.');
+    }
 
     const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
       where: {
@@ -134,8 +174,44 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       },
     });
 
+    switch (updatedBenefactor.currency) {
+      case Currency.BUZZ:
+        await createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: entry.userId,
+          amount: updatedBenefactor.unitAmount,
+          type: TransactionType.Bounty,
+          description: 'Reason: Bounty entry has been awarded!',
+        });
+
+        break;
+      default: // Do no checks
+        break;
+    }
+
     return updatedBenefactor;
   });
+
+  // Marks as complete:
+  const unawardedBountyBenefactors = await dbRead.bountyBenefactor.findFirst({
+    select: { userId: true },
+    where: {
+      awardedToId: null,
+      bountyId: benefactor.bountyId,
+    },
+  });
+
+  if (!unawardedBountyBenefactors) {
+    // Update bounty as completed:
+    await dbWrite.bounty.update({
+      where: {
+        id: benefactor.bountyId,
+      },
+      data: {
+        complete: true,
+      },
+    });
+  }
 
   return benefactor;
 };
