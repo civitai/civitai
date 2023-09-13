@@ -21,6 +21,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     sort: z.nativeEnum(BountySort).default(BountySort.Newest),
     engagement: z.enum(['tracking', 'benefactor', 'favorite', 'awarded']).optional(),
     userId: z.number().optional(),
+    baseModels: z.enum(constants.baseModels).array().optional(),
   })
 );
 
