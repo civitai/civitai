@@ -3050,6 +3050,11 @@ model BountyStat {
   unitAmountCountMonth   Int
   unitAmountCountYear    Int
   unitAmountCountAllTime Int
+  commentCountDay        Int
+  commentCountWeek       Int
+  commentCountMonth      Int
+  commentCountYear       Int
+  commentCountAllTime    Int
 }
 
 /// @view
@@ -3081,6 +3086,11 @@ model BountyRank {
   unitAmountCountMonthRank   Int    @default(0)
   unitAmountCountYearRank    Int    @default(0)
   unitAmountCountAllTimeRank Int    @default(0)
+  commentCountDayRank        Int    @default(0)
+  commentCountWeekRank       Int    @default(0)
+  commentCountMonthRank      Int    @default(0)
+  commentCountYearRank       Int    @default(0)
+  commentCountAllTimeRank    Int    @default(0)
 }
 
 /// @view
