@@ -6,6 +6,7 @@ import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
 import {
   awardBountyEntry,
+  deleteBountyEntry,
   getBountyEntryEarnedBuzz,
   getBountyEntryFilteredFiles,
   getEntryById,
@@ -127,6 +128,17 @@ export const getBountyEntryFilteredFilesHandler = async ({
     });
 
     return files;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const deleteBountyEntryHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    await deleteBountyEntry({
+      ...input,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

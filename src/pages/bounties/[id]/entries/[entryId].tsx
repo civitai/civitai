@@ -38,15 +38,11 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
-import ImagePage from '~/pages/images/[imageId]';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useHotkeys } from '@mantine/hooks';
 import {
-  IconAlertCircle,
   IconAward,
   IconChevronLeft,
   IconChevronRight,
@@ -54,6 +50,7 @@ import {
   IconLockOpen,
   IconShare3,
   IconStar,
+  IconTrash,
   IconTrophy,
 } from '@tabler/icons-react';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -68,8 +65,9 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useRouter } from 'next/router';
-import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
+import { openConfirmModal } from '@mantine/modals';
+import { showErrorNotification } from '~/utils/notifications';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -167,11 +165,28 @@ export default function BountyEntryDetailsPage({
   const { data: files = [], isLoading: isLoadingFiles } = trpc.bountyEntry.getFiles.useQuery({
     id: entryId,
   });
+  const queryUtils = trpc.useContext();
+
+  const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
+    trpc.bountyEntry.delete.useMutation({
+      onSuccess: async () => {
+        await queryUtils.bounty.getEntries.invalidate({ id: bounty?.id });
+        router.replace(`/bounties/${bounty?.id}`);
+      },
+      onError: (error) => {
+        showErrorNotification({
+          title: 'Could not delete entry',
+          error: new Error(error.message),
+        });
+      },
+    });
   const [mainImage] = bountyEntry?.images ?? [];
   const user = bountyEntry?.user;
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
   const benefactor = (bounty?.benefactors ?? []).find((b) => b.user.id === currentUser?.id);
+  const isOwner = currentUser && user?.id === currentUser?.id;
+  const isModerator = currentUser?.isModerator ?? false;
 
   const meta = (
     <Meta
@@ -185,7 +200,7 @@ export default function BountyEntryDetailsPage({
     />
   );
 
-  if (isLoadingBounty || isLoadingEntry) {
+  if (isLoadingBounty || isLoadingEntry || isLoadingDelete) {
     return <PageLoader />;
   }
 
@@ -266,6 +281,43 @@ export default function BountyEntryDetailsPage({
 
   const shareSection = (
     <Group noWrap>
+      {(isOwner || isModerator) && bountyEntry.awardedUnitAmountTotal === 0 && (
+        <Button
+          size="md"
+          radius="xl"
+          color="gray"
+          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          compact
+          fullWidth
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            openConfirmModal({
+              title: 'Delete this entry?',
+              children: (
+                <Stack>
+                  <Text size="sm">Are you sure you want to delete this entry?</Text>
+                  <Text color="red.4" size="sm">
+                    This action is not reversible. If you still want to participate in the hunt, you
+                    will have to create a new submission.
+                  </Text>
+                </Stack>
+              ),
+              centered: true,
+              labels: { confirm: 'Delete', cancel: 'Cancel' },
+              onConfirm: () => {
+                deleteEntryMutation({ id: bountyEntry.id });
+              },
+            });
+          }}
+        >
+          <Group spacing={4}>
+            <IconTrash size={14} />
+            <Text size="xs">Delete</Text>
+          </Group>
+        </Button>
+      )}
       <AwardBountyAction bounty={bounty} bountyEntryId={bountyEntry.id || entryId}>
         {({ onClick, isLoading }) => (
           <Button

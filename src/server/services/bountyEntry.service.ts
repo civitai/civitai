@@ -279,3 +279,51 @@ export const getBountyEntryFilteredFiles = async ({
     };
   });
 };
+
+export const deleteBountyEntry = async ({ id }: { id: number }) => {
+  const entry = await dbRead.bountyEntry.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      bountyId: true,
+      userId: true,
+      bounty: {
+        select: {
+          complete: true,
+        },
+      },
+    },
+  });
+
+  if (!entry) {
+    throw throwBadRequestError('Bounty entry does not exist');
+  }
+
+  const [award] = await getBountyEntryEarnedBuzz({ ids: [entry.id] });
+
+  if (award.awardedUnitAmount > 0) {
+    throw throwBadRequestError(
+      'This bounty entry has been awarded by some users and as such, cannot be deleted.'
+    );
+  }
+
+  const deletedBountyEntry = await dbWrite.$transaction(async (tx) => {
+    const deletedBountyEntry = await tx.bountyEntry.delete({ where: { id } });
+    if (!deletedBountyEntry) return null;
+
+    await tx.file.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
+    const images = await tx.imageConnection.findMany({
+      select: {
+        imageId: true,
+      },
+      where: { entityId: id, entityType: 'BountyEntry' },
+    });
+
+    await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
+    await tx.image.deleteMany({ where: { id: { in: images.map((i) => i.imageId) } } });
+
+    return deletedBountyEntry;
+  });
+
+  if (!deletedBountyEntry) return null;
+};

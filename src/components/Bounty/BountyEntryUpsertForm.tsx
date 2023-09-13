@@ -49,6 +49,7 @@ const formSchema = upsertBountyEntryInputSchema.omit({
 export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const router = useRouter();
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
+  const queryUtils = trpc.useContext();
 
   const handleDropImages = async (droppedFiles: File[]) => {
     for (const file of droppedFiles) {
@@ -76,6 +77,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
       { ...data, bountyId: bounty.id, images: filteredImages },
       {
         async onSuccess() {
+          await queryUtils.bounty.getEntries.invalidate({ id: bounty.id });
           await router.push(`/bounties/${bounty.id}`);
         },
         onError(error) {
