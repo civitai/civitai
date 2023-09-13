@@ -24,7 +24,6 @@ export const getBountyEntryHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const period = MetricTimeframe.AllTime;
     const entry = await getEntryById({
       input,
       select: {
@@ -37,12 +36,12 @@ export const getBountyEntryHandler = async ({
         },
         stats: {
           select: {
-            [`likeCount${period}`]: true,
-            [`dislikeCount${period}`]: true,
-            [`heartCount${period}`]: true,
-            [`laughCount${period}`]: true,
-            [`cryCount${period}`]: true,
-            [`unitAmountCount${period}`]: true,
+            likeCountAllTime: true,
+            dislikeCountAllTime: true,
+            heartCountAllTime: true,
+            laughCountAllTime: true,
+            cryCountAllTime: true,
+            unitAmountCountAllTime: true,
           },
         },
       },

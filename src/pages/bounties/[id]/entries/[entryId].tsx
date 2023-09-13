@@ -35,7 +35,6 @@ import {
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -450,6 +449,18 @@ export default function BountyEntryDetailsPage({
                 mobile={true}
               />
               <Divider label="Discussion" labelPosition="center" />
+              <Reactions
+                entityId={bountyEntry.id}
+                entityType="bountyEntry"
+                reactions={reactions}
+                metrics={{
+                  likeCount: stats?.likeCountAllTime,
+                  dislikeCount: stats?.dislikeCountAllTime,
+                  heartCount: stats?.heartCountAllTime,
+                  laughCount: stats?.laughCountAllTime,
+                  cryCount: stats?.cryCountAllTime,
+                }}
+              />
               {user?.id && (
                 <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
               )}
@@ -502,19 +513,18 @@ export default function BountyEntryDetailsPage({
                   />
                   <Paper p="sm" radius={0}>
                     <Stack spacing={8}>
-                      {/*TODO.bounties: Add reactions*/}
-                      {/*<Reactions*/}
-                      {/*  entityId={bountyEntry.id}*/}
-                      {/*  entityType="bountyEntry"*/}
-                      {/*  reactions={reactions}*/}
-                      {/*  metrics={{*/}
-                      {/*    likeCount: stats?.likeCountAllTime,*/}
-                      {/*    dislikeCount: stats?.dislikeCountAllTime,*/}
-                      {/*    heartCount: stats?.heartCountAllTime,*/}
-                      {/*    laughCount: stats?.laughCountAllTime,*/}
-                      {/*    cryCount: stats?.cryCountAllTime,*/}
-                      {/*  }}*/}
-                      {/*/>*/}
+                      <Reactions
+                        entityId={bountyEntry.id}
+                        entityType="bountyEntry"
+                        reactions={reactions}
+                        metrics={{
+                          likeCount: stats?.likeCountAllTime,
+                          dislikeCount: stats?.dislikeCountAllTime,
+                          heartCount: stats?.heartCountAllTime,
+                          laughCount: stats?.laughCountAllTime,
+                          cryCount: stats?.cryCountAllTime,
+                        }}
+                      />
                       {user?.id && (
                         <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
                       )}

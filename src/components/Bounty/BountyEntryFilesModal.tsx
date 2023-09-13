@@ -20,7 +20,7 @@ import { BountyEntryGetById } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 
-type Props = { bountyEntry: Omit<BountyEntryGetById, 'files'> };
+type Props = { bountyEntry: Omit<BountyEntryGetById, 'files' | 'stats' | 'reactions'> };
 
 const { openModal: openBountyEntryFilesModal, Modal } = createContextModal<Props>({
   name: 'bountyEntryFiles',
