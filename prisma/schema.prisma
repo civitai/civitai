@@ -2028,6 +2028,9 @@ model Bounty {
   benefactors BountyBenefactor[]
   engagements BountyEngagement[]
   thread      Thread?
+  metrics     BountyMetric[]
+  rank        BountyRank?
+  stats       BountyStat?
 }
 
 model BountyEntry {
@@ -2043,6 +2046,9 @@ model BountyEntry {
   benefactors BountyBenefactor[]
   thread      Thread?
   reactions   BountyEntryReaction[]
+  metrics     BountyEntryMetric[]
+  rank        BountyEntryRank?
+  stats       BountyEntryStat?
 }
 
 model BountyEntryReaction {
@@ -2095,6 +2101,33 @@ model TipConnection {
   entityType    String
 
   @@id([entityId, entityType, transactionId])
+}
+
+model BountyMetric {
+  bounty          Bounty          @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId        Int
+  timeframe       MetricTimeframe
+  favoriteCount   Int             @default(0)
+  trackCount      Int             @default(0)
+  entryCount      Int             @default(0)
+  benefactorCount Int             @default(0)
+  unitAmountCount Int             @default(0)
+
+  @@id([bountyId, timeframe])
+}
+
+model BountyEntryMetric {
+  bountyEntry     BountyEntry     @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  bountyEntryId   Int
+  timeframe       MetricTimeframe
+  likeCount       Int             @default(0)
+  dislikeCount    Int             @default(0)
+  laughCount      Int             @default(0)
+  cryCount        Int             @default(0)
+  heartCount      Int             @default(0)
+  unitAmountCount Int             @default(0)
+
+  @@id([bountyEntryId, timeframe])
 }
 
 /// @view
@@ -2985,4 +3018,148 @@ model GenerationCoverage {
   covered        Boolean
 
   @@id([modelId, modelVersionId])
+}
+
+/// @view
+model BountyStat {
+  bountyId                   Int    @id
+  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
+  favoriteCountDay       Int
+  favoriteCountWeek      Int
+  favoriteCountMonth     Int
+  favoriteCountYear      Int
+  favoriteCountAllTime   Int
+  trackCountDay          Int
+  trackCountWeek         Int
+  trackCountMonth        Int
+  trackCountYear         Int
+  trackCountAllTime      Int
+  entryCountDay          Int
+  entryCountWeek         Int
+  entryCountMonth        Int
+  entryCountYear         Int
+  entryCountAllTime      Int
+  benefactorCountDay     Int
+  benefactorCountWeek    Int
+  benefactorCountMonth   Int
+  benefactorCountYear    Int
+  benefactorCountAllTime Int
+  unitAmountCountDay     Int
+  unitAmountCountWeek    Int
+  unitAmountCountMonth   Int
+  unitAmountCountYear    Int
+  unitAmountCountAllTime Int
+}
+
+/// @view
+model BountyRank {
+  bountyId                   Int    @id
+  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
+  favoriteCountDayRank       Int    @default(0)
+  favoriteCountWeekRank      Int    @default(0)
+  favoriteCountMonthRank     Int    @default(0)
+  favoriteCountYearRank      Int    @default(0)
+  favoriteCountAllTimeRank   Int    @default(0)
+  trackCountDayRank          Int    @default(0)
+  trackCountWeekRank         Int    @default(0)
+  trackCountMonthRank        Int    @default(0)
+  trackCountYearRank         Int    @default(0)
+  trackCountAllTimeRank      Int    @default(0)
+  entryCountDayRank          Int    @default(0)
+  entryCountWeekRank         Int    @default(0)
+  entryCountMonthRank        Int    @default(0)
+  entryCountYearRank         Int    @default(0)
+  entryCountAllTimeRank      Int    @default(0)
+  benefactorCountDayRank     Int    @default(0)
+  benefactorCountWeekRank    Int    @default(0)
+  benefactorCountMonthRank   Int    @default(0)
+  benefactorCountYearRank    Int    @default(0)
+  benefactorCountAllTimeRank Int    @default(0)
+  unitAmountCountDayRank     Int    @default(0)
+  unitAmountCountWeekRank    Int    @default(0)
+  unitAmountCountMonthRank   Int    @default(0)
+  unitAmountCountYearRank    Int    @default(0)
+  unitAmountCountAllTimeRank Int    @default(0)
+}
+
+/// @view
+model BountyEntryStat {
+  bountyEntryId              Int         @id
+  BountyEntry                BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
+  cryCountDay            Int
+  cryCountWeek           Int
+  cryCountMonth          Int
+  cryCountYear           Int
+  cryCountAllTime        Int
+  dislikeCountDay        Int
+  dislikeCountWeek       Int
+  dislikeCountMonth      Int
+  dislikeCountYear       Int
+  dislikeCountAllTime    Int
+  heartCountDay          Int
+  heartCountWeek         Int
+  heartCountMonth        Int
+  heartCountYear         Int
+  heartCountAllTime      Int
+  laughCountDay          Int
+  laughCountWeek         Int
+  laughCountMonth        Int
+  laughCountYear         Int
+  laughCountAllTime      Int
+  likeCountDay           Int
+  likeCountWeek          Int
+  likeCountMonth         Int
+  likeCountYear          Int
+  likeCountAllTime       Int
+  reactionCountDay       Int
+  reactionCountWeek      Int
+  reactionCountMonth     Int
+  reactionCountYear      Int
+  reactionCountAllTime   Int
+  unitAmountCountDay     Int
+  unitAmountCountWeek    Int
+  unitAmountCountMonth   Int
+  unitAmountCountYear    Int
+  unitAmountCountAllTime Int
+}
+
+/// @view
+model BountyEntryRank {
+  bountyEntryId              Int         @id
+  BountyEntry                BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
+  cryCountDayRank            Int         @default(0)
+  cryCountWeekRank           Int         @default(0)
+  cryCountMonthRank          Int         @default(0)
+  cryCountYearRank           Int         @default(0)
+  cryCountAllTimeRank        Int         @default(0)
+  dislikeCountDayRank        Int         @default(0)
+  dislikeCountWeekRank       Int         @default(0)
+  dislikeCountMonthRank      Int         @default(0)
+  dislikeCountYearRank       Int         @default(0)
+  dislikeCountAllTimeRank    Int         @default(0)
+  heartCountDayRank          Int         @default(0)
+  heartCountWeekRank         Int         @default(0)
+  heartCountMonthRank        Int         @default(0)
+  heartCountYearRank         Int         @default(0)
+  heartCountAllTimeRank      Int         @default(0)
+  laughCountDayRank          Int         @default(0)
+  laughCountWeekRank         Int         @default(0)
+  laughCountMonthRank        Int         @default(0)
+  laughCountYearRank         Int         @default(0)
+  laughCountAllTimeRank      Int         @default(0)
+  likeCountDayRank           Int         @default(0)
+  likeCountWeekRank          Int         @default(0)
+  likeCountMonthRank         Int         @default(0)
+  likeCountYearRank          Int         @default(0)
+  likeCountAllTimeRank       Int         @default(0)
+  reactionCountDayRank       Int         @default(0)
+  reactionCountWeekRank      Int         @default(0)
+  reactionCountMonthRank     Int         @default(0)
+  reactionCountYearRank      Int         @default(0)
+  reactionCountAllTimeRank   Int         @default(0)
+  unitAmountCountDayRank     Int         @default(0)
+  unitAmountCountWeekRank    Int         @default(0)
+  unitAmountCountMonthRank   Int         @default(0)
+  unitAmountCountYearRank    Int         @default(0)
+  unitAmountCountAllTimeRank Int         @default(0)
 }

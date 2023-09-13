@@ -130,7 +130,9 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
 }
 
 type Props = {
-  data: Omit<BountyEntryGetById, 'files'>;
+  data: Omit<BountyEntryGetById, 'files' | 'stats' | 'reactions'>;
   currency: Currency;
-  renderActions?: (bountyEntry: Omit<BountyEntryGetById, 'files'>) => React.ReactNode;
+  renderActions?: (
+    bountyEntry: Omit<BountyEntryGetById, 'files' | 'stats' | 'reactions'>
+  ) => React.ReactNode;
 };

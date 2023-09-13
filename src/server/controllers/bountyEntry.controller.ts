@@ -13,6 +13,8 @@ import {
 } from '../services/bountyEntry.service';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { MetricTimeframe } from '@prisma/client';
+import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 
 export const getBountyEntryHandler = async ({
   input,
@@ -29,6 +31,19 @@ export const getBountyEntryHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
+        reactions: {
+          select: getReactionsSelectV2,
+        },
+        stats: {
+          select: {
+            likeCountAllTime: true,
+            dislikeCountAllTime: true,
+            heartCountAllTime: true,
+            laughCountAllTime: true,
+            cryCountAllTime: true,
+            unitAmountCountAllTime: true,
+          },
+        },
       },
     });
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
