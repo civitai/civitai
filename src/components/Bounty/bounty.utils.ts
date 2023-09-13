@@ -107,13 +107,20 @@ export const getMainBountyAmount = (bounty?: {
   return MIN_CREATE_BOUNTY_AMOUNT;
 };
 
-export const useBountyEngagement = ({ bountyId }: { bountyId: number }) => {
+export const useQueryBountyEngagements = () => {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
 
-  const { data: engagements } = trpc.user.getBountyEngagement.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
+  const { data: engagements, isInitialLoading: loading } = trpc.user.getBountyEngagement.useQuery(
+    undefined,
+    { enabled: !!currentUser, cacheTime: Infinity, staleTime: Infinity }
+  );
+
+  return { engagements, loading };
+};
+
+export const useBountyEngagement = ({ bountyId }: { bountyId: number }) => {
+  const queryUtils = trpc.useContext();
+  const { engagements } = useQueryBountyEngagements();
 
   const toggleEngagementMutation = trpc.user.toggleBountyEngagement.useMutation({
     async onMutate({ type, bountyId }) {

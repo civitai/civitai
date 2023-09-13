@@ -175,6 +175,9 @@ export const constants = {
   imageUpload: {
     maxFileSize: 32 * 1024 ** 2, // 32MB
   },
+  bounties: {
+    engagementTypes: ['favorite', 'tracking', 'benefactor', 'awarded'],
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

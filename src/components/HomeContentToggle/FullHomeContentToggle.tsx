@@ -70,6 +70,7 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
   const { set } = useHomeSelection();
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/').pop() || 'home';
+  const { engagement } = router.query;
 
   const data: SegmentedControlItem[] = [
     {
@@ -159,7 +160,17 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
     },
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
+        <Group
+          align="center"
+          spacing={8}
+          onClick={
+            // Workaround to clear out any query filters
+            activePath === 'bounties' && engagement
+              ? () => router.push('/bounties', undefined, { shallow: true })
+              : undefined
+          }
+          noWrap
+        >
           <ThemeIcon
             size={30}
             color={activePath === 'bounties' ? theme.colors.dark[7] : 'transparent'}
