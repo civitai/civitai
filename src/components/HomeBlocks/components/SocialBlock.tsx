@@ -54,9 +54,37 @@ function InstagramPost({ url }: { url: string }) {
   return <InstagramEmbed url={url} width="100%" placeholderDisabled />;
 }
 
+function extractVideoID(url: string) {
+  // Regular expression to find the YouTube video ID
+  const regExp =
+    /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?)|(shorts\/))\??v?=?([^#&?]*).*/;
+  const match = url.match(regExp);
+
+  return match && match[8].length == 11 ? match[8] : null;
+}
+
 function YoutubeShort({ url }: { url: string }) {
+  url = url.includes('/shorts/') ? url.replace('/shorts/', '/watch?v=') : url;
+  const videoId = extractVideoID(url);
+  console.log({ videoId });
   return (
-    <YouTubeEmbed url={url} width="100%" placeholderDisabled height={typeHeight['yt-short']} />
+    <YouTubeEmbed
+      url={url}
+      width="100%"
+      placeholderDisabled
+      height={typeHeight['yt-short']}
+      youTubeProps={{
+        opts: {
+          playerVars: {
+            autoplay: 1,
+            loop: 1,
+            mute: 1,
+            showinfo: 0,
+            playlist: videoId,
+          },
+        },
+      }}
+    />
   );
 }
 
