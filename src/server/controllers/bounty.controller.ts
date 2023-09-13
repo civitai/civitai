@@ -40,11 +40,13 @@ export const getInfiniteBountiesHandler = async ({
   input: GetInfiniteBountySchema;
   ctx: Context;
 }) => {
+  const { user } = ctx;
   const limit = input.limit + 1 ?? 10;
+  const userId = input.userId ?? user?.id;
 
   try {
     const items = await getAllBounties({
-      input: { ...input, limit },
+      input: { ...input, limit, userId },
       select: {
         id: true,
         name: true,

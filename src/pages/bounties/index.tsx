@@ -1,4 +1,5 @@
-import { Group, Stack } from '@mantine/core';
+import { Group, SegmentedControl, Stack, Title, createStyles } from '@mantine/core';
+import { useRouter } from 'next/router';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite';
@@ -19,8 +20,48 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const useStyles = createStyles((theme) => ({
+  label: {
+    padding: '6px 16px',
+    textTransform: 'capitalize',
+    backgroundColor:
+      theme.colorScheme === 'dark'
+        ? theme.fn.rgba(theme.colors.gray[3], 0.06)
+        : theme.fn.rgba(theme.colors.gray[9], 0.06),
+  },
+  labelActive: {
+    backgroundColor: 'transparent',
+    '&,&:hover': {
+      color: theme.colors.dark[9],
+    },
+  },
+  active: {
+    backgroundColor: theme.white,
+  },
+  root: {
+    backgroundColor: 'transparent',
+    gap: 8,
+
+    [theme.fn.smallerThan('sm')]: {
+      overflow: 'auto hidden',
+      maxWidth: '100%',
+    },
+  },
+  control: { border: 'none !important' },
+}));
+
 export default function BountiesPage() {
   const currentUser = useCurrentUser();
+  const { classes } = useStyles();
+  const router = useRouter();
+  const query = router.query;
+  const engagement = constants.bounties.engagementTypes.find(
+    (type) => type === ((query.engagement as string) ?? '').toLowerCase()
+  );
+
+  const handleEngagementChange = (value: string) => {
+    router.push({ query: { engagement: value } }, '/bounties', { shallow: true });
+  };
 
   return (
     <>
@@ -52,11 +93,26 @@ export default function BountiesPage() {
               <FullHomeContentToggle />
               <Group spacing={8} noWrap>
                 <SortFilter type="bounties" variant="button" />
+                {/* TODO.bounty: period filters */}
                 {/* <PeriodFilter type="bounties" /> */}
                 <BountyFiltersDropdown />
               </Group>
             </Group>
-            <BountiesInfinite />
+            {query.engagement && (
+              <Stack spacing="xl" align="flex-start">
+                <Title>My Bounties</Title>
+                <SegmentedControl
+                  classNames={classes}
+                  transitionDuration={0}
+                  radius="xl"
+                  mb="xl"
+                  data={[...constants.bounties.engagementTypes]}
+                  value={query.engagement as string}
+                  onChange={handleEngagementChange}
+                />
+              </Stack>
+            )}
+            <BountiesInfinite filters={{ engagement }} />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

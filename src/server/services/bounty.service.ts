@@ -23,12 +23,22 @@ import { BountySort, BountyStatus } from '../common/enums';
 import { isNotTag, isTag } from '../schema/tag.schema';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
-  input: { cursor, limit: take, query, sort, types, status, mode },
+  input: { cursor, limit: take, query, sort, types, status, mode, engagement, userId },
   select,
 }: {
   input: GetInfiniteBountySchema;
   select: TSelect;
 }) => {
+  const AND: Prisma.Enumerable<Prisma.BountyWhereInput> = [];
+
+  if (userId && engagement) {
+    if (engagement === 'favorite')
+      AND.push({ engagements: { some: { type: 'Favorite', userId } } });
+    if (engagement === 'tracking') AND.push({ engagements: { some: { type: 'Track', userId } } });
+    if (engagement === 'benefactor') AND.push({ benefactors: { some: { userId } } });
+    if (engagement === 'awarded') AND.push({ benefactors: { some: { awartedTo: { userId } } } });
+  }
+
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
   // TODO.bounty: handle sorting when metrics are in
   if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
@@ -48,6 +58,7 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
           : status === BountyStatus.Expired
           ? { lt: new Date() }
           : undefined,
+      AND,
     },
     orderBy,
   });

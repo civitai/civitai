@@ -19,6 +19,8 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     nsfw: z.boolean().optional(),
     period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
     sort: z.nativeEnum(BountySort).default(BountySort.Newest),
+    engagement: z.enum(['tracking', 'benefactor', 'favorite', 'awarded']).optional(),
+    userId: z.number().optional(),
   })
 );
 

@@ -65,4 +65,4 @@ export function BountiesInfinite({ filters: filterOverrides, showEof = true }: P
   );
 }
 
-type Props = { filters?: GetInfiniteBountySchema; showEof?: boolean };
+type Props = { filters?: Partial<GetInfiniteBountySchema>; showEof?: boolean };
