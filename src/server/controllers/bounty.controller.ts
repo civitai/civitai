@@ -31,6 +31,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
+import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -51,6 +52,16 @@ export const getInfiniteBountiesHandler = async ({
         expiresAt: true,
         type: true,
         user: { select: userWithCosmeticsSelect },
+        stats: {
+          select: {
+            favoriteCountAllTime: true,
+            trackCountAllTime: true,
+            entryCountAllTime: true,
+            benefactorCountAllTime: true,
+            unitAmountCountAllTime: true,
+            commentCountAllTime: true,
+          },
+        },
       },
     });
 
@@ -134,6 +145,19 @@ export const getBountyEntriesHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
+        reactions: {
+          select: getReactionsSelectV2,
+        },
+        stats: {
+          select: {
+            likeCountAllTime: true,
+            dislikeCountAllTime: true,
+            heartCountAllTime: true,
+            laughCountAllTime: true,
+            cryCountAllTime: true,
+            unitAmountCountAllTime: true,
+          },
+        },
       },
     });
 

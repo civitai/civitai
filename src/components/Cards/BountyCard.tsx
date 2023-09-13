@@ -11,15 +11,11 @@ import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { BountyGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import {
-  IconBolt,
-  IconClockHour4,
-  IconHeart,
-  IconMessage2,
-  IconViewfinder,
-} from '@tabler/icons-react';
+import { IconClockHour4, IconHeart, IconMessageCircle2, IconViewfinder } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -30,6 +26,7 @@ export function BountyCard({ data }: Props) {
   // TODO.bounty: applyUserPreferences on bounty image
   const cover = images?.[0];
   const expired = expiresAt < new Date();
+  const { stats } = data;
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
@@ -135,22 +132,13 @@ export function BountyCard({ data }: Props) {
             </Text>
           </Stack>
           <Group spacing={8} position="apart">
-            {/* TODO.bounty: use correct field when metrics are in place */}
-            <IconBadge
-              className={classes.chip}
-              icon={
-                <IconBolt size={14} color={theme.colors.accent[5]} fill={theme.colors.accent[5]} />
-              }
+            <CurrencyBadge
+              currency={Currency.BUZZ}
+              unitAmount={stats?.unitAmountCountAllTime ?? 0}
               radius="xl"
               px={8}
-              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
               variant="filled"
-            >
-              <Text size="xs" color="accent.5">
-                0
-              </Text>
-            </IconBadge>
-
+            />
             <Badge
               className={classes.chip}
               sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
@@ -158,7 +146,6 @@ export function BountyCard({ data }: Props) {
               px={8}
               variant="filled"
             >
-              {/* TODO.bounty: use correct fields when metrics are in place */}
               <Group spacing="xs" noWrap>
                 <IconBadge
                   icon={<IconViewfinder size={14} />}
@@ -168,7 +155,7 @@ export function BountyCard({ data }: Props) {
                   // @ts-ignore: transparent variant does work
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(0)}</Text>
+                  <Text size="xs">{abbreviateNumber(stats?.trackCountAllTime ?? 0)}</Text>
                 </IconBadge>
                 <IconBadge
                   icon={<IconHeart size={14} />}
@@ -178,17 +165,17 @@ export function BountyCard({ data }: Props) {
                   // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(0)}</Text>
+                  <Text size="xs">{abbreviateNumber(stats?.favoriteCountAllTime ?? 0)}</Text>
                 </IconBadge>
                 <IconBadge
-                  icon={<IconMessage2 size={14} />}
+                  icon={<IconMessageCircle2 size={14} />}
                   color="dark"
                   p={0}
                   size="lg"
                   // @ts-ignore
                   variant="transparent"
                 >
-                  <Text size="xs">{abbreviateNumber(0)}</Text>
+                  <Text size="xs">{abbreviateNumber(stats?.commentCountAllTime ?? 0)}</Text>
                 </IconBadge>
               </Group>
             </Badge>

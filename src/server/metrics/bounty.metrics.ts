@@ -28,6 +28,13 @@ export const bountyMetrics = createMetricProcessor({
       WHERE ("createdAt" > ${lastUpdate})
 
       UNION
+      
+      SELECT t."bountyId" as id
+      FROM "Thread" t
+      JOIN "CommentV2" c ON c."threadId" = t.id
+      WHERE t."bountyId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
+      
+      UNION
 
       SELECT
         "id"
@@ -56,7 +63,7 @@ export const bountyMetrics = createMetricProcessor({
       )
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "BountyMetric" ("bountyId", timeframe, "favoriteCount", "trackCount", "entryCount", "benefactorCount", "unitAmountCount")
+      INSERT INTO "BountyMetric" ("bountyId", timeframe, "favoriteCount", "trackCount", "entryCount", "benefactorCount", "unitAmountCount", "commentCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -94,7 +101,14 @@ export const bountyMetrics = createMetricProcessor({
           WHEN tf.timeframe = 'Month' THEN month_unit_amount_count
           WHEN tf.timeframe = 'Week' THEN week_unit_amount_count
           WHEN tf.timeframe = 'Day' THEN day_unit_amount_count
-        END AS unit_amount_count
+        END AS unit_amount_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN comment_count
+          WHEN tf.timeframe = 'Year' THEN year_comment_count
+          WHEN tf.timeframe = 'Month' THEN month_comment_count
+          WHEN tf.timeframe = 'Week' THEN week_comment_count
+          WHEN tf.timeframe = 'Day' THEN day_comment_count
+        END AS comment_count
       FROM
       (
         SELECT
@@ -123,8 +137,26 @@ export const bountyMetrics = createMetricProcessor({
           COALESCE(bf.year_unit_amount_count, 0) AS year_unit_amount_count,
           COALESCE(bf.month_unit_amount_count, 0) AS month_unit_amount_count,
           COALESCE(bf.week_unit_amount_count, 0) AS week_unit_amount_count,
-          COALESCE(bf.day_unit_amount_count, 0) AS day_unit_amount_count
+          COALESCE(bf.day_unit_amount_count, 0) AS day_unit_amount_count,
+          COALESCE(c.comment_count, 0) AS comment_count,
+          COALESCE(c.year_comment_count, 0) AS year_comment_count,
+          COALESCE(c.month_comment_count, 0) AS month_comment_count,
+          COALESCE(c.week_comment_count, 0) AS week_comment_count,
+          COALESCE(c.day_comment_count, 0) AS day_comment_count
         FROM affected a
+        LEFT JOIN (
+          SELECT
+            ic."bountyId" AS id,
+            COUNT(*) AS comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
+            SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
+          FROM "Thread" ic
+          JOIN "CommentV2" v ON ic."id" = v."threadId"
+          WHERE ic."bountyId" IS NOT NULL
+          GROUP BY ic."bountyId"
+        ) c ON a.id = c.id
         LEFT JOIN (
           SELECT
               be."bountyId",
