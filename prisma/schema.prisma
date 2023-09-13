@@ -2112,6 +2112,7 @@ model BountyMetric {
   entryCount      Int             @default(0)
   benefactorCount Int             @default(0)
   unitAmountCount Int             @default(0)
+  commentCount    Int             @default(0)
 
   @@id([bountyId, timeframe])
 }
@@ -3022,8 +3023,8 @@ model GenerationCoverage {
 
 /// @view
 model BountyStat {
-  bountyId                   Int    @id
-  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
+  bountyId               Int    @id
+  Bounty                 Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
   favoriteCountDay       Int
   favoriteCountWeek      Int
   favoriteCountMonth     Int
@@ -3084,8 +3085,8 @@ model BountyRank {
 
 /// @view
 model BountyEntryStat {
-  bountyEntryId              Int         @id
-  BountyEntry                BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
+  bountyEntryId          Int         @id
+  BountyEntry            BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
   cryCountDay            Int
   cryCountWeek           Int
   cryCountMonth          Int
