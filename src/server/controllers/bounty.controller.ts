@@ -51,6 +51,15 @@ export const getInfiniteBountiesHandler = async ({
         expiresAt: true,
         type: true,
         user: { select: userWithCosmeticsSelect },
+        stats: {
+          select: {
+            favoriteCountAllTime: true,
+            trackCountAllTime: true,
+            entryCountAllTime: true,
+            benefactorCountAllTime: true,
+            unitAmountCountAllTime: true,
+          },
+        },
       },
     });
 
@@ -134,6 +143,16 @@ export const getBountyEntriesHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
+        stats: {
+          select: {
+            likeCountAllTime: true,
+            dislikeCountAllTime: true,
+            heartCountAllTime: true,
+            laughCountAllTime: true,
+            cryCountAllTime: true,
+            unitAmountCountAllTime: true,
+          },
+        },
       },
     });
 
