@@ -32,7 +32,6 @@ import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
-  InputCheckbox,
   InputDatePicker,
   InputMultiFileUpload,
   InputNumber,
@@ -56,7 +55,7 @@ import dayjs from 'dayjs';
 import { getDisplayName } from '~/utils/string-helpers';
 import { constants } from '~/server/common/constants';
 import { z } from 'zod';
-import { getMinMaxDates, useQueryBounty } from './bounty.utils';
+import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -177,7 +176,7 @@ export function BountyCreateForm() {
     BountyType.EmbedCreation,
   ].some((t) => t === type);
 
-  const { createBounty, creating: creatingBounty } = useQueryBounty();
+  const { createBounty, creating: creatingBounty } = useMutateBounty();
 
   const handleSubmit = async ({ ...data }: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
