@@ -1,5 +1,6 @@
 import { Group, Menu, Text, createStyles, useMantineTheme, MenuProps, Button } from '@mantine/core';
 import { IconCheck, IconChevronDown, IconFilter, IconSortDescending } from '@tabler/icons-react';
+import { useState } from 'react';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
@@ -65,6 +66,10 @@ const useStyles = createStyles((theme) => ({
       borderRadius: theme.radius.md,
     },
   },
+  opened: {
+    transform: 'rotate(180deg)',
+    transition: 'transform 200ms ease',
+  },
 }));
 
 export function SelectMenuV2<T extends string | number>({
@@ -75,7 +80,8 @@ export function SelectMenuV2<T extends string | number>({
   disabled,
   children,
 }: SelectMenu<T>) {
-  const { classes, theme } = useStyles();
+  const { classes, theme, cx } = useStyles();
+  const [opened, setOpened] = useState(false);
 
   return (
     <Menu
@@ -84,6 +90,7 @@ export function SelectMenuV2<T extends string | number>({
       shadow="md"
       radius={12}
       width={256}
+      onChange={setOpened}
       disabled={disabled}
     >
       <Menu.Target>
@@ -92,7 +99,7 @@ export function SelectMenuV2<T extends string | number>({
           radius="xl"
           variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
           disabled={disabled}
-          rightIcon={<IconChevronDown size={16} />}
+          rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
         >
           <Group spacing={4} noWrap>
             <IconSortDescending size={16} />

@@ -23,7 +23,7 @@ import { BountySort, BountyStatus } from '../common/enums';
 import { isNotTag, isTag } from '../schema/tag.schema';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
-  input: { cursor, limit: take, query, sort, types, status, mode, engagement, userId },
+  input: { cursor, limit: take, query, sort, types, status, mode, engagement, userId, period },
   select,
 }: {
   input: GetInfiniteBountySchema;
@@ -39,10 +39,20 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     if (engagement === 'awarded') AND.push({ benefactors: { some: { awartedTo: { userId } } } });
   }
 
-  const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
+  const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [{ complete: 'asc' }];
   // TODO.bounty: handle sorting when metrics are in
-  if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
-  else orderBy.push({ createdAt: 'desc' });
+  if (sort === BountySort.EndingSoon) orderBy.unshift({ expiresAt: 'asc' });
+  else if (sort === BountySort.HighestBounty)
+    orderBy.unshift({ rank: { [`unitAmountCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostContributors)
+    orderBy.unshift({ rank: { [`entryCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostDiscussed)
+    orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostLiked)
+    orderBy.unshift({ rank: { [`favoriteCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostTracked)
+    orderBy.unshift({ rank: { [`trackCount${period}Rank`]: 'asc' } });
+  else orderBy.unshift({ createdAt: 'desc' });
 
   return dbRead.bounty.findMany({
     take,

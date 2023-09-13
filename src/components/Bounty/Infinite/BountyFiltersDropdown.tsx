@@ -13,11 +13,13 @@ import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { BountyMode, BountyType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { BountyStatus } from '~/server/common/enums';
 
 export function BountyFiltersDropdown() {
-  const { classes, theme } = useStyles();
+  const { classes, theme, cx } = useStyles();
+
+  const [opened, setOpened] = useState(false);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state.bounties,
@@ -49,6 +51,7 @@ export function BountyFiltersDropdown() {
       position="bottom-end"
       shadow="md"
       radius={12}
+      onChange={setOpened}
       middlewares={{ flip: true, shift: true }}
     >
       <Popover.Target>
@@ -65,7 +68,7 @@ export function BountyFiltersDropdown() {
             color="gray"
             radius="xl"
             variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            rightIcon={<IconChevronDown size={16} />}
+            rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
           >
             <Group spacing={4} noWrap>
               <IconFilter size={16} />
@@ -152,5 +155,9 @@ const useStyles = createStyles((theme) => ({
         backgroundColor: 'transparent',
       },
     },
+  },
+  opened: {
+    transform: 'rotate(180deg)',
+    transition: 'transform 200ms ease',
   },
 }));

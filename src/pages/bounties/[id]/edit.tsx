@@ -54,7 +54,7 @@ export const getServerSideProps = createServerSideProps({
 export default function EditBountyPage({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { bounty, loading } = useQueryBounty({ bountyId: id });
+  const { bounty, loading } = useQueryBounty({ id });
 
   if (!loading && !bounty) return <NotFound />;
 
