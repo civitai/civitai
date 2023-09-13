@@ -15,7 +15,7 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
     where: {
       complete: false,
       expiresAt: {
-        lt: dayjs().subtract(1, 'day').toDate(),
+        lt: dayjs().subtract(1, 'day').endOf('day').toDate(),
       },
     },
     select: {
