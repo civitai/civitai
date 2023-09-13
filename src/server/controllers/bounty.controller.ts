@@ -31,6 +31,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
+import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -143,6 +144,9 @@ export const getBountyEntriesHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
+        reactions: {
+          select: getReactionsSelectV2,
+        },
         stats: {
           select: {
             likeCountAllTime: true,

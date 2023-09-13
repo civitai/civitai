@@ -1,4 +1,4 @@
-import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -12,8 +12,11 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { IconFiles } from '@tabler/icons-react';
+import { IconFiles, IconHeart, IconViewfinder } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { Reactions } from '~/components/Reaction/Reactions';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -23,6 +26,14 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { user, images, awardedUnitAmountTotal } = data;
   // TODO.bounty: applyUserPreferences on bounty entry image
   const cover = images?.[0];
+  const reactions = data?.reactions ?? [];
+  const stats: {
+    likeCountAllTime: number;
+    dislikeCountAllTime: number;
+    heartCountAllTime: number;
+    laughCountAllTime: number;
+    cryCountAllTime: number;
+  } | null = data?.stats ?? null;
 
   return (
     <FeedCard aspectRatio="square" href={`/bounties/${data.bountyId}/entries/${data.id}`}>
@@ -124,15 +135,30 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             </ImageGuard.Content>
           )}
         />
+        <Stack
+          className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
+          spacing="sm"
+        >
+          <Reactions
+            entityId={data.id}
+            entityType="bountyEntry"
+            reactions={reactions}
+            metrics={{
+              likeCount: stats?.likeCountAllTime,
+              dislikeCount: stats?.dislikeCountAllTime,
+              heartCount: stats?.heartCountAllTime,
+              laughCount: stats?.laughCountAllTime,
+              cryCount: stats?.cryCountAllTime,
+            }}
+          />
+        </Stack>
       </div>
     </FeedCard>
   );
 }
 
 type Props = {
-  data: Omit<BountyEntryGetById, 'files' | 'stats' | 'reactions'>;
+  data: Omit<BountyEntryGetById, 'files'>;
   currency: Currency;
-  renderActions?: (
-    bountyEntry: Omit<BountyEntryGetById, 'files' | 'stats' | 'reactions'>
-  ) => React.ReactNode;
+  renderActions?: (bountyEntry: Omit<BountyEntryGetById, 'files'>) => React.ReactNode;
 };
