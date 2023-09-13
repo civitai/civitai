@@ -11,7 +11,7 @@ import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { BountyGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { IconClockHour4, IconHeart, IconViewfinder } from '@tabler/icons-react';
+import { IconClockHour4, IconHeart, IconMessageCircle2, IconViewfinder } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -166,6 +166,16 @@ export function BountyCard({ data }: Props) {
                   variant="transparent"
                 >
                   <Text size="xs">{abbreviateNumber(stats?.favoriteCountAllTime ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconMessageCircle2 size={14} />}
+                  color="dark"
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(stats?.commentCountAllTime ?? 0)}</Text>
                 </IconBadge>
               </Group>
             </Badge>
