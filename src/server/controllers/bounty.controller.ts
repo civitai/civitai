@@ -46,7 +46,6 @@ export const getInfiniteBountiesHandler = async ({
   try {
     const items = await getAllBounties({
       input: { ...input, limit, userId },
-      sessionUser: user,
       select: {
         id: true,
         name: true,
