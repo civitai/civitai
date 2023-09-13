@@ -9,7 +9,6 @@ import {
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
-import { MIN_CREATE_BOUNTY_AMOUNT } from '~/server/common/constants';
 import { ToggleUserBountyEngagementsInput } from '~/server/schema/user.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import dayjs from 'dayjs';
@@ -104,7 +103,7 @@ export const getMainBountyAmount = (bounty?: {
     return mainBenefactor.unitAmount;
   }
 
-  return MIN_CREATE_BOUNTY_AMOUNT;
+  return Currency.BUZZ;
 };
 
 export const useBountyEngagement = ({ bountyId }: { bountyId: number }) => {
