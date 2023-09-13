@@ -51,6 +51,7 @@ export function SocialLinks({ iconSize = 20, include, ...props }: Props) {
             component="a"
             href={`/${option}`}
             target="_blank"
+            rel="noopener noreferrer"
             {...defaultProps}
             {...props}
           >
