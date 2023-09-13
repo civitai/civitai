@@ -19,6 +19,7 @@ import {
   useMantineTheme,
   Loader,
   ThemeIcon,
+  Alert,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo } from 'react';
@@ -48,6 +49,7 @@ import {
   IconAward,
   IconClockHour4,
   IconHeart,
+  IconInfoCircle,
   IconShare3,
   IconStar,
   IconTrophy,
@@ -58,7 +60,6 @@ import { useRouter } from 'next/router';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import {
   getBountyCurrency,
-  isBenefactor,
   isMainBenefactor,
   useBountyEngagement,
 } from '~/components/Bounty/bounty.utils';
@@ -69,7 +70,6 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName } from '~/utils/string-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
-import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -78,11 +78,9 @@ import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageVi
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyDiscussion } from '~/components/Bounty/BountyDiscussion';
-import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 import { NextLink } from '@mantine/next';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
-import { generationPanel } from '~/store/generation.store';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { openConfirmModal } from '@mantine/modals';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
@@ -169,6 +167,8 @@ export default function BountyDetailsPage({
     color: 'gray',
   };
 
+  const expired = bounty.expiresAt < new Date();
+
   return (
     <>
       {meta}
@@ -179,18 +179,37 @@ export default function BountyDetailsPage({
               <Title weight="bold" className={classes.title} mr={14} lineClamp={2}>
                 {bounty.name}
               </Title>
+              {bounty.complete && (
+                <Tooltip
+                  label={'This bounty has been completed and entries have been awarded'}
+                  maw={250}
+                  multiline
+                  withArrow
+                  withinPortal
+                >
+                  <ThemeIcon color="yellow.7" radius="xl" variant="light">
+                    <IconTrophy size={20} stroke={2.5} fill="currentColor" />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
               <CurrencyBadge
                 {...defaultBadgeProps}
                 currency={currency}
                 unitAmount={totalUnitAmount}
               />
-              <IconBadge
-                {...defaultBadgeProps}
-                icon={<IconClockHour4 size={14} />}
-                style={{ color: theme.colors.success[5] }}
-              >
-                <DaysFromNow date={bounty.expiresAt} withoutSuffix />
-              </IconBadge>
+              {expired ? (
+                <Badge {...defaultBadgeProps} color="red" variant="filled" radius="xl">
+                  Expired
+                </Badge>
+              ) : (
+                <IconBadge
+                  {...defaultBadgeProps}
+                  icon={<IconClockHour4 size={14} />}
+                  style={{ color: theme.colors.success[5] }}
+                >
+                  <DaysFromNow date={bounty.expiresAt} withoutSuffix />
+                </IconBadge>
+              )}
             </Group>
             <BountyContextMenu bounty={bounty} position="bottom-end" />
           </Group>
@@ -253,8 +272,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
+  const expired = bounty.expiresAt < new Date();
 
   const addToBountyEnabled =
+    !expired &&
+    !bounty.complete &&
     !benefactor?.awardedToId &&
     (bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser));
   const { isLoading, mutate: addBenefactorUnitAmountMutation } =
@@ -456,41 +478,48 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
               <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
             </Group>
-            <PopConfirm
-              message={
-                <Stack spacing={0}>
-                  <Text size="sm">
-                    Are you sure you want {isBenefactor ? 'add' : 'become a benefactor by adding'}{' '}
-                    <Text component="span" weight={590}>
-                      <CurrencyIcon currency={currency} size={16} />{' '}
-                      {formatCurrencyForDisplay(minUnitAmount, currency)}
-                    </Text>{' '}
-                    to this bounty?
-                  </Text>
-                  <Text color="red.4" size="sm">
-                    This action is non refundable.
-                  </Text>
+            <Button
+              variant="filled"
+              disabled={isLoading}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
 
-                  {!isBenefactor && (
-                    <Text size="sm" mt="sm">
-                      <strong>Note:</strong> As a benefactor, you will be unable to add entries to
-                      this bounty
-                    </Text>
-                  )}
-                </Stack>
-              }
-              position="bottom-end"
-              onConfirm={() => onAddToBounty(minUnitAmount)}
-              withArrow
+                openConfirmModal({
+                  title: isBenefactor ? 'Add to bounty' : 'Become a benefactor',
+                  children: (
+                    <Stack spacing={0}>
+                      <Text size="sm">
+                        Are you sure you want{' '}
+                        {isBenefactor ? 'add' : 'become a benefactor by adding'}{' '}
+                        <Text component="span" weight={590}>
+                          <CurrencyIcon currency={currency} size={16} />{' '}
+                          {formatCurrencyForDisplay(minUnitAmount, currency)}
+                        </Text>{' '}
+                        to this bounty?
+                      </Text>
+                      <Text color="red.4" size="sm">
+                        This action is non refundable.
+                      </Text>
+
+                      {!isBenefactor && (
+                        <Text size="sm" mt="sm">
+                          <strong>Note:</strong> As a benefactor, you will be{' '}
+                          <strong>unable</strong> to add entries to this bounty
+                        </Text>
+                      )}
+                    </Stack>
+                  ),
+                  centered: true,
+                  labels: { confirm: 'Confirm', cancel: 'No, go back' },
+                  onConfirm: () => {
+                    onAddToBounty(minUnitAmount);
+                  },
+                });
+              }}
             >
-              <Button variant="filled" disabled={isLoading}>
-                {isLoading
-                  ? 'Processing...'
-                  : isBenefactor
-                  ? 'Add to bounty'
-                  : 'Become a benefactor'}
-              </Button>
-            </PopConfirm>
+              {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Become a benefactor'}
+            </Button>
           </Group>
         )}
         <Group spacing={8} noWrap>
@@ -662,25 +691,53 @@ const useStyles = createStyles((theme) => ({
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const theme = useMantineTheme();
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
-  const queryUtils = trpc.useContext();
   const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
+  const { data: ownedEntries = [], isLoading: isLoadingOwnedEntries } =
+    trpc.bounty.getEntries.useQuery({
+      id: bounty.id,
+      owned: true,
+    });
   const currentUser = useCurrentUser();
   const currency = getBountyCurrency(bounty);
   const benefactorItem = !currentUser
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
+  const expired = bounty.expiresAt < new Date();
+  const displaySubmitAction =
+    !benefactorItem &&
+    !isLoadingOwnedEntries &&
+    ownedEntries.length < bounty.entryLimit &&
+    !currentUser?.muted &&
+    !bounty.complete &&
+    !expired;
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
+      {bounty.complete && !isLoading && (
+        <Alert color="yellow">
+          {(entries?.length ?? 0) > 0 ? (
+            <Text>
+              This bounty has been completed and prizes have been awarded to winner entries
+            </Text>
+          ) : (
+            <Text>This bounty has been marked as completed with no entries.</Text>
+          )}
+        </Alert>
+      )}
       <Group position="apart">
         <Title order={2} size={28} weight={600}>
           Hunters
         </Title>
-        {!currentUser?.muted && (
-          <Button component={NextLink} href={entryCreateUrl} size="xs">
-            Submit
-          </Button>
-        )}
+        <Group>
+          <Tooltip label={`Max entries per user: ${bounty.entryLimit}`}>
+            <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+          </Tooltip>
+          {displaySubmitAction && (
+            <Button component={NextLink} href={entryCreateUrl} size="xs">
+              Submit
+            </Button>
+          )}
+        </Group>
       </Group>
       {children}
     </Stack>
@@ -716,7 +773,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             <Text color="dimmed" align="center">
               Be the first to submit your solution.
             </Text>
-            {!currentUser?.muted && (
+            {displaySubmitAction && (
               <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
                 Submit
               </Button>

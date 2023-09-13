@@ -13,6 +13,8 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addBenefactorUnitAmountInputSchema,
   createBountyInputSchema,
+  getBountyEntriesInputSchema,
+  GetBountyEntriesInputSchema,
   getInfiniteBountySchema,
   updateBountyInputSchema,
 } from '~/server/schema/bounty.schema';
@@ -43,7 +45,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 export const bountyRouter = router({
   getInfinite: publicProcedure.input(getInfiniteBountySchema).query(getInfiniteBountiesHandler),
   getById: publicProcedure.input(getByIdSchema).query(getBountyHandler),
-  getEntries: publicProcedure.input(getByIdSchema).query(getBountyEntriesHandler),
+  getEntries: publicProcedure.input(getBountyEntriesInputSchema).query(getBountyEntriesHandler),
   getBenefactors: publicProcedure.input(getByIdSchema).query(getBountyBenefactorsHandler),
   create: protectedProcedure.input(createBountyInputSchema).mutation(createBountyHandler),
   update: protectedProcedure

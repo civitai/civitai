@@ -2021,6 +2021,7 @@ model Bounty {
   maxBenefactorUnitAmount Int? // Default to initial benefactor's entry
   entryLimit              Int             @default(1)
   nsfw                    Boolean         @default(false)
+  complete                Boolean         @default(false)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]

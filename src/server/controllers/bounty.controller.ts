@@ -18,6 +18,7 @@ import {
   AddBenefactorUnitAmountInputSchema,
   BountyDetailsSchema,
   CreateBountyInput,
+  GetBountyEntriesInputSchema,
   GetInfiniteBountySchema,
   UpdateBountyInput,
 } from '../schema/bounty.schema';
@@ -121,13 +122,12 @@ export const getBountyEntriesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: GetBountyEntriesInputSchema;
   ctx: Context;
 }) => {
   try {
-    // TODO.Bounties = We should get the currency type via the main benefactor before getting the awarded amount per entry.
     const entries = await getAllEntriesByBountyId({
-      input: { bountyId: input.id },
+      input: { bountyId: input.id, userId: input.owned ? ctx.user?.id : undefined },
       select: {
         id: true,
         createdAt: true,
@@ -147,6 +147,7 @@ export const getBountyEntriesHandler = async ({
       type: 'BountyEntry',
     });
 
+    // TODO.Bounties = We should get the currency type via the main benefactor before getting the awarded amount per entry.
     const awardedTotal = await getBountyEntryEarnedBuzz({
       ids: entries.map((entry) => entry.id),
       currency: Currency.BUZZ,
