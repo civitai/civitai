@@ -1,5 +1,5 @@
 import { openConfirmModal } from '@mantine/modals';
-import { Stack, Text } from '@mantine/core';
+import { Center, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconAward } from '@tabler/icons-react';
 import React from 'react';
@@ -9,6 +9,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { BountyGetById } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getBountyCurrency } from '~/components/Bounty/bounty.utils';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { formatDate } from '~/utils/date-helpers';
 
 export const AwardBountyAction = ({
   bountyEntryId,
@@ -31,6 +33,9 @@ export const AwardBountyAction = ({
   const benefactorItem = !currentUser
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
+  const { data: bountyEntry } = trpc.bountyEntry.getById.useQuery({
+    id: bountyEntryId,
+  });
 
   const { isLoading: isAwardingBountyEntry, mutate: awardBountyEntryMutation } =
     trpc.bountyEntry.award.useMutation({
@@ -46,7 +51,6 @@ export const AwardBountyAction = ({
         const benefactorItem = bounty.benefactors.find((b) => b.user.id === currentUser.id);
 
         if (prevBounty) {
-
           await queryUtils.bounty.getById.setData(
             { id: bounty.id },
             produce((bounty) => {
@@ -69,7 +73,6 @@ export const AwardBountyAction = ({
         }
 
         if (prevEntries) {
-
           await queryUtils.bounty.getEntries.setData(
             { id: bounty.id },
             produce((entries) => {
@@ -154,6 +157,16 @@ export const AwardBountyAction = ({
       title: 'Award this entry?',
       children: (
         <Stack>
+          {bountyEntry && bountyEntry?.user && (
+            <Center>
+              <Stack>
+                <Text size="xs" color="dimmed">
+                  Entry added on {formatDate(bountyEntry.createdAt)} by
+                </Text>
+                <CreatorCard user={bountyEntry.user} />
+              </Stack>
+            </Center>
+          )}
           <Text>
             Are you sure you want to award{' '}
             {<CurrencyBadge currency={currency} unitAmount={benefactorItem.unitAmount ?? 0} />} to
