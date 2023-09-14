@@ -220,8 +220,6 @@ export default function BountyEntryDetailsPage({
     cryCountAllTime: number;
   } | null = bountyEntry?.stats ?? null;
 
-  console.log(bountyEntry);
-
   const userSection = (
     <>
       {user && (
