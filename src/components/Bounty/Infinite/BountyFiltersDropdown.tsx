@@ -10,14 +10,30 @@ import {
   createStyles,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { BountyMode, BountyType } from '@prisma/client';
+import { BountyMode, BountyType, MetricTimeframe } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { BountyStatus } from '~/server/common/enums';
+import { constants, BaseModel } from '~/server/common/constants';
+import { filter } from 'lodash';
+
+const supportsBaseModel = [
+  BountyType.ModelCreation,
+  BountyType.LoraCreation,
+  BountyType.EmbedCreation,
+] as const;
+
+const checkSupportsBaseModel = (types: BountyType[]) => {
+  return types.some((type) =>
+    supportsBaseModel.includes(type as (typeof supportsBaseModel)[number])
+  );
+};
 
 export function BountyFiltersDropdown() {
-  const { classes, theme } = useStyles();
+  const { classes, theme, cx } = useStyles();
+
+  const [opened, setOpened] = useState(false);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state.bounties,
@@ -25,13 +41,20 @@ export function BountyFiltersDropdown() {
   }));
 
   const filterLength =
-    (filters.types?.length ?? 0) + (!!filters.mode ? 1 : 0) + (!!filters.status ? 1 : 0);
+    (filters.types?.length ?? 0) +
+    (filters.baseModels?.length ?? 0) +
+    (!!filters.mode ? 1 : 0) +
+    (!!filters.status ? 1 : 0) +
+    (filters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(
     () =>
       setFilters({
         types: undefined,
         mode: undefined,
+        status: undefined,
+        baseModels: undefined,
+        period: MetricTimeframe.AllTime,
       }),
     [setFilters]
   );
@@ -43,12 +66,15 @@ export function BountyFiltersDropdown() {
     classNames: classes,
   };
 
+  const showBaseModelFilter = checkSupportsBaseModel(filters.types ?? []);
+
   return (
     <Popover
       zIndex={200}
       position="bottom-end"
       shadow="md"
       radius={12}
+      onChange={setOpened}
       middlewares={{ flip: true, shift: true }}
     >
       <Popover.Target>
@@ -65,7 +91,7 @@ export function BountyFiltersDropdown() {
             color="gray"
             radius="xl"
             variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            rightIcon={<IconChevronDown size={16} />}
+            rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
           >
             <Group spacing={4} noWrap>
               <IconFilter size={16} />
@@ -77,11 +103,31 @@ export function BountyFiltersDropdown() {
       <Popover.Dropdown maw={468} p="md" w="100%">
         <Stack spacing="lg">
           <Stack spacing="md">
+            <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Chip.Group
+              spacing={8}
+              value={filters.period}
+              onChange={(period: MetricTimeframe) => setFilters({ period })}
+            >
+              {Object.values(MetricTimeframe).map((type, index) => (
+                <Chip key={index} value={type} {...chipProps}>
+                  {getDisplayName(type)}
+                </Chip>
+              ))}
+            </Chip.Group>
+          </Stack>
+          <Stack spacing="md">
             <Divider label="Bounty type" labelProps={{ weight: 'bold', size: 'sm' }} />
             <Chip.Group
               spacing={8}
               value={filters.types ?? []}
-              onChange={(types: BountyType[]) => setFilters({ types })}
+              onChange={(types: BountyType[]) => {
+                const clearBaseModelFilter = !checkSupportsBaseModel(types);
+                setFilters({
+                  types,
+                  baseModels: clearBaseModelFilter ? undefined : filters.baseModels,
+                });
+              }}
               multiple
             >
               {Object.values(BountyType).map((type, index) => (
@@ -91,6 +137,23 @@ export function BountyFiltersDropdown() {
               ))}
             </Chip.Group>
           </Stack>
+          {showBaseModelFilter && (
+            <Stack spacing="md">
+              <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+              <Chip.Group
+                spacing={8}
+                value={filters.baseModels ?? []}
+                onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
+                multiple
+              >
+                {constants.baseModels.map((baseModel, index) => (
+                  <Chip key={index} value={baseModel} {...chipProps}>
+                    {baseModel}
+                  </Chip>
+                ))}
+              </Chip.Group>
+            </Stack>
+          )}
           <Stack spacing="md">
             <Divider label="Bounty mode" labelProps={{ weight: 'bold', size: 'sm' }} />
             <Group spacing={8}>
@@ -152,5 +215,9 @@ const useStyles = createStyles((theme) => ({
         backgroundColor: 'transparent',
       },
     },
+  },
+  opened: {
+    transform: 'rotate(180deg)',
+    transition: 'transform 200ms ease',
   },
 }));

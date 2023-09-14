@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
-import { useQueryBounty } from './bounty.utils';
+import { useMutateBounty } from './bounty.utils';
 import { ReportMenuItem } from '../MenuItems/ReportMenuItem';
 
 export function BountyContextMenu({
@@ -18,7 +18,7 @@ export function BountyContextMenu({
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === bounty.user?.id || isModerator;
 
-  const { deleteBounty } = useQueryBounty({ bountyId: bounty.id });
+  const { deleteBounty } = useMutateBounty({ bountyId: bounty.id });
 
   const menuItems: React.ReactElement<MenuItemProps>[] = [
     isOwner || isModerator ? (

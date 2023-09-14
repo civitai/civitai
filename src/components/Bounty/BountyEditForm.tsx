@@ -2,7 +2,7 @@ import { Button, Group, Stack, Title, ActionIcon, Text, Tooltip, Anchor } from '
 import { TagTarget } from '@prisma/client';
 import { IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { getMinMaxDates, useQueryBounty } from '~/components/Bounty/bounty.utils';
+import { getMinMaxDates, useMutateBounty } from '~/components/Bounty/bounty.utils';
 import {
   Form,
   InputDatePicker,
@@ -29,7 +29,7 @@ export function BountyEditForm({ bounty }: Props) {
   };
   const form = useForm({ schema: updateBountyInputSchema, defaultValues, shouldUnregister: false });
 
-  const { updateBounty: update, updating } = useQueryBounty({ bountyId: bounty.id });
+  const { updateBounty: update, updating } = useMutateBounty({ bountyId: bounty.id });
 
   const handleSubmit = async (data: UpdateBountyInput) => {
     await update(data);

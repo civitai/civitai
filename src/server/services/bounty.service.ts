@@ -1,4 +1,4 @@
-import { BountyEntryMode, Currency, ImageIngestionStatus, Prisma, TagTarget } from '@prisma/client';
+import { BountyEntryMode, Currency, ImageIngestionStatus, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { updateEntityFiles } from './file.service';
@@ -21,9 +21,23 @@ import { createEntityImages, ingestImage } from '~/server/services/image.service
 import { chunk, groupBy } from 'lodash-es';
 import { BountySort, BountyStatus } from '../common/enums';
 import { isNotTag, isTag } from '../schema/tag.schema';
+import { decreaseDate } from '~/utils/date-helpers';
+import { ManipulateType } from 'dayjs';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
-  input: { cursor, limit: take, query, sort, types, status, mode, engagement, userId },
+  input: {
+    cursor,
+    limit: take,
+    query,
+    sort,
+    types,
+    status,
+    mode,
+    engagement,
+    userId,
+    period,
+    baseModels,
+  },
   select,
 }: {
   input: GetInfiniteBountySchema;
@@ -39,10 +53,26 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     if (engagement === 'awarded') AND.push({ benefactors: { some: { awartedTo: { userId } } } });
   }
 
-  const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
+  if (baseModels && baseModels.length) {
+    AND.push({
+      OR: baseModels.map((base) => ({ details: { path: ['baseModel'], equals: base } })),
+    });
+  }
+
+  const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [{ complete: 'asc' }];
   // TODO.bounty: handle sorting when metrics are in
-  if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
-  else orderBy.push({ createdAt: 'desc' });
+  if (sort === BountySort.EndingSoon) orderBy.unshift({ expiresAt: 'asc' });
+  else if (sort === BountySort.HighestBounty)
+    orderBy.unshift({ rank: { [`unitAmountCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostContributors)
+    orderBy.unshift({ rank: { [`entryCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostDiscussed)
+    orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostLiked)
+    orderBy.unshift({ rank: { [`favoriteCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostTracked)
+    orderBy.unshift({ rank: { [`trackCount${period}Rank`]: 'asc' } });
+  else orderBy.unshift({ createdAt: 'desc' });
 
   return dbRead.bounty.findMany({
     take,
@@ -57,6 +87,11 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
           ? { gt: new Date() }
           : status === BountyStatus.Expired
           ? { lt: new Date() }
+          : undefined,
+      complete: status === BountyStatus.Awarded ? true : undefined,
+      createdAt:
+        period !== MetricTimeframe.AllTime
+          ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
           : undefined,
       AND,
     },

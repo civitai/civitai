@@ -94,8 +94,7 @@ const collectionFilterSchema = z.object({
 type BountyFilterSchema = z.infer<typeof bountyFilterSchema>;
 const bountyFilterSchema = z
   .object({
-    period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
-    periodMode: periodModeSchema,
+    period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
     sort: z.nativeEnum(BountySort).default(BountySort.EndingSoon),
   })
   .merge(

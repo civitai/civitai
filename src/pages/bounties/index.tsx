@@ -93,8 +93,6 @@ export default function BountiesPage() {
               <FullHomeContentToggle />
               <Group spacing={8} noWrap>
                 <SortFilter type="bounties" variant="button" />
-                {/* TODO.bounty: period filters */}
-                {/* <PeriodFilter type="bounties" /> */}
                 <BountyFiltersDropdown />
               </Group>
             </Group>

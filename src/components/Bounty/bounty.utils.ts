@@ -165,14 +165,16 @@ export const getMinMaxDates = () => {
   };
 };
 
+export const useQueryBounty = ({ id }: { id: number }) => {
+  const { data: bounty, isLoading: loading } = trpc.bounty.getById.useQuery({ id });
+
+  return { bounty, loading };
+};
+
 const DELETE_BOUNTY_TOAST_ID = 'DELETE_BOUNTY_TOAST_ID';
-export const useQueryBounty = (opts?: { bountyId?: number }) => {
+export const useMutateBounty = (opts?: { bountyId?: number }) => {
   const { bountyId } = opts ?? {};
   const queryUtils = trpc.useContext();
-  const { data: bounty, isInitialLoading } = trpc.bounty.getById.useQuery(
-    { id: bountyId as number },
-    { enabled: !!bountyId }
-  );
 
   const createBountyMutation = trpc.bounty.create.useMutation({
     async onSuccess() {
@@ -237,16 +239,16 @@ export const useQueryBounty = (opts?: { bountyId?: number }) => {
   };
 
   const handleUpdateBounty = (data: UpdateBountyInput) => {
-    return updateBountyMutation.mutateAsync(data);
+    if (!bountyId) return;
+    return updateBountyMutation.mutateAsync({ ...data, id: bountyId });
   };
 
   const handleDeleteBounty = () => {
-    return deleteBountyMutation.mutateAsync({ id: bountyId as number });
+    if (!bountyId) return;
+    return deleteBountyMutation.mutateAsync({ id: bountyId });
   };
 
   return {
-    bounty,
-    loading: isInitialLoading,
     createBounty: handleCreateBounty,
     creating: createBountyMutation.isLoading,
     updateBounty: handleUpdateBounty,
