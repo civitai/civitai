@@ -53,6 +53,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
 import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
+import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
+import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -121,7 +123,8 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   const features = useFeatureFlags();
 
   const targetIndex =
-    /\/(model|article|image|user|post|collection)s?\/?/.exec(router.pathname)?.[1] || 'model';
+    /\/(model|article|image|user|post|collection|bounty|bountie)s?\/?/.exec(router.pathname)?.[1] ||
+    'model';
   let indexName = `${targetIndex}s`;
 
   if (indexName === 'posts') {
@@ -130,6 +133,10 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
 
   // Ensure we disable this search
   if (indexName === 'images' && !features.imageSearch) {
+    indexName = 'models';
+  }
+
+  if (indexName in ['bounties', 'bounty'] && !features.bounties) {
     indexName = 'models';
   }
 
@@ -179,6 +186,7 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
         | ImageSearchIndexRecord
         | UserSearchIndexRecord
         | CollectionSearchIndexRecord
+        | BountySearchIndexRecord
       )[] = [];
       const opts = {
         currentUserId: currentUser?.id,
@@ -213,6 +221,8 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
           ...opts,
           items: hits as unknown as CollectionSearchIndexRecord[],
         });
+      } else if (indexName === 'bounties') {
+        filteredResults = hits as unknown as BountySearchIndexRecord[];
       } else {
         filteredResults = [];
       }
@@ -389,4 +399,5 @@ const IndexRenderItem: Record<string, React.FC> = {
   users: UserSearchItem,
   images: ImagesSearchItem,
   collections: CollectionsSearchItem,
+  bounties: BountiesSearchItem,
 };

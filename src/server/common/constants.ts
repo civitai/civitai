@@ -287,6 +287,7 @@ export const IMAGES_SEARCH_INDEX = 'images_v2';
 export const ARTICLES_SEARCH_INDEX = 'articles_v2';
 export const USERS_SEARCH_INDEX = 'users_v2';
 export const COLLECTIONS_SEARCH_INDEX = 'collections';
+export const BOUNTIES_SEARCH_INDEX = 'bounties';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',
