@@ -32,9 +32,6 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
