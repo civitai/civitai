@@ -336,8 +336,12 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
-  const indexReadyRecords = bounties.map(
-    ({ cosmetics, user, tags, images: bountyImages, ...bounty }) => {
+  const indexReadyRecords = bounties
+    .map(({ cosmetics, user, tags, images: bountyImages, ...bounty }) => {
+      if (!bountyImages) {
+        return null;
+      }
+
       const images = bountyImages
         ? bountyImages.filter(isDefined).map((i) => ({
             ...i,
@@ -357,8 +361,8 @@ const onFetchItemsToIndex = async ({
           cosmetics: (cosmetics ?? []).map((cosmetic) => ({ cosmetic })),
         },
       };
-    }
-  );
+    })
+    .filter(isDefined);
 
   return indexReadyRecords;
 };
@@ -392,7 +396,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [Prisma.sql`c.id IN (${Prisma.join(itemIds)})`],
+      whereOr: [Prisma.sql`b.id IN (${Prisma.join(itemIds)})`],
     });
 
     itemsToIndex.push(...newItems);
