@@ -220,6 +220,8 @@ export default function BountyEntryDetailsPage({
     cryCountAllTime: number;
   } | null = bountyEntry?.stats ?? null;
 
+  console.log(bountyEntry);
+
   const userSection = (
     <>
       {user && (
@@ -307,7 +309,11 @@ export default function BountyEntryDetailsPage({
           </Group>
         </Button>
       )}
-      <AwardBountyAction bounty={bounty} bountyEntryId={bountyEntry.id || entryId}>
+      <AwardBountyAction
+        bounty={bounty}
+        bountyEntryId={bountyEntry.id || entryId}
+        fileUnlockAmount={bountyEntry.fileUnlockAmount}
+      >
         {({ onClick, isLoading }) => (
           <Button
             disabled={isLoading}

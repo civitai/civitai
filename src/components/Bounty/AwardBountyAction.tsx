@@ -13,10 +13,12 @@ import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 
 export const AwardBountyAction = ({
+  fileUnlockAmount,
   bountyEntryId,
   bounty,
   children,
 }: {
+  fileUnlockAmount: number;
   bountyEntryId: number;
   bounty: BountyGetById;
   children: ({
@@ -178,6 +180,14 @@ export const AwardBountyAction = ({
           <Text color="red.4" size="sm">
             This action is non refundable.
           </Text>
+          {fileUnlockAmount > benefactorItem.unitAmount && (
+            <Text color="red.4" size="sm">
+              <strong>Note:</strong> Some files on this entry <strong>will not</strong> reach the
+              unlock amount after awarding this entry. If the bounty expires before the unlock
+              amount is reached, you will not gain access to these files and your funds not be
+              returned but instead will be kept by the selected entry.
+            </Text>
+          )}
         </Stack>
       ),
       centered: true,

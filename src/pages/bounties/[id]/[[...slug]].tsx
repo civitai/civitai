@@ -815,7 +815,11 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             renderActions={() => {
               return (
                 <>
-                  <AwardBountyAction bounty={bounty} bountyEntryId={entry.id}>
+                  <AwardBountyAction
+                    bounty={bounty}
+                    bountyEntryId={entry.id}
+                    fileUnlockAmount={entry.fileUnlockAmount}
+                  >
                     {({ onClick }) => (
                       <HoverActionButton
                         label="Award"
