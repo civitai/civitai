@@ -139,7 +139,7 @@ export default function TrainingSelectFile({
 
   const notificationId = `${modelVersion?.id || 1}-uploading-file-notification`;
 
-  const createFileMutation = trpc.modelFile.create.useMutation({
+  const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
       if (!model || !modelVersion) {
         // showErrorNotification({
@@ -212,6 +212,11 @@ export default function TrainingSelectFile({
       return;
     }
 
+    if (selectedFile === existingModelFile?.metadata?.selectedEpochUrl) {
+      onNextClick();
+      return;
+    }
+
     setAwaitInvalidate(true);
 
     showNotification({
@@ -260,8 +265,9 @@ export default function TrainingSelectFile({
           ...metadata,
           selectedEpochUrl: selectedFile,
         };
-        createFileMutation.mutate({
+        upsertFileMutation.mutate({
           ...result,
+          ...(existingModelFile && { id: existingModelFile.id }),
           sizeKB: bytesToKB(size),
           modelVersionId: versionId,
           type: 'Model',
@@ -296,14 +302,20 @@ export default function TrainingSelectFile({
       ) : noEpochs ? (
         <Stack p="xl" align="center">
           <Loader />
-          <Text>Models are currently training...</Text>
+          <Stack spacing="sm" align="center">
+            <Text>Models are currently training...</Text>
+            <Text>Results will stream in as they complete.</Text>
+          </Stack>
         </Stack>
       ) : (
         <>
           {modelVersion.trainingStatus === TrainingStatus.Processing && (
             <Stack p="xl" align="center">
               <Loader />
-              <Text>Models are currently training...</Text>
+              <Stack spacing="sm" align="center">
+                <Text>Models are currently training...</Text>
+                <Text>Results will stream in as they complete.</Text>
+              </Stack>
             </Stack>
           )}
           {/* TODO [bw] download all button */}
