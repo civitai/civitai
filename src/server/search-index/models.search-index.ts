@@ -41,7 +41,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes = ['name', 'user.username', 'hashes', 'tags.name', 'triggerWords'];
+  const searchableAttributes = ['name', 'user.username', 'hashes', 'triggerWords'];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
@@ -81,7 +81,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'words',
     'proximity',
     'exactness',
-    'typo',
   ];
 
   if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
