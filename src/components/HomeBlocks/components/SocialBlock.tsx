@@ -76,11 +76,10 @@ function YoutubeShort({ url }: { url: string }) {
       youTubeProps={{
         opts: {
           playerVars: {
-            autoplay: 1,
+            // autoplay: 1,
             loop: 1,
-            mute: 1,
             showinfo: 0,
-            playlist: videoId,
+            // playlist: videoId,
           },
         },
       }}
