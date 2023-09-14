@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { z } from 'zod';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InferGetServerSidePropsType } from 'next';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -11,9 +10,9 @@ import { isNsfwImage } from '~/server/common/model-helpers';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   Accordion,
+  ActionIcon,
   Alert,
   Anchor,
-  Box,
   Button,
   Card,
   Center,
@@ -23,6 +22,7 @@ import {
   Group,
   Loader,
   MantineProvider,
+  Menu,
   Paper,
   ScrollArea,
   SimpleGrid,
@@ -43,7 +43,6 @@ import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useHotkeys } from '@mantine/hooks';
 import {
-  IconAward,
   IconChevronLeft,
   IconChevronRight,
   IconLock,
@@ -56,7 +55,6 @@ import {
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { BountyEntryGetById } from '~/types/router';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BountyEntryDiscussion } from '~/components/Bounty/BountyEntryDiscussion';
 import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -68,6 +66,10 @@ import { useRouter } from 'next/router';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { openConfirmModal } from '@mantine/modals';
 import { showErrorNotification } from '~/utils/notifications';
+import { IconDotsVertical } from '@tabler/icons-react';
+import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -77,9 +79,8 @@ const querySchema = z.object({
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx, ssg, session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.bounties) return { notFound: true };
+  resolver: async ({ ctx, ssg, features }) => {
+    if (!features?.bounties) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
@@ -280,7 +281,7 @@ export default function BountyEntryDetailsPage({
   );
 
   const shareSection = (
-    <Group noWrap>
+    <Group spacing={8} noWrap>
       {(isOwner || isModerator) && bountyEntry.awardedUnitAmountTotal === 0 && (
         <Button
           size="md"
@@ -358,6 +359,31 @@ export default function BountyEntryDetailsPage({
           </Group>
         </Button>
       </ShareButton>
+      {!isOwner && (
+        <Menu>
+          <Menu.Target>
+            <ActionIcon
+              radius="xl"
+              color="gray"
+              size="md"
+              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+            >
+              <IconDotsVertical size={16} />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <ReportMenuItem
+              label="Report entry"
+              onReport={() =>
+                openContext('report', {
+                  entityType: ReportEntity.BountyEntry,
+                  entityId: bountyEntry.id,
+                })
+              }
+            />
+          </Menu.Dropdown>
+        </Menu>
+      )}
     </Group>
   );
 

@@ -234,6 +234,27 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             user: { select: { ...simpleUserSelect, email: true } },
           },
         },
+        collection: {
+          select: {
+            collection: {
+              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
+            },
+          },
+        },
+        bounty: {
+          select: {
+            bounty: {
+              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
+            },
+          },
+        },
+        bountyEntry: {
+          select: {
+            bountyEntry: {
+              select: { id: true, bountyId: true, user: { select: simpleUserSelect } },
+            },
+          },
+        },
       },
     });
     return {
@@ -247,6 +268,9 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
           article: item.article?.article,
           post: item.post?.post,
           reportedUser: item.reportedUser?.user,
+          collection: item.collection?.collection,
+          bounty: item.bounty?.bounty,
+          bountyEntry: item.bountyEntry?.bountyEntry,
         };
       }),
       ...result,

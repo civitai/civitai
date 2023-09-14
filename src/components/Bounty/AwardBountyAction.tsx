@@ -46,8 +46,7 @@ export const AwardBountyAction = ({
         const benefactorItem = bounty.benefactors.find((b) => b.user.id === currentUser.id);
 
         if (prevBounty) {
-
-          await queryUtils.bounty.getById.setData(
+          queryUtils.bounty.getById.setData(
             { id: bounty.id },
             produce((bounty) => {
               if (!bounty || !currentUser) {
@@ -69,8 +68,7 @@ export const AwardBountyAction = ({
         }
 
         if (prevEntries) {
-
-          await queryUtils.bounty.getEntries.setData(
+          queryUtils.bounty.getEntries.setData(
             { id: bounty.id },
             produce((entries) => {
               if (!entries || !benefactorItem) {
@@ -93,7 +91,7 @@ export const AwardBountyAction = ({
         }
 
         if (prevEntry) {
-          await queryUtils.bountyEntry.getById.setData(
+          queryUtils.bountyEntry.getById.setData(
             { id: prevEntry.id },
             produce((entry) => {
               if (!entry) {
@@ -114,7 +112,7 @@ export const AwardBountyAction = ({
           prevEntry,
         };
       },
-      onSuccess: async (_) => {
+      onSuccess: async () => {
         showSuccessNotification({
           title: 'You have awarded an entry!',
           message: `Your selected entry has been awarded!`,
@@ -129,15 +127,15 @@ export const AwardBountyAction = ({
         });
 
         if (context?.prevBounty) {
-          await queryUtils.bounty.getById.setData({ id: bounty.id }, context.prevBounty);
+          queryUtils.bounty.getById.setData({ id: bounty.id }, context.prevBounty);
         }
 
         if (context?.prevEntries) {
-          await queryUtils.bounty.getEntries.setData({ id: bounty.id }, context.prevEntries);
+          queryUtils.bounty.getEntries.setData({ id: bounty.id }, context.prevEntries);
         }
 
         if (context?.prevEntry) {
-          await queryUtils.bountyEntry.getById.setData({ id: bountyEntryId }, context.prevEntry);
+          queryUtils.bountyEntry.getById.setData({ id: bountyEntryId }, context.prevEntry);
         }
       },
     });

@@ -737,6 +737,8 @@ model Report {
   post           PostReport?
   reportedUser   UserReport?
   collection     CollectionReport?
+  bounty         BountyReport?
+  bountyEntry    BountyEntryReport?
 }
 
 model ResourceReviewReport {
@@ -818,6 +820,24 @@ model CollectionReport {
   report       Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, collectionId])
+}
+
+model BountyReport {
+  bountyId Int
+  bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, bountyId])
+}
+
+model BountyEntryReport {
+  bountyEntryId Int
+  bountyEntry   BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  reportId      Int         @unique
+  report        Report      @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, bountyEntryId])
 }
 
 model ResourceReview {
@@ -2031,6 +2051,7 @@ model Bounty {
   metrics     BountyMetric[]
   rank        BountyRank?
   stats       BountyStat?
+  reports     BountyReport[]
 }
 
 model BountyEntry {
@@ -2049,6 +2070,7 @@ model BountyEntry {
   metrics     BountyEntryMetric[]
   rank        BountyEntryRank?
   stats       BountyEntryStat?
+  reports     BountyEntryReport[]
 }
 
 model BountyEntryReaction {

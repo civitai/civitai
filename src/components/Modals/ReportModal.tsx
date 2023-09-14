@@ -46,7 +46,13 @@ const reports = [
     reason: ReportReason.NSFW,
     label: 'Mature Content',
     Element: ArticleNsfwForm,
-    availableFor: [ReportEntity.Article, ReportEntity.Post, ReportEntity.Collection],
+    availableFor: [
+      ReportEntity.Article,
+      ReportEntity.Post,
+      ReportEntity.Collection,
+      ReportEntity.Bounty,
+      ReportEntity.BountyEntry,
+    ],
   },
   {
     reason: ReportReason.TOSViolation,
@@ -62,6 +68,8 @@ const reports = [
       ReportEntity.Post,
       ReportEntity.User,
       ReportEntity.Collection,
+      ReportEntity.Bounty,
+      ReportEntity.BountyEntry,
     ],
   },
   {
@@ -78,6 +86,8 @@ const reports = [
       ReportEntity.Post,
       ReportEntity.User,
       ReportEntity.Collection,
+      ReportEntity.Bounty,
+      ReportEntity.BountyEntry,
     ],
   },
   {
@@ -90,7 +100,7 @@ const reports = [
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
-    availableFor: [ReportEntity.Model],
+    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry],
   },
 ];
 
@@ -193,6 +203,19 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
               );
               await queryUtils.article.getInfinite.invalidate();
               await queryUtils.article.getByCategory.invalidate();
+              break;
+            case ReportEntity.Bounty:
+              queryUtils.bounty.getById.setData(
+                { id: variables.id },
+                produce((old) => {
+                  if (old) {
+                    if (variables.reason === ReportReason.NSFW) {
+                      old.nsfw = true;
+                    }
+                  }
+                })
+              );
+              await queryUtils.bounty.getInfinite.invalidate();
               break;
             default:
               break;

@@ -201,7 +201,7 @@ export function ImageCarousel({
                     <Center style={{ height: '100%', width: '100%' }}>
                       <div style={{ width: '100%', position: 'relative' }}>
                         <ImageGuard.ToggleConnect position="top-left" />
-                        <ImageGuard.Report />
+                        <ImageGuard.Report context="image" />
                         {!safe ? (
                           <AspectRatio
                             ratio={1}
