@@ -59,7 +59,7 @@ export default function EditBountyPage({
   if (!loading && !bounty) return <NotFound />;
 
   return (
-    <Container size="sm" py="xl">
+    <Container size="sm">
       {loading ? (
         <Center h="100vh">
           <Loader size="xl" />

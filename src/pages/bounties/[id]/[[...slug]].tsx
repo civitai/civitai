@@ -189,7 +189,7 @@ export default function BountyDetailsPage({
                   withinPortal
                 >
                   <ThemeIcon color="yellow.7" radius="xl" variant="light">
-                    <IconTrophy size={20} stroke={2.5} fill="currentColor" />
+                    <IconTrophy size={16} fill="currentColor" />
                   </ThemeIcon>
                 </Tooltip>
               )}
@@ -274,6 +274,10 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const currentUser = useCurrentUser();
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
   const expired = bounty.expiresAt < new Date();
+
+  const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useQuery({
+    id: bounty.id,
+  });
 
   const addToBountyEnabled =
     !expired &&
@@ -413,8 +417,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           items={bounty.tags}
           limit={3}
           renderItem={(tag) => (
-            <Badge radius="xl" color="gray">
-              {tag.name}
+            <Badge radius="xl">
+              <Text transform="capitalize">{tag.name}</Text>
             </Badge>
           )}
           grouped
@@ -522,6 +526,25 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Become a supporter'}
             </Button>
           </Group>
+        )}
+        {bounty.complete && !loadingEntries && (
+          <Alert color="yellow">
+            {(entries?.length ?? 0) > 0 ? (
+              <Group spacing={8} align="center" noWrap>
+                <ThemeIcon color="yellow.7" variant="light">
+                  <IconTrophy size={20} fill="currentColor" />
+                </ThemeIcon>
+                <Text>
+                  This bounty has been completed and prizes have been awarded to the winners
+                </Text>
+              </Group>
+            ) : (
+              <Text>
+                This bounty has been marked as completed with no entries. All benefactors have been
+                refunded.
+              </Text>
+            )}
+          </Alert>
         )}
         <Group spacing={8} noWrap>
           <Tooltip label={isTracked ? 'Stop tracking' : 'Track'} position="top">
@@ -714,20 +737,6 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Stack spacing="xl" py={32}>
-      {bounty.complete && !isLoading && (
-        <Alert color="yellow">
-          {(entries?.length ?? 0) > 0 ? (
-            <Text>
-              This bounty has been completed and prizes have been awarded to winner entries
-            </Text>
-          ) : (
-            <Text>
-              This bounty has been marked as completed with no entries. Benefactos have been
-              refunded.
-            </Text>
-          )}
-        </Alert>
-      )}
       <Group position="apart">
         <Title order={2} size={28} weight={600}>
           Hunters

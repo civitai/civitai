@@ -1,4 +1,14 @@
-import { Button, Group, Stack, Title, ActionIcon, Text, Tooltip, Anchor } from '@mantine/core';
+import {
+  Button,
+  Group,
+  Stack,
+  Title,
+  ActionIcon,
+  Text,
+  Tooltip,
+  Anchor,
+  createStyles,
+} from '@mantine/core';
 import { TagTarget } from '@prisma/client';
 import { IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -16,8 +26,20 @@ import { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
 import { IconCalendar } from '@tabler/icons-react';
 
+const useStyles = createStyles((theme) => ({
+  title: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: '24px',
+    },
+  },
+  fluid: {
+    maxWidth: '100% !important',
+  },
+}));
+
 export function BountyEditForm({ bounty }: Props) {
   const router = useRouter();
+  const { classes } = useStyles();
 
   const defaultValues = {
     ...bounty,
@@ -44,7 +66,7 @@ export function BountyEditForm({ bounty }: Props) {
       <Stack spacing="xl">
         <Group spacing="md" noWrap>
           <BackButton url={`/bounties/${bounty.id}`} />
-          <Title>Editing {bounty.name} Bounty</Title>
+          <Title className={classes.title}>Editing {bounty.name} Bounty</Title>
         </Group>
         <InputRTE
           name="description"
@@ -57,6 +79,7 @@ export function BountyEditForm({ bounty }: Props) {
         {!alreadyStarted && (
           <Group spacing="xl" grow>
             <InputDatePicker
+              className={classes.fluid}
               name="startsAt"
               label="Start Date"
               placeholder="Select a starts date"
@@ -66,6 +89,7 @@ export function BountyEditForm({ bounty }: Props) {
               maxDate={maxStartDate}
             />
             <InputDatePicker
+              className={classes.fluid}
               name="expiresAt"
               label="Deadline"
               placeholder="Select an end date"

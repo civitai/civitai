@@ -111,6 +111,22 @@ const useStyles = createStyles((theme) => ({
     border: `2px solid ${theme.colors.blue[5]}`,
     backgroundColor: 'transparent',
   },
+
+  title: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: '24px',
+    },
+  },
+  sectionTitle: {
+    [theme.fn.smallerThan('sm')]: {
+      fontSize: '18px',
+    },
+  },
+  fluid: {
+    [theme.fn.smallerThan('sm')]: {
+      maxWidth: '100% !important',
+    },
+  },
 }));
 
 export function BountyCreateForm() {
@@ -196,13 +212,15 @@ export function BountyCreateForm() {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack spacing={48}>
-        <Group spacing="md">
+      <Stack spacing={32}>
+        <Group spacing="md" noWrap>
           <BackButton url="/bounties" />
-          <Title>Create a new bounty</Title>
+          <Title className={classes.title}>Create a new bounty</Title>
         </Group>
         <Stack spacing="xl">
-          <Title order={2}>Details</Title>
+          <Title order={2} className={classes.sectionTitle}>
+            Details
+          </Title>
           <InputText name="name" label="Bounty Name" placeholder="e.g.:LoRA for XYZ" withAsterisk />
           <InputRTE
             name="description"
@@ -292,6 +310,7 @@ export function BountyCreateForm() {
           )}
           <Group spacing="xl" grow>
             <InputDatePicker
+              className={classes.fluid}
               name="startsAt"
               label="Start Date"
               placeholder="Select a start date"
@@ -301,6 +320,7 @@ export function BountyCreateForm() {
               maxDate={maxStartDate}
             />
             <InputDatePicker
+              className={classes.fluid}
               name="expiresAt"
               label="Deadline"
               placeholder="Select an end date"
@@ -327,50 +347,52 @@ export function BountyCreateForm() {
               />
             ))}
           </InputRadioGroup>
-          <Group spacing="xs" grow>
+          <Group spacing="xl" grow>
             <InputNumber
+              className={classes.fluid}
               name="unitAmount"
               label="Bounty Amount"
               placeholder="How much are you willing to reward for this bounty"
               min={constants.bounties.minCreateAmount}
               max={100000}
               step={100}
-              sx={{ flexGrow: 1 }}
               icon={<CurrencyIcon currency="BUZZ" size={16} />}
               format={currency !== Currency.BUZZ ? 'currency' : undefined}
               withAsterisk
             />
             <InputNumber
+              className={classes.fluid}
               name="entryLimit"
               label="Max entries per hunter"
               placeholder="How many entries can a hunter submit to your bounty"
               min={1}
               max={100000}
-              sx={{ flexGrow: 1 }}
               withAsterisk
             />
             {mode === BountyMode.Split && (
               <InputNumber
+                className={classes.fluid}
                 name="minBenefactorUnitAmount"
                 label="Minimum Benefactor Amount"
                 placeholder="How much does a supporter need to contribute to your bounty to become a supporter"
                 min={0}
                 max={unitAmount}
-                sx={{ flexGrow: 1 }}
                 format={currency !== Currency.BUZZ ? 'currency' : undefined}
               />
             )}
           </Group>
         </Stack>
         <Stack spacing="xl">
-          <Title order={2}>Properties</Title>
+          <Title order={2} className={classes.sectionTitle}>
+            Properties
+          </Title>
           <Group spacing="xl" grow>
             <InputSelect
+              className={classes.fluid}
               name="type"
               label="Bounty Type"
               placeholder="Please select a bounty type"
               withAsterisk
-              style={{ flex: 1 }}
               data={Object.values(BountyType).map((value) => ({
                 value,
                 label: getDisplayName(value),
@@ -396,11 +418,11 @@ export function BountyCreateForm() {
             />
             {requireBaseModelSelection && (
               <InputSelect
+                className={classes.fluid}
                 name="details.baseModel"
                 label="Base model"
                 placeholder="Please select a base model"
                 withAsterisk
-                style={{ flex: 1 }}
                 data={[...constants.baseModels]}
               />
             )}
@@ -408,7 +430,12 @@ export function BountyCreateForm() {
 
           {type === 'ModelCreation' && (
             <Group spacing="xl" grow>
-              <Input.Wrapper label="Preferred model format" labelProps={{ w: '100%' }} withAsterisk>
+              <Input.Wrapper
+                className={classes.fluid}
+                label="Preferred model format"
+                labelProps={{ w: '100%' }}
+                withAsterisk
+              >
                 <InputSegmentedControl
                   classNames={classes}
                   name="details.modelFormat"
@@ -417,7 +444,12 @@ export function BountyCreateForm() {
                   fullWidth
                 />
               </Input.Wrapper>
-              <Input.Wrapper label="Preferred model size" labelProps={{ w: '100%' }} withAsterisk>
+              <Input.Wrapper
+                className={classes.fluid}
+                label="Preferred model size"
+                labelProps={{ w: '100%' }}
+                withAsterisk
+              >
                 <InputSegmentedControl
                   classNames={classes}
                   name="details.modelSize"

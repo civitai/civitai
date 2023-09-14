@@ -24,7 +24,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function BountyCreate() {
   return (
-    <Container size="md" py={32}>
+    <Container size="md">
       <BountyCreateForm />
     </Container>
   );
