@@ -57,7 +57,6 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
     `;
 
     if (!winnerEntry) {
-      console.log('no winners :( returning monys');
       // Return unawarded funds to benefactors
       const benefactors = await dbWrite.$queryRaw<
         {
