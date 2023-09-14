@@ -476,7 +476,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         autoClose: false,
         disallowClose: true,
         title: 'Creating and uploading archive',
-        message: `Packaging ${imageList.length} images...`,
+        message: `Packaging ${imageList.length} image${imageList.length !== 1 ? 's' : ''}...`,
       });
 
       try {

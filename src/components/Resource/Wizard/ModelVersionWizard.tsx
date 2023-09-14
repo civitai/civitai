@@ -43,7 +43,7 @@ export function ModelVersionWizard({ data }: Props) {
       router.replace(
         `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep + 1}`,
         undefined,
-        { shallow: true }
+        { shallow: true, scroll: true }
       );
   };
 
@@ -52,7 +52,7 @@ export function ModelVersionWizard({ data }: Props) {
       router.replace(
         `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep - 1}`,
         undefined,
-        { shallow: true }
+        { shallow: true, scroll: true }
       );
   };
 

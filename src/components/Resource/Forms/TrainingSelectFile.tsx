@@ -120,11 +120,9 @@ const EpochRow = ({
 
 export default function TrainingSelectFile({
   model,
-  onBackClick,
   onNextClick,
 }: {
   model?: ModelWithTags;
-  onBackClick: () => void;
   onNextClick: () => void;
 }) {
   const queryUtils = trpc.useContext();
@@ -338,9 +336,9 @@ export default function TrainingSelectFile({
       )}
 
       <Group mt="xl" position="right">
-        <Button variant="default" onClick={onBackClick}>
-          Back
-        </Button>
+        {/*<Button variant="default" onClick={onBackClick}>*/}
+        {/*  Back*/}
+        {/*</Button>*/}
         <Button onClick={handleSubmit} disabled={resultsLoading} loading={awaitInvalidate}>
           Next
         </Button>

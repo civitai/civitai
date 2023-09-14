@@ -35,5 +35,3 @@ export default function ModelTrainingNew() {
     </Center>
   );
 }
-
-ModelTrainingNew.getLayout = (page: React.ReactElement) => <>{page}</>;

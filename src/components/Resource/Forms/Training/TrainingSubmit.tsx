@@ -442,14 +442,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       const baseModelConvert: BaseModel =
         baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
 
-      const versionMutateData: ModelVersionUpsertInput = {
-        // these top vars appear to be required for upsert, but aren't actually being updated.
-        // only ID should technically be necessary
+      // these top vars appear to be required for upsert, but aren't actually being updated.
+      // only ID should technically be necessary
+      const basicVersionData = {
         id: thisModelVersion.id,
         name: thisModelVersion.name,
         modelId: model.id,
         trainedWords: [],
-        // ---
+      };
+
+      const versionMutateData: ModelVersionUpsertInput = {
+        ...basicVersionData,
         baseModel: baseModelConvert,
         epochs: paramData.maxTrainEpochs,
         steps: paramData.targetSteps,
@@ -470,6 +473,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
             if (!versionToUpdate) return old;
 
+            versionToUpdate.baseModel = request.baseModel!;
             versionToUpdate.trainingStatus = request.trainingStatus!;
             versionToUpdate.trainingDetails = request.trainingDetails!;
 
@@ -496,12 +500,45 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 await router.replace(userTrainingDashboardURL);
               },
               onError: (error) => {
-                // TODO [bw] set status back to pending
-                setAwaitInvalidate(false);
-                showErrorNotification({
-                  error: new Error(error.message),
-                  title: 'Failed to submit.',
-                });
+                // set the status back to pending
+                upsertVersionMutation.mutate(
+                  {
+                    ...basicVersionData,
+                    baseModel: baseModelConvert,
+                    trainingStatus: TrainingStatus.Pending,
+                  },
+                  {
+                    async onSuccess(response, request) {
+                      queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+                        if (!old) return old;
+
+                        const versionToUpdate = old.modelVersions.find(
+                          (mv) => mv.id === thisModelVersion.id
+                        );
+                        if (!versionToUpdate) return old;
+
+                        versionToUpdate.trainingStatus = request.trainingStatus!;
+
+                        return {
+                          ...old,
+                          modelVersions: [
+                            versionToUpdate,
+                            ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+                          ],
+                        };
+                      });
+                      // TODO [bw] don't invalidate, just update
+                      await queryUtils.model.getMyTrainingModels.invalidate();
+                    },
+                    onSettled() {
+                      setAwaitInvalidate(false);
+                      showErrorNotification({
+                        error: new Error(error.message),
+                        title: 'Failed to submit.',
+                      });
+                    },
+                  }
+                );
               },
             }
           );
