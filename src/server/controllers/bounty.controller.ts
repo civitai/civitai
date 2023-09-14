@@ -180,19 +180,35 @@ export const getBountyEntriesHandler = async ({
       currency: Currency.BUZZ,
     });
 
-    return entries.map((entry) => ({
-      ...entry,
-      images: images
-        .filter((i) => i.entityId === entry.id)
-        .map((i) => ({
-          ...i,
-          metadata: i.metadata as ImageMetaProps,
-        })),
-      fileCount: files.length,
-      awardedUnitAmountTotal: Number(
+    return entries.map((entry) => {
+      const awardedUnitAmountTotal = Number(
         awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0
-      ),
-    }));
+      );
+      return {
+        ...entry,
+        images: images
+          .filter((i) => i.entityId === entry.id)
+          .map((i) => ({
+            ...i,
+            metadata: i.metadata as ImageMetaProps,
+          })),
+        // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
+        fileUnlockAmount: Math.max(
+          0,
+          files.reduce(
+            (acc, curr) =>
+              Math.max(
+                acc,
+                curr.metadata ? (curr.metadata as BountyEntryFileMeta)?.unlockAmount ?? 0 : 0
+              ),
+            0
+          ) - awardedUnitAmountTotal
+        ),
+        fileCount: files.length,
+
+        awardedUnitAmountTotal,
+      };
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

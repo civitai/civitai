@@ -24,6 +24,7 @@ const nameOverrides: Record<string, string> = {
   scheduler: 'Sampler',
   TextualInversion: 'Embedding',
   MotionModule: 'Motion',
+  BenefactorsOnly: 'Supporters Only',
 };
 export function getDisplayName(value: string) {
   return nameOverrides[value] ?? splitUppercase(value);

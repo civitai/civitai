@@ -70,6 +70,8 @@ import { IconDotsVertical } from '@tabler/icons-react';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { formatDate } from '~/utils/date-helpers';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -223,26 +225,11 @@ export default function BountyEntryDetailsPage({
     <>
       {user && (
         <Card.Section py="xs" withBorder inheritPadding>
-          <Group position="apart" spacing={8} noWrap px="xs">
-            <UserAvatar
-              user={user}
-              avatarProps={{ size: 32 }}
-              size="sm"
-              subText={
-                <>
-                  {bountyEntry.createdAt && (
-                    <Text size="xs" color="dimmed">
-                      Added on <DaysFromNow date={bountyEntry.createdAt} />
-                    </Text>
-                  )}
-                </>
-              }
-              subTextForce
-              withUsername
-              linkToProfile
-            />
-            <Group spacing="md">
-              <FollowUserButton userId={user.id} size="md" compact />
+          <Stack spacing={0}>
+            <Group position="apart">
+              <Text size="xs" color="dimmed">
+                Entry added on {formatDate(bountyEntry.createdAt)} by
+              </Text>
               <NavigateBack url={`/bounties/${bounty.id}`}>
                 {({ onClick }) => (
                   <CloseButton
@@ -251,11 +238,13 @@ export default function BountyEntryDetailsPage({
                     variant="transparent"
                     iconSize={20}
                     onClick={onClick}
+                    ml="auto"
                   />
                 )}
               </NavigateBack>
             </Group>
-          </Group>
+            <CreatorCard user={user} />
+          </Stack>
         </Card.Section>
       )}
     </>
@@ -319,7 +308,11 @@ export default function BountyEntryDetailsPage({
           </Group>
         </Button>
       )}
-      <AwardBountyAction bounty={bounty} bountyEntryId={bountyEntry.id || entryId}>
+      <AwardBountyAction
+        bounty={bounty}
+        bountyEntryId={bountyEntry.id || entryId}
+        fileUnlockAmount={bountyEntry.fileUnlockAmount}
+      >
         {({ onClick, isLoading }) => (
           <Button
             disabled={isLoading}

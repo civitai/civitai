@@ -67,15 +67,15 @@ const tooltipProps: Partial<TooltipProps> = {
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
-    'Only you will be the benefactor of this bounty. This is great if you are offering a good reward for a really specific resource that you want tailored for your specific needs. The number of entries might be limited if the reward you are offering is not enticing enough.',
+    'Only you will be the supporter of this bounty. This is great if you are offering a good reward for a really specific resource that you want tailored for your specific needs. The number of entries might be limited if the reward you are offering is not enticing enough.',
   [BountyMode.Split]:
-    'Other users can become a benefactor in your bounty and select other entries to support. This is great for incentivizing a large number of people to contribute to submit entries to your bounty.',
+    'Other users can become a supporter in your bounty and select other entries to support. This is great for incentivizing a large number of people to contribute to submit entries to your bounty.',
 };
 const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
   [BountyEntryMode.Open]:
     'Any user, at any time, can support an entry and gain access to its files.',
   [BountyEntryMode.BenefactorsOnly]:
-    'Only people who become benefactors in your bounty can support an entry and gain access to the files. Each benefactor can only select 1 entry they support. So at best, each benefactor will have access to 1 set of files.',
+    'Only people who become supporters in your bounty can support an entry and gain access to the files. Each supporter can only select 1 entry they support. So at best, each supporter will have access to 1 set of files.',
 };
 
 const formSchema = createBountyInputSchema.omit({
@@ -353,7 +353,7 @@ export function BountyCreateForm() {
               <InputNumber
                 name="minBenefactorUnitAmount"
                 label="Minimum Benefactor Amount"
-                placeholder="How much does a benefactor need to contribute to your bounty to become a benefactor"
+                placeholder="How much does a supporter need to contribute to your bounty to become a supporter"
                 min={0}
                 max={unitAmount}
                 sx={{ flexGrow: 1 }}

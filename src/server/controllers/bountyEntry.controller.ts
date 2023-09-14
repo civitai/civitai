@@ -55,6 +55,7 @@ export const getBountyEntryHandler = async ({
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
     });
+
     const awardedTotal = await getBountyEntryEarnedBuzz({ ids: [entry.id] });
 
     return {
@@ -65,6 +66,12 @@ export const getBountyEntryHandler = async ({
       })),
       files,
       fileCount: files.length,
+      // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
+      fileUnlockAmount: Math.max(
+        0,
+        files.reduce((acc, curr) => Math.max(acc, curr.metadata?.unlockAmount ?? 0), 0) -
+          Number(awardedTotal[0]?.awardedUnitAmount ?? 0)
+      ),
       awardedUnitAmountTotal: Number(awardedTotal[0]?.awardedUnitAmount ?? 0),
     };
   } catch (error) {

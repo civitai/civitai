@@ -187,17 +187,17 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           {bounty.entryMode === BountyEntryMode.Open && (
             <Text>
               In this bounty, any and all users can award you for your entry, even if they are not
-              benefactors. This means that even after the bounty ends, you can earn rewards.
-              However, this also means that after a file is unlocked, even by providing a small
-              amount of awards, anyone can download it.
+              supporters. This means that even after the bounty ends, you can earn rewards. However,
+              this also means that after a file is unlocked, even by providing a small amount of
+              awards, anyone can download it.
             </Text>
           )}
           {bounty.entryMode === BountyEntryMode.BenefactorsOnly && (
             <Text>
-              In this bounty, only people who are marked as benefactors can award your entry.
-              Because of this, the number of possible awards may be limited. You can set your files
-              to only be available to those who give you awards and only unlocked after a certain
-              amount of awards is reached.
+              In this bounty, only people who are marked as supporters can award your entry. Because
+              of this, the number of possible awards may be limited. You can set your files to only
+              be available to those who give you awards and only unlocked after a certain amount of
+              awards is reached.
             </Text>
           )}
         </AlertWithIcon>

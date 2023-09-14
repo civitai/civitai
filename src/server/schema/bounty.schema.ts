@@ -19,7 +19,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     nsfw: z.boolean().optional(),
     period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
     sort: z.nativeEnum(BountySort).default(BountySort.Newest),
-    engagement: z.enum(['tracking', 'benefactor', 'favorite', 'awarded']).optional(),
+    engagement: z.enum(['tracking', 'supporter', 'favorite', 'awarded']).optional(),
     userId: z.number().optional(),
     baseModels: z.enum(constants.baseModels).array().optional(),
   })

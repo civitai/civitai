@@ -1,5 +1,5 @@
 import { openConfirmModal } from '@mantine/modals';
-import { Stack, Text } from '@mantine/core';
+import { Center, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconAward } from '@tabler/icons-react';
 import React from 'react';
@@ -9,12 +9,16 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { BountyGetById } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getBountyCurrency } from '~/components/Bounty/bounty.utils';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { formatDate } from '~/utils/date-helpers';
 
 export const AwardBountyAction = ({
+  fileUnlockAmount,
   bountyEntryId,
   bounty,
   children,
 }: {
+  fileUnlockAmount: number;
   bountyEntryId: number;
   bounty: BountyGetById;
   children: ({
@@ -31,6 +35,9 @@ export const AwardBountyAction = ({
   const benefactorItem = !currentUser
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
+  const { data: bountyEntry } = trpc.bountyEntry.getById.useQuery({
+    id: bountyEntryId,
+  });
 
   const { isLoading: isAwardingBountyEntry, mutate: awardBountyEntryMutation } =
     trpc.bountyEntry.award.useMutation({
@@ -152,6 +159,16 @@ export const AwardBountyAction = ({
       title: 'Award this entry?',
       children: (
         <Stack>
+          {bountyEntry && bountyEntry?.user && (
+            <Center>
+              <Stack>
+                <Text size="xs" color="dimmed">
+                  Entry added on {formatDate(bountyEntry.createdAt)} by
+                </Text>
+                <CreatorCard user={bountyEntry.user} />
+              </Stack>
+            </Center>
+          )}
           <Text>
             Are you sure you want to award{' '}
             {<CurrencyBadge currency={currency} unitAmount={benefactorItem.unitAmount ?? 0} />} to
@@ -163,6 +180,14 @@ export const AwardBountyAction = ({
           <Text color="red.4" size="sm">
             This action is non refundable.
           </Text>
+          {fileUnlockAmount > benefactorItem.unitAmount && (
+            <Text color="red.4" size="sm">
+              <strong>Note:</strong> Some files on this entry <strong>will not</strong> reach the
+              unlock amount after awarding this entry. If the bounty expires before the unlock
+              amount is reached, you will not gain access to these files and your funds not be
+              returned but instead will be kept by the selected entry.
+            </Text>
+          )}
         </Stack>
       ),
       centered: true,

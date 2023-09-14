@@ -311,7 +311,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         showSuccessNotification({
           title: isBenefactor
             ? 'Your contribution has increased!'
-            : 'You have been added as a benefactor to the bounty!',
+            : 'You have been added as a supporter to the bounty!',
           message: `The amount of ${formatCurrencyForDisplay(
             unitAmount,
             currency
@@ -399,14 +399,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       ),
     },
     {
-      label: 'Entry Mode',
-      value: (
-        <Badge radius="xl" color="gray">
-          {getDisplayName(bounty.entryMode)}
-        </Badge>
-      ),
-    },
-    {
       label: 'Date started',
       value: <Text>{formatDate(bounty.startsAt)}</Text>,
     },
@@ -444,7 +436,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           />
         )}
         {b.awardedToId && (
-          <Tooltip label={'This benefactor has already awarded an entry'}>
+          <Tooltip label={'This supporter has already awarded an entry'}>
             <IconTrophy
               color={CurrencyConfig[currency].color(theme)}
               fill={CurrencyConfig[currency].color(theme)}
@@ -495,12 +487,12 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 e.stopPropagation();
 
                 openConfirmModal({
-                  title: isBenefactor ? 'Add to bounty' : 'Become a benefactor',
+                  title: isBenefactor ? 'Add to bounty' : 'Become a supporter',
                   children: (
                     <Stack spacing={0}>
                       <Text size="sm">
                         Are you sure you want{' '}
-                        {isBenefactor ? 'add' : 'become a benefactor by adding'}{' '}
+                        {isBenefactor ? 'add' : 'become a supporter by adding'}{' '}
                         <Text component="span" weight={590}>
                           <CurrencyIcon currency={currency} size={16} />{' '}
                           {formatCurrencyForDisplay(minUnitAmount, currency)}
@@ -513,8 +505,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
                       {!isBenefactor && (
                         <Text size="sm" mt="sm">
-                          <strong>Note:</strong> As a benefactor, you will be{' '}
-                          <strong>unable</strong> to add entries to this bounty
+                          <strong>Note:</strong> As a supporter, you will be <strong>unable</strong>{' '}
+                          to add entries to this bounty
                         </Text>
                       )}
                     </Stack>
@@ -527,7 +519,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 });
               }}
             >
-              {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Become a benefactor'}
+              {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Become a supporter'}
             </Button>
           </Group>
         )}
@@ -623,7 +615,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         </Accordion.Item>
         <Accordion.Item value="benefactors">
           <Accordion.Control>
-            <Group position="apart">Benefactors</Group>
+            <Group position="apart">Supporters</Group>
           </Accordion.Control>
           <Accordion.Panel>
             <DescriptionTable
@@ -815,7 +807,11 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
             renderActions={() => {
               return (
                 <>
-                  <AwardBountyAction bounty={bounty} bountyEntryId={entry.id}>
+                  <AwardBountyAction
+                    bounty={bounty}
+                    bountyEntryId={entry.id}
+                    fileUnlockAmount={entry.fileUnlockAmount}
+                  >
                     {({ onClick }) => (
                       <HoverActionButton
                         label="Award"

@@ -176,7 +176,7 @@ export const constants = {
     maxFileSize: 32 * 1024 ** 2, // 32MB
   },
   bounties: {
-    engagementTypes: ['favorite', 'tracking', 'benefactor', 'awarded'],
+    engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
     minCreateAmount: 5000,
   },
   defaultCurrency: 'USD',
