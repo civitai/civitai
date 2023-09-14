@@ -138,7 +138,7 @@ export function BountyCreateForm() {
       currency: Currency.BUZZ,
       type: BountyType.LoraCreation,
       mode: BountyMode.Individual,
-      entryMode: BountyEntryMode.Open,
+      entryMode: BountyEntryMode.BenefactorsOnly,
       minBenefactorUnitAmount: constants.bounties.minCreateAmount,
       entryLimit: 1,
       files: [],
@@ -148,6 +148,8 @@ export function BountyCreateForm() {
     },
     shouldUnregister: false,
   });
+
+  const bountyEntryModeEnabled = false;
 
   const clearStorage = useFormStorage({
     schema: formSchema,
@@ -426,21 +428,23 @@ export function BountyCreateForm() {
               </Input.Wrapper>
             </Group>
           )}
-          <InputRadioGroup name="entryMode" label="Entry Mode" withAsterisk>
-            {Object.values(BountyEntryMode).map((value) => (
-              <Radio
-                key={value}
-                className={classes.radioItem}
-                value={value}
-                label={
-                  <RadioItem
-                    label={getDisplayName(value)}
-                    description={bountyEntryModeDescription[value]}
-                  />
-                }
-              />
-            ))}
-          </InputRadioGroup>
+          {bountyEntryModeEnabled && (
+            <InputRadioGroup name="entryMode" label="Entry Mode" withAsterisk>
+              {Object.values(BountyEntryMode).map((value) => (
+                <Radio
+                  key={value}
+                  className={classes.radioItem}
+                  value={value}
+                  label={
+                    <RadioItem
+                      label={getDisplayName(value)}
+                      description={bountyEntryModeDescription[value]}
+                    />
+                  }
+                />
+              ))}
+            </InputRadioGroup>
+          )}
 
           <Divider label="Additional information" />
           <InputTags name="tags" label="Tags" target={[TagTarget.Bounty]} />

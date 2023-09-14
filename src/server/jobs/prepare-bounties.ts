@@ -46,19 +46,55 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
     >`SELECT
           be.id,
           be."userId",
-          COALESCE(SUM(bb."unitAmount"), 0) AS "awardedUnitAmount"
+          COALESCE(SUM(bb."unitAmount"), 0) AS "awardedUnitAmount",
+          bes."reactionCountAllTime" AS "reactionCountAllTime"
       FROM "BountyEntry" be
+      LEFT JOIN "BountyEntryStat" bes on bes."bountyEntryId" = be.id
       LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
       WHERE be."bountyId" = ${id}
-      GROUP BY be.id, be."userId" 
-      ORDER BY "awardedUnitAmount" DESC, be.id ASC LIMIT 1
+      GROUP BY be.id, be."userId", bes."reactionCountAllTime" 
+      ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
     `;
 
     if (!winnerEntry) {
+      // Return unawarded funds to benefactors
+      const benefactors = await dbWrite.$queryRaw<
+        {
+          userId: number;
+          unitAmount: number;
+        }[]
+      >`SELECT
+            bf."userId",
+            bf."unitAmount"
+        FROM "BountyBenefactor" bf
+        WHERE bf."bountyId" = ${id} 
+          AND bf.currency = ${currency}::"Currency"
+          AND bf."awardedToId" IS NULL;
+      `;
+
+      // Now refund each of them:
+      for (const { userId, unitAmount } of benefactors) {
+        if (unitAmount > 0) {
+          switch (currency) {
+            case Currency.BUZZ:
+              await createBuzzTransaction({
+                fromAccountId: 0,
+                toAccountId: userId,
+                amount: unitAmount,
+                type: TransactionType.Bounty,
+                description: 'Reason: Bounty refund, no entries found on bounty',
+              });
+
+              break;
+            default: // Do no checks
+              break;
+          }
+        }
+      }
+
       await dbWrite.$executeRawUnsafe(` 
         UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};
       `);
-
       continue;
     }
 

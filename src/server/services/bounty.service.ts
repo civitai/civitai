@@ -1,4 +1,4 @@
-import { Currency, ImageIngestionStatus, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
+import { BountyEntryMode, Currency, ImageIngestionStatus, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { updateEntityFiles } from './file.service';
@@ -130,6 +130,8 @@ export const createBounty = async ({
     const bounty = await tx.bounty.create({
       data: {
         ...data,
+        // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
+        entryMode: BountyEntryMode.BenefactorsOnly,
         details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
         tags: tags
           ? {
