@@ -3,7 +3,7 @@ import { closeModal, openConfirmModal } from '@mantine/modals';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IconTrash, IconBan, IconLock, IconPencil } from '@tabler/icons-react';
+import { IconTrash, IconBan, IconLock, IconPencil, IconRadar2 } from '@tabler/icons-react';
 import { ToggleLockComments } from '~/components/CommentsV2';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
@@ -81,18 +81,32 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
           </>
         )}
         {isMod && (
-          <TosViolationButton onSuccess={handleTosViolationSuccess}>
-            {({ onClick, isLoading }) => (
-              <Menu.Item
-                icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
-                onClick={() => handleClick(onClick)}
-                disabled={isLoading}
-                closeMenuOnClick={false}
-              >
-                Remove as TOS Violation
-              </Menu.Item>
-            )}
-          </TosViolationButton>
+          <>
+            <TosViolationButton onSuccess={handleTosViolationSuccess}>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  icon={isLoading ? <Loader size={14} /> : <IconBan size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Remove as TOS Violation
+                </Menu.Item>
+              )}
+            </TosViolationButton>
+            <RescanImageButton>
+              {({ onClick, isLoading }) => (
+                <Menu.Item
+                  icon={isLoading ? <Loader size={14} /> : <IconRadar2 size={14} stroke={1.5} />}
+                  onClick={() => handleClick(onClick)}
+                  disabled={isLoading}
+                  closeMenuOnClick={false}
+                >
+                  Rescan Image
+                </Menu.Item>
+              )}
+            </RescanImageButton>
+          </>
         )}
         {isMod && image && (
           <ToggleLockComments entityId={image.id} entityType="image" onSuccess={handleClose}>
@@ -156,6 +170,29 @@ function TosViolationButton({ children, onSuccess }: ButtonCallbackProps) {
   };
 
   return children({ onClick: handleTosViolation, isLoading });
+}
+
+function RescanImageButton({ children, onSuccess }: ButtonCallbackProps) {
+  const { image } = useImageDetailContext();
+
+  const { mutate, isLoading } = trpc.image.rescan.useMutation({
+    async onSuccess() {
+      closeModal('confirm-tos-violation');
+      onSuccess?.();
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not rescan image, please try again',
+      });
+    },
+  });
+  const handle = () => {
+    if (!image) return;
+    mutate({ id: image.id });
+  };
+
+  return children({ onClick: handle, isLoading });
 }
 
 type ButtonCallbackProps = {

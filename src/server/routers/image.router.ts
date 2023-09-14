@@ -29,7 +29,11 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { applyUserPreferences } from '~/server/middleware.trpc';
-import { getImagesByCategory, removeImageResource } from '~/server/services/image.service';
+import {
+  getImagesByCategory,
+  ingestImageById,
+  removeImageResource,
+} from '~/server/services/image.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -83,6 +87,7 @@ export const imageRouter = router({
   removeResource: protectedProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => removeImageResource({ ...input, user: ctx.user })),
+  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
   getImagesByCategory: publicProcedure
     .input(getImagesByCategorySchema)
     .use(applyUserPreferences())

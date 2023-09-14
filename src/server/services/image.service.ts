@@ -196,6 +196,21 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   });
 };
 
+export const ingestImageById = async ({ id }: GetByIdInput) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      url: true,
+      type: true,
+      width: true,
+      height: true,
+    },
+  });
+  if (!image) throw new TRPCError({ code: 'NOT_FOUND' });
+  return await ingestImage({ image });
+};
+
 export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
