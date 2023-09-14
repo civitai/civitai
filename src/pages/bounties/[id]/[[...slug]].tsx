@@ -729,7 +729,10 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
               This bounty has been completed and prizes have been awarded to winner entries
             </Text>
           ) : (
-            <Text>This bounty has been marked as completed with no entries.</Text>
+            <Text>
+              This bounty has been marked as completed with no entries. Benefactos have been
+              refunded.
+            </Text>
           )}
         </Alert>
       )}
