@@ -1,4 +1,11 @@
-import { BountyEntryMode, Currency, ImageIngestionStatus, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
+import {
+  BountyEntryMode,
+  Currency,
+  ImageIngestionStatus,
+  MetricTimeframe,
+  Prisma,
+  TagTarget,
+} from '@prisma/client';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { updateEntityFiles } from './file.service';
@@ -49,7 +56,7 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     if (engagement === 'favorite')
       AND.push({ engagements: { some: { type: 'Favorite', userId } } });
     if (engagement === 'tracking') AND.push({ engagements: { some: { type: 'Track', userId } } });
-    if (engagement === 'benefactor') AND.push({ benefactors: { some: { userId } } });
+    if (engagement === 'supporter') AND.push({ benefactors: { some: { userId } } });
     if (engagement === 'awarded') AND.push({ benefactors: { some: { awartedTo: { userId } } } });
   }
 
@@ -247,7 +254,7 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
   const entriesCount = await dbWrite.bountyEntry.count({ where: { bountyId: id } });
 
   if (benefactorsCount !== 0 || entriesCount !== 0)
-    throw throwBadRequestError('Cannot delete bounty because it has benefactors and/or entries');
+    throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
 
   const deletedBounty = await dbWrite.$transaction(async (tx) => {
     const deletedBounty = await tx.bounty.delete({ where: { id } });

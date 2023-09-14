@@ -1,6 +1,5 @@
 import { Container } from '@mantine/core';
 
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { BountyEntryUpsertForm } from '~/components/Bounty/BountyEntryUpsertForm';

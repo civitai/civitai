@@ -158,7 +158,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
     });
 
     if (benefactor.awardedToId) {
-      throw throwBadRequestError('Benefactor has already awarded an entry.');
+      throw throwBadRequestError('Supporters has already awarded an entry.');
     }
 
     const updatedBenefactor = await tx.bountyBenefactor.update({
