@@ -94,7 +94,7 @@ export function BountyHitList() {
       hiddenTags,
       currentUserId: currentUser?.id,
     });
-  }, [hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
+  }, [loadingPreferences, hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
 
   const hiddenItems = hits.length - bounties.length;
 

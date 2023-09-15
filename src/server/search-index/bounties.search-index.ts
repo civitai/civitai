@@ -130,7 +130,7 @@ type BountyForSearchIndex = {
   expiresAt: Date;
   type: BountyType;
   details: Prisma.JsonObject | null;
-  complete?: boolean;
+  complete: boolean;
   stats: {
     favoriteCountAllTime: number;
     trackCountAllTime: number;
