@@ -36,7 +36,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes = ['name'];
+  const searchableAttributes = ['name', 'user.username'];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
