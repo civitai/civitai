@@ -59,6 +59,13 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['dev'],
   buzz: ['mod'],
   signal: ['user'],
+  assistant: {
+    toggleable: true,
+    default: true,
+    displayName: 'CivBot Assistant (Alpha)',
+    description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
+    availability: ['mod', 'founder'],
+  },
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

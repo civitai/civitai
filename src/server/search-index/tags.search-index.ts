@@ -60,7 +60,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'metrics.modelCount:desc',
     'metrics.imageCount:desc',
     'words',
-    'typo',
     'proximity',
     'sort',
     'exactness',

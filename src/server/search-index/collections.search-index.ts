@@ -69,7 +69,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  const rankingRules = ['sort', 'attribute', 'words', 'proximity', 'exactness', 'typo'];
+  const rankingRules = ['sort', 'attribute', 'words', 'proximity', 'exactness'];
 
   if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
     const updateRankingRulesTask = await index.updateRankingRules(rankingRules);

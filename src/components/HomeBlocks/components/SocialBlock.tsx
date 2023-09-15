@@ -66,7 +66,6 @@ function extractVideoID(url: string) {
 function YoutubeShort({ url }: { url: string }) {
   url = url.includes('/shorts/') ? url.replace('/shorts/', '/watch?v=') : url;
   const videoId = extractVideoID(url);
-  console.log({ videoId });
   return (
     <YouTubeEmbed
       url={url}
@@ -76,11 +75,10 @@ function YoutubeShort({ url }: { url: string }) {
       youTubeProps={{
         opts: {
           playerVars: {
-            autoplay: 1,
+            // autoplay: 1,
             loop: 1,
-            mute: 1,
             showinfo: 0,
-            playlist: videoId,
+            // playlist: videoId,
           },
         },
       }}
