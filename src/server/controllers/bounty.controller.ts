@@ -12,7 +12,7 @@ import {
   getImagesForBounties,
   updateBountyById,
 } from '../services/bounty.service';
-import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
+import { throwBadRequestError, throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import {
   AddBenefactorUnitAmountInputSchema,
@@ -244,6 +244,11 @@ export const createBountyHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
+    const { nsfw, poi } = input;
+
+    if (nsfw && poi)
+      throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
     const bounty = await createBounty({ ...input, userId });
 
     return bounty;

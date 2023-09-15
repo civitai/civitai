@@ -20,6 +20,7 @@ import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@p
 import {
   IconCalendar,
   IconCalendarDue,
+  IconExclamationMark,
   IconInfoCircle,
   IconQuestionMark,
   IconTrash,
@@ -57,6 +58,7 @@ import { constants } from '~/server/common/constants';
 import { z } from 'zod';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -78,9 +80,13 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
     'Only people who become supporters in your bounty can support an entry and gain access to the files. Each supporter can only select 1 entry they support. So at best, each supporter will have access to 1 set of files.',
 };
 
-const formSchema = createBountyInputSchema.omit({
-  images: true,
-});
+const formSchema = createBountyInputSchema
+  .omit({
+    images: true,
+  })
+  .refine((data) => !(data.nsfw && data.poi), {
+    message: 'Mature content depicting actual people is not permitted.',
+  });
 
 const useStyles = createStyles((theme) => ({
   radioItem: {
@@ -187,6 +193,7 @@ export function BountyCreateForm() {
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
+  const nsfwPoi = form.watch(['nsfw', 'poi']);
   const [creating, setCreating] = useState(false);
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
@@ -482,6 +489,25 @@ export function BountyCreateForm() {
           <InputTags name="tags" label="Tags" target={[TagTarget.Bounty]} />
           <InputSwitch
             className={classes.radioItem}
+            name="poi"
+            label={
+              <Stack spacing={4}>
+                <Group spacing={4}>
+                  <Text inline>Depicts an actual person</Text>
+                  <Tooltip label={matureLabel} {...tooltipProps}>
+                    <ThemeIcon radius="xl" size="xs" color="gray">
+                      <IconQuestionMark />
+                    </ThemeIcon>
+                  </Tooltip>
+                </Group>
+                <Text size="xs" color="dimmed">
+                  For example: Tom Cruise or Tom Cruise as Maverick
+                </Text>
+              </Stack>
+            }
+          />
+          <InputSwitch
+            className={classes.radioItem}
             name="nsfw"
             label={
               <Stack spacing={4}>
@@ -499,6 +525,17 @@ export function BountyCreateForm() {
               </Stack>
             }
           />
+          {nsfwPoi.every((item) => item === true) && (
+            <>
+              <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
+                <Text>
+                  Mature content depicting actual people is not permitted. Please revise the content
+                  of this listing to ensure no actual person is depicted in an mature context out of
+                  respect for the individual.
+                </Text>
+              </AlertWithIcon>
+            </>
+          )}
           <InputMultiFileUpload
             name="files"
             label="Attachments"

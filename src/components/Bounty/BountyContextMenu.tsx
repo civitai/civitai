@@ -7,6 +7,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import { useMutateBounty } from './bounty.utils';
 import { ReportMenuItem } from '../MenuItems/ReportMenuItem';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
 
 export function BountyContextMenu({
   bounty,
@@ -66,7 +68,9 @@ export function BountyContextMenu({
       <ReportMenuItem
         key="report"
         label="Report bounty"
-        onReport={() => console.log('open report modal')}
+        onReport={() =>
+          openContext('report', { entityType: ReportEntity.Bounty, entityId: bounty.id })
+        }
       />
     ) : null,
   ].filter(isDefined);

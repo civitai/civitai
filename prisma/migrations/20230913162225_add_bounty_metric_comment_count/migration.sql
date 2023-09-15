@@ -125,8 +125,8 @@ m."bountyEntryId",
   COALESCE(m."dislikeCount", 0) AS "dislikeCount",
   COALESCE(m."laughCount", 0) AS "laughCount",
   COALESCE(m."cryCount", 0) AS "cryCount",
-  coalesce(m."unitAmountCount", 0) AS "unitAmountCount",
-  coalesce(m."unitAmountCount", 0) AS "unitAmountCount"
+  COALESCE(m."heartCount", 0) + COALESCE(m."likeCount", 0) + COALESCE(m."dislikeCount", 0) + COALESCE(m."laughCount", 0) + COALESCE(m."cryCount", 0) AS "reactionCount",
+  COALESCE(m."unitAmountCount", 0) AS "unitAmountCount"
 FROM "BountyEntryMetric" m
 GROUP BY m."bountyEntryId", m.timeframe
 )
