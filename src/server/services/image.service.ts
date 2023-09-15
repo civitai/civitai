@@ -20,7 +20,7 @@ import { ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
-import { UpdateImageInput } from '~/server/schema/image.schema';
+import { ImageEntityType, ImageUploadProps, UpdateImageInput } from '~/server/schema/image.schema';
 import { imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -45,6 +45,7 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
+import { chunk } from 'lodash-es';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
