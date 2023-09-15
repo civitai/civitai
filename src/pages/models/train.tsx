@@ -30,10 +30,8 @@ export default function ModelTrainingNew() {
   return features.imageTraining ? (
     <TrainWizard />
   ) : (
-    <Center style={{ height: '100vh' }}>
+    <Center>
       <NotFound />
     </Center>
   );
 }
-
-ModelTrainingNew.getLayout = (page: React.ReactElement) => <>{page}</>;

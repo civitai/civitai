@@ -120,11 +120,9 @@ const EpochRow = ({
 
 export default function TrainingSelectFile({
   model,
-  onBackClick,
   onNextClick,
 }: {
   model?: ModelWithTags;
-  onBackClick: () => void;
   onNextClick: () => void;
 }) {
   const queryUtils = trpc.useContext();
@@ -141,7 +139,7 @@ export default function TrainingSelectFile({
 
   const notificationId = `${modelVersion?.id || 1}-uploading-file-notification`;
 
-  const createFileMutation = trpc.modelFile.create.useMutation({
+  const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
       if (!model || !modelVersion) {
         // showErrorNotification({
@@ -196,6 +194,7 @@ export default function TrainingSelectFile({
       showErrorNotification({
         error: new Error(error.message),
         title: 'Failed to save model version',
+        autoClose: false,
       });
     },
   });
@@ -204,13 +203,20 @@ export default function TrainingSelectFile({
     if (!model || !modelVersion) {
       showErrorNotification({
         error: new Error('Missing model data. Please try again.'),
+        autoClose: false,
       });
       return;
     }
     if (!selectedFile || !selectedFile.length) {
       showErrorNotification({
         error: new Error('Please select a file to be used.'),
+        autoClose: false,
       });
+      return;
+    }
+
+    if (selectedFile === existingModelFile?.metadata?.selectedEpochUrl) {
+      onNextClick();
       return;
     }
 
@@ -262,8 +268,9 @@ export default function TrainingSelectFile({
           ...metadata,
           selectedEpochUrl: selectedFile,
         };
-        createFileMutation.mutate({
+        upsertFileMutation.mutate({
           ...result,
+          ...(existingModelFile && { id: existingModelFile.id }),
           sizeKB: bytesToKB(size),
           modelVersionId: versionId,
           type: 'Model',
@@ -298,14 +305,20 @@ export default function TrainingSelectFile({
       ) : noEpochs ? (
         <Stack p="xl" align="center">
           <Loader />
-          <Text>Models are currently training...</Text>
+          <Stack spacing="sm" align="center">
+            <Text>Models are currently training...</Text>
+            <Text>Results will stream in as they complete.</Text>
+          </Stack>
         </Stack>
       ) : (
         <>
           {modelVersion.trainingStatus === TrainingStatus.Processing && (
             <Stack p="xl" align="center">
               <Loader />
-              <Text>Models are currently training...</Text>
+              <Stack spacing="sm" align="center">
+                <Text>Models are currently training...</Text>
+                <Text>Results will stream in as they complete.</Text>
+              </Stack>
             </Stack>
           )}
           {/* TODO [bw] download all button */}
@@ -338,9 +351,9 @@ export default function TrainingSelectFile({
       )}
 
       <Group mt="xl" position="right">
-        <Button variant="default" onClick={onBackClick}>
-          Back
-        </Button>
+        {/*<Button variant="default" onClick={onBackClick}>*/}
+        {/*  Back*/}
+        {/*</Button>*/}
         <Button onClick={handleSubmit} disabled={resultsLoading} loading={awaitInvalidate}>
           Next
         </Button>

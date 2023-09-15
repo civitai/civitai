@@ -7,6 +7,7 @@ const WIDTH = 320;
 const HEIGHT = 500;
 export function AssistantButton({ ...props }: ButtonProps) {
   const [opened, setOpened] = useState(false);
+  if (!env.NEXT_PUBLIC_GPTT_UUID) return null;
 
   return (
     <>

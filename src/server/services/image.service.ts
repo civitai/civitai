@@ -1,6 +1,4 @@
 import {
-  CosmeticSource,
-  CosmeticType,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -11,8 +9,32 @@ import {
   ReviewReactions,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
+
+import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
+import { nsfwLevelOrder } from '~/libs/moderation';
+import { VotableTagModel } from '~/libs/tags';
+import { ImageScanType, ImageSort } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { redis } from '~/server/redis/client';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { UpdateImageInput } from '~/server/schema/image.schema';
+import { imagesSearchIndex } from '~/server/search-index';
+import { ImageV2Model } from '~/server/selectors/imagev2.selector';
+import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { getTagsNeedingReview } from '~/server/services/system-cache';
+import { getTypeCategories } from '~/server/services/tag.service';
+import { getCosmeticsForUsers } from '~/server/services/user.service';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { logToDb } from '~/utils/logging';
+import { deleteObject } from '~/utils/s3-utils';
+import { hashifyObject } from '~/utils/string-helpers';
 import {
   GetImageInput,
   GetImagesByCategoryInput,
@@ -22,38 +44,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
   isImageResource,
-  ImageEntityType,
-  UpdateImageInput,
-  ImageUploadProps,
 } from './../schema/image.schema';
-
-import { TRPCError } from '@trpc/server';
-import { env } from '~/env/server.mjs';
-import { nsfwLevelOrder } from '~/libs/moderation';
-import { VotableTagModel } from '~/libs/tags';
-import { ImageScanType, ImageSort } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { UserPreferencesInput } from '~/server/schema/base.schema';
-import { redis } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { ImageV2Model } from '~/server/selectors/imagev2.selector';
-import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
-import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getTagsNeedingReview } from '~/server/services/system-cache';
-import { getTypeCategories } from '~/server/services/tag.service';
-import {
-  throwAuthorizationError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import { decreaseDate } from '~/utils/date-helpers';
-import { deleteObject } from '~/utils/s3-utils';
-import { hashifyObject } from '~/utils/string-helpers';
-import { logToDb } from '~/utils/logging';
-import { imagesSearchIndex } from '~/server/search-index';
-import { getCosmeticsForUsers } from '~/server/services/user.service';
-import { imageSelect } from '../selectors/image.selector';
-import { chunk } from 'lodash-es';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -960,9 +951,12 @@ export const getImagesForModelVersion = async ({
   ];
 
   // ensure that only scanned images make it to the main feed
-  imageWhere.push(
-    Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-  );
+  // nb: if image ingestion fails, models will not make it to any model feed (including the user published tab)
+  if (isProd) {
+    imageWhere.push(
+      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
+  }
 
   if (!!excludedTagIds?.length) {
     const excludedTagsOr: Prisma.Sql[] = [

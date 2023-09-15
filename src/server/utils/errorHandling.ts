@@ -62,7 +62,7 @@ export function throwDbError(error: unknown) {
   });
 }
 
-export const handleTRPCError = (error: unknown) => {
+export const handleTRPCError = (error: Error): TRPCError => {
   const isTrpcError = error instanceof TRPCError;
   if (!isTrpcError) {
     if (error instanceof Prisma.PrismaClientKnownRequestError)
@@ -84,7 +84,7 @@ export const handleTRPCError = (error: unknown) => {
         cause: error,
       });
   } else {
-    throw error;
+    return error;
   }
 };
 

@@ -1,13 +1,14 @@
 import {
   Accordion,
   ActionIcon,
-  Anchor,
   Badge,
   Button,
   Center,
   createStyles,
+  Divider,
   Group,
   HoverCard,
+  Loader,
   LoadingOverlay,
   MantineColor,
   Modal,
@@ -20,19 +21,26 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { TrainingStatus } from '@prisma/client';
-import { IconAlertCircle, IconCircleCheck, IconExternalLink, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
-import React, { useState } from 'react';
+import { IconAlertCircle, IconCircleCheck, IconTrash } from '@tabler/icons-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import produce from 'immer';
+import { useRouter } from 'next/router';
+import React, { useCallback, useState } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { constants } from '~/server/common/constants';
+import { SignalMessages } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
 } from '~/server/common/model-helpers';
 import { TrainingDetailsObj, TrainingDetailsParams } from '~/server/schema/model-version.schema';
+import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -109,20 +117,52 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
   },
 };
 
+const modelsLimit = 10;
+
 const minsWait = 5 * 60 * 1000;
 const minsPerEpoch = 1 * 60 * 1000;
 const minsPerEpochSDXL = 5 * 60 * 1000;
 
+const TrainingSignals = () => {
+  const queryClient = useQueryClient();
+
+  const onUpdate = useCallback(
+    (updated: TrainingUpdateSignalSchema) => {
+      const queryKey = getQueryKey(trpc.model.getMyTrainingModels);
+      queryClient.setQueriesData(
+        { queryKey, exact: false },
+        produce((old: MyTrainingModelGetAll | undefined) => {
+          const model = old?.items?.find((x) => x.id == updated.modelId);
+          const mv = model?.modelVersions[0];
+          if (mv) {
+            mv.trainingStatus = updated.status;
+            const mFile = mv.files[0];
+            if (mFile) {
+              mFile.metadata = updated.fileMetadata;
+            }
+          }
+        })
+      );
+    },
+    [queryClient]
+  );
+
+  useSignalConnection(SignalMessages.TrainingUpdate, onUpdate);
+
+  return null;
+};
+
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
+  const router = useRouter();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
   const [opened, { open, close }] = useDisclosure(false);
   const [modalData, setModalData] = useState<ModalData>({});
 
-  const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: 10 });
+  const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: modelsLimit });
   const { items, ...pagination } = data || {
     items: [],
     totalItems: 0,
@@ -138,8 +178,24 @@ export default function UserTrainingModels() {
     },
   });
 
-  // TODO [bw]: probably need to do something if attempting to delete while running
-  const handleDeleteModel = (model: (typeof items)[number]) => {
+  const goToModel = (e: React.MouseEvent<HTMLTableRowElement>, href: string) => {
+    if (opened) return false;
+    // on control click or middle click, open in new tab
+    if ((e.ctrlKey && e.button === 0) || e.button === 1) {
+      e.preventDefault();
+      window.open(href, '_blank');
+    } else if (e.button === 0) {
+      router.push(href);
+    }
+  };
+
+  const handleDeleteModel = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    model: MyTrainingModelGetAll['items'][number]
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.button !== 0) return;
     openConfirmModal({
       title: 'Delete model',
       children:
@@ -162,7 +218,12 @@ export default function UserTrainingModels() {
         style={{ height: 'max(400px, calc(100vh - 600px))' }}
         onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
       >
-        <Table verticalSpacing="md" fontSize="md" striped={hasTraining}>
+        <Table
+          verticalSpacing="md"
+          fontSize="md"
+          striped={hasTraining}
+          highlightOnHover={hasTraining}
+        >
           <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
             <tr>
               <th>Name</th>
@@ -208,7 +269,10 @@ export default function UserTrainingModels() {
                   )
                   .slice(-1)?.[0]?.time;
                 const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
+                const epochsDone = thisFileMetadata?.trainingResults?.epochs?.length || 0;
+                // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
                 const baseModel = thisTrainingDetails?.baseModel;
+
                 // nb: so yeah...this estimate can be better.
                 const eta =
                   !!startTime && !!numEpochs
@@ -225,14 +289,18 @@ export default function UserTrainingModels() {
                   : '-';
 
                 return (
-                  <tr key={model.id}>
-                    <td>
-                      <Link href={getModelTrainingWizardUrl(model)} passHref>
-                        <Anchor target="_blank" lineClamp={2}>
-                          {model.name} <IconExternalLink size={16} stroke={1.5} />
-                        </Anchor>
-                      </Link>
-                    </td>
+                  // nb:
+                  // Cannot use <Link> here as it doesn't properly wrap rows, handle middle clicks, etc.
+                  // onClick doesn't handle middle clicks
+                  // onAuxClick should work, but for some reason doesn't handle middle clicks
+                  // onMouseUp is not perfect, but it's the closest thing we've got
+                  // which means all click events inside that need to also be mouseUp, so they can be properly de-propagated
+                  <tr
+                    key={model.id}
+                    style={{ cursor: 'pointer' }}
+                    onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(model))}
+                  >
+                    <td>{model.name}</td>
                     <td>
                       <>
                         <Modal
@@ -365,7 +433,10 @@ export default function UserTrainingModels() {
                         </Modal>
                         <Button
                           variant="default"
-                          onClick={() => {
+                          onMouseUp={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (e.button !== 0) return;
                             setModalData({
                               id: thisModelVersion.id,
                               file: thisFile as TrainingFileData,
@@ -386,18 +457,39 @@ export default function UserTrainingModels() {
                       {thisModelVersion.trainingStatus ? (
                         <HoverCard shadow="md" width={300} zIndex={100} withArrow>
                           <HoverCard.Target>
-                            <Badge
-                              color={
-                                trainingStatusFields[thisModelVersion.trainingStatus]?.color ??
-                                'gray'
-                              }
-                            >
-                              {splitUppercase(
-                                thisModelVersion.trainingStatus === TrainingStatus.InReview
-                                  ? 'Ready'
-                                  : thisModelVersion.trainingStatus
+                            <Group spacing="sm">
+                              {/*<Stack>*/}
+                              <Badge
+                                color={
+                                  trainingStatusFields[thisModelVersion.trainingStatus]?.color ??
+                                  'gray'
+                                }
+                              >
+                                <Group spacing={6}>
+                                  {splitUppercase(
+                                    thisModelVersion.trainingStatus === TrainingStatus.InReview
+                                      ? 'Ready'
+                                      : thisModelVersion.trainingStatus
+                                  )}
+                                  {(thisModelVersion.trainingStatus === TrainingStatus.Submitted ||
+                                    thisModelVersion.trainingStatus ===
+                                      TrainingStatus.Processing) && <Loader size={12} />}
+                                </Group>
+                              </Badge>
+                              {thisModelVersion.trainingStatus === TrainingStatus.Processing && (
+                                <>
+                                  <Divider size="sm" orientation="vertical" />
+                                  <Badge
+                                    variant="filled"
+                                    // color={`gray.${Math.max(Math.min(epochsPct, 9), 0)}`}
+                                    color={'gray'}
+                                  >
+                                    {`Step ${epochsDone}/${numEpochs}`}
+                                  </Badge>
+                                </>
                               )}
-                            </Badge>
+                            </Group>
+                            {/*</Stack>*/}
                           </HoverCard.Target>
                           <HoverCard.Dropdown>
                             <Text>
@@ -449,7 +541,7 @@ export default function UserTrainingModels() {
                           color="red"
                           variant="subtle"
                           size="sm"
-                          onClick={() => !isProcessing && handleDeleteModel(model)}
+                          onMouseUp={(e) => !isProcessing && handleDeleteModel(e, model)}
                           disabled={isProcessing}
                         >
                           <IconTrash />
@@ -457,6 +549,7 @@ export default function UserTrainingModels() {
                       </Group>
                     </td>
                   </tr>
+                  // </Link>
                 );
               })
             ) : !isLoading ? (
@@ -479,6 +572,7 @@ export default function UserTrainingModels() {
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
+      <TrainingSignals />
     </Stack>
   );
 }

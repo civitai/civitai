@@ -1,5 +1,4 @@
-import { ActionIcon, Container, createStyles, Stack, Stepper, Title } from '@mantine/core';
-import { IconX } from '@tabler/icons-react';
+import { Container, Stack, Stepper, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -16,16 +15,7 @@ type WizardState = {
   step: number;
 };
 
-const useStyles = createStyles((theme) => ({
-  closeButton: {
-    position: 'absolute',
-    top: theme.spacing.md,
-    right: theme.spacing.md,
-  },
-}));
-
 export default function TrainWizard() {
-  const { classes } = useStyles();
   const router = useRouter();
 
   const posthog = usePostHog();
@@ -66,50 +56,18 @@ export default function TrainWizard() {
       setState((current) => ({ ...current, step: validStep ? step : 1 }));
     }
   }, [isNew, router.query.step, state.step]);
-  //
-  // useEffect(() => {
-  //   // set state model data when query has finished and there's data
-  //   if (model) {
-  //     const parsedModel = {
-  //       ...model,
-  //       tagsOnModels: model.tagsOnModels.map(({ tag }) => tag) ?? [],
-  //     };
-  //
-  //     if (!isEqual(parsedModel, state.model))
-  //       setState((current) => ({
-  //         ...current,
-  //         model: parsedModel,
-  //         modelVersion: parsedModel.modelVersions[0],
-  //       }));
-  //   }
-  // }, [model, state.model]);
 
   return (
     <Container size="sm">
-      <ActionIcon
-        className={classes.closeButton}
-        size="xl"
-        radius="xl"
-        variant="light"
-        // onClick={() => router.back()}
-        // TODO go back to user training page
-        onClick={() => {
-          isNew
-            ? typeof window !== 'undefined' && window.history.length <= 1
-              ? router.replace(`/`)
-              : router.back()
-            : router.replace(`/`);
-        }}
-      >
-        <IconX />
-      </ActionIcon>
-      {/*<LoadingOverlay visible={modelLoading} overlayBlur={2} />*/}
       {modelLoading ? (
         <PageLoader text="Loading model..." />
       ) : modelError ? (
         <NotFound />
       ) : (
-        <Stack py="xl">
+        <Stack pb="xl">
+          <Title mb="sm" order={2}>
+            Train a Model
+          </Title>
           <Stepper
             active={state.step - 1}
             onStepClick={(step) =>
@@ -130,9 +88,9 @@ export default function TrainWizard() {
 
             {/* == Step 2: Upload images/zip, captioning */}
             {/*
-                loading={uploading > 0}
-                color={error + aborted > 0 ? 'red' : undefined}
-              */}
+              loading={uploading > 0}
+              color={error + aborted > 0 ? 'red' : undefined}
+            */}
             <Stepper.Step label={hasFiles ? 'Edit training data' : 'Add training data'}>
               <Stack>
                 <Title order={3}>{hasFiles ? 'Edit training data' : 'Add training data'}</Title>
