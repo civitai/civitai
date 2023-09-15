@@ -15,12 +15,12 @@ import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchL
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
-import { CollectionCard } from '~/components/Cards/CollectionCard';
 import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.parser';
 import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import { BountyCard } from '~/components/Cards/BountyCard';
+import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 
-export default function CollectionSearch() {
+export default function BountySearch() {
   return (
     <SearchLayout.Root>
       <SearchLayout.Filters>
@@ -28,7 +28,7 @@ export default function CollectionSearch() {
       </SearchLayout.Filters>
       <SearchLayout.Content>
         <SearchHeader />
-        <CollectionHitList />
+        <BountyHitList />
       </SearchLayout.Content>
     </SearchLayout.Root>
   );
@@ -69,7 +69,7 @@ const RenderFilters = () => {
   );
 };
 
-export function CollectionHitList() {
+export function BountyHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHits<BountySearchIndexRecord>();
   const { status } = useInstantSearch();
   const { ref, inView } = useInView();
@@ -83,15 +83,17 @@ export function CollectionHitList() {
   } = useHiddenPreferencesContext();
 
   const bounties = useMemo(() => {
-    return hits;
-    // TODO.bounties: Apply user preferences
-    // return applyUserPreferencesBounties<CollectionSearchIndexRecord>({
-    //   items: hits,
-    //   hiddenUsers,
-    //   hiddenImages,
-    //   hiddenTags,
-    //   currentUserId: currentUser?.id,
-    // });
+    if (loadingPreferences) {
+      return [];
+    }
+
+    return applyUserPreferencesBounties<BountySearchIndexRecord>({
+      items: hits,
+      hiddenUsers,
+      hiddenImages,
+      hiddenTags,
+      currentUserId: currentUser?.id,
+    });
   }, [hits, hiddenUsers, hiddenImages, hiddenTags, currentUser]);
 
   const hiddenItems = hits.length - bounties.length;
@@ -185,6 +187,6 @@ export function CollectionHitList() {
   );
 }
 
-CollectionSearch.getLayout = function getLayout(page: React.ReactNode) {
+BountySearch.getLayout = function getLayout(page: React.ReactNode) {
   return <SearchLayout indexName={BOUNTIES_SEARCH_INDEX}>{page}</SearchLayout>;
 };
