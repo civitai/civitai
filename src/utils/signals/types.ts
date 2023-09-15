@@ -1,22 +1,22 @@
-export type SignalWorkerReady = {
+type SignalWorkerReady = {
   type: 'worker:ready';
 };
 
-export type SignalConnectionStarted = {
+type SignalConnectionStarted = {
   type: 'connection:ready';
 };
 
-export type SignalConnectionClosed = {
+type SignalConnectionClosed = {
   type: 'connection:closed';
   message?: string;
 };
 
-export type SignalWorkerError = {
+type SignalWorkerError = {
   type: 'connection:error';
   message?: string;
 };
 
-export type SignalEventReceived<T = unknown> = {
+type SignalEventReceived<T = unknown> = {
   type: 'event:received';
   target: string;
   payload: T;

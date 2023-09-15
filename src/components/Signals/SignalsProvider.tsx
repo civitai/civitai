@@ -20,7 +20,7 @@ export const useSignalContext = () => {
 };
 
 // Add possible types to this data structure. Leave any for safeguarding.
-type SignalCallback = (data: unknown) => void;
+type SignalCallback = (data: any) => void;
 
 export const useSignalConnection = (message: SignalMessages, cb: SignalCallback) => {
   const { connected, worker } = useSignalContext();
