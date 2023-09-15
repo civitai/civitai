@@ -93,7 +93,8 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
           : status === BountyStatus.Expired
           ? { lt: new Date() }
           : undefined,
-      complete: status === BountyStatus.Awarded ? true : undefined,
+      complete:
+        status === BountyStatus.Awarded ? true : status === BountyStatus.Open ? false : undefined,
       createdAt:
         period !== MetricTimeframe.AllTime
           ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
