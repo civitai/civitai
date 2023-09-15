@@ -1,4 +1,4 @@
-import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, BadgeProps, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -12,28 +12,73 @@ import { BountyGetAll } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { IconClockHour4, IconHeart, IconMessageCircle2, IconViewfinder } from '@tabler/icons-react';
-import dayjs from 'dayjs';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
+import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
+import { DaysFromNow } from '../Dates/DaysFromNow';
 
 const IMAGE_CARD_WIDTH = 332;
+
+const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
+  radius: 'xl',
+  variant: 'filled',
+  px: 8,
+  h: 26,
+  tt: 'capitalize',
+};
 
 export function BountyCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const { id, name, images, user, type, expiresAt } = data;
+  const { id, name, images, user, type, expiresAt, stats, complete } = data;
   // TODO.bounty: applyUserPreferences on bounty image
   const cover = images?.[0];
   const expired = expiresAt < new Date();
-  const { stats } = data;
+
+  const { engagements } = useBountyEngagement({ bountyId: id });
+
+  const isFavorite = !!engagements?.Favorite?.find((value) => value === id);
+  const isTracked = !!engagements?.Track?.find((value) => value === id);
+
+  const countdownBadge = (
+    <IconBadge
+      {...sharedBadgeProps}
+      color="dark"
+      icon={<IconClockHour4 size={14} color={theme.colors.success[5]} />}
+    >
+      <Text color="success.5" size="xs">
+        <DaysFromNow date={expiresAt} withoutSuffix />
+      </Text>
+    </IconBadge>
+  );
+
+  const expiredBadge = (
+    <Badge className={classes.chip} {...sharedBadgeProps} color="red" variant="filled" radius="xl">
+      Expired
+    </Badge>
+  );
+
+  const completeBadge = (
+    <Badge
+      className={classes.chip}
+      {...sharedBadgeProps}
+      color="yellow.7"
+      variant="filled"
+      radius="xl"
+    >
+      Completed
+    </Badge>
+  );
+
+  const deadlineBadge = complete ? completeBadge : expired ? expiredBadge : countdownBadge;
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
       <div className={classes.root}>
         <ImageGuard
           images={cover ? [cover] : []}
-          connect={{ entityId: data.id, entityType: 'bounty' }}
+          connect={{ entityId: id, entityType: 'bounty' }}
           render={(image) => (
             <ImageGuard.Content>
               {({ safe }) => (
@@ -57,26 +102,8 @@ export function BountyCard({ data }: Props) {
                           </Text>
                         </Badge>
                       )}
-                      {Date.now() > expiresAt.valueOf() && (
-                        <Badge className={classes.chip} color="red" variant="filled" radius="xl">
-                          Expired
-                        </Badge>
-                      )}
                     </Group>
-                    {!expired && (
-                      <IconBadge
-                        radius="xl"
-                        color="dark"
-                        variant="filled"
-                        px={8}
-                        h={26}
-                        icon={<IconClockHour4 size={14} color={theme.colors.success[5]} />}
-                      >
-                        <Text color="success.5" size="xs">
-                          {dayjs(expiresAt).toNow(true)}
-                        </Text>
-                      </IconBadge>
-                    )}
+                    {deadlineBadge}
                     <BountyContextMenu
                       bounty={data}
                       buttonProps={{ ml: 'auto', variant: 'transparent' }}
@@ -148,8 +175,13 @@ export function BountyCard({ data }: Props) {
             >
               <Group spacing="xs" noWrap>
                 <IconBadge
-                  icon={<IconViewfinder size={14} />}
-                  color="dark"
+                  icon={
+                    <IconViewfinder
+                      size={14}
+                      color={isTracked ? theme.colors.green[5] : 'currentColor'}
+                    />
+                  }
+                  color={isTracked ? 'green' : 'dark'}
                   p={0}
                   size="lg"
                   // @ts-ignore: transparent variant does work
@@ -158,8 +190,14 @@ export function BountyCard({ data }: Props) {
                   <Text size="xs">{abbreviateNumber(stats?.trackCountAllTime ?? 0)}</Text>
                 </IconBadge>
                 <IconBadge
-                  icon={<IconHeart size={14} />}
-                  color="dark"
+                  icon={
+                    <IconHeart
+                      size={14}
+                      color={isFavorite ? theme.colors.red[5] : 'currentColor'}
+                      fill={isFavorite ? theme.colors.red[5] : 'currentColor'}
+                    />
+                  }
+                  color={isFavorite ? 'red' : 'dark'}
                   p={0}
                   size="lg"
                   // @ts-ignore

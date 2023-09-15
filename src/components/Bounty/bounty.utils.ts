@@ -1,4 +1,4 @@
-import { Currency } from '@prisma/client';
+import { Currency, ArticleEngagementType, BountyEngagementType } from '@prisma/client';
 import { useMemo } from 'react';
 
 import {
@@ -16,6 +16,7 @@ import dayjs from 'dayjs';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { TRPCClientError } from '@trpc/client';
+import produce from 'immer';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
 import { BountyGetAll } from '~/types/router';
@@ -152,7 +153,27 @@ export const useBountyEngagement = ({ bountyId }: { bountyId: number }) => {
       const ids = previousEngagements[type] ?? [];
       const isToggled = !!ids.find((id) => id === bountyId);
 
-      // TODO.bounty: optimistic update current bounty stats
+      if (type === BountyEngagementType.Favorite) {
+        queryUtils.bounty.getById.setData(
+          { id: bountyId },
+          produce((bounty) => {
+            if (!bounty?.stats) return;
+            const favoriteCount = bounty.stats.favoriteCountAllTime;
+            bounty.stats.favoriteCountAllTime += !isToggled ? 1 : favoriteCount > 0 ? -1 : 0;
+          })
+        );
+      }
+
+      if (type === BountyEngagementType.Track) {
+        queryUtils.bounty.getById.setData(
+          { id: bountyId },
+          produce((bounty) => {
+            if (!bounty?.stats) return;
+            const trackCount = bounty.stats.trackCountAllTime;
+            bounty.stats.trackCountAllTime += !isToggled ? 1 : trackCount > 0 ? -1 : 0;
+          })
+        );
+      }
 
       queryUtils.user.getBountyEngagement.setData(undefined, (old = {}) => ({
         ...old,

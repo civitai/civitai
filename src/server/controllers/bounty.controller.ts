@@ -53,6 +53,7 @@ export const getInfiniteBountiesHandler = async ({
         createdAt: true,
         expiresAt: true,
         type: true,
+        complete: true,
         user: { select: userWithCosmeticsSelect },
         tags: {
           select: {
