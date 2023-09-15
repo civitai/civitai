@@ -8,7 +8,7 @@ import {
   addBenefactorUnitAmountHandler,
   getBountyBenefactorsHandler,
 } from '../controllers/bounty.controller';
-import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
+import { isFlagProtected, middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addBenefactorUnitAmountInputSchema,
@@ -43,20 +43,38 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const bountyRouter = router({
-  getInfinite: publicProcedure.input(getInfiniteBountySchema).query(getInfiniteBountiesHandler),
-  getById: publicProcedure.input(getByIdSchema).query(getBountyHandler),
-  getEntries: publicProcedure.input(getBountyEntriesInputSchema).query(getBountyEntriesHandler),
-  getBenefactors: publicProcedure.input(getByIdSchema).query(getBountyBenefactorsHandler),
-  create: protectedProcedure.input(createBountyInputSchema).mutation(createBountyHandler),
+  getInfinite: publicProcedure
+    .input(getInfiniteBountySchema)
+    .use(isFlagProtected('bounties'))
+    .query(getInfiniteBountiesHandler),
+  getById: publicProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('bounties'))
+    .query(getBountyHandler),
+  getEntries: publicProcedure
+    .input(getBountyEntriesInputSchema)
+    .use(isFlagProtected('bounties'))
+    .query(getBountyEntriesHandler),
+  getBenefactors: publicProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('bounties'))
+    .query(getBountyBenefactorsHandler),
+  create: protectedProcedure
+    .input(createBountyInputSchema)
+    .use(isFlagProtected('bounties'))
+    .mutation(createBountyHandler),
   update: protectedProcedure
     .input(updateBountyInputSchema)
+    .use(isFlagProtected('bounties'))
     .use(isOwnerOrModerator)
     .mutation(updateBountyHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
+    .use(isFlagProtected('bounties'))
     .use(isOwnerOrModerator)
     .mutation(deleteBountyHandler),
   addBenefactorUnitAmount: protectedProcedure
     .input(addBenefactorUnitAmountInputSchema)
+    .use(isFlagProtected('bounties'))
     .mutation(addBenefactorUnitAmountHandler),
 });
