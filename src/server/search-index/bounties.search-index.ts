@@ -125,7 +125,7 @@ type BountyForSearchIndex = {
   description: string;
   createdAt: Date;
   updatedAt: Date;
-  userId: string;
+  userId: number;
   startsAt: Date;
   expiresAt: Date;
   type: BountyType;
