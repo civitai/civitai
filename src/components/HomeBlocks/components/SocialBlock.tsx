@@ -66,7 +66,6 @@ function extractVideoID(url: string) {
 function YoutubeShort({ url }: { url: string }) {
   url = url.includes('/shorts/') ? url.replace('/shorts/', '/watch?v=') : url;
   const videoId = extractVideoID(url);
-  console.log({ videoId });
   return (
     <YouTubeEmbed
       url={url}

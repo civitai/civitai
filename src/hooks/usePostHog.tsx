@@ -36,7 +36,6 @@ const init = (user: CivitaiSessionState | null) => {
   )
     return;
   if (initialized) return posthog;
-  console.log({ initialized });
 
   posthog.init(env.NEXT_PUBLIC_POSTHOG_KEY, {
     api_host: env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://app.posthog.com',

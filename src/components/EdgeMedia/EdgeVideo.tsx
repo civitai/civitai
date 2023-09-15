@@ -62,7 +62,6 @@ export function EdgeVideo({
 // standardized on the HTMLVideoElement type
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const hasAudio = (video: any): boolean => {
-  console.log('audio', video);
   return (
     video.mozHasAudio ||
     Boolean(video.webkitAudioDecodedByteCount) ||
