@@ -25,5 +25,3 @@ export const getServerSideProps = createServerSideProps({
 export default function ModelNew() {
   return <ModelWizard />;
 }
-
-ModelNew.getLayout = (page: React.ReactElement) => <>{page}</>;

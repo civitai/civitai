@@ -297,6 +297,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           .catch((e) => {
             showErrorNotification({
               error: e ?? 'An error occurred while parsing the existing file.',
+              autoClose: false,
             });
           })
           .finally(() => setLoadingZip(false));
@@ -344,6 +345,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       } else {
         showErrorNotification({
           error: new Error('Could not find any valid files in zip.'),
+          autoClose: false,
         });
       }
     }
@@ -476,7 +478,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         autoClose: false,
         disallowClose: true,
         title: 'Creating and uploading archive',
-        message: `Packaging ${imageList.length} images...`,
+        message: `Packaging ${imageList.length} image${imageList.length !== 1 ? 's' : ''}...`,
       });
 
       try {

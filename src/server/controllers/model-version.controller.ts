@@ -152,9 +152,12 @@ export const upsertModelVersionHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    if (input.trainingDetails === null) {
+      input.trainingDetails = undefined;
+    }
     const version = await upsertModelVersion({
       ...input,
-      trainingDetails: input.trainingDetails as any,
+      trainingDetails: input.trainingDetails,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 

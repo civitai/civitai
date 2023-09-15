@@ -48,6 +48,7 @@ export default withAxiom(
         console.error(error);
       }
       handleTRPCError(error);
+      return error;
     },
   })
 );

@@ -1,5 +1,6 @@
 import { TrainingStatus } from '@prisma/client';
 import * as z from 'zod';
+import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail } from '~/server/email/templates';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -158,25 +159,32 @@ async function updateRecords(
     },
   });
 
-  if (status === 'InReview') {
-    const model = await dbWrite.model.findFirst({
-      where: { id: modelVersion.modelId },
-      select: {
-        id: true,
-        name: true,
-        user: {
-          select: {
-            email: true,
-            username: true,
-          },
+  const model = await dbWrite.model.findFirst({
+    where: { id: modelVersion.modelId },
+    select: {
+      id: true,
+      name: true,
+      user: {
+        select: {
+          id: true,
+          email: true,
+          username: true,
         },
       },
-    });
-    if (!model || !model.user) return;
+    },
+  });
+  if (!model || !model.user) return;
 
+  if (status === 'InReview') {
     await trainingCompleteEmail.send({
       model,
       user: model.user,
     });
   }
+
+  await fetch(`${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/training:update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId: model.id, status, fileMetadata: metadata }),
+  });
 }

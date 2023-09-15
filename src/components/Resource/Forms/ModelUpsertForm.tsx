@@ -1,5 +1,11 @@
 import { Alert, Grid, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
-import { CheckpointType, CommercialUse, ModelType, TagTarget } from '@prisma/client';
+import {
+  CheckpointType,
+  CommercialUse,
+  ModelType,
+  ModelUploadType,
+  TagTarget,
+} from '@prisma/client';
 import {
   IconBrush,
   IconCurrencyDollarOff,
@@ -141,6 +147,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                     value: type,
                   }))}
                   onChange={handleModelTypeChange}
+                  disabled={model?.uploadType === ModelUploadType.Trained}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (

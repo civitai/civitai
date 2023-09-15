@@ -174,7 +174,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           baseModel: version.baseModel as BaseModel,
           baseModelType: version.baseModelType as BaseModelType,
           meta: version.meta as ModelVersionMeta,
-          trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined | null,
+          trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
         };
       }),
     };
