@@ -1,4 +1,4 @@
-import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, BadgeProps, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -20,6 +20,14 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 
 const IMAGE_CARD_WIDTH = 332;
 
+const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
+  radius: 'xl',
+  variant: 'filled',
+  px: 8,
+  h: 26,
+  tt: 'capitalize',
+};
+
 export function BountyCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
@@ -35,11 +43,8 @@ export function BountyCard({ data }: Props) {
 
   const countdownBadge = (
     <IconBadge
-      radius="xl"
+      {...sharedBadgeProps}
       color="dark"
-      variant="filled"
-      px={8}
-      h={26}
       icon={<IconClockHour4 size={14} color={theme.colors.success[5]} />}
     >
       <Text color="success.5" size="xs">
@@ -49,13 +54,19 @@ export function BountyCard({ data }: Props) {
   );
 
   const expiredBadge = (
-    <Badge className={classes.chip} color="red" variant="filled" radius="xl">
+    <Badge className={classes.chip} {...sharedBadgeProps} color="red" variant="filled" radius="xl">
       Expired
     </Badge>
   );
 
   const completeBadge = (
-    <Badge className={classes.chip} color="yellow.7" variant="filled" radius="xl">
+    <Badge
+      className={classes.chip}
+      {...sharedBadgeProps}
+      color="yellow.7"
+      variant="filled"
+      radius="xl"
+    >
       Completed
     </Badge>
   );
