@@ -1,18 +1,15 @@
-/* eslint-disable react-hooks/rules-of-hooks */
-import { HubConnectionBuilder, HubConnection, HttpTransportType } from '@microsoft/signalr';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { SignalMessages } from '~/server/common/enums';
-import { env } from '~/env/client.mjs';
 import { useSession } from 'next-auth/react';
-import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
+import { SignalWorker, createSignalWorker } from '~/utils/signals';
 
 type SignalState = {
   connected: boolean;
-  connection: React.RefObject<HubConnection | null>;
+  worker: React.RefObject<SignalWorker | null>;
 };
 
 const SignalContext = createContext<SignalState | null>(null);
@@ -23,36 +20,31 @@ export const useSignalContext = () => {
 };
 
 // Add possible types to this data structure. Leave any for safeguarding.
-type SignalCallback = (data: BuzzUpdateSignalSchema | any) => void;
+type SignalCallback = (data: unknown) => void;
 
 export const useSignalConnection = (message: SignalMessages, cb: SignalCallback) => {
-  const { connected, connection } = useSignalContext();
+  const { connected, worker } = useSignalContext();
 
   useEffect(() => {
-    if (connected && connection.current) {
-      connection.current.on(message, cb);
+    const signalWorker = worker.current;
+    if (connected && signalWorker) {
+      signalWorker.on(message, cb);
     }
 
-    const active = connection.current;
-
     return () => {
-      if (!active) {
-        return;
-      }
-
-      active.off(message, cb);
+      signalWorker?.off(message, cb);
     };
   }, [connected]);
 };
 
 function FakeSignalProvider({ children }: { children: React.ReactNode }) {
-  const connection = useRef<HubConnection | null>(null);
-  const [connected, setConnected] = useState(false);
+  const workerRef = useRef<SignalWorker | null>(null);
+  const [connected] = useState(false);
   return (
     <SignalContext.Provider
       value={{
         connected,
-        connection,
+        worker: workerRef,
       }}
     >
       <SignalNotifications />
@@ -63,54 +55,33 @@ function FakeSignalProvider({ children }: { children: React.ReactNode }) {
 
 function RealSignalProvider({ children }: { children: React.ReactNode }) {
   const session = useSession();
+  const firstRunRef = useRef(true);
+  const workerRef = useRef<SignalWorker | null>(null);
   const [connected, setConnected] = useState(false);
   const { data } = trpc.signals.getAccessToken.useQuery(undefined, {
     enabled: !!session.data?.user,
   });
-  const connection = useRef<HubConnection | null>(null);
-
-  const getConnection = async () => {
-    if (connection.current) return connection.current;
-    if (!data?.accessToken) return null;
-
-    const signalRConnection = new HubConnectionBuilder()
-      .withUrl(`${env.NEXT_PUBLIC_SIGNALS_ENDPOINT}/hub`, {
-        accessTokenFactory: () => data.accessToken, // Set the access token for the connection
-        skipNegotiation: true,
-        transport: HttpTransportType.WebSockets,
-      })
-      .withAutomaticReconnect() // Enable automatic retry
-      .build();
-
-    try {
-      await signalRConnection.start();
-      setConnected(true);
-
-      signalRConnection.onclose(() => {
-        setConnected(false);
-      });
-
-      signalRConnection.onreconnected(() => {
-        setConnected(true);
-      });
-
-      connection.current = signalRConnection;
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
   useEffect(() => {
-    if (data?.accessToken) {
-      getConnection();
+    if (!workerRef.current && data?.accessToken && firstRunRef.current) {
+      firstRunRef.current = false;
+      createSignalWorker({
+        token: data.accessToken,
+        onConnected: () => setConnected(true),
+        onClosed: (message) => setConnected(false),
+        onError: (message) => console.error({ type: 'signal service error', message }),
+      }).then((worker) => {
+        workerRef.current = worker;
+      });
     }
+    return () => workerRef.current?.unload();
   }, [data?.accessToken]);
 
   return (
     <SignalContext.Provider
       value={{
         connected,
-        connection,
+        worker: workerRef,
       }}
     >
       <SignalNotifications />
