@@ -297,6 +297,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           .catch((e) => {
             showErrorNotification({
               error: e ?? 'An error occurred while parsing the existing file.',
+              autoClose: false,
             });
           })
           .finally(() => setLoadingZip(false));
@@ -344,6 +345,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       } else {
         showErrorNotification({
           error: new Error('Could not find any valid files in zip.'),
+          autoClose: false,
         });
       }
     }

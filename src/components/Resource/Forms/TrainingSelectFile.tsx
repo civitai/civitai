@@ -194,6 +194,7 @@ export default function TrainingSelectFile({
       showErrorNotification({
         error: new Error(error.message),
         title: 'Failed to save model version',
+        autoClose: false,
       });
     },
   });
@@ -202,12 +203,14 @@ export default function TrainingSelectFile({
     if (!model || !modelVersion) {
       showErrorNotification({
         error: new Error('Missing model data. Please try again.'),
+        autoClose: false,
       });
       return;
     }
     if (!selectedFile || !selectedFile.length) {
       showErrorNotification({
         error: new Error('Please select a file to be used.'),
+        autoClose: false,
       });
       return;
     }

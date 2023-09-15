@@ -1,4 +1,5 @@
 import { TrainingStatus } from '@prisma/client';
+import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -31,20 +32,36 @@ export const createTrainingRequest = async ({
   if (!env.ORCHESTRATOR_TOKEN) throw throwBadRequestError('Missing ORCHESTRATOR_TOKEN env');
 
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
-    SELECT
-      mv."trainingDetails",
-      m.name "modelName",
-      mf.url "trainingUrl",
-      mf.id "fileId",
-      mf.metadata "fileMetadata"
+    SELECT mv."trainingDetails",
+           m.name      "modelName",
+           mf.url      "trainingUrl",
+           mf.id       "fileId",
+           mf.metadata "fileMetadata"
     FROM "ModelVersion" mv
-    JOIN "Model" m ON m.id = mv."modelId"
-    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-    WHERE m."userId" = ${userId} AND mv.id = ${modelVersionId}
+           JOIN "Model" m ON m.id = mv."modelId"
+           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+    WHERE m."userId" = ${userId}
+      AND mv.id = ${modelVersionId}
   `;
 
   if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
   const modelVersion = modelVersions[0];
+
+  const trainingParams = modelVersion.trainingDetails.params;
+  if (!trainingParams) throw throwBadRequestError('Missing training params');
+  for (const [key, value] of Object.entries(trainingParams)) {
+    const setting = trainingSettings.find((ts) => ts.name === key);
+    console.log(setting);
+    if (!setting) continue;
+    // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
+    if (typeof value === 'number') {
+      if ((setting.min && value < setting.min) || (setting.max && value > setting.max)) {
+        throw throwBadRequestError(
+          `Invalid settings for training: "${key}" is outside allowed min/max.`
+        );
+      }
+    }
+  }
 
   const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
 
@@ -57,7 +74,7 @@ export const createTrainingRequest = async ({
     trainingData: trainingUrl,
     maxRetryAttempt: constants.maxTrainingRetries,
     params: {
-      ...modelVersion.trainingDetails.params,
+      ...trainingParams,
       modelFileId: modelVersion.fileId,
       loraName: modelVersion.modelName,
     },

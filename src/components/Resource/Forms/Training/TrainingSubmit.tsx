@@ -1,4 +1,5 @@
 import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/core';
+import { showNotification } from '@mantine/notifications';
 import { TrainingStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
@@ -78,7 +79,7 @@ const getPrecision = (n: any) => {
   return p;
 };
 
-const trainingSettings: TrainingSettingsType[] = [
+export const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'maxTrainEpochs',
     label: 'Epochs',
@@ -394,13 +395,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchFields]);
 
-  const { isDirty, errors } = form.formState;
+  const { errors } = form.formState;
 
+  // TODO [bw] this should be a new route for modelVersion.update instead
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
-        title: 'Failed to saved model version',
+        title: 'Failed to save model version',
+        autoClose: false,
       });
     },
   });
@@ -411,150 +414,150 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to submit for training',
         error: new Error(error.message),
         reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+        autoClose: false,
       });
     },
   });
 
   const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
     const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
-    if (isDirty) {
-      if (!thisFile) {
-        showErrorNotification({
-          error: new Error('Missing file data, please reupload your images.'),
-        });
-        return;
-      }
 
-      if (form.getValues('targetSteps') > 10000) {
-        showErrorNotification({
-          error: new Error(
-            'Steps are beyond the maximum (10,000). Please lower Epochs or Num Repeats, or increase Train Batch Size.'
-          ),
-          title: 'Too many steps',
-        });
-        return;
-      }
-
-      setAwaitInvalidate(true);
-
-      const { baseModel, ...paramData } = rest;
-
-      const baseModelConvert: BaseModel =
-        baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
-
-      // these top vars appear to be required for upsert, but aren't actually being updated.
-      // only ID should technically be necessary
-      const basicVersionData = {
-        id: thisModelVersion.id,
-        name: thisModelVersion.name,
-        modelId: model.id,
-        trainedWords: [],
-      };
-
-      const versionMutateData: ModelVersionUpsertInput = {
-        ...basicVersionData,
-        baseModel: baseModelConvert,
-        epochs: paramData.maxTrainEpochs,
-        steps: paramData.targetSteps,
-        clipSkip: paramData.clipSkip,
-        trainingStatus: TrainingStatus.Submitted,
-        trainingDetails: {
-          ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
-          baseModel: baseModel,
-          params: paramData,
-        },
-      };
-
-      upsertVersionMutation.mutate(versionMutateData, {
-        async onSuccess(response, request) {
-          queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
-            if (!old) return old;
-
-            const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
-            if (!versionToUpdate) return old;
-
-            versionToUpdate.baseModel = request.baseModel!;
-            versionToUpdate.trainingStatus = request.trainingStatus!;
-            versionToUpdate.trainingDetails = request.trainingDetails!;
-
-            return {
-              ...old,
-              modelVersions: [
-                versionToUpdate,
-                ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
-              ],
-            };
-          });
-          // TODO [bw] don't invalidate, just update
-          await queryUtils.model.getMyTrainingModels.invalidate();
-
-          doTraining.mutate(
-            { modelVersionId: thisModelVersion.id },
-            {
-              onSuccess: async () => {
-                setAwaitInvalidate(false);
-                showSuccessNotification({
-                  title: 'Successfully submitted for training!',
-                  message: 'You will be emailed when training is complete.',
-                });
-                await router.replace(userTrainingDashboardURL);
-              },
-              onError: (error) => {
-                // set the status back to pending
-                upsertVersionMutation.mutate(
-                  {
-                    ...basicVersionData,
-                    baseModel: baseModelConvert,
-                    trainingStatus: TrainingStatus.Pending,
-                  },
-                  {
-                    async onSuccess(response, request) {
-                      queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
-                        if (!old) return old;
-
-                        const versionToUpdate = old.modelVersions.find(
-                          (mv) => mv.id === thisModelVersion.id
-                        );
-                        if (!versionToUpdate) return old;
-
-                        versionToUpdate.trainingStatus = request.trainingStatus!;
-
-                        return {
-                          ...old,
-                          modelVersions: [
-                            versionToUpdate,
-                            ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
-                          ],
-                        };
-                      });
-                      // TODO [bw] don't invalidate, just update
-                      await queryUtils.model.getMyTrainingModels.invalidate();
-                    },
-                    onSettled() {
-                      setAwaitInvalidate(false);
-                      showErrorNotification({
-                        error: new Error(error.message),
-                        title: 'Failed to submit.',
-                      });
-                    },
-                  }
-                );
-              },
-            }
-          );
-        },
-        onError: (error) => {
-          setAwaitInvalidate(false);
-          showErrorNotification({
-            error: new Error(error.message),
-            title: 'Failed to submit.',
-          });
-        },
+    // TODO [bw] we should probably disallow people to get to the training wizard at all when it's not pending
+    if (thisModelVersion.trainingStatus !== TrainingStatus.Pending) {
+      showNotification({
+        message: 'Model was already submitted for training.',
       });
-    } else {
-      // TODO [bw] this won't do anything since there are no changes, change verbiage?
       router.replace(userTrainingDashboardURL);
+      return;
     }
+
+    if (!thisFile) {
+      showErrorNotification({
+        error: new Error('Missing file data, please reupload your images.'),
+        autoClose: false,
+      });
+      return;
+    }
+
+    if (form.getValues('targetSteps') > 10000) {
+      showErrorNotification({
+        error: new Error(
+          'Steps are beyond the maximum (10,000). Please lower Epochs or Num Repeats, or increase Train Batch Size.'
+        ),
+        title: 'Too many steps',
+        autoClose: false,
+      });
+      return;
+    }
+
+    setAwaitInvalidate(true);
+
+    const { baseModel, ...paramData } = rest;
+
+    const baseModelConvert: BaseModel =
+      baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
+
+    // these top vars appear to be required for upsert, but aren't actually being updated.
+    // only ID should technically be necessary
+    const basicVersionData = {
+      id: thisModelVersion.id,
+      name: thisModelVersion.name,
+      modelId: model.id,
+      trainedWords: [],
+    };
+
+    const versionMutateData: ModelVersionUpsertInput = {
+      ...basicVersionData,
+      baseModel: baseModelConvert,
+      epochs: paramData.maxTrainEpochs,
+      steps: paramData.targetSteps,
+      clipSkip: paramData.clipSkip,
+      trainingStatus: TrainingStatus.Submitted,
+      trainingDetails: {
+        ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
+        baseModel: baseModel,
+        params: paramData,
+      },
+    };
+
+    upsertVersionMutation.mutate(versionMutateData, {
+      async onSuccess(response, request) {
+        queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+          if (!old) return old;
+
+          const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
+          if (!versionToUpdate) return old;
+
+          versionToUpdate.baseModel = request.baseModel!;
+          versionToUpdate.trainingStatus = request.trainingStatus!;
+          versionToUpdate.trainingDetails = request.trainingDetails!;
+
+          return {
+            ...old,
+            modelVersions: [
+              versionToUpdate,
+              ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+            ],
+          };
+        });
+        // TODO [bw] don't invalidate, just update
+        await queryUtils.model.getMyTrainingModels.invalidate();
+
+        doTraining.mutate(
+          { modelVersionId: thisModelVersion.id },
+          {
+            onSuccess: async () => {
+              setAwaitInvalidate(false);
+              showSuccessNotification({
+                title: 'Successfully submitted for training!',
+                message: 'You will be emailed when training is complete.',
+              });
+              await router.replace(userTrainingDashboardURL);
+            },
+            onError: () => {
+              // set the status back to pending
+              upsertVersionMutation.mutate(
+                {
+                  ...basicVersionData,
+                  baseModel: baseModelConvert,
+                  trainingStatus: TrainingStatus.Pending,
+                },
+                {
+                  async onSuccess(response, request) {
+                    queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+                      if (!old) return old;
+
+                      const versionToUpdate = old.modelVersions.find(
+                        (mv) => mv.id === thisModelVersion.id
+                      );
+                      if (!versionToUpdate) return old;
+
+                      versionToUpdate.trainingStatus = request.trainingStatus!;
+
+                      return {
+                        ...old,
+                        modelVersions: [
+                          versionToUpdate,
+                          ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+                        ],
+                      };
+                    });
+                    // TODO [bw] don't invalidate, just update
+                    await queryUtils.model.getMyTrainingModels.invalidate();
+                  },
+                  onSettled() {
+                    setAwaitInvalidate(false);
+                  },
+                }
+              );
+            },
+          }
+        );
+      },
+      onError: () => {
+        setAwaitInvalidate(false);
+      },
+    });
   };
 
   return (

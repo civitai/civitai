@@ -40,6 +40,7 @@ import {
 } from '~/server/common/model-helpers';
 import { TrainingDetailsObj, TrainingDetailsParams } from '~/server/schema/model-version.schema';
 import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -130,9 +131,8 @@ const TrainingSignals = () => {
       const queryKey = getQueryKey(trpc.model.getMyTrainingModels);
       queryClient.setQueriesData(
         { queryKey, exact: false },
-        // TODO [bw] can we type "old" better here?
-        produce((old: any) => {
-          const model = old?.items?.find((x: any) => x.id == updated.modelId);
+        produce((old: MyTrainingModelGetAll | undefined) => {
+          const model = old?.items?.find((x) => x.id == updated.modelId);
           const mv = model?.modelVersions[0];
           if (mv) {
             mv.trainingStatus = updated.status;
@@ -189,7 +189,10 @@ export default function UserTrainingModels() {
     }
   };
 
-  const handleDeleteModel = (e: React.MouseEvent<HTMLButtonElement>, model: any[][number]) => {
+  const handleDeleteModel = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    model: MyTrainingModelGetAll['items'][number]
+  ) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.button !== 0) return;
