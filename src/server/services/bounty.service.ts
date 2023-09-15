@@ -21,7 +21,6 @@ import {
   UpdateBountyInput,
 } from '../schema/bounty.schema';
 import { imageSelect } from '../selectors/image.selector';
-import { getUserAccountHandler } from '~/server/controllers/buzz.controller';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createEntityImages, ingestImage } from '~/server/services/image.service';
@@ -67,19 +66,18 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   }
 
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [{ complete: 'asc' }];
-  // TODO.bounty: handle sorting when metrics are in
-  if (sort === BountySort.EndingSoon) orderBy.unshift({ expiresAt: 'asc' });
+  if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
   else if (sort === BountySort.HighestBounty)
-    orderBy.unshift({ rank: { [`unitAmountCount${period}Rank`]: 'asc' } });
+    orderBy.push({ rank: { [`unitAmountCount${period}Rank`]: 'asc' } });
   else if (sort === BountySort.MostContributors)
-    orderBy.unshift({ rank: { [`entryCount${period}Rank`]: 'asc' } });
+    orderBy.push({ rank: { [`entryCount${period}Rank`]: 'asc' } });
   else if (sort === BountySort.MostDiscussed)
-    orderBy.unshift({ rank: { [`commentCount${period}Rank`]: 'asc' } });
+    orderBy.push({ rank: { [`commentCount${period}Rank`]: 'asc' } });
   else if (sort === BountySort.MostLiked)
-    orderBy.unshift({ rank: { [`favoriteCount${period}Rank`]: 'asc' } });
+    orderBy.push({ rank: { [`favoriteCount${period}Rank`]: 'asc' } });
   else if (sort === BountySort.MostTracked)
-    orderBy.unshift({ rank: { [`trackCount${period}Rank`]: 'asc' } });
-  else orderBy.unshift({ createdAt: 'desc' });
+    orderBy.push({ rank: { [`trackCount${period}Rank`]: 'asc' } });
+  else orderBy.push({ createdAt: 'desc' });
 
   return dbRead.bounty.findMany({
     take,

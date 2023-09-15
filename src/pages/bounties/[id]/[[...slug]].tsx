@@ -50,6 +50,7 @@ import {
   IconClockHour4,
   IconHeart,
   IconInfoCircle,
+  IconMessageCircle2,
   IconShare3,
   IconStar,
   IconTrophy,
@@ -57,11 +58,12 @@ import {
 } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useRouter } from 'next/router';
-import { formatCurrencyForDisplay } from '~/utils/number-helpers';
+import { abbreviateNumber, formatCurrencyForDisplay } from '~/utils/number-helpers';
 import {
   getBountyCurrency,
   isMainBenefactor,
   useBountyEngagement,
+  useQueryBounty,
 } from '~/components/Bounty/bounty.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import {
@@ -114,7 +116,7 @@ export default function BountyDetailsPage({
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useIsMobile();
-  const { data: bounty, isLoading } = trpc.bounty.getById.useQuery({ id });
+  const { bounty, loading } = useQueryBounty({ id });
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
@@ -146,9 +148,9 @@ export default function BountyDetailsPage({
     if (bounty?.id) {
       setImages(bounty.images);
     }
-  }, [bounty?.id]);
+  }, [bounty?.id, bounty?.images, setImages]);
 
-  if (isLoading) return <PageLoader />;
+  if (loading) return <PageLoader />;
   if (!bounty) return <NotFound />;
 
   if ((bounty.nsfw || isNsfwImage(mainImage)) && !currentUser) {
@@ -182,7 +184,7 @@ export default function BountyDetailsPage({
               </Title>
               {bounty.complete && (
                 <Tooltip
-                  label={'This bounty has been completed and entries have been awarded'}
+                  label="This bounty has been completed and entries have been awarded"
                   maw={250}
                   multiline
                   withArrow
@@ -220,6 +222,20 @@ export default function BountyDetailsPage({
             <Text color="dimmed" size="sm">
               {formatDate(bounty.startsAt)}
             </Text>
+            {bounty.stats && (
+              <>
+                <Divider orientation="vertical" />
+                <IconBadge {...defaultBadgeProps} icon={<IconViewfinder size={14} />}>
+                  {abbreviateNumber(bounty.stats.trackCountAllTime)}
+                </IconBadge>
+                <IconBadge {...defaultBadgeProps} icon={<IconHeart size={14} />}>
+                  {abbreviateNumber(bounty.stats.favoriteCountAllTime)}
+                </IconBadge>
+                <IconBadge {...defaultBadgeProps} icon={<IconMessageCircle2 size={14} />}>
+                  {abbreviateNumber(bounty.stats.commentCountAllTime)}
+                </IconBadge>
+              </>
+            )}
           </Group>
         </Stack>
         <Grid gutterMd={32} gutterLg={64}>
@@ -349,6 +365,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const isFavorite = !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !!engagements?.Track?.find((id) => id === bounty.id);
   const handleEngagementClick = async (type: BountyEngagementType) => {
+    if (toggling) return;
     await toggle({ type, bountyId: bounty.id });
   };
 

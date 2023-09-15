@@ -63,7 +63,6 @@ export function BountyContextMenu({
         </Menu.Item>
       </Link>
     ) : null,
-    // TODO.bounty: report bounty
     !isOwner || isModerator ? (
       <ReportMenuItem
         key="report"
