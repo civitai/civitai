@@ -458,7 +458,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   const { subscription, ...rest } = user;
   const tier: string | undefined =
-    subscription && subscription.status === 'active'
+    subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
       : undefined;
 
