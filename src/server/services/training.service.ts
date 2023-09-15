@@ -51,7 +51,6 @@ export const createTrainingRequest = async ({
   if (!trainingParams) throw throwBadRequestError('Missing training params');
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
-    console.log(setting);
     if (!setting) continue;
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
     if (typeof value === 'number') {
