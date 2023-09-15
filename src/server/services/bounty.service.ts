@@ -404,7 +404,11 @@ export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] 
   });
 
   const groupedImages = groupBy(
-    connections.map(({ entityId, image }) => ({ ...image, entityId })),
+    connections.map(({ entityId, image }) => ({
+      ...image,
+      tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
+      entityId,
+    })),
     'entityId'
   );
 

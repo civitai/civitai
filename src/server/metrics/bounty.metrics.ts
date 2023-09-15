@@ -1,5 +1,6 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { Prisma } from '@prisma/client';
+import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { bountiesSearchIndex, collectionsSearchIndex } from '~/server/search-index';
 
 export const bountyMetrics = createMetricProcessor({
   name: 'Bounty',
@@ -207,6 +208,19 @@ export const bountyMetrics = createMetricProcessor({
       ON CONFLICT ("bountyId", timeframe) DO UPDATE
         SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "entryCount" = EXCLUDED."entryCount",  "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount";
     `;
+
+    const affected = await db.$queryRaw<{ id: number }[]>`
+      ${recentEngagementSubquery}
+      SELECT DISTINCT
+          r.id
+      FROM recent_engagements r
+      JOIN "Bounty" b ON b.id = r.id
+      WHERE r.id IS NOT NULL
+    `;
+
+    await bountiesSearchIndex.queueUpdate(
+      affected.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   },
   async clearDay({ db }) {
     await db.$executeRaw`
