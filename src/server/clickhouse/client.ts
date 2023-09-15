@@ -67,7 +67,14 @@ export type ReportType = 'Create' | 'StatusChange';
 export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete';
 export type TagEngagementType = 'Hide' | 'Allow';
 export type UserEngagementType = 'Follow' | 'Hide' | 'Delete';
-export type CommentType = 'Model' | 'Image' | 'Post' | 'Comment' | 'Review';
+export type CommentType =
+  | 'Model'
+  | 'Image'
+  | 'Post'
+  | 'Comment'
+  | 'Review'
+  | 'Bounty'
+  | 'BountyEntry';
 export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags';
 export type ImageActivityType = 'Create' | 'Delete' | 'DeleteTOS' | 'Tags' | 'Resources';
