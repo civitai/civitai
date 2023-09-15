@@ -34,11 +34,15 @@ const getConnection = async ({ token }: { token: string }) => {
     .withAutomaticReconnect()
     .build();
 
-  await connection.start();
-  connection.onreconnected(() => emitter.emit('connectionReady', undefined));
-  connection.onclose((error) =>
-    emitter.emit('connectionError', { message: JSON.stringify(error) })
-  );
+  try {
+    await connection.start();
+    connection.onreconnected(() => emitter.emit('connectionReady', undefined));
+    connection.onclose((error) =>
+      emitter.emit('connectionError', { message: JSON.stringify(error) })
+    );
+  } catch (e) {
+    emitter.emit('connectionError', { message: JSON.stringify(e) });
+  }
 
   return connection;
 };

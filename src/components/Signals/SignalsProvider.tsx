@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { SignalMessages } from '~/server/common/enums';
 import { useSession } from 'next-auth/react';
-import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
@@ -21,7 +20,7 @@ export const useSignalContext = () => {
 };
 
 // Add possible types to this data structure. Leave any for safeguarding.
-type SignalCallback = (data: BuzzUpdateSignalSchema | any) => void;
+type SignalCallback = (data: unknown) => void;
 
 export const useSignalConnection = (message: SignalMessages, cb: SignalCallback) => {
   const { connected, worker } = useSignalContext();
@@ -70,6 +69,7 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
         token: data.accessToken,
         onConnected: () => setConnected(true),
         onClosed: (message) => setConnected(false),
+        onError: (message) => console.error({ type: 'signal service error', message }),
       }).then((worker) => {
         workerRef.current = worker;
       });
