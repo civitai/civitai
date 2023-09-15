@@ -83,6 +83,8 @@ export const handleTRPCError = (error: unknown) => {
         message: 'An unexpected error ocurred, please try again later',
         cause: error,
       });
+  } else {
+    throw error;
   }
 };
 

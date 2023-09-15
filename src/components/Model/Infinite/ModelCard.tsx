@@ -27,6 +27,7 @@ import {
   IconTagOff,
   IconDotsVertical,
   IconPlaylistAdd,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
@@ -47,6 +48,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -337,6 +339,24 @@ export function AmbientModelCard({ data, height }: Props) {
       reportImageOption,
     ]);
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
+
+  if (currentUser?.isModerator && env.NEXT_PUBLIC_MODEL_LOOKUP_URL) {
+    contextMenuItems.unshift(
+      <Menu.Item
+        component="a"
+        target="_blank"
+        icon={<IconInfoCircle size={14} stroke={1.5} />}
+        href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
+        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`, '_blank');
+        }}
+      >
+        Lookup Model
+      </Menu.Item>
+    );
+  }
 
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =

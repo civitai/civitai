@@ -43,6 +43,7 @@ import {
   IconCircleMinus,
   IconReload,
   IconPlaylistAdd,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -100,6 +101,7 @@ import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -588,6 +590,16 @@ export default function ModelDetailsV2({
                     )}
                     {currentUser && isModerator && (
                       <>
+                        {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
+                          <Menu.Item
+                            component="a"
+                            target="_blank"
+                            icon={<IconInfoCircle size={14} stroke={1.5} />}
+                            href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
+                          >
+                            Lookup Model
+                          </Menu.Item>
+                        )}
                         {published && (
                           <Menu.Item
                             color="yellow"

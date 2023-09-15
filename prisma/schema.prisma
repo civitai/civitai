@@ -1980,6 +1980,7 @@ enum HomeBlockType {
   Collection
   Announcement
   Leaderboard
+  Social
 }
 
 model HomeBlock {

@@ -8,13 +8,7 @@ export function AddToCollectionMenuItem({ onClick }: Props) {
   return (
     <LoginRedirect reason="add-to-collection">
       <Menu.Item
-        icon={
-          <IconPlaylistAdd
-            size={14}
-            stroke={1.5}
-            color={theme.colors.pink[theme.fn.primaryShade()]}
-          />
-        }
+        icon={<IconPlaylistAdd size={14} stroke={1.5} />}
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();

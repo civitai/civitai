@@ -1,29 +1,23 @@
-import {
-  ActionIcon,
-  Button,
-  Card,
-  createStyles,
-  Divider,
-  Group,
-  Skeleton,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Box, createStyles, Group, Popover, Stack, Text, Title } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
-import { IconArrowRight, IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
-import { Fragment, useCallback, useRef } from 'react';
-import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
-import { LeaderHomeBlockCreatorItem } from '~/components/HomeBlocks/components/LeaderboardHomeBlockCreatorItem';
+import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
+import { useCallback, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { SocialBlock } from '~/components/HomeBlocks/components/SocialBlock';
+import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useMasonryContainerContext } from '~/components/MasonryColumns/MasonryContainer';
+import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { trpc } from '~/utils/trpc';
-
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema };
 
 const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(
   (theme, { columnGap, columnWidth }, getRef) => ({
+    root: {
+      paddingTop: '32px',
+      paddingBottom: '32px',
+    },
+
     carousel: {
       [theme.fn.smallerThan('sm')]: {
         marginRight: -theme.spacing.md,
@@ -98,22 +92,28 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
   })
 );
 
-export const LeaderboardsHomeBlock = ({ ...props }: Props) => {
+export const SocialHomeBlock = ({ ...props }: Props) => {
+  if (!props.metadata.socials?.length) return null;
+
   return (
     <HomeBlockWrapper py={32}>
-      <LeaderboardsHomeBlockContent {...props} />
+      <SocialHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
 };
 
-export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
-  const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery({ id: homeBlockId });
+const SocialHomeBlockContent = ({ metadata }: Props) => {
+  const currentUser = useCurrentUser();
+  const { classes: homeBlockClasses } = useHomeBlockStyles();
+
+  const socialData = metadata.socials ?? [];
+  const itemCount = socialData.length;
   const { columnWidth, columnGap, columnCount } = useMasonryContainerContext();
-  const { classes, cx } = useStyles({
-    columnGap,
-    columnWidth,
-  });
-  const itemCount = homeBlock?.leaderboards?.length ?? 0;
+  const { classes, cx } = useStyles({ columnWidth, columnGap });
+
+  // ---------------------
+  // Snap Scrolling with buttons
+  // ---------------------
   const [{ atStart, atEnd }, setScrollState] = useDebouncedState<{
     atStart: boolean;
     atEnd: boolean;
@@ -147,65 +147,71 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
     [setScrollState]
   );
 
-  const { leaderboards } = homeBlock ?? {};
+  const MetaDataTop = (
+    <Stack spacing="sm">
+      <Group spacing="xs" position="apart">
+        <Group noWrap>
+          <Title className={homeBlockClasses.title} order={1} lineClamp={1}>
+            {metadata.title}{' '}
+          </Title>
+          {!metadata.descriptionAlwaysVisible && currentUser && metadata.description && (
+            <Popover withArrow width={380}>
+              <Popover.Target>
+                <Box
+                  display="inline-block"
+                  sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                  color="white"
+                >
+                  <IconInfoCircle size={20} />
+                </Box>
+              </Popover.Target>
+              <Popover.Dropdown maw="100%">
+                <Text weight={500} size="lg" mb="xs">
+                  {metadata.title}
+                </Text>
+                {metadata.description && (
+                  <Text size="sm" mb="xs">
+                    <ReactMarkdown
+                      allowedElements={['a']}
+                      unwrapDisallowed
+                      className="markdown-content"
+                    >
+                      {metadata.description}
+                    </ReactMarkdown>
+                  </Text>
+                )}
+                <Group spacing={4}>
+                  <SocialLinks />
+                </Group>
+              </Popover.Dropdown>
+            </Popover>
+          )}
+        </Group>
+        <Group spacing={4}>
+          <SocialLinks include={['instagram', 'youtube', 'twitter']} size={36} iconSize={28} />
+        </Group>
+      </Group>
+      {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
+        <Text>
+          <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+            {metadata.description}
+          </ReactMarkdown>
+        </Text>
+      )}
+    </Stack>
+  );
 
   return (
-    <Stack spacing="xl">
-      <div>
-        <HomeBlockHeaderMeta metadata={metadata} />
-      </div>
-
+    <>
+      <Box mb="md" className={classes.meta}>
+        {MetaDataTop}
+      </Box>
       <div className={classes.container}>
         <div className={classes.scrollArea} ref={viewportRef} onScroll={onScroll}>
           <div className={classes.grid}>
-            {isLoading || !leaderboards
-              ? Array.from({ length: 14 }).map((_, index) => (
-                  <Skeleton key={index} width="100%" height={300} />
-                ))
-              : leaderboards.map((leaderboard) => {
-                  const displayedResults = leaderboard.results.slice(0, 4);
-
-                  return (
-                    <Card
-                      key={leaderboard.id}
-                      radius="md"
-                      w="100%"
-                      h="100%"
-                      style={{ scrollSnapAlign: 'start' }}
-                    >
-                      <Group position="apart" align="center">
-                        <Text size="lg">{leaderboard.title}</Text>
-                        <Button
-                          component={NextLink}
-                          href={`/leaderboard/${leaderboard.id}`}
-                          rightIcon={<IconArrowRight size={16} />}
-                          variant="subtle"
-                          size="xs"
-                          compact
-                        >
-                          More
-                        </Button>
-                      </Group>
-                      <Stack mt="md">
-                        {displayedResults.length === 0 && (
-                          <Text color="dimmed">
-                            No results have been published for this leaderboard
-                          </Text>
-                        )}
-                        {displayedResults.map((result, idx) => {
-                          const isLastItem = idx === leaderboard.results.length - 1;
-
-                          return (
-                            <Fragment key={idx}>
-                              <LeaderHomeBlockCreatorItem leaderboard={leaderboard} data={result} />
-                              {!isLastItem && <Divider />}
-                            </Fragment>
-                          );
-                        })}
-                      </Stack>
-                    </Card>
-                  );
-                })}
+            {socialData.map((block) => {
+              return <SocialBlock key={block.url} {...block} />;
+            })}
           </div>
         </div>
         <ActionIcon
@@ -231,6 +237,8 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
           <IconChevronRight />
         </ActionIcon>
       </div>
-    </Stack>
+    </>
   );
 };
+
+type Props = { metadata: HomeBlockMetaSchema };

@@ -4,6 +4,13 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
+const socialBlockTypeSchema = z.enum(['ig-reel', 'ig-post', 'yt-short', 'yt-long', 'tw-post']);
+const socialBlockSchema = z.object({
+  url: z.string().url(),
+  type: socialBlockTypeSchema,
+});
+export type SocialBlockSchema = z.infer<typeof socialBlockSchema>;
+
 export const homeBlockMetaSchema = z
   .object({
     title: z.string(),
@@ -26,6 +33,7 @@ export const homeBlockMetaSchema = z
       ids: z.array(z.number()).optional(),
       limit: z.number().optional(),
     }),
+    socials: z.array(socialBlockSchema),
     link: z.string(),
     linkText: z.string(),
   })

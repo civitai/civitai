@@ -117,6 +117,8 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_POSTHOG_HOST: z.string().optional(),
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
   NEXT_PUBLIC_USER_LOOKUP_URL: z.string().optional(),
+  NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
+  NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
 });
 
 /**
@@ -143,4 +145,6 @@ export const clientEnv = {
   NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
   NEXT_PUBLIC_USER_LOOKUP_URL: process.env.NEXT_PUBLIC_USER_LOOKUP_URL,
+  NEXT_PUBLIC_MODEL_LOOKUP_URL: process.env.NEXT_PUBLIC_MODEL_LOOKUP_URL,
+  NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
 };
