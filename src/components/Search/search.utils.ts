@@ -233,3 +233,80 @@ export const applyUserPreferencesCollections = <T>({
 
   return filtered as T[];
 };
+
+export const applyUserPreferencesBounties = <T>({
+  items,
+  currentUserId,
+  hiddenImages,
+  hiddenUsers,
+  hiddenTags,
+}: {
+  items: {
+    id: number;
+    userId?: number;
+    user?: {
+      id: number;
+    } | null;
+    tags?:
+      | {
+          id: number;
+        }[]
+      | number[]
+      | null;
+    images: {
+      id: number;
+      tags?:
+        | {
+            id: number;
+          }[]
+        | number[]
+        | null;
+    }[];
+  }[];
+  hiddenImages: Map<number, boolean>;
+  hiddenUsers: Map<number, boolean>;
+  hiddenTags: Map<number, boolean>;
+  currentUserId?: number | null;
+}) => {
+  const filtered = items
+    .filter((x) => {
+      const userId = x.user?.id || x.userId;
+      if (userId === currentUserId) return true;
+      if (userId && hiddenUsers.get(userId)) return false;
+
+      for (const tag of x.tags ?? []) {
+        if (typeof tag === 'number') {
+          if (hiddenTags.get(tag)) return false;
+        } else {
+          if (hiddenTags.get(tag.id)) return false;
+        }
+      }
+
+      return true;
+    })
+    .map(({ images, ...x }) => {
+      const filteredImages = images?.filter((i) => {
+        if (hiddenImages.get(i.id)) return false;
+
+        for (const tag of i.tags ?? []) {
+          if (typeof tag === 'number') {
+            if (hiddenTags.get(tag)) return false;
+          } else {
+            if (hiddenTags.get(tag.id)) return false;
+          }
+        }
+
+        return true;
+      });
+
+      if (!filteredImages?.length) return null;
+
+      return {
+        ...x,
+        images: filteredImages,
+      };
+    })
+    .filter(isDefined);
+
+  return filtered as T[];
+};

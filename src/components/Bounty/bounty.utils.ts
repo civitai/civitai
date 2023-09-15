@@ -16,6 +16,9 @@ import dayjs from 'dayjs';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { TRPCClientError } from '@trpc/client';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { applyUserPreferencesBounties } from '~/components/Search/search.utils';
+import { BountyGetAll } from '~/types/router';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -83,8 +86,25 @@ export const useQueryBounties = (
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     ...options,
   });
+  const currentUser = useCurrentUser();
+  const {
+    images: hiddenImages,
+    tags: hiddenTags,
+    users: hiddenUsers,
+    isLoading: isLoadingHidden,
+  } = useHiddenPreferencesContext();
 
-  const bounties = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
+  const bounties = useMemo(() => {
+    if (isLoadingHidden) return [];
+    const items = data?.pages.flatMap((x) => x.items) ?? [];
+    return applyUserPreferencesBounties<BountyGetAll[number]>({
+      items,
+      currentUserId: currentUser?.id,
+      hiddenImages,
+      hiddenTags,
+      hiddenUsers,
+    });
+  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
 
   return { data, bounties, ...rest };
 };

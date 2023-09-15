@@ -20,7 +20,7 @@ export function HiddenTagsSection() {
   const blockedTags = hiddenTags.filter((x) => !moderationTags.includes(x.id));
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
-    entityType: ['Model'],
+    entityType: ['Model', 'Bounty'],
     query: debouncedSearch.toLowerCase().trim(),
   });
   const modelTags =

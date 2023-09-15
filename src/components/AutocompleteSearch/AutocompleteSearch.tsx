@@ -40,6 +40,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import {
   applyUserPreferencesArticles,
+  applyUserPreferencesBounties,
   applyUserPreferencesCollections,
   applyUserPreferencesImages,
   applyUserPreferencesModels,
@@ -222,7 +223,10 @@ const AutocompleteSearchContent = forwardRef<{ focus: () => void }, Props & { in
           items: hits as unknown as CollectionSearchIndexRecord[],
         });
       } else if (indexName === 'bounties') {
-        filteredResults = hits as unknown as BountySearchIndexRecord[];
+        filteredResults = applyUserPreferencesBounties({
+          ...opts,
+          items: hits as unknown as BountySearchIndexRecord[],
+        });
       } else {
         filteredResults = [];
       }
