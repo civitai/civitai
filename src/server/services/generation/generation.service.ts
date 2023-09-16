@@ -269,6 +269,8 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
   const { additionalResourceTypes, aspectRatios } = getGenerationConfig(params.baseModel);
+  if (params.aspectRatio.includes('x'))
+    throw throwBadRequestError('Invalid size. Please select your size and try again');
   const { height, width } = aspectRatios[Number(params.aspectRatio)];
 
   // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
@@ -285,7 +287,7 @@ export const createGenerationRequest = async ({
     }, {} as { [key: string]: object });
 
   const negativePrompts = [negativePrompt ?? ''];
-  if (!nsfw) {
+  if (!nsfw && !isSDXL) {
     for (const { id, triggerWord } of safeNegatives) {
       additionalNetworks[`@civitai/${id}`] = {
         triggerWord,

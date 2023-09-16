@@ -26,6 +26,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   InputNumber,
   InputNumberSlider,
@@ -57,6 +58,7 @@ export function GenerateFormView({
   onSubmit: (data: GenerateFormModel) => void;
 }) {
   const { classes } = useStyles();
+  const currentUser = useCurrentUser();
   const { formState } = form;
   const { isSubmitting } = formState;
 
@@ -160,10 +162,12 @@ export function GenerateFormView({
                       </Stack>
 
                       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
-                      <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+                      {!isSDXL && (
+                        <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+                      )}
                     </Stack>
                   </Card>
-                  <Card {...sharedCardProps}>
+                  <Card {...sharedCardProps} style={{ overflow: 'visible' }}>
                     <Stack>
                       <Stack spacing={0}>
                         <Input.Label>Aspect Ratio</Input.Label>
@@ -290,6 +294,7 @@ export function GenerateFormView({
                   size="lg"
                   loading={isSubmitting}
                   className={classes.generateButtonButton}
+                  disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
                 >
                   Generate
                 </Button>
@@ -323,6 +328,28 @@ export function GenerateFormView({
                         our survey
                       </Text>
                       .
+                    </Text>
+                  }
+                />
+              )}
+              {isSDXL && (
+                <DismissibleAlert
+                  id="sdxl-preview"
+                  title="SDXL Generation Preview"
+                  content={
+                    <Text>
+                      SDXL is currently in early preview. You must be{' '}
+                      <Text
+                        component="a"
+                        td="underline"
+                        href="/pricing"
+                        variant="link"
+                        target="_blank"
+                      >
+                        a Supporter
+                      </Text>{' '}
+                      to generate SDXL images. LoRA support has been postponed. Stay tuned for more
+                      updates.
                     </Text>
                   }
                 />
