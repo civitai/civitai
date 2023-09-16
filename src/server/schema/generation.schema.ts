@@ -64,6 +64,7 @@ const baseGenerationParamsSchema = z.object({
   clipSkip: z.coerce.number(),
   quantity: z.coerce.number(),
   nsfw: z.boolean().optional(),
+  aspectRatio: z.string(),
 });
 
 const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
@@ -106,11 +107,6 @@ export const generateFormSchema = generationFormShapeSchema
     model: generationResourceSchema,
     resources: generationResourceSchema.array().max(9).default([]),
     vae: generationResourceSchema.optional(),
-    aspectRatio: z.string().superRefine((x, ctx) => {
-      const [width, height] = x.split('x');
-      if (isNaN(width as any) || isNaN(height as any))
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid aspect ratio' });
-    }),
   });
 
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
@@ -124,10 +120,7 @@ export const createGenerationRequestSchema = z.object({
     })
     .array()
     .max(10),
-  params: sharedGenerationParamsSchema.extend({
-    height: z.number(),
-    width: z.number(),
-  }),
+  params: sharedGenerationParamsSchema,
 });
 
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;

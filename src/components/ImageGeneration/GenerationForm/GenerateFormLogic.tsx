@@ -87,8 +87,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
 
   const { mutateAsync } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
-    const { model, resources = [], vae, aspectRatio, ...params } = data;
-    const [width, height] = aspectRatio.split('x').map(Number);
+    const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources].map((resource) => {
       if (resource.modelType === ModelType.TextualInversion)
         return { ...resource, triggerWord: resource.trainedWords[0] };
@@ -98,11 +97,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
 
     await mutateAsync({
       resources: _resources.filter((x) => x.covered !== false),
-      params: {
-        ...params,
-        width,
-        height,
-      },
+      params,
     });
 
     onSuccess?.();

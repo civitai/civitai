@@ -264,7 +264,7 @@ export const generation = {
     seed: undefined,
     clipSkip: 2,
     quantity: 4,
-    aspectRatio: '512x512',
+    aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
   },

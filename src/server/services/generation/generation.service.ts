@@ -268,7 +268,10 @@ export const createGenerationRequest = async ({
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
-  const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
+  const { additionalResourceTypes, aspectRatios } = getGenerationConfig(params.baseModel);
+  const { height, width } = aspectRatios[Number(params.aspectRatio)];
+
+  // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
 
   const additionalNetworks = resources
     .filter((x) => additionalResourceTypes.includes(x.modelType as any))
@@ -312,8 +315,8 @@ export const createGenerationRequest = async ({
         scheduler: samplersToSchedulers[params.sampler as Sampler],
         steps: params.steps,
         cfgScale: params.cfgScale,
-        width: params.width,
-        height: params.height,
+        height,
+        width,
         seed: params.seed,
         clipSkip: params.clipSkip,
       },

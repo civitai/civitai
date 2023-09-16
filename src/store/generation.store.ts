@@ -120,8 +120,10 @@ const formatGenerationData = (
   type: RunType,
   { resources, params }: Generation.Data
 ): Partial<GenerateFormModel> => {
-  const aspectRatio = getClosestAspectRatio(params?.width, params?.height, params?.baseModel);
-
+  const aspectRatio =
+    params?.width && params.height
+      ? getClosestAspectRatio(params?.width, params?.height, params?.baseModel)
+      : undefined;
   if (params?.sampler)
     params.sampler = generation.samplers.includes(params.sampler as any)
       ? params.sampler
@@ -139,6 +141,7 @@ const formatGenerationData = (
     const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
     return { ...formData, baseModel, model, resources };
   } else {
+    // const aspectRatio = getClosestAspectRatio(params?.width, params?.height, params?.baseModel);
     const additionalResourceTypes = getGenerationConfig(params?.baseModel).additionalResourceTypes;
     const additionalResources = resources.filter((x) =>
       additionalResourceTypes.includes(x.modelType as any)
@@ -154,6 +157,7 @@ const formatGenerationData = (
 
     return {
       ...formData,
+      // aspectRatio,
       model,
       vae,
       baseModel,
@@ -168,8 +172,6 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
   const ratios = aspectRatios.map((x) => x.width / x.height);
   const closest = findClosest(ratios, width / height);
-  console.log({ closest });
   const index = ratios.indexOf(closest);
-  const supported = aspectRatios[index] ?? { width: 512, height: 512 };
-  return `${supported.width}x${supported.height}`;
+  return `${index ?? 0}`;
 };

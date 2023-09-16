@@ -427,7 +427,7 @@ const getBaseModels = (data: DeepPartial<GenerateFormModel>) => {
 
 const getAspectRatioControls = (baseModel?: string) => {
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  return aspectRatios.map(({ label, width, height }) => ({
+  return aspectRatios.map(({ label, width, height }, index) => ({
     label: (
       <Stack spacing={2}>
         <Center>
@@ -442,7 +442,7 @@ const getAspectRatioControls = (baseModel?: string) => {
         </Stack>
       </Stack>
     ),
-    value: `${width}x${height}`,
+    value: `${index}`,
   }));
 };
 
