@@ -7,7 +7,7 @@ import { useCreateGenerationRequest } from '~/components/ImageGeneration/utils/g
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import { uniqBy } from 'lodash-es';
-import { generation } from '~/server/common/constants';
+import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
@@ -20,7 +20,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       ...generation.defaultValues,
       nsfw: currentUser?.showNsfw,
     },
-    shouldUnregister: true,
+    shouldUnregister: false,
   });
 
   const runData = useGenerationStore((state) => state.data);
@@ -28,20 +28,38 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   useEffect(() => {
     if (runData) {
       const { data, type } = runData;
+      const previousData = form.getValues();
       const getFormData = () => {
-        const previousData = form.getValues();
         switch (type) {
           case 'remix': // 'remix' will return the formatted generation data as is
             return { ...generation.defaultValues, ...data };
           case 'run': // 'run' will keep previous relevant data and add new resources to existing resources
+            const baseModel = data.baseModel as BaseModelSetType | undefined;
             const resources = (previousData.resources ?? []).concat(data.resources ?? []);
+            const uniqueResources = !!resources.length ? uniqBy(resources, 'id') : undefined;
+            const filteredResources = baseModel
+              ? uniqueResources?.filter((x) =>
+                  baseModelSets[baseModel].includes(x.baseModel as BaseModel)
+                )
+              : uniqueResources;
+            const parsedModel = data.model ?? previousData.model;
+            const [model] = parsedModel
+              ? baseModel
+                ? [parsedModel].filter((x) =>
+                    baseModelSets[baseModel].includes(x.baseModel as BaseModel)
+                  )
+                : [parsedModel]
+              : [];
+
             return {
               ...previousData,
               ...data,
-              resources: !!resources.length ? uniqBy(resources, 'id') : undefined,
+              model,
+              resources: filteredResources,
             };
-          case 'random': // TODO - handle the case where random includes resources
           case 'params':
+            return { ...previousData, ...data };
+          case 'random': // TODO - handle the case where random includes resources
             return { ...previousData, ...data };
         }
       };
@@ -66,12 +84,6 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       generationStore.clearData();
     };
   }, [runData]); //eslint-disable-line
-
-  // useEffect(() => {
-  //   return () => {
-  //     console.log('clear');
-  //   };
-  // }, []);
 
   const { mutateAsync } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {

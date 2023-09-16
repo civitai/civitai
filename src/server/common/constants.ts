@@ -180,7 +180,10 @@ export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
-export const baseModelSets: Record<string, BaseModel[]> = {
+
+export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL'] as const;
+export type BaseModelSetType = (typeof baseModelSetTypes)[number];
+export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0'],
@@ -248,12 +251,6 @@ export const samplerMap = new Map<Sampler, string[]>([
 
 export const generation = {
   formStoreKey: 'generation-form',
-  aspectRatios: [
-    { label: 'Square', width: 512, height: 512 },
-    { label: 'Landscape', width: 768, height: 512 },
-    { label: 'Portrait', width: 512, height: 768 },
-  ],
-  additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion],
   samplers: constants.samplers.filter((sampler) =>
     ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].includes(
       sampler
@@ -271,6 +268,30 @@ export const generation = {
     prompt: '',
     negativePrompt: '',
   },
+};
+
+export const generationConfig = {
+  SD1: {
+    additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion],
+    aspectRatios: [
+      { label: 'Square', width: 512, height: 512 },
+      { label: 'Landscape', width: 768, height: 512 },
+      { label: 'Portrait', width: 512, height: 768 },
+    ],
+  },
+  SDXL: {
+    additionalResourceTypes: [ModelType.LORA],
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+  },
+};
+
+export const getGenerationConfig = (baseModel?: string) => {
+  const key = baseModel as keyof typeof generationConfig | undefined;
+  return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
 
 export const MODELS_SEARCH_INDEX = 'models_v2';

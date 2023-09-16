@@ -30,6 +30,7 @@ export namespace Generation {
     cfgScale: number;
     seed?: number;
     clipSkip: number;
+    baseModel?: string;
   };
 
   export type Asset = {

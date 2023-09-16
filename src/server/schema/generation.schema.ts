@@ -1,6 +1,12 @@
 import { ModelType } from '@prisma/client';
 import { z } from 'zod';
-import { BaseModel, Sampler, constants, generation } from '~/server/common/constants';
+import {
+  BaseModel,
+  Sampler,
+  constants,
+  generation,
+  baseModelSetTypes,
+} from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/metadata/audit';
 
@@ -83,6 +89,7 @@ const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(10),
   nsfw: z.boolean().optional(),
+  baseModel: z.string().optional(),
 });
 
 export const generationFormShapeSchema = baseGenerationParamsSchema.extend({

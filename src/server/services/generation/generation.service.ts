@@ -27,7 +27,13 @@ import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
 import { env } from '~/env/server.mjs';
 
-import { BaseModel, baseModelSets, generation, Sampler } from '~/server/common/constants';
+import {
+  BaseModel,
+  baseModelSets,
+  BaseModelSetType,
+  getGenerationConfig,
+  Sampler,
+} from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { chunk, uniqBy } from 'lodash-es';
 import { modelsSearchIndex } from '~/server/search-index';
@@ -137,6 +143,7 @@ export const getGenerationResources = async ({
   }));
 };
 
+const baseModelSetsEntries = Object.entries(baseModelSets);
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
   const modelVersionIds = requests
     .map((x) => parseModelVersionId(x.job.model))
@@ -149,6 +156,13 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
     where: { id: { in: modelVersionIds } },
     select: generationResourceSelect,
   });
+
+  const checkpoint = modelVersions.find((x) => x.model.type === 'Checkpoint');
+  const baseModel = checkpoint
+    ? (baseModelSetsEntries.find(([, v]) =>
+        v.includes(checkpoint.baseModel as BaseModel)
+      )?.[0] as BaseModelSetType)
+    : undefined;
 
   return requests.map((x): Generation.Request => {
     const { additionalNetworks = {}, params, ...job } = x.job;
@@ -170,6 +184,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       queuePosition: x.queuePosition,
       params: {
         ...params,
+        baseModel,
         negativePrompt,
         seed: params.seed === -1 ? undefined : params.seed,
       },
@@ -237,17 +252,26 @@ const samplersToSchedulers: Record<Sampler, string> = {
   UniPC: 'UniPC',
 };
 
+const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
+  SD1: 'SD_1_5',
+  SD2: undefined,
+  SDXL: 'SDXL',
+};
+
 export const createGenerationRequest = async ({
   userId,
   resources,
   params: { nsfw, negativePrompt, ...params },
 }: CreateGenerationRequestInput & { userId: number }) => {
+  const isSDXL = params.baseModel === 'SDXL';
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
+  const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
+
   const additionalNetworks = resources
-    .filter((x) => generation.additionalResourceTypes.includes(x.modelType as any))
+    .filter((x) => additionalResourceTypes.includes(x.modelType as any))
     .map((x) => {
       if (x.modelType === ModelType.LORA && !x.strength) x.strength = 1;
       return x;
@@ -269,7 +293,7 @@ export const createGenerationRequest = async ({
   }
 
   const vae = resources.find((x) => x.modelType === ModelType.VAE);
-  if (vae) {
+  if (vae && !isSDXL) {
     additionalNetworks[`@civitai/${vae.id}`] = {
       type: ModelType.VAE,
     };
@@ -279,6 +303,7 @@ export const createGenerationRequest = async ({
     userId,
     job: {
       model: `@civitai/${checkpoint.id}`,
+      baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
       quantity: params.quantity,
       additionalNetworks,
       params: {
@@ -476,9 +501,13 @@ export const getResourceGenerationData = async (id: number): Promise<Generation.
     });
     if (vae) resources.push({ ...vae, vaeId: null });
   }
+  const baseModel = baseModelSetsEntries.find(([, v]) =>
+    v.includes(resource.baseModel as BaseModel)
+  )?.[0] as BaseModelSetType;
   return {
     resources: resources.map(mapGenerationResource),
     params: {
+      baseModel,
       clipSkip: resource.clipSkip ?? undefined,
     },
   };
@@ -539,6 +568,13 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     }
   }
 
+  const model = deduped.find((x) => x.modelType === 'Checkpoint');
+  const baseModel = model
+    ? (baseModelSetsEntries.find(([, v]) =>
+        v.includes(model.baseModel as BaseModel)
+      )?.[0] as BaseModelSetType)
+    : undefined;
+
   return {
     resources: deduped.map((resource) => ({
       ...resource,
@@ -549,6 +585,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       clipSkip,
       height: image.height ?? undefined,
       width: image.width ?? undefined,
+      baseModel,
     },
   };
 };
