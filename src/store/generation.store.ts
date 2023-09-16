@@ -2,7 +2,13 @@ import { ModelType } from '@prisma/client';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { generation } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelSetType,
+  baseModelSets,
+  generation,
+  getGenerationConfig,
+} from '~/server/common/constants';
 import { GenerateFormModel, GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { showErrorNotification } from '~/utils/notifications';
@@ -51,15 +57,19 @@ export const useGenerationStore = create<GenerationState>()(
           state.view = view;
         }),
       setParams: (params) => {
-        const data = formatGenerationData({ resources: [], params });
+        const data = formatGenerationData('params', { resources: [], params });
+
         set((state) => {
-          state.data = { type: 'params', data };
+          state.data = {
+            type: 'params',
+            data: { ...data },
+          };
         });
       },
       setData: ({ data, type }) =>
         set((state) => {
           state.view = 'generate';
-          state.data = { type, data: formatGenerationData(data) };
+          state.data = { type, data: formatGenerationData(type, data) };
         }),
       randomize: async (includeResources) => {
         const data = await getGenerationData({ type: 'random', includeResources });
@@ -105,38 +115,63 @@ const getGenerationData = async (input: GetGenerationDataInput) => {
   }
 };
 
-const formatGenerationData = ({
-  resources,
-  params,
-}: Generation.Data): Partial<GenerateFormModel> => {
-  const additionalResources = resources.filter((x) =>
-    generation.additionalResourceTypes.includes(x.modelType as any)
-  );
-
+const baseModelSetsEntries = Object.entries(baseModelSets);
+const formatGenerationData = (
+  type: RunType,
+  { resources, params }: Generation.Data
+): Partial<GenerateFormModel> => {
   const aspectRatio =
-    params?.height && params.width ? getClosestAspectRatio(params.width, params.height) : undefined;
+    params?.width && params.height
+      ? getClosestAspectRatio(params?.width, params?.height, params?.baseModel)
+      : undefined;
+  if (params?.sampler)
+    params.sampler = generation.samplers.includes(params.sampler as any)
+      ? params.sampler
+      : undefined;
 
-  let sampler = params?.sampler;
-  if (sampler) sampler = generation.samplers.includes(sampler as any) ? sampler : undefined;
+  const formData: Partial<GenerateFormModel> = { ...params, aspectRatio };
+  if (type === 'params') return formData;
+  else if (type === 'run') {
+    const resource = resources[0];
+    const baseModel = resource
+      ? (baseModelSetsEntries.find(([, v]) =>
+          v.includes(resource.baseModel as BaseModel)
+        )?.[0] as BaseModelSetType)
+      : undefined;
+    const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
+    return { ...formData, baseModel, model, resources };
+  } else {
+    // const aspectRatio = getClosestAspectRatio(params?.width, params?.height, params?.baseModel);
+    const additionalResourceTypes = getGenerationConfig(params?.baseModel).additionalResourceTypes;
+    const additionalResources = resources.filter((x) =>
+      additionalResourceTypes.includes(x.modelType as any)
+    );
 
-  const formData: Partial<GenerateFormModel> = {
-    model: resources.find((x) => x.modelType === ModelType.Checkpoint),
-    vae: resources.find((x) => x.modelType === ModelType.VAE),
-    aspectRatio,
-    ...params,
-    sampler,
-    // seed: params?.seed === -1 ? undefined : params?.seed,
-  };
-  return {
-    ...removeEmpty(formData),
-    resources: !!additionalResources.length ? additionalResources : undefined,
-  };
+    const model = resources.find((x) => x.modelType === ModelType.Checkpoint);
+    const vae = resources.find((x) => x.modelType === ModelType.VAE);
+    const baseModel = model
+      ? (baseModelSetsEntries.find(([, v]) =>
+          v.includes(model.baseModel as BaseModel)
+        )?.[0] as BaseModelSetType)
+      : undefined;
+
+    return {
+      ...formData,
+      // aspectRatio,
+      model,
+      vae,
+      baseModel,
+      resources: !!additionalResources.length ? additionalResources : undefined,
+    };
+  }
 };
 
-export const getClosestAspectRatio = (width = 512, height = 512) => {
-  const ratios = generation.aspectRatios.map((x) => x.width / x.height);
+export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
+  width = width ?? baseModel === 'SDXL' ? 1024 : 512;
+  height = height ?? baseModel === 'SDXL' ? 1024 : 512;
+  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+  const ratios = aspectRatios.map((x) => x.width / x.height);
   const closest = findClosest(ratios, width / height);
   const index = ratios.indexOf(closest);
-  const supported = generation.aspectRatios[index] ?? { width: 512, height: 512 };
-  return `${supported.width}x${supported.height}`;
+  return `${index ?? 0}`;
 };

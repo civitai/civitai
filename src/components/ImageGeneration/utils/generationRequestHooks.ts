@@ -70,7 +70,7 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
   useEffect(() => {
     update((old) => {
       if (!old) return;
-      requests: for (const request of requests) {
+      for (const request of requests) {
         for (const page of old.pages) {
           const index = page.items.findIndex((x) => x.id === request.id);
           if (index > -1) {
@@ -83,7 +83,6 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
               const match = request.images?.find((image) => image.hash === x.hash);
               return { ...x, ...match };
             });
-            break requests;
           }
         }
       }

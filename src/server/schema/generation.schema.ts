@@ -1,6 +1,12 @@
 import { ModelType } from '@prisma/client';
 import { z } from 'zod';
-import { BaseModel, Sampler, constants, generation } from '~/server/common/constants';
+import {
+  BaseModel,
+  Sampler,
+  constants,
+  generation,
+  baseModelSetTypes,
+} from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/metadata/audit';
 
@@ -58,6 +64,7 @@ const baseGenerationParamsSchema = z.object({
   clipSkip: z.coerce.number(),
   quantity: z.coerce.number(),
   nsfw: z.boolean().optional(),
+  aspectRatio: z.string(),
 });
 
 const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
@@ -83,6 +90,7 @@ const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().max(10),
   nsfw: z.boolean().optional(),
+  baseModel: z.string().optional(),
 });
 
 export const generationFormShapeSchema = baseGenerationParamsSchema.extend({
@@ -99,11 +107,6 @@ export const generateFormSchema = generationFormShapeSchema
     model: generationResourceSchema,
     resources: generationResourceSchema.array().max(9).default([]),
     vae: generationResourceSchema.optional(),
-    aspectRatio: z.string().superRefine((x, ctx) => {
-      const [width, height] = x.split('x');
-      if (isNaN(width as any) || isNaN(height as any))
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid aspect ratio' });
-    }),
   });
 
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
@@ -117,10 +120,7 @@ export const createGenerationRequestSchema = z.object({
     })
     .array()
     .max(10),
-  params: sharedGenerationParamsSchema.extend({
-    height: z.number(),
-    width: z.number(),
-  }),
+  params: sharedGenerationParamsSchema,
 });
 
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
