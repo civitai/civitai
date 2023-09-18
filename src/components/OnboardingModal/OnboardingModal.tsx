@@ -219,35 +219,37 @@ export default function OnboardingModal() {
                     }
                     withAsterisk
                   />
-                  <InputText
-                    size="lg"
-                    name="userReferralCode"
-                    label="Referral Code"
-                    type="text"
-                    clearable={false}
-                    error={
-                      userReferralCode && userReferralCode.length <= 3
-                        ? 'Referral codes must be longer than 3 characters'
-                        : undefined
-                    }
-                    rightSection={
-                      userReferralCode && userReferralCode.length > 3 && referrerLoading ? (
-                        <Loader size="sm" mr="xs" />
-                      ) : (
-                        userReferralCode &&
-                        userReferralCode.length > 3 && (
-                          <ThemeIcon
-                            variant="outline"
-                            color={referrer ? 'green' : 'red'}
-                            radius="xl"
-                            mr="xs"
-                          >
-                            {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
-                          </ThemeIcon>
+                  {!user?.referral && (
+                    <InputText
+                      size="lg"
+                      name="userReferralCode"
+                      label="Referral Code"
+                      type="text"
+                      clearable={false}
+                      error={
+                        userReferralCode && userReferralCode.length <= 3
+                          ? 'Referral codes must be longer than 3 characters'
+                          : undefined
+                      }
+                      rightSection={
+                        userReferralCode && userReferralCode.length > 3 && referrerLoading ? (
+                          <Loader size="sm" mr="xs" />
+                        ) : (
+                          userReferralCode &&
+                          userReferralCode.length > 3 && (
+                            <ThemeIcon
+                              variant="outline"
+                              color={referrer ? 'green' : 'red'}
+                              radius="xl"
+                              mr="xs"
+                            >
+                              {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
+                            </ThemeIcon>
+                          )
                         )
-                      )
-                    }
-                  />
+                      }
+                    />
+                  )}
 
                   {error && (
                     <Alert color="red" variant="light">

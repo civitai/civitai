@@ -455,6 +455,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     where,
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
+      referral: { select: { id: true } },
     },
   });
 
