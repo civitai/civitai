@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
+import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 export const clickhouse = shouldConnect
@@ -110,6 +111,9 @@ export type BountyCreateActivity = {
     type: BountyType;
     nsfw: boolean;
     poi: boolean;
+    minBenefactorUnitAmount: number;
+    entryLimit: number;
+    details?: Partial<BountyDetailsSchema>;
     attachments?: boolean;
     tags?: boolean;
   };
