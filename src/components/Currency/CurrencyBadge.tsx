@@ -24,6 +24,7 @@ export function CurrencyBadge({
   currency,
   formatter,
   displayCurrency = true,
+  sx,
   ...badgeProps
 }: Props) {
   const value = formatCurrencyForDisplay(unitAmount, currency);
@@ -43,6 +44,7 @@ export function CurrencyBadge({
         fontWeight: 600,
         lineHeight: 1.5,
         color: config.color ? config.color(theme) : theme.colors.accent[5],
+        ...(sx ? (typeof sx === 'function' ? sx(theme) : sx) : {}),
       }}
       {...badgeProps}
     >

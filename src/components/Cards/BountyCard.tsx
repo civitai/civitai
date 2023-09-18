@@ -165,6 +165,8 @@ export function BountyCard({ data }: Props) {
               radius="xl"
               px={8}
               variant="filled"
+              className={classes.chip}
+              sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
             />
             <Badge
               className={classes.chip}
