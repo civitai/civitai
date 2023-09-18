@@ -16,6 +16,7 @@ import {
 } from '../utils/errorHandling';
 import {
   AddBenefactorUnitAmountInputSchema,
+  BountyDetailsSchema,
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
@@ -196,7 +197,7 @@ export const createBounty = async ({
     return bounty;
   });
 
-  return bounty;
+  return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
 
 export const updateBountyById = async ({ id, files, tags, ...data }: UpdateBountyInput) => {

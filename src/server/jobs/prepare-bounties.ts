@@ -5,6 +5,8 @@ import dayjs from 'dayjs';
 import { Currency } from '@prisma/client';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { Tracker } from '../clickhouse/client';
+import { handleTrackError } from '../utils/errorHandling';
 
 const log = createLogger('bounties', 'blue');
 
@@ -23,6 +25,7 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
       userId: true,
     },
   });
+  const tracker = new Tracker();
 
   // Get latest results for date
   for (const { id, userId } of bounties) {
@@ -95,6 +98,7 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
       await dbWrite.$executeRawUnsafe(` 
         UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};
       `);
+      tracker.bounty({ type: 'Expire', data: { id } }).catch(handleTrackError);
       continue;
     }
 
@@ -128,6 +132,12 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
         UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};
       `),
     ]);
+    tracker
+      .bountyEntry({
+        type: 'Award',
+        data: { awardedToId: winnerEntryId, bountyId: id, currency, unitAmount: awardedAmount },
+      })
+      .catch(handleTrackError);
 
     if (awardedAmount > 0) {
       switch (currency) {

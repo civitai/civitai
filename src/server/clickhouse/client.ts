@@ -113,7 +113,7 @@ export type BountyCreateActivity = {
     poi: boolean;
     minBenefactorUnitAmount: number;
     entryLimit: number;
-    details?: Partial<BountyDetailsSchema>;
+    details?: Partial<BountyDetailsSchema> | null;
     attachments?: boolean;
     tags?: boolean;
   };
