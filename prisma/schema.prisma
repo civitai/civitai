@@ -54,6 +54,27 @@ model SessionInvalidation {
   @@id([userId, invalidatedAt])
 }
 
+model UserReferral {
+  id                 Int               @id @default(autoincrement())
+  userReferralCodeId Int?
+  userReferralCode   UserReferralCode? @relation(fields: [userReferralCodeId], references: [id], onDelete: SetNull)
+  source             String?
+  createdAt          DateTime          @default(now())
+  userId             Int               @unique
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note               String?
+}
+
+model UserReferralCode {
+  id     Int    @id @default(autoincrement())
+  userId Int
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code   String
+  note   String
+
+  referees UserReferral[]
+}
+
 model User {
   id                  Int                   @id @default(autoincrement())
   name                String?
@@ -76,6 +97,7 @@ model User {
   autoplayGifs        Boolean?              @default(true)
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
   leaderboardShowcase String?
+  referral            UserReferral?
 
   accounts             Account[]
   sessions             Session[]
@@ -131,6 +153,7 @@ model User {
   collectionItems         CollectionItem[]
   contributingCollections CollectionContributor[]
   homeBlocks              HomeBlock[]
+  referralCodes           UserReferralCode[]
 }
 
 model CustomerSubscription {
