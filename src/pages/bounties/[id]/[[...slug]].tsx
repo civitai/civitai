@@ -14,12 +14,11 @@ import {
   Accordion,
   Center,
   SimpleGrid,
-  Paper,
-  ActionIcon,
   useMantineTheme,
   Loader,
   ThemeIcon,
   Alert,
+  ScrollArea,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo } from 'react';
@@ -36,7 +35,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNsfwImage } from '~/server/common/model-helpers';
@@ -53,6 +52,7 @@ import {
   IconMessageCircle2,
   IconShare3,
   IconStar,
+  IconTournament,
   IconTrophy,
   IconViewfinder,
 } from '@tabler/icons-react';
@@ -88,6 +88,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 import { Collection } from '~/components/Collection/Collection';
+import Link from 'next/link';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -120,6 +121,15 @@ export default function BountyDetailsPage({
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
+  const { toggle, engagements, toggling } = useBountyEngagement({ bountyId: bounty?.id });
+
+  const isFavorite = !bounty ? false : !!engagements?.Favorite?.find((id) => id === bounty.id);
+  const isTracked = !bounty ? false : !!engagements?.Track?.find((id) => id === bounty.id);
+  const handleEngagementClick = async (type: BountyEngagementType) => {
+    if (toggling || !bounty) return;
+    await toggle({ type, bountyId: bounty.id });
+  };
+
   const totalUnitAmount = useMemo(() => {
     if (!bounty) {
       return 0;
@@ -163,11 +173,10 @@ export default function BountyDetailsPage({
   }
 
   const defaultBadgeProps: BadgeProps = {
-    variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
-    radius: 'xl',
-    px: 'sm',
-    size: 'md',
+    radius: 'sm',
+    size: 'lg',
     color: 'gray',
+    sx: { cursor: 'pointer' },
   };
 
   const expired = bounty.expiresAt < new Date();
@@ -176,7 +185,7 @@ export default function BountyDetailsPage({
     <>
       {meta}
       <Container size="xl">
-        <Stack spacing={8} mb="xl">
+        <Stack spacing="xs" mb="xl">
           <Group position="apart" className={classes.titleWrapper} noWrap>
             <Group spacing="xs">
               <Title weight="bold" className={classes.title} mr={14} lineClamp={2}>
@@ -195,45 +204,90 @@ export default function BountyDetailsPage({
                   </ThemeIcon>
                 </Tooltip>
               )}
-              <CurrencyBadge
-                {...defaultBadgeProps}
-                currency={currency}
-                unitAmount={totalUnitAmount}
-              />
-              {expired ? (
-                <Badge {...defaultBadgeProps} color="red" variant="filled" radius="xl">
-                  Expired
-                </Badge>
-              ) : (
-                <IconBadge
+              <Group spacing={2}>
+                <CurrencyBadge
                   {...defaultBadgeProps}
-                  icon={<IconClockHour4 size={14} />}
-                  style={{ color: theme.colors.success[5] }}
-                >
-                  <DaysFromNow date={bounty.expiresAt} withoutSuffix />
-                </IconBadge>
-              )}
+                  currency={currency}
+                  unitAmount={totalUnitAmount}
+                  variant={undefined}
+                />
+                {expired ? (
+                  <Badge {...defaultBadgeProps} color="red" variant="filled">
+                    Expired
+                  </Badge>
+                ) : (
+                  <IconBadge
+                    {...defaultBadgeProps}
+                    icon={<IconClockHour4 size={18} />}
+                    style={{ color: theme.colors.success[5] }}
+                  >
+                    <DaysFromNow date={bounty.expiresAt} withoutSuffix />
+                  </IconBadge>
+                )}
+                {bounty.stats && (
+                  <>
+                    <LoginRedirect reason="perform-action">
+                      <IconBadge
+                        {...defaultBadgeProps}
+                        icon={
+                          <IconViewfinder
+                            size={18}
+                            color={isTracked ? theme.colors.green[6] : undefined}
+                          />
+                        }
+                        onClick={() => handleEngagementClick('Track')}
+                      >
+                        {abbreviateNumber(bounty.stats.trackCountAllTime)}
+                      </IconBadge>
+                    </LoginRedirect>
+                    <LoginRedirect reason="perform-action">
+                      <IconBadge
+                        {...defaultBadgeProps}
+                        icon={
+                          <IconHeart
+                            size={18}
+                            color={isFavorite ? theme.colors.red[6] : undefined}
+                            style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                          />
+                        }
+                        onClick={() => handleEngagementClick('Favorite')}
+                      >
+                        {abbreviateNumber(bounty.stats.favoriteCountAllTime)}
+                      </IconBadge>
+                    </LoginRedirect>
+                    <IconBadge {...defaultBadgeProps} icon={<IconMessageCircle2 size={18} />}>
+                      {abbreviateNumber(bounty.stats.commentCountAllTime)}
+                    </IconBadge>
+                  </>
+                )}
+              </Group>
             </Group>
             <BountyContextMenu bounty={bounty} position="bottom-end" />
           </Group>
           <Group spacing={8}>
-            <UserAvatar user={bounty.user} withUsername linkToProfile />
-            <Divider orientation="vertical" />
-            <Text color="dimmed" size="sm">
+            <Text color="dimmed" size="xs">
+              {isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started'}:{' '}
               {formatDate(bounty.startsAt)}
             </Text>
-            {bounty.stats && (
+            {bounty.tags.length > 0 && (
               <>
                 <Divider orientation="vertical" />
-                <IconBadge {...defaultBadgeProps} icon={<IconViewfinder size={14} />}>
-                  {abbreviateNumber(bounty.stats.trackCountAllTime)}
-                </IconBadge>
-                <IconBadge {...defaultBadgeProps} icon={<IconHeart size={14} />}>
-                  {abbreviateNumber(bounty.stats.favoriteCountAllTime)}
-                </IconBadge>
-                <IconBadge {...defaultBadgeProps} icon={<IconMessageCircle2 size={14} />}>
-                  {abbreviateNumber(bounty.stats.commentCountAllTime)}
-                </IconBadge>
+                <Collection
+                  items={bounty.tags}
+                  renderItem={(tag) => (
+                    <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Badge
+                        component="a"
+                        size="sm"
+                        color="gray"
+                        variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                        sx={{ cursor: 'pointer' }}
+                      >
+                        {tag.name}
+                      </Badge>
+                    </Link>
+                  )}
+                />
               </>
             )}
           </Group>
@@ -269,8 +323,10 @@ export default function BountyDetailsPage({
             </Stack>
           </Grid.Col>
         </Grid>
-        <BountyEntries bounty={bounty} />
-        <Stack spacing="xl" py={32}>
+      </Container>
+      <BountyEntries bounty={bounty} />
+      <Container size="xl">
+        <Stack spacing="xl" py={8}>
           <Group position="apart">
             <Title order={2} size={28} weight={600}>
               Discussion
@@ -420,51 +476,37 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       ),
     },
     {
-      label: 'Date started',
+      label: isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started',
       value: <Text>{formatDate(bounty.startsAt)}</Text>,
     },
     {
       label: 'Deadline',
       value: <Text>{formatDate(bounty.expiresAt)}</Text>,
     },
-    {
-      label: 'Tags',
-      value: (
-        <Collection
-          items={bounty.tags}
-          limit={3}
-          renderItem={(tag) => (
-            <Badge radius="xl">
-              <Text transform="capitalize">{tag.name}</Text>
-            </Badge>
-          )}
-          grouped
-        />
-      ),
-      visible: !!bounty.tags?.length,
-    },
   ];
 
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
-      <Group spacing={4}>
+      <Group spacing={4} position="apart">
         <UserAvatar user={b.user} withUsername linkToProfile />
-        {isMainBenefactor(bounty, b.user) && (
-          <IconStar
-            color={CurrencyConfig[currency].color(theme)}
-            fill={CurrencyConfig[currency].color(theme)}
-            size={12}
-          />
-        )}
-        {b.awardedToId && (
-          <Tooltip label={'This supporter has already awarded an entry'}>
-            <IconTrophy
+        <Group>
+          {isMainBenefactor(bounty, b.user) && (
+            <IconStar
               color={CurrencyConfig[currency].color(theme)}
               fill={CurrencyConfig[currency].color(theme)}
-              size={12}
+              size={18}
             />
-          </Tooltip>
-        )}
+          )}
+          {b.awardedToId && (
+            <Tooltip label={'This supporter has already awarded an entry'}>
+              <IconTrophy
+                color={CurrencyConfig[currency].color(theme)}
+                fill={CurrencyConfig[currency].color(theme)}
+                size={18}
+              />
+            </Tooltip>
+          )}
+        </Group>
       </Group>
     ),
     value: (
@@ -482,26 +524,29 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   return (
     <Stack spacing="md">
-      <Group spacing={8}>
+      <Group spacing={8} noWrap>
         {addToBountyEnabled && (
           <Group
             color="gray"
             position="apart"
-            p={4}
-            sx={{
+            h={36}
+            py={2}
+            px={4}
+            sx={(theme) => ({
               background:
                 theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
               flexGrow: 1,
-            }}
+              borderRadius: theme.radius.xs,
+            })}
             noWrap
           >
             <Group spacing={2}>
               <CurrencyIcon currency={currency} size={20} />
-
               <Text weight={590}>{formatCurrencyForDisplay(minUnitAmount, currency)}</Text>
             </Group>
             <Button
               variant="filled"
+              h="100%"
               disabled={isLoading}
               onClick={(e) => {
                 e.preventDefault();
@@ -540,82 +585,72 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 });
               }}
             >
-              {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Become a supporter'}
+              {isLoading ? 'Processing...' : isBenefactor ? 'Add to bounty' : 'Support'}
             </Button>
           </Group>
-        )}
-        {bounty.complete && !loadingEntries && (
-          <Alert color="yellow">
-            {(entries?.length ?? 0) > 0 ? (
-              <Group spacing={8} align="center" noWrap>
-                <ThemeIcon color="yellow.7" variant="light">
-                  <IconTrophy size={20} fill="currentColor" />
-                </ThemeIcon>
-                <Text>
-                  This bounty has been completed and prizes have been awarded to the winners
-                </Text>
-              </Group>
-            ) : (
-              <Text>
-                This bounty has been marked as completed with no entries. All benefactors have been
-                refunded.
-              </Text>
-            )}
-          </Alert>
         )}
         <Group spacing={8} noWrap>
           <Tooltip label={isTracked ? 'Stop tracking' : 'Track'} position="top">
             <div>
               <LoginRedirect reason="perform-action">
-                <ActionIcon
-                  size={42}
+                <Button
                   onClick={() => handleEngagementClick('Track')}
                   color={isTracked ? 'green' : theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
-                  variant="filled"
+                  sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                 >
                   <IconViewfinder
-                    size={20}
                     color={theme.colorScheme === 'light' ? theme.black : 'currentColor'}
-                  />
-                </ActionIcon>
+                  />{' '}
+                </Button>
               </LoginRedirect>
             </div>
           </Tooltip>
           <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top">
             <div>
               <LoginRedirect reason="perform-action">
-                <ActionIcon
-                  size={42}
+                <Button
                   onClick={() => handleEngagementClick('Favorite')}
                   color={isFavorite ? 'red' : theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
-                  variant="filled"
+                  sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                 >
-                  <IconHeart
-                    size={20}
-                    color={theme.colorScheme === 'light' ? theme.black : 'currentColor'}
-                  />
-                </ActionIcon>
+                  <IconHeart color={theme.colorScheme === 'light' ? theme.black : 'currentColor'} />
+                </Button>
               </LoginRedirect>
             </div>
           </Tooltip>
           <Tooltip label="Share" position="top">
             <div style={{ marginLeft: 'auto' }}>
               <ShareButton url={router.asPath} title={bounty.name}>
-                <ActionIcon
-                  size={42}
+                <Button
+                  sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                   color={theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
-                  variant="filled"
                 >
-                  <IconShare3
-                    size={20}
-                    color={theme.colorScheme === 'light' ? theme.black : 'currentColor'}
-                  />
-                </ActionIcon>
+                  <IconShare3 />
+                </Button>
               </ShareButton>
             </div>
           </Tooltip>
         </Group>
       </Group>
+      {bounty.complete && !loadingEntries && (
+        <Alert color="yellow">
+          {(entries?.length ?? 0) > 0 ? (
+            <Group spacing={8} align="center" noWrap>
+              <ThemeIcon color="yellow.7" variant="light">
+                <IconTrophy size={20} fill="currentColor" />
+              </ThemeIcon>
+              <Text>
+                This bounty has been completed and prizes have been awarded to the winners
+              </Text>
+            </Group>
+          ) : (
+            <Text>
+              This bounty has been marked as completed with no entries. All benefactors have been
+              refunded.
+            </Text>
+          )}
+        </Alert>
+      )}
 
       <Accordion
         variant="separated"
@@ -658,52 +693,56 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             <Group position="apart">Supporters</Group>
           </Accordion.Control>
           <Accordion.Panel>
-            <DescriptionTable
-              items={benefactorDetails}
-              labelWidth="70%"
-              withBorder
-              paperProps={{
-                sx: {
-                  borderLeft: 0,
-                  borderRight: 0,
-                  borderBottom: 0,
-                },
-                radius: 0,
-              }}
-            />
+            <ScrollArea.Autosize maxHeight={500}>
+              <DescriptionTable
+                items={benefactorDetails}
+                labelWidth="70%"
+                withBorder
+                paperProps={{
+                  sx: {
+                    borderLeft: 0,
+                    borderRight: 0,
+                    borderBottom: 0,
+                  },
+                  radius: 0,
+                }}
+              />
+            </ScrollArea.Autosize>
           </Accordion.Panel>
         </Accordion.Item>
-        <Accordion.Item
-          value="files"
-          sx={(theme) => ({
-            marginTop: theme.spacing.md,
-            marginBottom: theme.spacing.md,
-            borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-          })}
-        >
-          <Accordion.Control>
-            <Group position="apart">
-              {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
-            </Group>
-          </Accordion.Control>
-          <Accordion.Panel>
-            <Stack spacing={2}>
-              {filesCount > 0 ? (
-                <SimpleGrid cols={1} spacing={2}>
-                  {files.map((file) => (
-                    <AttachmentCard key={file.id} {...file} />
-                  ))}
-                </SimpleGrid>
-              ) : (
-                <Center p="xl">
-                  <Text size="md" color="dimmed">
-                    No files were provided for this bounty
-                  </Text>
-                </Center>
-              )}
-            </Stack>
-          </Accordion.Panel>
-        </Accordion.Item>
+        {filesCount > 0 && (
+          <Accordion.Item
+            value="files"
+            sx={(theme) => ({
+              marginTop: theme.spacing.md,
+              marginBottom: theme.spacing.md,
+              borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
+            })}
+          >
+            <Accordion.Control>
+              <Group position="apart">
+                {filesCount ? `${filesCount === 1 ? '1 File' : `${filesCount} Files`}` : 'Files'}
+              </Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack spacing={2}>
+                {filesCount > 0 ? (
+                  <SimpleGrid cols={1} spacing={2}>
+                    {files.map((file) => (
+                      <AttachmentCard key={file.id} {...file} />
+                    ))}
+                  </SimpleGrid>
+                ) : (
+                  <Center p="xl">
+                    <Text size="md" color="dimmed">
+                      No files were provided for this bounty
+                    </Text>
+                  </Center>
+                )}
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
       </Accordion>
     </Stack>
   );
@@ -730,7 +769,6 @@ const useStyles = createStyles((theme) => ({
 }));
 
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
-  const theme = useMantineTheme();
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
   const { data: entries, isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
   const { data: ownedEntries = [], isLoading: isLoadingOwnedEntries } =
@@ -753,24 +791,30 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
     !expired;
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
-    <Stack spacing="xl" py={32}>
-      <Group position="apart">
-        <Title order={2} size={28} weight={600}>
-          Hunters
-        </Title>
-        <Group>
-          <Tooltip label={`Max entries per user: ${bounty.entryLimit}`}>
-            <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-          </Tooltip>
-          {displaySubmitAction && (
-            <Button component={NextLink} href={entryCreateUrl} size="xs">
-              Submit
-            </Button>
-          )}
-        </Group>
-      </Group>
-      {children}
-    </Stack>
+    <Container
+      fluid
+      my="md"
+      sx={(theme) => ({
+        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+      })}
+    >
+      <Container size="xl">
+        <Stack spacing="md" py={32}>
+          <Group>
+            <Title order={2}>Entries</Title>
+            {displaySubmitAction && (
+              <Button size="xs" variant="outline" component={NextLink} href={entryCreateUrl}>
+                Submit Entry
+              </Button>
+            )}
+            <Tooltip label={`Max entries per user: ${bounty.entryLimit}`}>
+              <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+            </Tooltip>
+          </Group>
+          {children}
+        </Stack>
+      </Container>
+    </Container>
   );
 
   if (isLoading) {
@@ -786,30 +830,22 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   if (!entries?.length) {
     return (
       <Wrapper>
-        <Paper
-          p="xl"
-          radius="sm"
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-          }}
-        >
-          <Stack spacing="sm" align="center">
-            <Text size={24} weight={600} align="center">
-              No submissions yet
-            </Text>
-            <Text color="dimmed" align="center">
-              Be the first to submit your solution.
-            </Text>
-            {displaySubmitAction && (
-              <Button component={NextLink} href={entryCreateUrl} size="sm" w="75%">
-                Submit
-              </Button>
-            )}
-          </Stack>
-        </Paper>
+        <Group spacing="xs">
+          <ThemeIcon color="gray" size="xl" radius="xl">
+            <IconTournament />
+          </ThemeIcon>
+          <Text size="md" color="dimmed">
+            No submissions yet
+          </Text>
+          {displaySubmitAction && (
+            <>
+              <Divider orientation="vertical" />
+              <Text size="md" color="dimmed">
+                Be the first to submit your solution.
+              </Text>
+            </>
+          )}
+        </Group>
       </Wrapper>
     );
   }

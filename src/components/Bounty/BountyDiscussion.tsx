@@ -22,7 +22,7 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
         ) : (
           <Stack>
             <CreateComment />
-            {data?.length || created.length ? (
+            {(data?.length || created.length) > 0 && (
               <>
                 {data?.map((comment) => (
                   <Comment key={comment.id} comment={comment} />
@@ -44,27 +44,6 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
                   <Comment key={comment.id} comment={comment} />
                 ))}
               </>
-            ) : (
-              <Paper
-                p="xl"
-                radius="md"
-                sx={(theme) => ({
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-                })}
-              >
-                <Stack spacing="sm" align="center">
-                  <Text size={24} weight={600} align="center">
-                    No comments yet
-                  </Text>
-                  <Text color="dimmed" align="center">
-                    Start the conversation by leaving a comment.
-                  </Text>
-                </Stack>
-              </Paper>
             )}
           </Stack>
         )

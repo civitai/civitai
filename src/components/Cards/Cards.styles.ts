@@ -31,7 +31,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
       header: {
         ref: headerRef,
         padding: '12px',
-        background: theme.colors.dark[6],
+        background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[2],
         width: '100%',
       },
 

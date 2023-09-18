@@ -139,7 +139,7 @@ export const useQueryBountyEngagements = () => {
   return { engagements, loading };
 };
 
-export const useBountyEngagement = ({ bountyId }: { bountyId: number }) => {
+export const useBountyEngagement = ({ bountyId }: { bountyId?: number }) => {
   const queryUtils = trpc.useContext();
   const { engagements } = useQueryBountyEngagements();
 
@@ -183,12 +183,20 @@ export const useBountyEngagement = ({ bountyId }: { bountyId: number }) => {
       return { previousEngagements, previousBounty };
     },
     onError: (_error, _variables, context) => {
+      if (!bountyId) {
+        return;
+      }
+
       queryUtils.user.getBountyEngagement.setData(undefined, context?.previousEngagements);
       queryUtils.bounty.getById.setData({ id: bountyId }, context?.previousBounty);
     },
   });
 
   const handleToggle = async ({ type }: ToggleUserBountyEngagementsInput) => {
+    if (!bountyId) {
+      return;
+    }
+
     await toggleEngagementMutation.mutateAsync({ bountyId, type });
   };
 
