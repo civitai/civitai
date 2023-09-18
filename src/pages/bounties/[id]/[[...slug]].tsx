@@ -89,6 +89,7 @@ import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 import { Collection } from '~/components/Collection/Collection';
 import Link from 'next/link';
+import { TrackView } from '~/components/TrackView/TrackView';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -184,6 +185,7 @@ export default function BountyDetailsPage({
   return (
     <>
       {meta}
+      <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
       <Container size="xl">
         <Stack spacing="xs" mb="xl">
           <Group position="apart" className={classes.titleWrapper} noWrap>

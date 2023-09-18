@@ -32,6 +32,7 @@ import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
+import { handleTrackError } from '~/server/utils/errorHandling';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -264,6 +265,14 @@ export const createBountyHandler = async ({
 
     const bounty = await createBounty({ ...input, userId });
 
+    // Let it run in the background
+    ctx.track
+      .bounty({
+        type: 'Create',
+        data: { ...bounty, attachments: !!input.files?.length, tags: !!input.tags?.length },
+      })
+      .catch(handleTrackError);
+
     return bounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -282,6 +291,14 @@ export const updateBountyHandler = async ({
     const updated = await updateBountyById(input);
     if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
+    // Let it run in the background
+    ctx.track
+      .bounty({
+        type: 'Update',
+        data: { ...updated, attachments: !!input.files?.length, tags: !!input.tags?.length },
+      })
+      .catch(handleTrackError);
+
     return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -289,10 +306,19 @@ export const updateBountyHandler = async ({
   }
 };
 
-export const deleteBountyHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteBountyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const deleted = await deleteBountyById(input);
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);
+
+    // Let it run in the background
+    ctx.track.bounty({ type: 'Delete', data: deleted }).catch(handleTrackError);
 
     return deleted;
   } catch (error) {

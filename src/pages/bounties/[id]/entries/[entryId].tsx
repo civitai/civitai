@@ -69,6 +69,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
+import { TrackView } from '~/components/TrackView/TrackView';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -501,6 +502,12 @@ export default function BountyEntryDetailsPage({
     return (
       <>
         {meta}
+        <TrackView
+          entityId={bountyEntry.id}
+          entityType="BountyEntry"
+          type="BountyEntryView"
+          details={{ bountyId: bountyEntry.bountyId }}
+        />
         <Paper className={classes.root}>
           <Stack w="100%">
             {userSection}
@@ -541,6 +548,12 @@ export default function BountyEntryDetailsPage({
   return (
     <>
       {meta}{' '}
+      <TrackView
+        entityId={bountyEntry.id}
+        entityType="BountyEntry"
+        type="BountyEntryView"
+        details={{ bountyId: bountyEntry.bountyId }}
+      />
       <Paper className={classes.root}>
         <NavigateBack url={`/bounties/${bounty.id}`}>
           {({ onClick }) => (

@@ -130,3 +130,8 @@ export function throwInsufficientFundsError(message: string | null = null, error
     cause: error,
   });
 }
+
+export function handleTrackError(e: Error) {
+  const error = new Error('Failed to track event: ' + e.message, { cause: e });
+  console.error(error);
+}

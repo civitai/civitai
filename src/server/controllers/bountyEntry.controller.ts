@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '../createContext';
 import { GetByIdInput } from '../schema/base.schema';
-import { throwDbError, throwNotFoundError } from '../utils/errorHandling';
+import { handleTrackError, throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
 import {
@@ -93,6 +93,19 @@ export const upsertBountyEntryHandler = async ({
       userId: ctx.user.id,
     });
 
+    ctx.track
+      .bountyEntry({
+        type: input.id ? 'Create' : 'Update',
+        data: {
+          ...entry,
+          files: input.files.map((file) => ({
+            ...file.metadata,
+            fileType: file.name.split('.').pop(),
+          })),
+        },
+      })
+      .catch(handleTrackError);
+
     return entry;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -112,6 +125,8 @@ export const awardBountyEntryHandler = async ({
       ...input,
       userId: ctx.user.id,
     });
+
+    ctx.track.bountyEntry({ type: 'Award', data: benefactor }).catch(handleTrackError);
 
     return benefactor;
   } catch (error) {
@@ -141,11 +156,22 @@ export const getBountyEntryFilteredFilesHandler = async ({
   }
 };
 
-export const deleteBountyEntryHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteBountyEntryHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
-    await deleteBountyEntry({
+    const deleted = await deleteBountyEntry({
       ...input,
     });
+    if (!deleted) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
+
+    ctx.track.bountyEntry({ type: 'Delete', data: deleted }).catch(handleTrackError);
+
+    return deleted;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

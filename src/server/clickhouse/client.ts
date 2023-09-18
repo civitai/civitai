@@ -8,8 +8,12 @@ import {
   ReportStatus,
   NsfwLevel,
   ArticleEngagementType,
+  BountyEngagementType,
+  BountyMode,
+  BountyType,
 } from '@prisma/client';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 export const clickhouse = shouldConnect
@@ -26,8 +30,20 @@ export type ViewType =
   | 'PostView'
   | 'ModelView'
   | 'ModelVersionView'
-  | 'ArticleView';
-export type EntityType = 'User' | 'Image' | 'Post' | 'Model' | 'ModelVersion' | 'Article';
+  | 'ArticleView'
+  | 'CollectionView'
+  | 'BountyView'
+  | 'BountyEntryView';
+export type EntityType =
+  | 'User'
+  | 'Image'
+  | 'Post'
+  | 'Model'
+  | 'ModelVersion'
+  | 'Article'
+  | 'Collection'
+  | 'Bounty'
+  | 'BountyEntry';
 
 export type UserActivityType =
   | 'Registration'
@@ -62,7 +78,9 @@ export type ReactionType =
   | 'Question_Create'
   | 'Question_Delete'
   | 'Answer_Create'
-  | 'Answer_Delete';
+  | 'Answer_Delete'
+  | 'BountyEntry_Create'
+  | 'BountyEntry_Delete';
 export type ReportType = 'Create' | 'StatusChange';
 export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete';
 export type TagEngagementType = 'Hide' | 'Allow';
@@ -81,6 +99,65 @@ export type ImageActivityType = 'Create' | 'Delete' | 'DeleteTOS' | 'Tags' | 'Re
 export type QuestionType = 'Create' | 'Delete';
 export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';
+export type BountyCreateActivity = {
+  type: 'Create';
+  data: {
+    id: number;
+    name: string;
+    startsAt: Date;
+    expiresAt: Date;
+    mode: BountyMode;
+    type: BountyType;
+    nsfw: boolean;
+    poi: boolean;
+    attachments?: boolean;
+    tags?: boolean;
+  };
+};
+export type BountyUpdateActivity = {
+  type: 'Update';
+  data: {
+    id: number;
+    startsAt: Date;
+    expiresAt: Date;
+    attachments?: boolean;
+    tags?: boolean;
+  };
+};
+export type BountyDeleteActivity = {
+  type: 'Delete';
+  data: { id: number };
+};
+export type BountyExpireActivity = {
+  type: 'Expire';
+  data: { id: number };
+};
+export type BountyActivity =
+  | BountyCreateActivity
+  | BountyUpdateActivity
+  | BountyDeleteActivity
+  | BountyExpireActivity;
+
+export type BountyEntryUpsertActivity = {
+  type: 'Create' | 'Update';
+  data: {
+    id: number;
+    bountyId: number;
+    files?: Array<BountyEntryFileMeta & { fileType?: string }>;
+  };
+};
+export type BountyEntryDeleteActivity = {
+  type: 'Delete';
+  data: { id: number };
+};
+export type BountyEntryAwardActivity = {
+  type: 'Award';
+  data: { bountyId: number; awardedToId: number | null; unitAmount: number; currency: string };
+};
+export type BountyEntryActivity =
+  | BountyEntryUpsertActivity
+  | BountyEntryDeleteActivity
+  | BountyEntryAwardActivity;
 
 export type TrackRequest = {
   userId: number;
@@ -212,6 +289,14 @@ export class Tracker {
     return this.track('images', values);
   }
 
+  public bounty(values: BountyActivity) {
+    return this.track('bounties', values);
+  }
+
+  public bountyEntry(values: BountyEntryActivity) {
+    return this.track('bountyEntries', values);
+  }
+
   public modelEngagement(values: { type: ModelEngagementType; modelId: number }) {
     return this.track('modelEngagements', values);
   }
@@ -228,6 +313,13 @@ export class Tracker {
     return this.track('userEngagements', values);
   }
 
+  public bountyEngagement(values: {
+    type: BountyEngagementType | `Delete${BountyEngagementType}`;
+    bountyId: number;
+  }) {
+    return this.track('bountyEngagements', values);
+  }
+
   public report(values: {
     type: ReportType;
     entityType: string;
@@ -236,5 +328,9 @@ export class Tracker {
     status: ReportStatus;
   }) {
     return this.track('reports', values);
+  }
+
+  public share(values: { url: string; platform: 'reddit' | 'twitter' | 'clipboard' }) {
+    return this.track('shares', values);
   }
 }

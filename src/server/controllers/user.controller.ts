@@ -43,6 +43,7 @@ import {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
 import {
+  handleTrackError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -803,8 +804,15 @@ export const toggleBountyEngagementHandler = async ({
 }) => {
   try {
     const on = await toggleUserBountyEngagement({ ...input, userId: ctx.user.id });
-    // TODO.bounty: track event on clickhouse/posthog?
-    // if (on) await ctx.track.articleEngagement(input);
+
+    // Not awaiting here to avoid slowing down the response
+    ctx.track
+      .bountyEngagement({
+        ...input,
+        type: on ? input.type : `Delete${input.type}`,
+      })
+      .catch(handleTrackError);
+
     return on;
   } catch (error) {
     throw throwDbError(error);
