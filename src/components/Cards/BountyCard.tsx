@@ -45,9 +45,10 @@ export function BountyCard({ data }: Props) {
     <IconBadge
       {...sharedBadgeProps}
       color="dark"
-      icon={<IconClockHour4 size={14} color={theme.colors.success[5]} />}
+      icon={<IconClockHour4 size={14} />}
+      sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
     >
-      <Text color="success.5" size="xs">
+      <Text size="xs">
         <DaysFromNow date={expiresAt} withoutSuffix />
       </Text>
     </IconBadge>
