@@ -158,10 +158,6 @@ export type BountyEntryAwardActivity = {
   type: 'Award';
   data: { bountyId: number; awardedToId: number | null; unitAmount: number; currency: string };
 };
-export type BountyEntryDownloadActivity = {
-  type: 'Download';
-  data: { id: number; bountyId: number; unitAmount: number; currency: string };
-};
 export type BountyEntryActivity =
   | BountyEntryUpsertActivity
   | BountyEntryDeleteActivity
