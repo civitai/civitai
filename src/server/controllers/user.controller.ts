@@ -22,6 +22,7 @@ import {
   toggleUserArticleEngagement,
   updateLeaderboardRank,
   toggleBan,
+  userByReferralCode,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -37,6 +38,7 @@ import {
   ToggleModelEngagementInput,
   GetUserCosmeticsSchema,
   ToggleUserArticleEngagementsInput,
+  UserByReferralCodeSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -787,6 +789,14 @@ export const toggleArticleEngagementHandler = async ({
     const on = await toggleUserArticleEngagement({ ...input, userId: ctx.user.id });
     if (on) await ctx.track.articleEngagement(input);
     return on;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {
+  try {
+    return await userByReferralCode(input);
   } catch (error) {
     throw throwDbError(error);
   }

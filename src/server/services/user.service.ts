@@ -1,5 +1,8 @@
-import { ToggleUserArticleEngagementsInput } from './../schema/user.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  ToggleUserArticleEngagementsInput,
+  UserByReferralCodeSchema,
+} from './../schema/user.schema';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   ArticleEngagementType,
   ModelEngagementType,
@@ -36,6 +39,7 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -693,5 +697,25 @@ export const toggleUserArticleEngagement = async ({
   }
 
   return !exists;
+};
+// #endregion
+
+// #region [user referrals]
+export const userByReferralCode = async ({ userReferralCode }: UserByReferralCodeSchema) => {
+  const referralCode = await dbRead.userReferralCode.findFirst({
+    where: { code: userReferralCode },
+    select: {
+      userId: true,
+      user: {
+        select: userWithCosmeticsSelect,
+      },
+    },
+  });
+
+  if (!referralCode) {
+    throw throwBadRequestError('Referral code is not valid');
+  }
+
+  return referralCode.user;
 };
 // #endregion

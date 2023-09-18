@@ -15,14 +15,11 @@ import {
   ThemeIcon,
   Badge,
 } from '@mantine/core';
-import { ContextModalProps } from '@mantine/modals';
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { z } from 'zod';
 
-import { Form, InputCheckbox, InputSwitch, InputText, useForm } from '~/libs/form';
+import { Form, InputText, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
-import { toStringList } from '~/utils/array-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import ReactMarkdown from 'react-markdown';
@@ -44,6 +41,8 @@ const schema = z.object({
       required_error: 'Please provide an email',
     })
     .email(),
+  userReferralCode: z.string().optional(),
+  source: z.string().optional(),
 });
 
 export default function OnboardingModal() {
@@ -58,7 +57,9 @@ export default function OnboardingModal() {
     defaultValues: { ...user },
   });
   const username = form.watch('username');
+  const userReferralCode = form.watch('userReferralCode');
   const [debounced] = useDebouncedValue(username, 300);
+  const [debouncedUserReferralCode] = useDebouncedValue(userReferralCode, 300);
 
   const onboarded = {
     tos: !!user?.tos,
@@ -78,6 +79,11 @@ export default function OnboardingModal() {
       { username: debounced },
       { enabled: !!username && username.length >= 3 }
     );
+  // Confirm user referral code:
+  const { data: referrer, isLoading: referrerLoading } = trpc.user.userByReferralCode.useQuery(
+    { userReferralCode: debouncedUserReferralCode as string },
+    { enabled: !!debouncedUserReferralCode && debouncedUserReferralCode.length >= 3 }
+  );
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
   const { mutate: acceptTOS, isLoading: acceptTOSLoading } = trpc.user.acceptTOS.useMutation();
@@ -213,6 +219,36 @@ export default function OnboardingModal() {
                     }
                     withAsterisk
                   />
+                  <InputText
+                    size="lg"
+                    name="userReferralCode"
+                    label="Referral Code"
+                    type="text"
+                    clearable={false}
+                    error={
+                      userReferralCode && userReferralCode.length <= 3
+                        ? 'Referral codes must be longer than 3 characters'
+                        : undefined
+                    }
+                    rightSection={
+                      userReferralCode && userReferralCode.length > 3 && referrerLoading ? (
+                        <Loader size="sm" mr="xs" />
+                      ) : (
+                        userReferralCode &&
+                        userReferralCode.length > 3 && (
+                          <ThemeIcon
+                            variant="outline"
+                            color={referrer ? 'green' : 'red'}
+                            radius="xl"
+                            mr="xs"
+                          >
+                            {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
+                          </ThemeIcon>
+                        )
+                      )
+                    }
+                  />
+
                   {error && (
                     <Alert color="red" variant="light">
                       {error.data?.code === 'CONFLICT'

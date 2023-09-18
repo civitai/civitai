@@ -109,3 +109,6 @@ export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticle
 export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema.extend({
   articleId: z.number(),
 });
+
+export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
+export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;

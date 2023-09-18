@@ -18,7 +18,13 @@ export default function Login({ providers }: Props) {
     error,
     returnUrl = '/',
     reason,
-  } = router.query as { error: string; returnUrl: string; reason: LoginRedirectReason };
+  } = router.query as {
+    error: string;
+    returnUrl: string;
+    reason: LoginRedirectReason;
+    refCode?: string;
+    refSource?: string;
+  };
 
   const redirectReason = loginRedirectReasons[reason];
 

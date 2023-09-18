@@ -14,13 +14,13 @@ import {
   getUserEngagedModelsHandler,
   getUserEngagedModelVersionsHandler,
   toggleBanHandler,
-  toggleHideModelHandler,
   toggleMuteHandler,
   getUserCosmeticsHandler,
   getUsernameAvailableHandler,
   acceptTOSHandler,
   completeOnboardingHandler,
   toggleArticleEngagementHandler,
+  userByReferralCodeHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -39,11 +39,10 @@ import {
   toggleFollowUserSchema,
   userUpdateSchema,
   deleteUserSchema,
-  toggleBlockedTagSchema,
   getUserTagsSchema,
-  batchBlockTagsSchema,
   getUserCosmeticsSchema,
   toggleUserArticleEngagementSchema,
+  userByReferralCodeSchema,
 } from '~/server/schema/user.schema';
 import { getUserArticleEngagements, removeAllContent } from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -99,4 +98,7 @@ export const userRouter = router({
   toggleArticleEngagement: protectedProcedure
     .input(toggleUserArticleEngagementSchema)
     .mutation(toggleArticleEngagementHandler),
+  userByReferralCode: publicProcedure
+    .input(userByReferralCodeSchema)
+    .query(userByReferralCodeHandler),
 });
