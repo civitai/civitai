@@ -18,7 +18,7 @@ export const createUserReferralCode = async ({
   code,
 }: {
   userId: number;
-  note?: string;
+  note?: string | null;
   code?: string;
 }) => {
   const user = await dbRead.user.findUniqueOrThrow({ where: { id: userId } });

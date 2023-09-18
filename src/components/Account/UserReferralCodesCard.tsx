@@ -3,7 +3,7 @@ import { Text, Card, Title, Stack, Button } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 
 export function UserReferralCodesCard() {
-  const { data: userReferralCodes = [] } = trpc.userReferralCode.getAll.useQuery();
+  const { data: userReferralCodes = [] } = trpc.userReferralCode.getAll.useQuery({});
 
   return (
     <Card withBorder>

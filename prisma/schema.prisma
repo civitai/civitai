@@ -66,11 +66,11 @@ model UserReferral {
 }
 
 model UserReferralCode {
-  id     Int    @id @default(autoincrement())
+  id     Int     @id @default(autoincrement())
   userId Int
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  code   String
-  note   String
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code   String  @unique
+  note   String?
 
   referees UserReferral[]
 }
