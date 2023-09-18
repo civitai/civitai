@@ -154,10 +154,16 @@ export type BountyEntryAwardActivity = {
   type: 'Award';
   data: { bountyId: number; awardedToId: number | null; unitAmount: number; currency: string };
 };
+export type BountyEntryDownloadActivity = {
+  type: 'Download';
+  data: { id: number; bountyId: number; unitAmount: number; currency: string };
+};
 export type BountyEntryActivity =
   | BountyEntryUpsertActivity
   | BountyEntryDeleteActivity
   | BountyEntryAwardActivity;
+
+export type FileActivity = 'Download';
 
 export type TrackRequest = {
   userId: number;
@@ -289,8 +295,8 @@ export class Tracker {
     return this.track('images', values);
   }
 
-  public bounty(values: BountyActivity) {
-    return this.track('bounties', values);
+  public bounty({ type, data }: BountyActivity) {
+    return this.track('bounties', { type, ...data });
   }
 
   public bountyEntry(values: BountyEntryActivity) {
@@ -332,5 +338,9 @@ export class Tracker {
 
   public share(values: { url: string; platform: 'reddit' | 'twitter' | 'clipboard' }) {
     return this.track('shares', values);
+  }
+
+  public file(values: { type: FileActivity; url: string; entityType: string; entityId: number }) {
+    return this.track('files', values);
   }
 }
