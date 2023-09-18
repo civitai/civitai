@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '../db/client';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { isDefined } from '~/utils/type-guards';
+import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -69,5 +70,33 @@ export const updateEntityFiles = async ({
         entityType,
       })),
     });
+  }
+};
+
+export const getFileWithPermission = async ({
+  fileId,
+  userId,
+}: {
+  fileId: number;
+  userId?: number;
+}) => {
+  const file = await dbRead.file.findUnique({
+    where: { id: fileId },
+    select: { url: true, name: true, metadata: true, entityId: true, entityType: true },
+  });
+
+  if (!file) return null;
+
+  switch (file.entityType) {
+    case 'BountyEntry': {
+      const bountyEntryFiles = await getBountyEntryFilteredFiles({ id: file.entityId, userId });
+      if (!bountyEntryFiles.some((x) => x.id === fileId && !!x.url)) {
+        return null;
+      }
+
+      return file;
+    }
+    default:
+      return file;
   }
 };

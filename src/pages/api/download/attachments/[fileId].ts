@@ -8,6 +8,7 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
+import { getFileWithPermission } from '~/server/services/file.service';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -51,10 +52,9 @@ export default RateLimitedEndpoint(
         .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.fileId}` });
 
     const { fileId } = queryResults.data;
-    const file = await dbRead.file.findUnique({
-      where: { id: fileId },
-      select: { url: true, name: true },
-    });
+
+    const file = await getFileWithPermission({ fileId, userId: session?.user?.id });
+
     if (!file) return notFound(req, res, 'File not found');
 
     // Handle unauthenticated downloads
