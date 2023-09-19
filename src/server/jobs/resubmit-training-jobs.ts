@@ -2,6 +2,7 @@ import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { createTrainingRequest } from '~/server/services/training.service';
 import { createJob } from './job';
+import { TRPCError } from '@trpc/server';
 
 export const resubmitTrainingJobs = createJob(
   'resubmit-training-jobs',
@@ -36,7 +37,12 @@ export const resubmitTrainingJobs = createJob(
           },
         });
         if (response.status === 404) {
-          await createTrainingRequest({ modelVersionId: id, userId });
+          try {
+            await createTrainingRequest({ modelVersionId: id, userId });
+          } catch (error) {
+            const message = error instanceof TRPCError ? error.message : `${error}`;
+            console.error(`Failed to resubmit training job for model version ${id}: ${message}`);
+          }
         }
       }
     }
