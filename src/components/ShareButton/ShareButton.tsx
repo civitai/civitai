@@ -11,7 +11,7 @@ import { CollectItemInput } from '~/server/schema/collection.schema';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useTrackShare } from '../TrackView/track.utils';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 export function ShareButton({
   children,
@@ -27,7 +27,7 @@ export function ShareButton({
   const clipboard = useClipboard({ timeout: undefined });
   const { requireLogin } = useLoginRedirect({ reason: 'add-to-collection' });
   const features = useFeatureFlags();
-  const { trackShare } = useTrackShare();
+  const { trackShare } = useTrackEvent();
 
   const url =
     typeof window === 'undefined'

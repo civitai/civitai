@@ -90,6 +90,7 @@ import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 import { Collection } from '~/components/Collection/Collection';
 import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -349,6 +350,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
   const expired = bounty.expiresAt < new Date();
 
+  const { trackEvent } = useTrackEvent();
+
   const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useQuery({
     id: bounty.id,
   });
@@ -554,6 +557,9 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 e.preventDefault();
                 e.stopPropagation();
 
+                // Ignore track error
+                trackEvent({ type: 'AddToBounty_Click' }).catch(() => undefined);
+
                 openConfirmModal({
                   title: isBenefactor ? 'Add to bounty' : 'Become a supporter',
                   children: (
@@ -583,6 +589,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                   labels: { confirm: 'Confirm', cancel: 'No, go back' },
                   onConfirm: () => {
                     onAddToBounty(minUnitAmount);
+                    trackEvent({ type: 'AddToBounty_Confirm' }).catch(() => undefined);
                   },
                 });
               }}
