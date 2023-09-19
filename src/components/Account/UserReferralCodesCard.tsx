@@ -9,6 +9,8 @@ import {
   ActionIcon,
   Tooltip,
   Paper,
+  Loader,
+  Center,
 } from '@mantine/core';
 
 import { trpc } from '~/utils/trpc';
@@ -16,11 +18,12 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useClipboard } from '@mantine/hooks';
 import { IconClipboardCopy, IconTrash } from '@tabler/icons-react';
+import { env } from '~/env/client.mjs';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
   const currentUser = useCurrentUser();
-  const { data: userReferralCodes = [] } = trpc.userReferralCode.getAll.useQuery({});
+  const { data: userReferralCodes = [], isLoading } = trpc.userReferralCode.getAll.useQuery({});
   const queryUtils = trpc.useContext();
   const { mutate: upsertUserReferralCode, isLoading: upsertingCode } =
     trpc.userReferralCode.upsert.useMutation({
@@ -43,7 +46,7 @@ export function UserReferralCodesCard() {
       },
     });
 
-  const referralUrl = `sd/register?referralCode=`;
+  const referralUrl = `${env.NEXT_PUBLIC_BASE_URL}/register?referralCode=`;
 
   return (
     <Card withBorder>
@@ -52,65 +55,73 @@ export function UserReferralCodesCard() {
           <Title order={2}>Referral Codes</Title>
           <Text color="dimmed" size="sm">
             You can use referral codes to invite your friends to join the platform. Referring
-            accounts will grant you 500 Buzz which you can use to generate content, run bounties and
+            accounts will grant you Buzz which you can use to generate content, run bounties and
             more!
           </Text>
         </Stack>
         <Stack>
-          {userReferralCodes.length === 0 ? (
-            <Text color="red">Looks like you have created no referral codes just yet.</Text>
+          {isLoading ? (
+            <Center>
+              <Loader />
+            </Center>
           ) : (
-            <Stack>
-              {userReferralCodes.map((referralCode) => (
-                <Paper withBorder p="sm" key={referralCode.id}>
-                  <Group position="apart">
-                    <Stack spacing={0}>
-                      <Code color="blue" style={{ textAlign: 'center' }}>
-                        {referralCode.code}
-                      </Code>
-                      {referralCode.note && (
-                        <Text color="dimmed" size="xs">
-                          {referralCode.note}
-                        </Text>
-                      )}
-                    </Stack>
+            <>
+              {userReferralCodes.length === 0 ? (
+                <Text color="red">Looks like you have created no referral codes just yet.</Text>
+              ) : (
+                <Stack spacing="xs">
+                  {userReferralCodes.map((referralCode) => (
+                    <Paper withBorder p="sm" key={referralCode.id}>
+                      <Group position="apart">
+                        <Stack spacing={0}>
+                          <Code color="blue" style={{ textAlign: 'center' }}>
+                            {referralCode.code}
+                          </Code>
+                          {referralCode.note && (
+                            <Text color="dimmed" size="xs">
+                              {referralCode.note}
+                            </Text>
+                          )}
+                        </Stack>
 
-                    <Group>
-                      <Tooltip
-                        label={copied ? 'Copied' : 'Copy referral URL'}
-                        withArrow
-                        withinPortal
-                      >
-                        <ActionIcon
-                          size="md"
-                          color="blue"
-                          radius="xl"
-                          variant="light"
-                          onClick={() => copy(`${referralUrl}${referralCode.code}`)}
-                        >
-                          <IconClipboardCopy size={20} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Delete" withArrow withinPortal>
-                        <ActionIcon
-                          size="md"
-                          color="red"
-                          radius="xl"
-                          variant="light"
-                          onClick={() => deleteUserReferralCode({ id: referralCode.id })}
-                        >
-                          <IconTrash size={20} />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
-                  </Group>
-                </Paper>
-              ))}
-            </Stack>
+                        <Group>
+                          <Tooltip
+                            label={copied ? 'Copied' : 'Copy referral URL'}
+                            withArrow
+                            withinPortal
+                          >
+                            <ActionIcon
+                              size="md"
+                              color="blue"
+                              radius="xl"
+                              variant="light"
+                              onClick={() => copy(`${referralUrl}${referralCode.code}`)}
+                            >
+                              <IconClipboardCopy size={20} />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Delete" withArrow withinPortal>
+                            <ActionIcon
+                              size="md"
+                              color="red"
+                              radius="xl"
+                              variant="light"
+                              onClick={() => deleteUserReferralCode({ id: referralCode.id })}
+                            >
+                              <IconTrash size={20} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Group>
+                      </Group>
+                    </Paper>
+                  ))}
+                </Stack>
+              )}
+            </>
           )}
           <Button
             disabled={userReferralCodes.length >= 3}
-            loading={upsertingCode}
+            loading={upsertingCode || isLoading}
             onClick={() => upsertUserReferralCode({ userId: currentUser?.id })}
           >
             Generate new referral code
