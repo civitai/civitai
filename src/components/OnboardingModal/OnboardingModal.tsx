@@ -32,6 +32,7 @@ import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { usernameInputSchema } from '~/server/schema/user.schema';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -48,13 +49,14 @@ const schema = z.object({
 export default function OnboardingModal() {
   const user = useCurrentUser();
   const utils = trpc.useContext();
+  const { code, source } = useReferralsContext();
   const { classes } = useStyles();
 
   const form = useForm({
     schema,
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: { ...user },
+    defaultValues: { ...user, userReferralCode: code, source },
   });
   const username = form.watch('username');
   const userReferralCode = form.watch('userReferralCode');

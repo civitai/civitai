@@ -35,13 +35,13 @@ export default function Account({ providers }: Props) {
             </Text>
           </Stack>
           <ProfileCard />
+          <UserReferralCodesCard />
           <SocialProfileCard />
           <SettingsCard />
           <ModerationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <NotificationsCard />
           <AccountsCard providers={providers} />
-          <UserReferralCodesCard />
           {apiKeys && <ApiKeysCard />}
           <DeleteCard />
         </Stack>

@@ -23,6 +23,7 @@ import {
   updateLeaderboardRank,
   toggleBan,
   userByReferralCode,
+  createUserReferral,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -200,7 +201,7 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, showNsfw, username, ...data } = input;
+  const { id, badgeId, nameplateId, showNsfw, username, source, userReferralCode, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
   if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
@@ -238,6 +239,13 @@ export const updateUserHandler = async ({
     });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
+    if (userReferralCode || source) {
+      await createUserReferral({
+        id: updatedUser.id,
+        userReferralCode,
+        source,
+      });
+    }
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 

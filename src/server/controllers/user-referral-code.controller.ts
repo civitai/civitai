@@ -21,7 +21,7 @@ export const getUserReferralCodesHandler = async ({
 }) => {
   const userId = input.userId || ctx.user.id;
 
-  return await getUserReferralCodes({ userId });
+  return await getUserReferralCodes({ userId, includeCount: !!input.includeCount });
 };
 
 export const upsertUserReferralCodeHandler = async ({

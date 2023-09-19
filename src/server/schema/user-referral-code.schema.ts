@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 export type GetUserReferralCodesSchema = z.infer<typeof getUserReferralCodesSchema>;
-export const getUserReferralCodesSchema = z.object({ userId: z.number().optional() });
+export const getUserReferralCodesSchema = z.object({
+  userId: z.number().optional(),
+  includeCount: z.boolean().optional(),
+});
 
 export type UpsertUserReferralCodesSchema = z.infer<typeof upsertUserReferralCodesSchema>;
 export const upsertUserReferralCodesSchema = z.object({

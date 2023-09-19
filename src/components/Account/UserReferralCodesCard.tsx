@@ -23,7 +23,9 @@ import { env } from '~/env/client.mjs';
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
   const currentUser = useCurrentUser();
-  const { data: userReferralCodes = [], isLoading } = trpc.userReferralCode.getAll.useQuery({});
+  const { data: userReferralCodes = [], isLoading } = trpc.userReferralCode.getAll.useQuery({
+    includeCount: true,
+  });
   const queryUtils = trpc.useContext();
   const { mutate: upsertUserReferralCode, isLoading: upsertingCode } =
     trpc.userReferralCode.upsert.useMutation({
@@ -46,7 +48,7 @@ export function UserReferralCodesCard() {
       },
     });
 
-  const referralUrl = `${env.NEXT_PUBLIC_BASE_URL}/register?referralCode=`;
+  const referralUrl = `${env.NEXT_PUBLIC_BASE_URL}/login?ref_code=`;
 
   return (
     <Card withBorder>
@@ -80,6 +82,11 @@ export function UserReferralCodesCard() {
                           {referralCode.note && (
                             <Text color="dimmed" size="xs">
                               {referralCode.note}
+                            </Text>
+                          )}
+                          {referralCode._count && (
+                            <Text color="dimmed" size="xs">
+                              Referees: {referralCode._count.referees}
                             </Text>
                           )}
                         </Stack>

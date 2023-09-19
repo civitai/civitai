@@ -1,4 +1,14 @@
-import { Container, Paper, Stack, Text, Alert, Group, ThemeIcon, Divider } from '@mantine/core';
+import {
+  Container,
+  Paper,
+  Stack,
+  Text,
+  Alert,
+  Group,
+  ThemeIcon,
+  Divider,
+  Code,
+} from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
@@ -11,6 +21,10 @@ import { SocialButton } from '~/components/Social/SocialButton';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
+import { trpc } from '~/utils/trpc';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { QS } from '~/utils/qs';
 
 export default function Login({ providers }: Props) {
   const router = useRouter();
@@ -22,9 +36,19 @@ export default function Login({ providers }: Props) {
     error: string;
     returnUrl: string;
     reason: LoginRedirectReason;
-    refCode?: string;
-    refSource?: string;
   };
+  const { code, source } = useReferralsContext();
+  const { data: referrer, isLoading: referrerLoading } = trpc.user.userByReferralCode.useQuery(
+    { userReferralCode: code as string },
+    { enabled: !!code }
+  );
+
+  const returnUrlWithReferrals =
+    code || source
+      ? returnUrl.includes('?')
+        ? `${returnUrl}&${QS.stringify({ ref_source: source, ref_code: code })}`
+        : `${returnUrl}?${QS.stringify({ ref_source: source, ref_code: code })}`
+      : returnUrl;
 
   const redirectReason = loginRedirectReasons[reason];
 
@@ -41,6 +65,21 @@ export default function Login({ providers }: Props) {
             </Group>
           </Alert>
         )}
+        {referrer && (
+          <Paper withBorder>
+            <Stack spacing="xs" p="md">
+              <Text color="dimmed" size="sm">
+                You have been referred by
+              </Text>
+              <CreatorCard user={referrer} />
+              <Text size="sm">
+                By using signing up with the referral code <Code>{code}</Code> both you and the user
+                who referred you will be awarded buzz. This code will be automatically applied
+                during your username selection process.
+              </Text>
+            </Stack>
+          </Paper>
+        )}
         <Paper radius="md" p="xl" withBorder>
           <Text size="lg" weight={500}>
             Welcome to Civitai, sign in with
@@ -55,7 +94,7 @@ export default function Login({ providers }: Props) {
                       <SocialButton
                         key={provider.name}
                         provider={provider.id as BuiltInProviderType}
-                        onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                        onClick={() => signIn(provider.id, { callbackUrl: returnUrlWithReferrals })}
                       />
                     );
                   })
@@ -87,7 +126,8 @@ type Props = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, ctx }) => {
+    console.log(ctx);
     if (session) {
       return {
         redirect: {

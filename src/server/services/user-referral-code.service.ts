@@ -3,13 +3,26 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { isModerator } from '~/server/routers/base.router';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
-export const getUserReferralCodes = async ({ userId }: { userId: number }) => {
+export const getUserReferralCodes = async ({
+  userId,
+  includeCount,
+}: {
+  userId: number;
+  includeCount: boolean;
+}) => {
   return await dbRead.userReferralCode.findMany({
     where: { userId },
     select: {
       id: true,
       code: true,
       note: true,
+      _count: includeCount
+        ? {
+            select: {
+              referees: true,
+            },
+          }
+        : undefined,
     },
   });
 };

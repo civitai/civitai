@@ -167,7 +167,7 @@ export const acceptTOS = ({ id }: { id: number }) => {
   });
 };
 
-export const completeOnboarding = ({ id }: { id: number }) => {
+export const completeOnboarding = async ({ id }: { id: number }) => {
   return dbWrite.user.update({
     where: { id },
     data: { onboarded: true },
@@ -720,3 +720,38 @@ export const userByReferralCode = async ({ userReferralCode }: UserByReferralCod
   return referralCode.user;
 };
 // #endregion
+
+export const createUserReferral = async ({
+  id,
+  userReferralCode,
+  source,
+}: {
+  id: number;
+  userReferralCode?: string;
+  source?: string;
+}) => {
+  const user = await dbRead.user.findUniqueOrThrow({
+    where: { id },
+    select: { id: true, referral: { select: { id: true } } },
+  });
+
+  if (!!user.referral) {
+    return;
+  }
+
+  if (userReferralCode || source) {
+    // Confirm userReferralCode is valid:
+    const referralCode = await dbRead.userReferralCode.findFirst({
+      where: { code: userReferralCode },
+    });
+
+    // Create new referral:
+    await dbWrite.userReferral.create({
+      data: {
+        userId: id,
+        source,
+        userReferralCodeId: referralCode?.id ?? undefined,
+      },
+    });
+  }
+};
