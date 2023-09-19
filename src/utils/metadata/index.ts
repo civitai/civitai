@@ -1,6 +1,6 @@
 import ExifReader from 'exifreader';
 import { v4 as uuidv4 } from 'uuid';
-import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
+import { ImageMetaProps, imageGenerationSchema } from '~/server/schema/image.schema';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
 import { isDefined } from '~/utils/type-guards';
@@ -33,7 +33,7 @@ export async function getMetadata(file: File) {
   } catch (e: any) { //eslint-disable-line
     console.error('Error parsing metadata', e);
   }
-  const result = imageMetaSchema.safeParse(metadata);
+  const result = imageGenerationSchema.partial().safeParse(metadata);
   return result.success ? result.data : {};
 }
 
