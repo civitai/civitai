@@ -11,6 +11,7 @@ import { CollectItemInput } from '~/server/schema/collection.schema';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 export function ShareButton({
   children,
@@ -26,6 +27,7 @@ export function ShareButton({
   const clipboard = useClipboard({ timeout: undefined });
   const { requireLogin } = useLoginRedirect({ reason: 'add-to-collection' });
   const features = useFeatureFlags();
+  const { trackShare } = useTrackEvent();
 
   const url =
     typeof window === 'undefined'
@@ -38,24 +40,32 @@ export function ShareButton({
   const shareLinks = [
     {
       type: clipboard.copied ? 'Copied' : 'Copy Url',
-      onClick: () => clipboard.copy(url),
+      onClick: () => {
+        trackShare({ platform: 'clipboard', url });
+        clipboard.copy(url);
+      },
       render: <SocialIconCopy copied={clipboard.copied} />,
     },
     {
       type: 'Reddit',
-      onClick: () => window.open(`https://www.reddit.com/submit?${QS.stringify({ url, title })}`),
+      onClick: () => {
+        trackShare({ platform: 'reddit', url });
+        window.open(`https://www.reddit.com/submit?${QS.stringify({ url, title })}`);
+      },
       render: <SocialIconReddit />,
     },
     {
       type: 'Twitter',
-      onClick: () =>
+      onClick: () => {
+        trackShare({ platform: 'twitter', url });
         window.open(
           `https://twitter.com/intent/tweet?${QS.stringify({
             url,
             text: title,
             via: 'HelloCivitai',
           })}`
-        ),
+        );
+      },
       render: <SocialIconTwitter />,
     },
     {

@@ -1,4 +1,4 @@
-import { Currency, Prisma } from '@prisma/client';
+import { Currency, File, Prisma } from '@prisma/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { dbRead, dbWrite } from '../db/client';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
@@ -85,7 +85,12 @@ export const upsertBountyEntry = async ({
       const entry = await tx.bountyEntry.findUniqueOrThrow({ where: { id } });
 
       if (files) {
-        await updateEntityFiles({ tx, entityId: entry.id, entityType: 'BountyEntry', files });
+        await updateEntityFiles({
+          tx,
+          entityId: entry.id,
+          entityType: 'BountyEntry',
+          files,
+        });
       }
 
       if (images) {
@@ -326,4 +331,6 @@ export const deleteBountyEntry = async ({ id }: { id: number }) => {
   });
 
   if (!deletedBountyEntry) return null;
+
+  return deletedBountyEntry;
 };

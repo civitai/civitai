@@ -9,6 +9,8 @@ import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
+import { Tracker } from '~/server/clickhouse/client';
+import { handleTrackError } from '~/server/utils/errorHandling';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -107,6 +109,12 @@ export default RateLimitedEndpoint(
 
     try {
       const { url } = await getDownloadUrl(file.url, file.name);
+
+      const tracker = new Tracker(req, res);
+      tracker
+        .file({ type: 'Download', url, entityId: file.entityId, entityType: file.entityType })
+        .catch(handleTrackError);
+
       res.redirect(url);
     } catch (err: unknown) {
       const error = err as Error;

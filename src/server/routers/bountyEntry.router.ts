@@ -1,5 +1,5 @@
 import { getByIdSchema } from '../schema/base.schema';
-import { middleware, protectedProcedure, publicProcedure, router } from '../trpc';
+import { isFlagProtected, middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 import {
   awardBountyEntryHandler,
   deleteBountyEntryHandler,
@@ -35,12 +35,25 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const bountyEntryRouter = router({
-  getById: publicProcedure.input(getByIdSchema).query(getBountyEntryHandler),
-  getFiles: publicProcedure.input(getByIdSchema).query(getBountyEntryFilteredFilesHandler),
-  create: protectedProcedure.input(upsertBountyEntryInputSchema).mutation(upsertBountyEntryHandler),
-  award: protectedProcedure.input(getByIdSchema).mutation(awardBountyEntryHandler),
+  getById: publicProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('bounties'))
+    .query(getBountyEntryHandler),
+  getFiles: publicProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('bounties'))
+    .query(getBountyEntryFilteredFilesHandler),
+  create: protectedProcedure
+    .input(upsertBountyEntryInputSchema)
+    .use(isFlagProtected('bounties'))
+    .mutation(upsertBountyEntryHandler),
+  award: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('bounties'))
+    .mutation(awardBountyEntryHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
+    .use(isFlagProtected('bounties'))
     .mutation(deleteBountyEntryHandler),
 });
