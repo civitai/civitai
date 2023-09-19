@@ -484,7 +484,7 @@ export default function UserTrainingModels() {
                                     // color={`gray.${Math.max(Math.min(epochsPct, 9), 0)}`}
                                     color={'gray'}
                                   >
-                                    {`Step ${epochsDone}/${numEpochs}`}
+                                    {`Progress (Epochs) ${epochsDone}/${numEpochs}`}
                                   </Badge>
                                 </>
                               )}
