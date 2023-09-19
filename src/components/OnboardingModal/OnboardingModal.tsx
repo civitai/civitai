@@ -46,7 +46,7 @@ const schema = z.object({
   userReferralCode: z
     .string()
     .transform((code) => (code ? code.trim() : code))
-    .refine((code) => code && code.length <= constants.referrals.referralCodeMinLength, {
+    .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
       message: `Referral codes must be at least ${constants.referrals.referralCodeMinLength} characters long`,
     }),
   source: z.string().optional(),
@@ -90,7 +90,11 @@ export default function OnboardingModal() {
   // Confirm user referral code:
   const { data: referrer, isLoading: referrerLoading } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: debouncedUserReferralCode as string },
-    { enabled: !!debouncedUserReferralCode && debouncedUserReferralCode.length >= 3 }
+    {
+      enabled:
+        !!debouncedUserReferralCode &&
+        debouncedUserReferralCode.length > constants.referrals.referralCodeMinLength,
+    }
   );
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
