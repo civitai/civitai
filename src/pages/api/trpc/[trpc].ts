@@ -1,8 +1,9 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
-import { log, withAxiom } from 'next-axiom';
-import { isDev, isProd } from '~/env/other';
+import { withAxiom } from 'next-axiom';
+import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
+import { logToAxiom } from '~/server/logging/client';
 import { appRouter } from '~/server/routers';
 import { handleTRPCError } from '~/server/utils/errorHandling';
 
@@ -46,7 +47,10 @@ export default withAxiom(
       handleTRPCError(error);
 
       if (isProd) {
-        log.error('TRPC Error', { code: error.code, message: error.message });
+        logToAxiom(
+          { name: error.name, code: error.code, message: error.message, stack: error.stack },
+          'civitai-prod'
+        ).then();
       } else {
         console.error(`❌ tRPC failed on ${path}`);
         console.error(error);
