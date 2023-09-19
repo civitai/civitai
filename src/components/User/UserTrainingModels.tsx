@@ -22,24 +22,18 @@ import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { TrainingStatus } from '@prisma/client';
 import { IconAlertCircle, IconCircleCheck, IconTrash } from '@tabler/icons-react';
-import { useQueryClient } from '@tanstack/react-query';
-import { getQueryKey } from '@trpc/react-query';
-import produce from 'immer';
 import { useRouter } from 'next/router';
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { constants } from '~/server/common/constants';
-import { SignalMessages } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
 } from '~/server/common/model-helpers';
 import { TrainingDetailsObj, TrainingDetailsParams } from '~/server/schema/model-version.schema';
-import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -122,35 +116,6 @@ const modelsLimit = 10;
 const minsWait = 5 * 60 * 1000;
 const minsPerEpoch = 1 * 60 * 1000;
 const minsPerEpochSDXL = 5 * 60 * 1000;
-
-const TrainingSignals = () => {
-  const queryClient = useQueryClient();
-
-  const onUpdate = useCallback(
-    (updated: TrainingUpdateSignalSchema) => {
-      const queryKey = getQueryKey(trpc.model.getMyTrainingModels);
-      queryClient.setQueriesData(
-        { queryKey, exact: false },
-        produce((old: MyTrainingModelGetAll | undefined) => {
-          const model = old?.items?.find((x) => x.id == updated.modelId);
-          const mv = model?.modelVersions[0];
-          if (mv) {
-            mv.trainingStatus = updated.status;
-            const mFile = mv.files[0];
-            if (mFile) {
-              mFile.metadata = updated.fileMetadata;
-            }
-          }
-        })
-      );
-    },
-    [queryClient]
-  );
-
-  useSignalConnection(SignalMessages.TrainingUpdate, onUpdate);
-
-  return null;
-};
 
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
@@ -572,7 +537,6 @@ export default function UserTrainingModels() {
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
-      <TrainingSignals />
     </Stack>
   );
 }
