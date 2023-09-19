@@ -1,6 +1,6 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
-import { withAxiom } from 'next-axiom';
+import { log, withAxiom } from 'next-axiom';
 import { isDev } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
@@ -48,6 +48,7 @@ export default withAxiom(
         console.error(error);
       }
       handleTRPCError(error);
+      log.error('TRPC Error', { code: error.code, message: error.message });
       return error;
     },
   })
