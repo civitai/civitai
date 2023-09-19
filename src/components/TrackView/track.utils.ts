@@ -5,12 +5,12 @@ export const useTrackEvent = () => {
   const { mutateAsync: trackShare } = trpc.track.trackShare.useMutation();
   const { mutateAsync: trackEvent } = trpc.track.addEvent.useMutation();
 
-  const handleTrackShare = async (data: TrackShareInput) => {
-    await trackShare(data);
+  const handleTrackShare = (data: TrackShareInput) => {
+    return trackShare(data);
   };
 
-  const handleTrackEvent = async (data: TrackEventInput) => {
-    await trackEvent(data);
+  const handleTrackEvent = (data: TrackEventInput) => {
+    return trackEvent(data);
   };
 
   return { trackShare: handleTrackShare, trackEvent: handleTrackEvent };
