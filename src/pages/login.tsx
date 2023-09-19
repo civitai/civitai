@@ -73,7 +73,7 @@ export default function Login({ providers }: Props) {
               </Text>
               <CreatorCard user={referrer} />
               <Text size="sm">
-                By using signing up with the referral code <Code>{code}</Code> both you and the user
+                By signing up with the referral code <Code>{code}</Code> both you and the user
                 who referred you will be awarded buzz. This code will be automatically applied
                 during your username selection process.
               </Text>
