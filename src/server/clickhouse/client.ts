@@ -163,6 +163,8 @@ export type BountyEntryActivity =
   | BountyEntryDeleteActivity
   | BountyEntryAwardActivity;
 
+export type BountyBenefactorActivity = 'Create';
+
 export type FileActivity = 'Download';
 
 export type TrackRequest = {
@@ -299,8 +301,16 @@ export class Tracker {
     return this.track('bounties', { type, ...data });
   }
 
-  public bountyEntry(values: BountyEntryActivity) {
-    return this.track('bountyEntries', values);
+  public bountyEntry({ type, data }: BountyEntryActivity) {
+    return this.track('bountyEntries', { type, ...data });
+  }
+
+  public bountyBenefactor(values: {
+    type: BountyBenefactorActivity;
+    bountyId: number;
+    unitAmount: number;
+  }) {
+    return this.track('bountyBenefactors', values);
   }
 
   public modelEngagement(values: { type: ModelEngagementType; modelId: number }) {

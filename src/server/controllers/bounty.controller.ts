@@ -337,6 +337,15 @@ export const addBenefactorUnitAmountHandler = async ({
   try {
     const { id: userId } = ctx.user;
     const bountyBenefactor = await addBenefactorUnitAmount({ ...input, userId });
+
+    ctx.track
+      .bountyBenefactor({
+        type: 'Create',
+        bountyId: bountyBenefactor.bountyId,
+        unitAmount: bountyBenefactor.unitAmount,
+      })
+      .catch(handleTrackError);
+
     return bountyBenefactor;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

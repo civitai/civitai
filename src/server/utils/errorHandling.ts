@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
+import { log } from 'next-axiom';
+import { isProd } from '~/env/other';
 
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
@@ -132,6 +134,7 @@ export function throwInsufficientFundsError(message: string | null = null, error
 }
 
 export function handleTrackError(e: Error) {
-  const error = new Error('Failed to track event: ' + e.message, { cause: e });
-  console.error(error);
+  const error = new Error('Failed to track clickhouse event: ' + e.message, { cause: e });
+  if (isProd) log.error(error.message);
+  else console.error(error);
 }
