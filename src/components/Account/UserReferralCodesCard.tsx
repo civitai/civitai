@@ -32,7 +32,7 @@ export function UserReferralCodesCard() {
       onSuccess: async (_, { id }) => {
         showSuccessNotification({
           title: 'Success',
-          message: id ? 'Referral code updated successfuly' : 'Referral code created successfuly',
+          message: id ? 'Referral code updated successfully' : 'Referral code created successfully',
         });
         await queryUtils.userReferralCode.getAll.invalidate();
       },
