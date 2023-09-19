@@ -1,9 +1,49 @@
-import { Text, Card, Title, Stack, Button } from '@mantine/core';
+import {
+  Text,
+  Card,
+  Title,
+  Stack,
+  Button,
+  Group,
+  Code,
+  ActionIcon,
+  Tooltip,
+  Paper,
+} from '@mantine/core';
 
 import { trpc } from '~/utils/trpc';
+import { showSuccessNotification } from '~/utils/notifications';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useClipboard } from '@mantine/hooks';
+import { IconClipboardCopy, IconTrash } from '@tabler/icons-react';
 
 export function UserReferralCodesCard() {
+  const { copied, copy } = useClipboard();
+  const currentUser = useCurrentUser();
   const { data: userReferralCodes = [] } = trpc.userReferralCode.getAll.useQuery({});
+  const queryUtils = trpc.useContext();
+  const { mutate: upsertUserReferralCode, isLoading: upsertingCode } =
+    trpc.userReferralCode.upsert.useMutation({
+      onSuccess: async (_, { id }) => {
+        showSuccessNotification({
+          title: 'Success',
+          message: id ? 'Referral code updated successfuly' : 'Referral code created successfuly',
+        });
+        await queryUtils.userReferralCode.getAll.invalidate();
+      },
+    });
+  const { mutate: deleteUserReferralCode, isLoading: deletingCode } =
+    trpc.userReferralCode.delete.useMutation({
+      onSuccess: async () => {
+        showSuccessNotification({
+          title: 'Success',
+          message: 'Referral code has been deleted',
+        });
+        await queryUtils.userReferralCode.getAll.invalidate();
+      },
+    });
+
+  const referralUrl = `sd/register?referralCode=`;
 
   return (
     <Card withBorder>
@@ -20,9 +60,61 @@ export function UserReferralCodesCard() {
           {userReferralCodes.length === 0 ? (
             <Text color="red">Looks like you have created no referral codes just yet.</Text>
           ) : (
-            <Text>You have created {userReferralCodes.length} referral code</Text>
+            <Stack>
+              {userReferralCodes.map((referralCode) => (
+                <Paper withBorder p="sm" key={referralCode.id}>
+                  <Group position="apart">
+                    <Stack spacing={0}>
+                      <Code color="blue" style={{ textAlign: 'center' }}>
+                        {referralCode.code}
+                      </Code>
+                      {referralCode.note && (
+                        <Text color="dimmed" size="xs">
+                          {referralCode.note}
+                        </Text>
+                      )}
+                    </Stack>
+
+                    <Group>
+                      <Tooltip
+                        label={copied ? 'Copied' : 'Copy referral URL'}
+                        withArrow
+                        withinPortal
+                      >
+                        <ActionIcon
+                          size="md"
+                          color="blue"
+                          radius="xl"
+                          variant="light"
+                          onClick={() => copy(`${referralUrl}${referralCode.code}`)}
+                        >
+                          <IconClipboardCopy size={20} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Delete" withArrow withinPortal>
+                        <ActionIcon
+                          size="md"
+                          color="red"
+                          radius="xl"
+                          variant="light"
+                          onClick={() => deleteUserReferralCode({ id: referralCode.id })}
+                        >
+                          <IconTrash size={20} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Group>
+                </Paper>
+              ))}
+            </Stack>
           )}
-          <Button onClick={() => console.log('generando')}>Generate new referral code</Button>
+          <Button
+            disabled={userReferralCodes.length >= 3}
+            loading={upsertingCode}
+            onClick={() => upsertUserReferralCode({ userId: currentUser?.id })}
+          >
+            Generate new referral code
+          </Button>
         </Stack>
       </Stack>
     </Card>
