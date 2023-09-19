@@ -43,12 +43,15 @@ export default withAxiom(
     //     }
     //   : undefined,
     onError: ({ error, type, path, input, ctx, req }) => {
-      if (isDev) {
+      if (isProd) {
+        log.error('TRPC Error', { code: error.code, message: error.message });
+      } else {
         console.error(`❌ tRPC failed on ${path}`);
         console.error(error);
       }
+
       handleTRPCError(error);
-      if (isProd) log.error('TRPC Error', { code: error.code, message: error.message });
+
       return error;
     },
   })
