@@ -12,6 +12,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -48,11 +49,20 @@ const useStyles = createStyles((theme) => ({
     },
   },
   control: { border: 'none !important' },
+
+  filtersWrapper: {
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+
+      '> *': { flexGrow: 1 },
+    },
+  },
 }));
 
 export default function BountiesPage() {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
+  const mobile = useIsMobile();
   const router = useRouter();
   const query = router.query;
   const engagement = constants.bounties.engagementTypes.find(
@@ -91,7 +101,7 @@ export default function BountiesPage() {
             />
             <Group position="apart" spacing={8}>
               <FullHomeContentToggle />
-              <Group spacing={8} noWrap>
+              <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 <SortFilter type="bounties" variant="button" />
                 <BountyFiltersDropdown />
               </Group>

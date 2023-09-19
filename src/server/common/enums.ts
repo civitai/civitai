@@ -131,8 +131,8 @@ export enum SignalMessages {
 }
 
 export enum BountySort {
-  HighestBounty = 'Highest Bounty',
   EndingSoon = 'Ending Soon',
+  HighestBounty = 'Highest Bounty',
   MostLiked = 'Most Liked',
   MostDiscussed = 'Most Discussed',
   MostContributors = 'Most Contributors',
