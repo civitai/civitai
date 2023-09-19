@@ -135,6 +135,6 @@ export function throwInsufficientFundsError(message: string | null = null, error
 
 export function handleTrackError(e: Error) {
   const error = new Error('Failed to track clickhouse event: ' + e.message, { cause: e });
-  if (isProd) log.error(error.message);
+  if (isProd) log.error(error.message, { cause: e });
   else console.error(error);
 }
