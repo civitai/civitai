@@ -171,6 +171,10 @@ export const constants = {
   imageUpload: {
     maxFileSize: 32 * 1024 ** 2, // 32MB
   },
+  referrals: {
+    referralCodeMinLength: 6,
+    referralCodeMaxCount: 3,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

@@ -33,6 +33,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { usernameInputSchema } from '~/server/schema/user.schema';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
+import { constants } from '~/server/common/constants';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -42,7 +43,12 @@ const schema = z.object({
       required_error: 'Please provide an email',
     })
     .email(),
-  userReferralCode: z.string().optional(),
+  userReferralCode: z
+    .string()
+    .transform((code) => (code ? code.trim() : code))
+    .refine((code) => code && code.length <= constants.referrals.referralCodeMinLength, {
+      message: `Referral codes must be at least ${constants.referrals.referralCodeMinLength} characters long`,
+    }),
   source: z.string().optional(),
 });
 
@@ -228,17 +234,14 @@ export default function OnboardingModal() {
                       label="Referral Code"
                       type="text"
                       clearable={false}
-                      error={
-                        userReferralCode && userReferralCode.length <= 3
-                          ? 'Referral codes must be longer than 3 characters'
-                          : undefined
-                      }
                       rightSection={
-                        userReferralCode && userReferralCode.length > 3 && referrerLoading ? (
+                        userReferralCode &&
+                        userReferralCode.length >= constants.referrals.referralCodeMinLength &&
+                        referrerLoading ? (
                           <Loader size="sm" mr="xs" />
                         ) : (
                           userReferralCode &&
-                          userReferralCode.length > 3 && (
+                          userReferralCode.length >= constants.referrals.referralCodeMinLength && (
                             <ThemeIcon
                               variant="outline"
                               color={referrer ? 'green' : 'red'}

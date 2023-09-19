@@ -19,6 +19,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useClipboard } from '@mantine/hooks';
 import { IconClipboardCopy, IconTrash } from '@tabler/icons-react';
 import { env } from '~/env/client.mjs';
+import { constants } from '~/server/common/constants';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
@@ -127,7 +128,7 @@ export function UserReferralCodesCard() {
             </>
           )}
           <Button
-            disabled={userReferralCodes.length >= 3}
+            disabled={userReferralCodes.length >= constants.referrals.referralCodeMaxCount}
             loading={upsertingCode || isLoading}
             onClick={() => upsertUserReferralCode({ userId: currentUser?.id })}
           >
