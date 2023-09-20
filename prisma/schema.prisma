@@ -1947,6 +1947,17 @@ model HomeBlock {
   clones    HomeBlock[]   @relation("Clones")
 }
 
+model BuzzTip {
+  entityType String
+  entityId   Int
+  toUserId   Int
+  fromUserId Int
+  amount     Int
+
+  @@id([entityType, entityId, fromUserId])
+  @@index([toUserId])
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id
