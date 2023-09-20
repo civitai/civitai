@@ -109,3 +109,8 @@ export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticle
 export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema.extend({
   articleId: z.number(),
 });
+
+export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
+export const reportProhibitedRequestSchema = z.object({
+  prompt: z.string(),
+});

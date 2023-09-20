@@ -37,6 +37,7 @@ import {
   ToggleModelEngagementInput,
   GetUserCosmeticsSchema,
   ToggleUserArticleEngagementsInput,
+  ReportProhibitedRequestInput,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -54,6 +55,8 @@ import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import { dbWrite } from '~/server/db/client';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { redis } from '~/server/redis/client';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -790,4 +793,49 @@ export const toggleArticleEngagementHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const reportProhibitedRequestHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ReportProhibitedRequestInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  await ctx.track.prohibitedRequest(input);
+
+  try {
+    const userId = ctx.user.id;
+    const countRes = await clickhouse?.query({
+      query: `
+        SELECT
+          COUNT(*) as count
+        FROM prohibitedRequests
+        WHERE userId = ${userId} AND time > subtractHours(now(), 24);
+      `,
+      format: 'JSONEachRow',
+    });
+    const count = ((await countRes?.json()) as [{ count: number }])?.[0]?.count ?? 0;
+    const limit =
+      constants.imageGeneration.requestBlocking.muted -
+      constants.imageGeneration.requestBlocking.notified;
+    if (count >= limit) {
+      await updateUserById({ id: userId, data: { muted: true } });
+      await invalidateSession(userId);
+
+      await ctx.track.userActivity({
+        type: 'Muted',
+        targetUserId: userId,
+      });
+
+      return true;
+    }
+  } catch (error) {
+    throw new TRPCError({
+      message: 'Error checking prohibited request count',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  }
+
+  return false;
 };

@@ -21,6 +21,7 @@ import {
   acceptTOSHandler,
   completeOnboardingHandler,
   toggleArticleEngagementHandler,
+  reportProhibitedRequestHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -44,6 +45,7 @@ import {
   batchBlockTagsSchema,
   getUserCosmeticsSchema,
   toggleUserArticleEngagementSchema,
+  reportProhibitedRequestSchema,
 } from '~/server/schema/user.schema';
 import { getUserArticleEngagements, removeAllContent } from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -99,4 +101,7 @@ export const userRouter = router({
   toggleArticleEngagement: protectedProcedure
     .input(toggleUserArticleEngagementSchema)
     .mutation(toggleArticleEngagementHandler),
+  reportProhibitedRequest: protectedProcedure
+    .input(reportProhibitedRequestSchema)
+    .mutation(reportProhibitedRequestHandler),
 });

@@ -159,6 +159,11 @@ export const constants = {
   },
   imageGeneration: {
     drawerZIndex: 301,
+    requestBlocking: {
+      warned: 10,
+      notified: 20,
+      muted: 50,
+    },
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,

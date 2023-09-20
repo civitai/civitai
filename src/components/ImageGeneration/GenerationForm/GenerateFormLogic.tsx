@@ -1,5 +1,9 @@
 import { useForm } from 'react-hook-form';
-import { GenerateFormModel, generateFormSchema } from '~/server/schema/generation.schema';
+import {
+  blockedRequest,
+  GenerateFormModel,
+  generateFormSchema,
+} from '~/server/schema/generation.schema';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { GenerateFormView } from '~/components/ImageGeneration/GenerationForm/GenerateFormView';
 import { useEffect } from 'react';
@@ -9,6 +13,7 @@ import { generationPanel, generationStore, useGenerationStore } from '~/store/ge
 import { uniqBy } from 'lodash-es';
 import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
+import { trpc } from '~/utils/trpc';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -104,5 +109,17 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     generationPanel.setView('queue'); // TODO.generation - determine what should actually happen after clicking 'generate'
   };
 
-  return <GenerateFormView form={form} onSubmit={handleSubmit} />;
+  const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
+  const handleError = async (e: unknown) => {
+    const promptError = (e as any)?.prompt as any;
+    if (promptError?.type === 'custom') {
+      const status = blockedRequest.status();
+      if (status === 'notified' || status === 'muted') {
+        const isBlocked = await reportProhibitedRequest({ prompt: promptError.ref.value });
+        if (isBlocked) currentUser?.refresh();
+      }
+    }
+  };
+
+  return <GenerateFormView form={form} onSubmit={handleSubmit} onError={handleError} />;
 }
