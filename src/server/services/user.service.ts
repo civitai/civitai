@@ -704,7 +704,7 @@ export const toggleUserArticleEngagement = async ({
 // #region [user referrals]
 export const userByReferralCode = async ({ userReferralCode }: UserByReferralCodeSchema) => {
   const referralCode = await dbRead.userReferralCode.findFirst({
-    where: { code: userReferralCode },
+    where: { code: userReferralCode, deletedAt: null },
     select: {
       userId: true,
       user: {

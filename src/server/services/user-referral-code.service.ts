@@ -11,7 +11,7 @@ export const getUserReferralCodes = async ({
   includeCount: boolean;
 }) => {
   return await dbRead.userReferralCode.findMany({
-    where: { userId },
+    where: { userId, deletedAt: null },
     select: {
       id: true,
       code: true,
@@ -42,7 +42,7 @@ export const upsertUserReferralCode = async ({
 }) => {
   if (id) {
     return await dbWrite.userReferralCode.update({
-      where: { id },
+      where: { id, deletedAt: null },
       data: {
         userId,
         note,
@@ -109,5 +109,5 @@ export const deleteUserReferralCode = async ({
     throw throwBadRequestError('You do not have permission to delete this referral code');
   }
 
-  return await dbWrite.userReferralCode.delete({ where: { id } });
+  return await dbWrite.userReferralCode.update({ where: { id }, data: { deletedAt: new Date() } });
 };
