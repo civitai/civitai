@@ -1,7 +1,8 @@
 import { samplerMap } from '~/server/common/constants';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
+import { fromJson } from '../json-helpers';
 
 const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
 
@@ -91,10 +92,8 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       controlNets,
       versionIds,
       modelIds,
-      comfy: {
-        prompt,
-        workflow,
-      },
+      // Converting to string to reduce bytes size
+      comfy: JSON.stringify({ prompt, workflow }),
     };
 
     // Handle control net apply
@@ -108,8 +107,11 @@ export const comfyMetadataProcessor = createMetadataProcessor({
 
     return metadata;
   },
-  encode: ({ comfy }) => {
-    return comfy ? JSON.stringify((comfy as any).workflow) : '';
+  encode: (meta) => {
+    const comfy =
+      typeof meta.comfy === 'string' ? fromJson<ComfyMetaSchema>(meta.comfy) : meta.comfy;
+
+    return comfy && comfy.workflow ? JSON.stringify(comfy.workflow) : '';
   },
 });
 

@@ -19,6 +19,18 @@ const stringToNumber = z.preprocess(
 
 const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
 
+export type ComfyMetaSchema = z.infer<typeof comfyMetaSchema>;
+export const comfyMetaSchema = z
+  .object({
+    prompt: z.object({}).passthrough(),
+    workflow: z
+      .object({
+        nodes: z.object({}).passthrough().array().optional(),
+      })
+      .passthrough(),
+  })
+  .partial();
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -39,6 +51,7 @@ export const imageGenerationSchema = z.object({
   //   .array()
   //   .optional(),
   hashes: z.record(z.string()).optional(),
+  comfy: z.union([z.string().optional(), comfyMetaSchema]), // stored as stringified JSON
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();

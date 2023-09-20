@@ -5,15 +5,19 @@ export function toJson(obj: any) {
   });
 }
 
-export function fromJson(str: string) {
-  return JSON.parse(str, (key, value) => {
-    if (typeof value === 'string' && /^\d+n$/.test(value)) return BigInt(value.slice(0, -1));
-    return value;
-  });
+export function fromJson<T extends object>(str: string) {
+  try {
+    return JSON.parse(str, (key, value) => {
+      if (typeof value === 'string' && /^\d+n$/.test(value)) return BigInt(value.slice(0, -1));
+      return value;
+    }) as T;
+  } catch (e) {
+    return null;
+  }
 }
 
 export function calculateSizeInBytes(obj: any) {
-  const jsonString = JSON.stringify(obj, null, 2);
+  const jsonString = JSON.stringify(obj);
   const encoded = new Blob([jsonString]);
 
   return encoded.size;
