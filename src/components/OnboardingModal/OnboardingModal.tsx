@@ -62,7 +62,7 @@ export default function OnboardingModal() {
     schema,
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: { ...user, userReferralCode: code, source },
+    defaultValues: { ...user, ...(!user?.referral ? { userReferralCode: code, source } : {}) },
   });
   const username = form.watch('username');
   const userReferralCode = form.watch('userReferralCode');
@@ -92,6 +92,7 @@ export default function OnboardingModal() {
     { userReferralCode: debouncedUserReferralCode as string },
     {
       enabled:
+        !user?.referral &&
         !!debouncedUserReferralCode &&
         debouncedUserReferralCode.length > constants.referrals.referralCodeMinLength,
     }

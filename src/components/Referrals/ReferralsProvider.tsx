@@ -33,21 +33,23 @@ export const ReferralsProvider = ({ children }: { children: React.ReactNode }) =
   const [source, setSource] = useState<string | undefined>(referrals.source);
 
   useEffect(() => {
-    if (result.success) {
+    if (result.success && !user?.referral) {
       const { ref_id, ref_source, ref_code } = result.data;
       const { code, source } = referrals;
-      const expirationDate = dayjs().add(7, 'day').toDate();
+      const expirationDate = dayjs().add(5, 'day').toDate();
 
       if (ref_id && ref_id !== code) {
+        console.log('Cookie set');
         setCookie('ref_code', ref_id, expirationDate);
         setCode(ref_id);
       }
       if (ref_code && ref_code !== code) {
-        setCookie('ref_code', ref_id, expirationDate);
+        console.log('Cookie set');
+        setCookie('ref_code', ref_code, expirationDate);
         setCode(ref_code);
       }
       if (ref_source && ref_source !== source) {
-        setCookie('ref_source', ref_id, expirationDate);
+        setCookie('ref_source', ref_source, expirationDate);
         setSource(ref_source);
       }
     }

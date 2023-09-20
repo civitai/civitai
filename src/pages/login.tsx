@@ -37,18 +37,11 @@ export default function Login({ providers }: Props) {
     returnUrl: string;
     reason: LoginRedirectReason;
   };
-  const { code, source } = useReferralsContext();
+  const { code } = useReferralsContext();
   const { data: referrer, isLoading: referrerLoading } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: code as string },
     { enabled: !!code }
   );
-
-  const returnUrlWithReferrals =
-    code || source
-      ? returnUrl.includes('?')
-        ? `${returnUrl}&${QS.stringify({ ref_source: source, ref_code: code })}`
-        : `${returnUrl}?${QS.stringify({ ref_source: source, ref_code: code })}`
-      : returnUrl;
 
   const redirectReason = loginRedirectReasons[reason];
 
@@ -73,9 +66,9 @@ export default function Login({ providers }: Props) {
               </Text>
               <CreatorCard user={referrer} />
               <Text size="sm">
-                By signing up with the referral code <Code>{code}</Code> both you and the user
-                who referred you will be awarded buzz. This code will be automatically applied
-                during your username selection process.
+                By signing up with the referral code <Code>{code}</Code> both you and the user who
+                referred you will be awarded buzz. This code will be automatically applied during
+                your username selection process.
               </Text>
             </Stack>
           </Paper>
@@ -94,7 +87,7 @@ export default function Login({ providers }: Props) {
                       <SocialButton
                         key={provider.name}
                         provider={provider.id as BuiltInProviderType}
-                        onClick={() => signIn(provider.id, { callbackUrl: returnUrlWithReferrals })}
+                        onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
                       />
                     );
                   })
