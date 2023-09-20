@@ -80,7 +80,7 @@ function mapGenerationResource(resource: GenerationResourceSelect): Generation.R
     modelName: model.name,
     modelType: model.type,
     baseModel: x.baseModel,
-    strength: model.type === ModelType.LORA ? 1 : undefined,
+    strength: 1,
   };
 }
 
@@ -139,7 +139,7 @@ export const getGenerationResources = async ({
 
   return results.map((resource) => ({
     ...resource,
-    strength: resource.modelType === ModelType.LORA ? 1 : undefined,
+    strength: 1,
   }));
 };
 
@@ -277,10 +277,6 @@ export const createGenerationRequest = async ({
 
   const additionalNetworks = resources
     .filter((x) => additionalResourceTypes.includes(x.modelType as any))
-    .map((x) => {
-      if (x.modelType === ModelType.LORA && !x.strength) x.strength = 1;
-      return x;
-    })
     .reduce((acc, { id, modelType, ...rest }) => {
       acc[`@civitai/${id}`] = { type: modelType, ...rest };
       return acc;
@@ -559,7 +555,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
-      if (!key.startsWith('lora:')) continue;
+      if (!['lora:', 'lyco:'].includes(key)) continue;
 
       // get the resource that matches the hash
       const resource = deduped.find((x) => x.hash === hash);
@@ -583,7 +579,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   return {
     resources: deduped.map((resource) => ({
       ...resource,
-      strength: resource.modelType === ModelType.LORA ? 1 : undefined,
+      strength: 1,
     })),
     params: {
       ...meta,

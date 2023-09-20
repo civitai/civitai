@@ -277,7 +277,7 @@ export const generation = {
 
 export const generationConfig = {
   SD1: {
-    additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion],
+    additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion, ModelType.LoCon],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
