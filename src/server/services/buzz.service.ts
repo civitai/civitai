@@ -134,7 +134,7 @@ export async function createBuzzTransaction({
 
     if (existingRecord) {
       // Update it:
-      await dbWrite.BuzzTip.update({
+      await dbWrite.buzzTip.update({
         where: {
           entityId,
           entityType,
@@ -146,7 +146,7 @@ export async function createBuzzTransaction({
         },
       });
     } else {
-      await dbWrite.BuzzTip.create({
+      await dbWrite.buzzTip.create({
         data: {
           amount: payload.amount,
           entityId,
