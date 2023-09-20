@@ -716,7 +716,7 @@ export const toggleUserBountyEngagement = async ({
   userId,
 }: ToggleUserBountyEngagementsInput & { userId: number }) => {
   const engagement = await dbRead.bountyEngagement.findUnique({
-    where: { userId_bountyId_type: { userId, bountyId, type } },
+    where: { type_bountyId_userId: { userId, bountyId, type } },
     select: { type: true },
   });
 
@@ -725,7 +725,7 @@ export const toggleUserBountyEngagement = async ({
     return true;
   } else {
     await dbWrite.bountyEngagement.delete({
-      where: { userId_bountyId_type: { userId, bountyId, type } },
+      where: { type_bountyId_userId: { userId, bountyId, type } },
     });
     return false;
   }

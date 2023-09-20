@@ -155,7 +155,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
     const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
       where: {
-        userId_bountyId: {
+        bountyId_userId: {
           userId,
           bountyId: entry.bountyId,
         },
@@ -168,7 +168,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
     const updatedBenefactor = await tx.bountyBenefactor.update({
       where: {
-        userId_bountyId: {
+        bountyId_userId: {
           userId,
           bountyId: entry.bountyId,
         },
@@ -252,7 +252,7 @@ export const getBountyEntryFilteredFiles = async ({
     ? null
     : await dbRead.bountyBenefactor.findUnique({
         where: {
-          userId_bountyId: {
+          bountyId_userId: {
             userId,
             bountyId: bountyEntry.bountyId,
           },

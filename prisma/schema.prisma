@@ -599,7 +599,7 @@ model File {
   entityType String
   metadata   Json?
 
-  @@unique([id, entityId, entityType])
+  @@index([entityType, entityId])
 }
 
 enum MetricTimeframe {
@@ -748,6 +748,7 @@ model ResourceReviewReport {
   report           Report         @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, resourceReviewId])
+  @@index([resourceReviewId], type: Hash)
 }
 
 model ModelReport {
@@ -757,6 +758,7 @@ model ModelReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, modelId])
+  @@index([modelId], type: Hash)
 }
 
 model CommentReport {
@@ -766,6 +768,7 @@ model CommentReport {
   report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, commentId])
+  @@index([commentId], type: Hash)
 }
 
 model CommentV2Report {
@@ -775,6 +778,7 @@ model CommentV2Report {
   report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, commentV2Id])
+  @@index([commentV2Id], type: Hash)
 }
 
 model ImageReport {
@@ -784,6 +788,7 @@ model ImageReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, imageId])
+  @@index([imageId], type: Hash)
 }
 
 model ArticleReport {
@@ -793,6 +798,7 @@ model ArticleReport {
   report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, articleId])
+  @@index([articleId], type: Hash)
 }
 
 model PostReport {
@@ -802,6 +808,7 @@ model PostReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, postId])
+  @@index([postId], type: Hash)
 }
 
 model UserReport {
@@ -811,6 +818,7 @@ model UserReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, userId])
+  @@index([userId], type: Hash)
 }
 
 model CollectionReport {
@@ -820,6 +828,7 @@ model CollectionReport {
   report       Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, collectionId])
+  @@index([collectionId], type: Hash)
 }
 
 model BountyReport {
@@ -829,6 +838,7 @@ model BountyReport {
   report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, bountyId])
+  @@index([bountyId], type: Hash)
 }
 
 model BountyEntryReport {
@@ -838,6 +848,7 @@ model BountyEntryReport {
   report        Report      @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@id([reportId, bountyEntryId])
+  @@index([bountyEntryId], type: Hash)
 }
 
 model ResourceReview {
@@ -1026,7 +1037,8 @@ model ImageConnection {
   entityId   Int
   entityType String
 
-  @@id([imageId, entityId, entityType])
+  @@id([imageId, entityType, entityId])
+  @@index([entityType, entityId])
 }
 
 enum ImageEngagementType {
@@ -2054,6 +2066,10 @@ model Bounty {
   rank        BountyRank?
   stats       BountyStat?
   reports     BountyReport[]
+
+  @@index([userId], type: Hash)
+  @@index([type])
+  @@index([mode])
 }
 
 model BountyEntry {
@@ -2073,6 +2089,8 @@ model BountyEntry {
   rank        BountyEntryRank?
   stats       BountyEntryStat?
   reports     BountyEntryReport[]
+
+  @@index([bountyId], type: Hash)
 }
 
 model BountyEntryReaction {
@@ -2084,6 +2102,7 @@ model BountyEntryReaction {
   createdAt     DateTime        @default(now())
 
   @@id([bountyEntryId, userId, reaction])
+  @@index([bountyEntryId], type: Hash)
 }
 
 model BountyBenefactor {
@@ -2099,7 +2118,9 @@ model BountyBenefactor {
   awartedTo   BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
   currency    Currency     @default(BUZZ)
 
-  @@id([userId, bountyId])
+  @@id([bountyId, userId])
+  @@index([bountyId], type: Hash)
+  @@index([userId], type: Hash)
 }
 
 enum BountyEngagementType {
@@ -2115,8 +2136,9 @@ model BountyEngagement {
   type      BountyEngagementType
   createdAt DateTime             @default(now())
 
-  @@id([userId, bountyId, type])
+  @@id([type, bountyId, userId])
   @@index([bountyId])
+  @@index([userId], type: Hash)
 }
 
 model TipConnection {
@@ -2124,7 +2146,7 @@ model TipConnection {
   entityId      Int
   entityType    String
 
-  @@id([entityId, entityType, transactionId])
+  @@id([entityType, entityId, transactionId])
 }
 
 model BountyMetric {

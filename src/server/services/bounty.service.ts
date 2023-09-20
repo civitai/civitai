@@ -269,7 +269,7 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
   // Refund the bounty creator
   if (bounty.userId) {
     const bountyCreator = await dbRead.bountyBenefactor.findUnique({
-      where: { userId_bountyId: { userId: bounty.userId, bountyId: id } },
+      where: { bountyId_userId: { userId: bounty.userId, bountyId: id } },
       select: { unitAmount: true, currency: true },
     });
 
@@ -335,7 +335,7 @@ export const addBenefactorUnitAmount = async ({
 
   const benefactor = await dbRead.bountyBenefactor.findUnique({
     where: {
-      userId_bountyId: {
+      bountyId_userId: {
         userId,
         bountyId,
       },
@@ -383,7 +383,7 @@ export const addBenefactorUnitAmount = async ({
       unitAmount,
     },
     where: {
-      userId_bountyId: {
+      bountyId_userId: {
         userId,
         bountyId,
       },
