@@ -10,7 +10,11 @@ import EmailProvider, { SendVerificationRequestParams } from 'next-auth/provider
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
-import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
+import {
+  refreshToken,
+  invalidateSession,
+  getSessionFromBearerToken,
+} from '~/server/utils/session-helpers';
 import {
   createUserReferral,
   getSessionUser,
@@ -54,6 +58,7 @@ export function createAuthOptions(): NextAuthOptions {
     events: {
       createUser: async ({ user }) => {
         const startingUsername = user.email?.trim() ?? user.name?.trim() ?? `civ_`;
+
         if (startingUsername) {
           let username: string | undefined = undefined;
           while (!username) username = await setUserName(Number(user.id), startingUsername);
@@ -158,7 +163,6 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   const customAuthOptions = createAuthOptions();
   customAuthOptions.events ??= {};
   customAuthOptions.events.signIn = async (context) => {
-    const code = req.cookies['ref_code'] as string;
     const source = req.cookies['ref_source'] as string;
 
     if (context.isNewUser) {
@@ -168,15 +172,17 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
         targetUserId: parseInt(context.user.id),
       });
 
-      if (code || source) {
+      if (source) {
+        // Only source will be ser via the auth callback.
+        // For userReferralCode, the user must finish onboarding.
         await createUserReferral({
           id: parseInt(context.user.id),
-          userReferralCode: code,
           source,
         });
       }
     }
   };
+
   return await NextAuth(req, res, customAuthOptions);
 }
 

@@ -732,26 +732,44 @@ export const createUserReferral = async ({
 }) => {
   const user = await dbRead.user.findUniqueOrThrow({
     where: { id },
-    select: { id: true, referral: { select: { id: true } } },
+    select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
   });
 
-  if (!!user.referral) {
+  if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {
     return;
   }
 
   if (userReferralCode || source) {
     // Confirm userReferralCode is valid:
-    const referralCode = await dbRead.userReferralCode.findFirst({
-      where: { code: userReferralCode },
-    });
+    const referralCode = !!userReferralCode
+      ? await dbRead.userReferralCode.findFirst({
+          where: { code: userReferralCode },
+        })
+      : null;
 
-    // Create new referral:
-    await dbWrite.userReferral.create({
-      data: {
-        userId: id,
-        source,
-        userReferralCodeId: referralCode?.id ?? undefined,
-      },
-    });
+    if (!referralCode && !source) {
+      return;
+    }
+
+    if (user.referral && referralCode) {
+      // Allow to update a referral with a user-referral-code:
+      return await dbWrite.userReferral.update({
+        where: {
+          id: user.referral.id,
+        },
+        data: {
+          userReferralCodeId: referralCode?.id ?? undefined,
+        },
+      });
+    } else if (!user.referral) {
+      // Create new referral:
+      return await dbWrite.userReferral.create({
+        data: {
+          userId: id,
+          source,
+          userReferralCodeId: referralCode?.id ?? undefined,
+        },
+      });
+    }
   }
 };

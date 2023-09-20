@@ -80,7 +80,6 @@ export default function OnboardingModal() {
     { slug: 'tos' },
     { enabled: !onboarded.tos }
   );
-
   // Check if username is available
   const { data: usernameAvailable, isRefetching: usernameAvailableLoading } =
     trpc.user.usernameAvailable.useQuery(
