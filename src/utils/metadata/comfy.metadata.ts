@@ -109,7 +109,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     return metadata;
   },
   encode: ({ comfy }) => {
-    return JSON.stringify((comfy as any).workflow);
+    return comfy ? JSON.stringify((comfy as any).workflow) : '';
   },
 });
 

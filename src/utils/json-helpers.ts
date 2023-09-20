@@ -11,3 +11,15 @@ export function fromJson(str: string) {
     return value;
   });
 }
+
+export function calculateSizeInBytes(obj: any) {
+  const jsonString = JSON.stringify(obj, null, 2);
+  const encoded = new Blob([jsonString]);
+
+  return encoded.size;
+}
+
+export function calculateSizeInMegabytes(obj: any) {
+  const sizeInBytes = calculateSizeInBytes(obj);
+  return sizeInBytes / 1024 ** 2;
+}

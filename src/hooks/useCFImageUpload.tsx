@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { getImageDataFromFile } from '~/utils/metadata';
+import { getDataFromFile } from '~/utils/metadata';
 
-type TrackedFile = AsyncReturnType<typeof getImageDataFromFile> & {
+type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
   progress: number;
   uploaded: number;
   size: number;
@@ -65,7 +65,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
     }
 
     const { id, uploadURL: url } = data;
-    const imageData = await getImageDataFromFile(file);
+    const imageData = await getDataFromFile(file);
     if (!imageData) throw new Error();
 
     const xhr = new XMLHttpRequest();
