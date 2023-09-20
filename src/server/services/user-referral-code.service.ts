@@ -42,7 +42,7 @@ export const upsertUserReferralCode = async ({
 }) => {
   if (id) {
     return await dbWrite.userReferralCode.update({
-      where: { id, deletedAt: null },
+      where: { id },
       data: {
         userId,
         note,
