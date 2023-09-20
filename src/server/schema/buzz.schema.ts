@@ -52,11 +52,29 @@ export const getUserBuzzTransactionsResponse = z.object({
 });
 
 export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInput>;
-export const createBuzzTransactionInput = z.object({
-  // To user id (0 is central bank)
-  toAccountId: z.number().min(0),
-  type: z.nativeEnum(TransactionType),
-  amount: z.number().min(1),
-  description: z.string().trim().nonempty().nullish(),
-  details: z.object({}).passthrough().nullish(),
-});
+export const createBuzzTransactionInput = z
+  .object({
+    // To user id (0 is central bank)
+    toAccountId: z.number().min(0),
+    type: z.nativeEnum(TransactionType),
+    amount: z.number().min(1),
+    description: z.string().trim().nonempty().nullish(),
+    details: z.object({}).passthrough().nullish(),
+    entityId: z.number().optional(),
+    entityType: z.string().optional(),
+  })
+  .refine(
+    (data) => {
+      if (
+        data.type === TransactionType.Tip &&
+        ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
+      )
+        return false;
+
+      return true;
+    },
+    {
+      message: 'Please provide both the entityId and entityType',
+      params: ['entityId', 'entityType'],
+    }
+  );

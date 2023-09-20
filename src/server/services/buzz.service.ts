@@ -11,6 +11,8 @@ import {
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { Prisma } from '@prisma/client';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
@@ -90,9 +92,11 @@ export async function getUserBuzzTransactions({
   };
 }
 
-export async function createBuzzTransaction(
-  payload: CreateBuzzTransactionInput & { fromAccountId: number }
-) {
+export async function createBuzzTransaction({
+  entityId,
+  entityType,
+  ...payload
+}: CreateBuzzTransactionInput & { fromAccountId: number }) {
   const body = JSON.stringify(payload);
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transaction`, {
     method: 'POST',
@@ -111,6 +115,46 @@ export async function createBuzzTransaction(
           message: 'An unexpected error ocurred, please try again later',
           cause,
         });
+    }
+  }
+
+  if (entityId && entityType) {
+    // Store this action in the DB:
+    const existingRecord = await dbRead.BuzzTip.findUnique({
+      where: {
+        entityId,
+        entityType,
+        toUserId: payload.toAccountId,
+        fromAccountId: payload.fromAccountId,
+      },
+      select: {
+        amount: true,
+      },
+    });
+
+    if (existingRecord) {
+      // Update it:
+      await dbWrite.BuzzTip.update({
+        where: {
+          entityId,
+          entityType,
+          toUserId: payload.toAccountId,
+          fromUserId: payload.fromAccountId,
+        },
+        data: {
+          amount: existingRecord.amount + payload.amount,
+        },
+      });
+    } else {
+      await dbWrite.BuzzTip.create({
+        data: {
+          amount: payload.amount,
+          entityId,
+          entityType,
+          toUserId: payload.toAccountId,
+          fromUserId: payload.fromAccountId,
+        },
+      });
     }
   }
 
