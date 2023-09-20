@@ -120,7 +120,7 @@ export async function createBuzzTransaction({
 
   if (entityId && entityType) {
     // Store this action in the DB:
-    const existingRecord = await dbRead.BuzzTip.findUnique({
+    const existingRecord = await dbRead.buzzTip.findUnique({
       where: {
         entityId,
         entityType,
