@@ -161,8 +161,6 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const code = req.cookies['ref_code'] as string;
     const source = req.cookies['ref_source'] as string;
 
-    console.log({ code, source });
-
     if (context.isNewUser) {
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
@@ -171,7 +169,6 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       });
 
       if (code || source) {
-        console.log('Creating referral...');
         await createUserReferral({
           id: parseInt(context.user.id),
           userReferralCode: code,
