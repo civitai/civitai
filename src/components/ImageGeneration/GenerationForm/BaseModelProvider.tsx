@@ -1,10 +1,14 @@
 import { isEqual } from 'lodash';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { FieldValues, DeepPartial, useFormContext } from 'react-hook-form';
+import { InputText } from '~/libs/form';
+import { BaseModelSetType } from '~/server/common/constants';
 
-type State = {
+type GetBaseModelReturn = {
   baseModels: string[];
+  baseModel: BaseModelSetType | undefined;
 };
+type State = GetBaseModelReturn;
 
 const BaseModelsContext = createContext<State | null>(null);
 export const useBaseModelsContext = () => {
@@ -17,23 +21,28 @@ export function BaseModelProvider<T extends FieldValues>({
   children,
   getBaseModels,
 }: {
-  children: React.ReactNode;
-  getBaseModels: (data: DeepPartial<T>) => string[];
+  children: ({ baseModel }: { baseModel?: BaseModelSetType }) => React.ReactNode;
+  getBaseModels: (data: DeepPartial<T>) => GetBaseModelReturn;
 }) {
   const [baseModels, setBaseModels] = useState<string[]>([]);
-  const { getValues, watch } = useFormContext();
+  const [baseModel, setBaseModel] = useState<BaseModelSetType | undefined>();
+  const { getValues, setValue, watch } = useFormContext();
 
   useEffect(() => {
     const subscription = watch((value, { name, type }) => {
       const values = getValues();
-      const baseModels = getBaseModels(values as any);
-      setBaseModels((state) => {
-        return isEqual(state, baseModels) ? state : baseModels;
-      });
-      //TODO - alert user if there are incompatible basemodels
+      const { baseModels, baseModel } = getBaseModels(values as any);
+      setBaseModels((state) => (isEqual(state, baseModels) ? state : baseModels));
+      setBaseModel(baseModel);
+      if (name !== 'baseModel') setValue('baseModel', baseModel);
     });
     return () => subscription.unsubscribe();
   }, []); //eslint-disable-line
 
-  return <BaseModelsContext.Provider value={{ baseModels }}>{children}</BaseModelsContext.Provider>;
+  return (
+    <BaseModelsContext.Provider value={{ baseModels, baseModel }}>
+      <InputText type="hidden" name="baseModel" />
+      {children({ baseModel })}
+    </BaseModelsContext.Provider>
+  );
 }

@@ -150,7 +150,7 @@ const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * 
       (
         await dbWrite.customerSubscription.findMany({
           where: {
-            status: 'active',
+            status: { in: ['active', 'trialing'] },
             user: {
               accounts: {
                 some: { provider: 'discord' },

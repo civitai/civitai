@@ -17,6 +17,7 @@ import {
   completeOnboardingHandler,
   toggleArticleEngagementHandler,
   toggleBountyEngagementHandler,
+  reportProhibitedRequestHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -39,6 +40,7 @@ import {
   getUserCosmeticsSchema,
   toggleUserArticleEngagementSchema,
   toggleUserBountyEngagementSchema,
+  reportProhibitedRequestSchema,
 } from '~/server/schema/user.schema';
 import {
   getUserArticleEngagements,
@@ -104,4 +106,7 @@ export const userRouter = router({
   toggleBountyEngagement: protectedProcedure
     .input(toggleUserBountyEngagementSchema)
     .mutation(toggleBountyEngagementHandler),
+  reportProhibitedRequest: protectedProcedure
+    .input(reportProhibitedRequestSchema)
+    .mutation(reportProhibitedRequestHandler),
 });

@@ -111,15 +111,14 @@ export const createTrainingRequest = async ({
         ...fileMetadata,
         trainingResults: {
           ...(fileMetadata.trainingResults || {}),
-          history: [
+          history: (fileMetadata.trainingResults?.history || []).concat([
             {
-              // nb: this will overwrite if its ever rerun
               jobId: data.jobId as string,
               jobToken: data.token as string,
               time: new Date().toISOString(),
               status: TrainingStatus.Submitted,
             },
-          ],
+          ]),
         },
       },
     },

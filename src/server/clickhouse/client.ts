@@ -348,6 +348,10 @@ export class Tracker {
     return this.track('bountyEngagements', values);
   }
 
+  public prohibitedRequest(values: { prompt: string }) {
+    return this.track('prohibitedRequests', values);
+  }
+
   public report(values: {
     type: ReportType;
     entityType: string;

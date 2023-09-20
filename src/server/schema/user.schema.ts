@@ -119,3 +119,8 @@ export type ToggleUserBountyEngagementsInput = z.infer<typeof toggleUserBountyEn
 export const toggleUserBountyEngagementSchema = getUserBountyEngagementsSchema.extend({
   bountyId: z.number(),
 });
+
+export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
+export const reportProhibitedRequestSchema = z.object({
+  prompt: z.string(),
+});
