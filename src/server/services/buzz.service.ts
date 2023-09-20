@@ -122,10 +122,11 @@ export async function createBuzzTransaction({
     // Store this action in the DB:
     const existingRecord = await dbRead.buzzTip.findUnique({
       where: {
-        entityId,
-        entityType,
-        toUserId: payload.toAccountId,
-        fromAccountId: payload.fromAccountId,
+        entityType_entityId_fromUserId: {
+          entityId,
+          entityType,
+          fromUserId: payload.fromAccountId,
+        },
       },
       select: {
         amount: true,
@@ -136,10 +137,11 @@ export async function createBuzzTransaction({
       // Update it:
       await dbWrite.buzzTip.update({
         where: {
-          entityId,
-          entityType,
-          toUserId: payload.toAccountId,
-          fromUserId: payload.fromAccountId,
+          entityType_entityId_fromUserId: {
+            entityId,
+            entityType,
+            fromUserId: payload.fromAccountId,
+          },
         },
         data: {
           amount: existingRecord.amount + payload.amount,
