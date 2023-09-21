@@ -606,16 +606,18 @@ enum MetricTimeframe {
 }
 
 model ModelMetric {
-  model          Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelId        Int
-  timeframe      MetricTimeframe
-  rating         Float           @default(0)
-  ratingCount    Int             @default(0)
-  downloadCount  Int             @default(0)
-  favoriteCount  Int             @default(0)
-  commentCount   Int             @default(0)
-  collectedCount Int             @default(0)
-  imageCount     Int             @default(0)
+  model             Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId           Int
+  timeframe         MetricTimeframe
+  rating            Float           @default(0)
+  ratingCount       Int             @default(0)
+  downloadCount     Int             @default(0)
+  favoriteCount     Int             @default(0)
+  commentCount      Int             @default(0)
+  collectedCount    Int             @default(0)
+  imageCount        Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
 
   @@id([modelId, timeframe])
 }
@@ -1026,17 +1028,19 @@ model ImageResource {
   @@index([imageId, modelVersionId])
 }
 
-model ImageMetric {
-  image          Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  imageId        Int
-  timeframe      MetricTimeframe
-  likeCount      Int             @default(0)
-  dislikeCount   Int             @default(0)
-  laughCount     Int             @default(0)
-  cryCount       Int             @default(0)
-  heartCount     Int             @default(0)
-  commentCount   Int             @default(0)
-  collectedCount Int             @default(0)
+ model ImageMetric {
+  image             Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId           Int
+  timeframe         MetricTimeframe
+  likeCount         Int             @default(0)
+  dislikeCount      Int             @default(0)
+  laughCount        Int             @default(0)
+  cryCount          Int             @default(0)
+  heartCount        Int             @default(0)
+  commentCount      Int             @default(0)
+  collectedCount    Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
 
   @@id([imageId, timeframe])
 }
@@ -1723,19 +1727,21 @@ model ArticleEngagement {
 }
 
 model ArticleMetric {
-  article        Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  articleId      Int
-  timeframe      MetricTimeframe
-  likeCount      Int             @default(0)
-  dislikeCount   Int             @default(0)
-  laughCount     Int             @default(0)
-  cryCount       Int             @default(0)
-  heartCount     Int             @default(0)
-  commentCount   Int             @default(0)
-  viewCount      Int             @default(0)
-  favoriteCount  Int             @default(0)
-  hideCount      Int             @default(0)
-  collectedCount Int             @default(0)
+  article           Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  articleId         Int
+  timeframe         MetricTimeframe
+  likeCount         Int             @default(0)
+  dislikeCount      Int             @default(0)
+  laughCount        Int             @default(0)
+  cryCount          Int             @default(0)
+  heartCount        Int             @default(0)
+  commentCount      Int             @default(0)
+  viewCount         Int             @default(0)
+  favoriteCount     Int             @default(0)
+  hideCount         Int             @default(0)
+  collectedCount    Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
 
   @@id([articleId, timeframe])
 }
@@ -1953,6 +1959,8 @@ model BuzzTip {
   toUserId   Int
   fromUserId Int
   amount     Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@id([entityType, entityId, fromUserId])
   @@index([toUserId])
@@ -2187,58 +2195,68 @@ model ModelVersionRank {
 
 /// @view
 model ArticleStat {
-  articleId            Int     @id
-  article              Article @relation(fields: [articleId], references: [id], onDelete: NoAction)
-  cryCountDay          Int     @default(0)
-  cryCountWeek         Int     @default(0)
-  cryCountMonth        Int     @default(0)
-  cryCountYear         Int     @default(0)
-  cryCountAllTime      Int     @default(0)
-  dislikeCountDay      Int     @default(0)
-  dislikeCountWeek     Int     @default(0)
-  dislikeCountMonth    Int     @default(0)
-  dislikeCountYear     Int     @default(0)
-  dislikeCountAllTime  Int     @default(0)
-  heartCountDay        Int     @default(0)
-  heartCountWeek       Int     @default(0)
-  heartCountMonth      Int     @default(0)
-  heartCountYear       Int     @default(0)
-  heartCountAllTime    Int     @default(0)
-  laughCountDay        Int     @default(0)
-  laughCountWeek       Int     @default(0)
-  laughCountMonth      Int     @default(0)
-  laughCountYear       Int     @default(0)
-  laughCountAllTime    Int     @default(0)
-  likeCountDay         Int     @default(0)
-  likeCountWeek        Int     @default(0)
-  likeCountMonth       Int     @default(0)
-  likeCountYear        Int     @default(0)
-  likeCountAllTime     Int     @default(0)
-  commentCountDay      Int     @default(0)
-  commentCountWeek     Int     @default(0)
-  commentCountMonth    Int     @default(0)
-  commentCountYear     Int     @default(0)
-  commentCountAllTime  Int     @default(0)
-  reactionCountDay     Int     @default(0)
-  reactionCountWeek    Int     @default(0)
-  reactionCountMonth   Int     @default(0)
-  reactionCountYear    Int     @default(0)
-  reactionCountAllTime Int     @default(0)
-  viewCountDay         Int     @default(0)
-  viewCountWeek        Int     @default(0)
-  viewCountMonth       Int     @default(0)
-  viewCountYear        Int     @default(0)
-  viewCountAllTime     Int     @default(0)
-  favoriteCountDay     Int     @default(0)
-  favoriteCountWeek    Int     @default(0)
-  favoriteCountMonth   Int     @default(0)
-  favoriteCountYear    Int     @default(0)
-  favoriteCountAllTime Int     @default(0)
-  hideCountDay         Int     @default(0)
-  hideCountWeek        Int     @default(0)
-  hideCountMonth       Int     @default(0)
-  hideCountYear        Int     @default(0)
-  hideCountAllTime     Int     @default(0)
+  articleId                Int     @id
+  article                  Article @relation(fields: [articleId], references: [id], onDelete: NoAction)
+  cryCountDay              Int     @default(0)
+  cryCountWeek             Int     @default(0)
+  cryCountMonth            Int     @default(0)
+  cryCountYear             Int     @default(0)
+  cryCountAllTime          Int     @default(0)
+  dislikeCountDay          Int     @default(0)
+  dislikeCountWeek         Int     @default(0)
+  dislikeCountMonth        Int     @default(0)
+  dislikeCountYear         Int     @default(0)
+  dislikeCountAllTime      Int     @default(0)
+  heartCountDay            Int     @default(0)
+  heartCountWeek           Int     @default(0)
+  heartCountMonth          Int     @default(0)
+  heartCountYear           Int     @default(0)
+  heartCountAllTime        Int     @default(0)
+  laughCountDay            Int     @default(0)
+  laughCountWeek           Int     @default(0)
+  laughCountMonth          Int     @default(0)
+  laughCountYear           Int     @default(0)
+  laughCountAllTime        Int     @default(0)
+  likeCountDay             Int     @default(0)
+  likeCountWeek            Int     @default(0)
+  likeCountMonth           Int     @default(0)
+  likeCountYear            Int     @default(0)
+  likeCountAllTime         Int     @default(0)
+  commentCountDay          Int     @default(0)
+  commentCountWeek         Int     @default(0)
+  commentCountMonth        Int     @default(0)
+  commentCountYear         Int     @default(0)
+  commentCountAllTime      Int     @default(0)
+  reactionCountDay         Int     @default(0)
+  reactionCountWeek        Int     @default(0)
+  reactionCountMonth       Int     @default(0)
+  reactionCountYear        Int     @default(0)
+  reactionCountAllTime     Int     @default(0)
+  viewCountDay             Int     @default(0)
+  viewCountWeek            Int     @default(0)
+  viewCountMonth           Int     @default(0)
+  viewCountYear            Int     @default(0)
+  viewCountAllTime         Int     @default(0)
+  favoriteCountDay         Int     @default(0)
+  favoriteCountWeek        Int     @default(0)
+  favoriteCountMonth       Int     @default(0)
+  favoriteCountYear        Int     @default(0)
+  favoriteCountAllTime     Int     @default(0)
+  hideCountDay             Int     @default(0)
+  hideCountWeek            Int     @default(0)
+  hideCountMonth           Int     @default(0)
+  hideCountYear            Int     @default(0)
+  hideCountAllTime         Int     @default(0)
+  tippedCountDay           Int     @default(0)
+  tippedCountWeek          Int     @default(0)
+  tippedCountMonth         Int     @default(0)
+  tippedCountYear          Int     @default(0)
+  tippedCountAllTime       Int     @default(0)
+  tippedAmountCountDay     Int     @default(0)
+  tippedAmountCountWeek    Int     @default(0)
+  tippedAmountCountMonth   Int     @default(0)
+  tippedAmountCountYear    Int     @default(0)
+  tippedAmountCountAllTime Int     @default(0)
 }
 
 /// @view

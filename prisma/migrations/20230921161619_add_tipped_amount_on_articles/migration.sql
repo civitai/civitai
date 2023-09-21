@@ -1,0 +1,367 @@
+-- AlterTable
+ALTER TABLE "ArticleMetric" ADD COLUMN     "tippedAmountCount" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "ImageMetric" ADD COLUMN     "tippedAmountCount" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "ModelMetric" ADD COLUMN     "tippedAmountCount" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
+
+-- Article Rank View
+drop view if exists "ArticleRank_Live";
+create or replace view "ArticleRank_Live" as
+WITH timeframe_stats AS (
+	SELECT
+		m."articleId",
+		m."heartCount",
+		m."likeCount",
+		m."dislikeCount",
+		m."laughCount",
+		m."cryCount",
+		m."commentCount",
+		m."heartCount" + m."likeCount" + m."dislikeCount" + m."laughCount" +
+		m."cryCount" AS "reactionCount",
+		m."viewCount",
+		m."favoriteCount",
+		m."hideCount",
+		m."collectedCount",
+		m."tippedCount",
+		m."tippedAmountCount",
+		m.timeframe
+	FROM "ArticleMetric" m
+), timeframe_rank AS (
+	SELECT
+		"articleId",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, "articleId" DESC) AS "heartCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("likeCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, "articleId" DESC) AS "likeCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("dislikeCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "articleId" DESC) AS "dislikeCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("laughCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "articleId" DESC) AS "laughCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("cryCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "articleId" DESC) AS "cryCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "articleId" DESC) AS "reactionCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("commentCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "articleId" DESC) AS "commentCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("viewCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "articleId" DESC) AS "viewCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("favoriteCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "articleId" DESC) AS "favoriteCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("hideCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "articleId" DESC) AS "hideCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("collectedCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "articleId" DESC) AS "collectedCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("tippedCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "articleId" DESC) AS "tippedCountRank",
+		ROW_NUMBER() OVER (PARTITION BY timeframe ORDER BY (COALESCE("tippedAmountCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "articleId" DESC) AS "tippedAmountCountRank",
+		timeframe
+	FROM timeframe_stats
+)
+SELECT
+	"articleId",
+	MAX(iif(timeframe = 'Day', "heartCountRank", NULL)) AS "heartCountDayRank",
+	MAX(iif(timeframe = 'Week', "heartCountRank", NULL)) AS "heartCountWeekRank",
+	MAX(iif(timeframe = 'Month', "heartCountRank", NULL)) AS "heartCountMonthRank",
+	MAX(iif(timeframe = 'Year', "heartCountRank", NULL)) AS "heartCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "heartCountRank", NULL)) AS "heartCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "likeCountRank", NULL)) AS "likeCountDayRank",
+	MAX(iif(timeframe = 'Week', "likeCountRank", NULL)) AS "likeCountWeekRank",
+	MAX(iif(timeframe = 'Month', "likeCountRank", NULL)) AS "likeCountMonthRank",
+	MAX(iif(timeframe = 'Year', "likeCountRank", NULL)) AS "likeCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "likeCountRank", NULL)) AS "likeCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "dislikeCountRank", NULL)) AS "dislikeCountDayRank",
+	MAX(iif(timeframe = 'Week', "dislikeCountRank", NULL)) AS "dislikeCountWeekRank",
+	MAX(iif(timeframe = 'Month', "dislikeCountRank", NULL)) AS "dislikeCountMonthRank",
+	MAX(iif(timeframe = 'Year', "dislikeCountRank", NULL)) AS "dislikeCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "dislikeCountRank", NULL)) AS "dislikeCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "laughCountRank", NULL)) AS "laughCountDayRank",
+	MAX(iif(timeframe = 'Week', "laughCountRank", NULL)) AS "laughCountWeekRank",
+	MAX(iif(timeframe = 'Month', "laughCountRank", NULL)) AS "laughCountMonthRank",
+	MAX(iif(timeframe = 'Year', "laughCountRank", NULL)) AS "laughCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "laughCountRank", NULL)) AS "laughCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "cryCountRank", NULL)) AS "cryCountDayRank",
+	MAX(iif(timeframe = 'Week', "cryCountRank", NULL)) AS "cryCountWeekRank",
+	MAX(iif(timeframe = 'Month', "cryCountRank", NULL)) AS "cryCountMonthRank",
+	MAX(iif(timeframe = 'Year', "cryCountRank", NULL)) AS "cryCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "cryCountRank", NULL)) AS "cryCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "reactionCountRank", NULL)) AS "reactionCountDayRank",
+	MAX(iif(timeframe = 'Week', "reactionCountRank", NULL)) AS "reactionCountWeekRank",
+	MAX(iif(timeframe = 'Month', "reactionCountRank", NULL)) AS "reactionCountMonthRank",
+	MAX(iif(timeframe = 'Year', "reactionCountRank", NULL)) AS "reactionCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "reactionCountRank", NULL)) AS "reactionCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "commentCountRank", NULL)) AS "commentCountDayRank",
+	MAX(iif(timeframe = 'Week', "commentCountRank", NULL)) AS "commentCountWeekRank",
+	MAX(iif(timeframe = 'Month', "commentCountRank", NULL)) AS "commentCountMonthRank",
+	MAX(iif(timeframe = 'Year', "commentCountRank", NULL)) AS "commentCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "commentCountRank", NULL)) AS "commentCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "viewCountRank", NULL)) AS "viewCountDayRank",
+	MAX(iif(timeframe = 'Week', "viewCountRank", NULL)) AS "viewCountWeekRank",
+	MAX(iif(timeframe = 'Month', "viewCountRank", NULL)) AS "viewCountMonthRank",
+	MAX(iif(timeframe = 'Year', "viewCountRank", NULL)) AS "viewCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "viewCountRank", NULL)) AS "viewCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "favoriteCountRank", NULL)) AS "favoriteCountDayRank",
+	MAX(iif(timeframe = 'Week', "favoriteCountRank", NULL)) AS "favoriteCountWeekRank",
+	MAX(iif(timeframe = 'Month', "favoriteCountRank", NULL)) AS "favoriteCountMonthRank",
+	MAX(iif(timeframe = 'Year', "favoriteCountRank", NULL)) AS "favoriteCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "favoriteCountRank", NULL)) AS "favoriteCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "hideCountRank", NULL)) AS "hideCountDayRank",
+	MAX(iif(timeframe = 'Week', "hideCountRank", NULL)) AS "hideCountWeekRank",
+	MAX(iif(timeframe = 'Month', "hideCountRank", NULL)) AS "hideCountMonthRank",
+	MAX(iif(timeframe = 'Year', "hideCountRank", NULL)) AS "hideCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "hideCountRank", NULL)) AS "hideCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "collectedCountRank", NULL)) AS "collectedCountDayRank",
+	MAX(iif(timeframe = 'Week', "collectedCountRank", NULL)) AS "collectedCountWeekRank",
+	MAX(iif(timeframe = 'Month', "collectedCountRank", NULL)) AS "collectedCountMonthRank",
+	MAX(iif(timeframe = 'Year', "collectedCountRank", NULL)) AS "collectedCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "collectedCountRank", NULL)) AS "collectedCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "tippedCountRank", NULL)) AS "tippedCountDayRank",
+	MAX(iif(timeframe = 'Week', "tippedCountRank", NULL)) AS "tippedCountWeekRank",
+	MAX(iif(timeframe = 'Month', "tippedCountRank", NULL)) AS "tippedCountMonthRank",
+	MAX(iif(timeframe = 'Year', "tippedCountRank", NULL)) AS "tippedCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "tippedCountRank", NULL)) AS "tippedCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "tippedAmountCountRank", NULL)) AS "tippedAmountCountDayRank",
+	MAX(iif(timeframe = 'Week', "tippedAmountCountRank", NULL)) AS "tippedAmountCountWeekRank",
+	MAX(iif(timeframe = 'Month', "tippedAmountCountRank", NULL)) AS "tippedAmountCountMonthRank",
+	MAX(iif(timeframe = 'Year', "tippedAmountCountRank", NULL)) AS "tippedAmountCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "tippedAmountCountRank", NULL)) AS "tippedAmountCountAllTimeRank"
+FROM timeframe_rank
+GROUP BY "articleId";
+
+-- Create ArticleStat View
+CREATE OR REPLACE VIEW "ArticleStat" AS
+WITH timeframe_stats AS (
+  SELECT
+		m."articleId",
+        COALESCE(m."heartCount", 0) AS "heartCount",
+        COALESCE(m."likeCount", 0) AS "likeCount",
+        COALESCE(m."dislikeCount", 0) AS "dislikeCount",
+        COALESCE(m."laughCount", 0) AS "laughCount",
+        COALESCE(m."cryCount", 0) AS "cryCount",
+        COALESCE(m."commentCount", 0) AS "commentCount",
+        COALESCE(m."viewCount", 0) AS "viewCount",
+        COALESCE(m."favoriteCount", 0) AS "favoriteCount",
+        COALESCE(m."hideCount", 0) AS "hideCount",
+        COALESCE(m."tippedCount", 0) AS "tippedCount",
+        COALESCE(m."tippedAmountCount", 0) AS "tippedAmountCount",
+		m.timeframe
+	FROM "ArticleMetric" m
+)
+SELECT
+	"articleId",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "heartCount" + "dislikeCount" + "likeCount" + "cryCount" + "laughCount", NULL::integer)) AS "reactionCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "favoriteCount", NULL::integer)) AS "favoriteCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "favoriteCount", NULL::integer)) AS "favoriteCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "favoriteCount", NULL::integer)) AS "favoriteCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "favoriteCount", NULL::integer)) AS "favoriteCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "favoriteCount", NULL::integer)) AS "favoriteCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "hideCount", NULL::integer)) AS "hideCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "hideCount", NULL::integer)) AS "hideCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "hideCount", NULL::integer)) AS "hideCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "hideCount", NULL::integer)) AS "hideCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "hideCount", NULL::integer)) AS "hideCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountAllTime"
+FROM timeframe_stats ts
+GROUP BY "articleId";
+
+
+-- Images Rank View
+drop view if exists "ImageRank_Live";
+create view "ImageRank_Live" as
+WITH timeframe_stats AS (
+	SELECT
+		"imageId",
+		"heartCount",
+		"likeCount",
+		"dislikeCount",
+		"laughCount",
+		"cryCount",
+		"commentCount",
+		"collectedCount",
+		"heartCount" + "likeCount" + "laughCount" + "cryCount" - "dislikeCount" AS "reactionCount",
+		"tippedCount",
+		"tippedAmountCount",
+		timeframe
+	FROM "ImageMetric"
+), timeframe_rank AS (
+	SELECT
+		"imageId",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, "imageId" DESC ) AS "heartCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("likeCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, "imageId" DESC ) AS "likeCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("dislikeCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "imageId" DESC ) AS "dislikeCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("laughCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "imageId" DESC ) AS "laughCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("cryCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "imageId" DESC ) AS "cryCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("commentCount", 0)) DESC, "imageId" DESC ) AS "reactionCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("commentCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "imageId" DESC ) AS "commentCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("collectedCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "imageId" DESC ) AS "collectedCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("tippedCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "imageId" DESC ) AS "tippedCountRank",
+		ROW_NUMBER() OVER ( PARTITION BY timeframe ORDER BY (COALESCE("tippedAmountCount", 0)) DESC, (COALESCE("reactionCount", 0)) DESC, (COALESCE("heartCount", 0)) DESC, (COALESCE("likeCount", 0)) DESC, (COALESCE("laughCount", 0)) DESC, "imageId" DESC ) AS "tippedAmountCountRank",
+		timeframe
+	FROM timeframe_stats
+)
+SELECT
+	"imageId",
+	MAX(iif(timeframe = 'Day', "heartCountRank", NULL)) AS "heartCountDayRank",
+	MAX(iif(timeframe = 'Week', "heartCountRank", NULL)) AS "heartCountWeekRank",
+	MAX(iif(timeframe = 'Month', "heartCountRank", NULL)) AS "heartCountMonthRank",
+	MAX(iif(timeframe = 'Year', "heartCountRank", NULL)) AS "heartCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "heartCountRank", NULL)) AS "heartCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "likeCountRank", NULL)) AS "likeCountDayRank",
+	MAX(iif(timeframe = 'Week', "likeCountRank", NULL)) AS "likeCountWeekRank",
+	MAX(iif(timeframe = 'Month', "likeCountRank", NULL)) AS "likeCountMonthRank",
+	MAX(iif(timeframe = 'Year', "likeCountRank", NULL)) AS "likeCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "likeCountRank", NULL)) AS "likeCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "dislikeCountRank", NULL)) AS "dislikeCountDayRank",
+	MAX(iif(timeframe = 'Week', "dislikeCountRank", NULL)) AS "dislikeCountWeekRank",
+	MAX(iif(timeframe = 'Month', "dislikeCountRank", NULL)) AS "dislikeCountMonthRank",
+	MAX(iif(timeframe = 'Year', "dislikeCountRank", NULL)) AS "dislikeCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "dislikeCountRank", NULL)) AS "dislikeCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "laughCountRank", NULL)) AS "laughCountDayRank",
+	MAX(iif(timeframe = 'Week', "laughCountRank", NULL)) AS "laughCountWeekRank",
+	MAX(iif(timeframe = 'Month', "laughCountRank", NULL)) AS "laughCountMonthRank",
+	MAX(iif(timeframe = 'Year', "laughCountRank", NULL)) AS "laughCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "laughCountRank", NULL)) AS "laughCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "cryCountRank", NULL)) AS "cryCountDayRank",
+	MAX(iif(timeframe = 'Week', "cryCountRank", NULL)) AS "cryCountWeekRank",
+	MAX(iif(timeframe = 'Month', "cryCountRank", NULL)) AS "cryCountMonthRank",
+	MAX(iif(timeframe = 'Year', "cryCountRank", NULL)) AS "cryCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "cryCountRank", NULL)) AS "cryCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "reactionCountRank", NULL)) AS "reactionCountDayRank",
+	MAX(iif(timeframe = 'Week', "reactionCountRank", NULL)) AS "reactionCountWeekRank",
+	MAX(iif(timeframe = 'Month', "reactionCountRank", NULL)) AS "reactionCountMonthRank",
+	MAX(iif(timeframe = 'Year', "reactionCountRank", NULL)) AS "reactionCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "reactionCountRank", NULL)) AS "reactionCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "commentCountRank", NULL)) AS "commentCountDayRank",
+	MAX(iif(timeframe = 'Week', "commentCountRank", NULL)) AS "commentCountWeekRank",
+	MAX(iif(timeframe = 'Month', "commentCountRank", NULL)) AS "commentCountMonthRank",
+	MAX(iif(timeframe = 'Year', "commentCountRank", NULL)) AS "commentCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "commentCountRank", NULL)) AS "commentCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "collectedCountRank", NULL)) AS "collectedCountDayRank",
+	MAX(iif(timeframe = 'Week', "collectedCountRank", NULL)) AS "collectedCountWeekRank",
+	MAX(iif(timeframe = 'Month', "collectedCountRank", NULL)) AS "collectedCountMonthRank",
+	MAX(iif(timeframe = 'Year', "collectedCountRank", NULL)) AS "collectedCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "collectedCountRank", NULL)) AS "collectedCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "tippedCountRank", NULL)) AS "tippedCountDayRank",
+	MAX(iif(timeframe = 'Week', "tippedCountRank", NULL)) AS "tippedCountWeekRank",
+	MAX(iif(timeframe = 'Month', "tippedCountRank", NULL)) AS "tippedCountMonthRank",
+	MAX(iif(timeframe = 'Year', "tippedCountRank", NULL)) AS "tippedCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "tippedCountRank", NULL)) AS "tippedCountAllTimeRank",
+	MAX(iif(timeframe = 'Day', "tippedAmountCountRank", NULL)) AS "tippedAmountCountDayRank",
+	MAX(iif(timeframe = 'Week', "tippedAmountCountRank", NULL)) AS "tippedAmountCountWeekRank",
+	MAX(iif(timeframe = 'Month', "tippedAmountCountRank", NULL)) AS "tippedAmountCountMonthRank",
+	MAX(iif(timeframe = 'Year', "tippedAmountCountRank", NULL)) AS "tippedAmountCountYearRank",
+	MAX(iif(timeframe = 'AllTime', "tippedAmountCountRank", NULL)) AS "tippedAmountCountAllTimeRank"
+FROM timeframe_rank
+GROUP BY "imageId";
+
+CREATE OR REPLACE VIEW "ImageStat" AS
+WITH timeframe_stats AS (
+  SELECT
+		i.id AS "imageId",
+		COALESCE(mm."heartCount", 0) AS "heartCount",
+		COALESCE(mm."likeCount", 0) AS "likeCount",
+    COALESCE(mm."dislikeCount", 0) AS "dislikeCount",
+    COALESCE(mm."laughCount", 0) AS "laughCount",
+    COALESCE(mm."cryCount", 0) AS "cryCount",
+		COALESCE(mm."commentCount", 0) AS "commentCount",
+		COALESCE(mm."collectedCount", 0) AS "collectedCount",
+		COALESCE(mm."tippedCount", 0) AS "tippedCount",
+		COALESCE(mm."tippedAmountCount", 0) AS "tippedAmountCount",
+		tf.timeframe
+	FROM "Image" i
+	CROSS JOIN (
+		SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+	) tf
+	LEFT JOIN "ImageMetric" mm ON mm."imageId" = i.id AND mm.timeframe = tf.timeframe
+)
+SELECT
+	"imageId",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "heartCount", NULL::integer)) AS "heartCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "likeCount", NULL::integer)) AS "likeCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "dislikeCount", NULL::integer)) AS "dislikeCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "laughCount", NULL::integer)) AS "laughCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "cryCount", NULL::integer)) AS "cryCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "commentCount", NULL::integer)) AS "commentCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "collectedCount", NULL::integer)) AS "collectedCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "collectedCount", NULL::integer)) AS "collectedCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "collectedCount", NULL::integer)) AS "collectedCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "collectedCount", NULL::integer)) AS "collectedCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "collectedCount", NULL::integer)) AS "collectedCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "tippedCount", NULL::integer)) AS "tippedCountAllTime",
+	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountDay",
+	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountWeek",
+	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountMonth",
+	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountYear",
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountAllTime"
+
+FROM timeframe_stats
+GROUP BY "imageId";

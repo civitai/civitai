@@ -27,6 +27,13 @@ export const imageMetrics = createMetricProcessor({
         WHERE ci."imageId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
 
         UNION
+        
+        SELECT bt."entityId" as id
+        FROM "BuzzTip" bt
+        WHERE bt."entityId" IS NOT NULL AND bt."entityType" = 'Image'
+          AND (bt."createdAt" > ${lastUpdate} OR bt."updatedAt" > ${lastUpdate})
+  
+        UNION
 
         SELECT
           "id"
@@ -49,7 +56,7 @@ export const imageMetrics = createMetricProcessor({
 
       -- upsert metrics for all affected users
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "collectedCount")
+      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "collectedCount", "tippedCount", "tippedAmountCount") 
       SELECT
         m.id,
         tf.timeframe,
@@ -101,7 +108,21 @@ export const imageMetrics = createMetricProcessor({
           WHEN tf.timeframe = 'Month' THEN month_collected_count
           WHEN tf.timeframe = 'Week' THEN week_collected_count
           WHEN tf.timeframe = 'Day' THEN day_collected_count
-        END AS collected_count
+        END AS collected_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN tipped_count
+          WHEN tf.timeframe = 'Year' THEN year_tipped_count
+          WHEN tf.timeframe = 'Month' THEN month_tipped_count
+          WHEN tf.timeframe = 'Week' THEN week_tipped_count
+          WHEN tf.timeframe = 'Day' THEN day_tipped_count
+        END AS tipped_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN tipped_amount_count
+          WHEN tf.timeframe = 'Year' THEN year_tipped_amount_count
+          WHEN tf.timeframe = 'Month' THEN month_tipped_amount_count
+          WHEN tf.timeframe = 'Week' THEN week_tipped_amount_count
+          WHEN tf.timeframe = 'Day' THEN day_tipped_amount_count
+        END AS tipped_amount_count
       FROM
       (
         SELECT
@@ -140,7 +161,17 @@ export const imageMetrics = createMetricProcessor({
           COALESCE(ci.year_collected_count, 0) AS year_collected_count,
           COALESCE(ci.month_collected_count, 0) AS month_collected_count,
           COALESCE(ci.week_collected_count, 0) AS week_collected_count,
-          COALESCE(ci.day_collected_count, 0) AS day_collected_count
+          COALESCE(ci.day_collected_count, 0) AS day_collected_count,
+          COALESCE(bt.tipped_count, 0) AS tipped_count,
+          COALESCE(bt.year_tipped_count, 0) AS year_tipped_count,
+          COALESCE(bt.month_tipped_count, 0) AS month_tipped_count,
+          COALESCE(bt.week_tipped_count, 0) AS week_tipped_count,
+          COALESCE(bt.day_tipped_count, 0) AS day_tipped_count,
+          COALESCE(bt.tipped_amount_count, 0) AS tipped_amount_count,
+          COALESCE(bt.year_tipped_amount_count, 0) AS year_tipped_amount_count,
+          COALESCE(bt.month_tipped_amount_count, 0) AS month_tipped_amount_count,
+          COALESCE(bt.week_tipped_amount_count, 0) AS week_tipped_amount_count,
+          COALESCE(bt.day_tipped_amount_count, 0) AS day_tipped_amount_count
         FROM affected q
         LEFT JOIN (
           SELECT
@@ -198,12 +229,29 @@ export const imageMetrics = createMetricProcessor({
           WHERE ici."imageId" IS NOT NULL
           GROUP BY ici."imageId"
         ) ci ON q.id = ci.id
+        LEFT JOIN (
+          SELECT
+            abt."entityId" AS id,
+            COALESCE(COUNT(*), 0) AS tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_tipped_count,
+            COALESCE(SUM(abt.amount), 0) AS tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '365 days'), abt.amount, 0)) AS year_tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '30 days'), abt.amount, 0)) AS month_tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '7 days'), abt.amount, 0)) AS week_tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '1 days'), abt.amount, 0)) AS day_tipped_amount_count
+          FROM "BuzzTip" abt
+          WHERE abt."entityType" = 'Image' AND abt."entityId" IS NOT NULL
+          GROUP BY abt."entityId"
+        ) bt ON q.id = bt.id
       ) m
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount";
+        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount", "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount";
   `;
 
     const affectedImages: Array<{ id: number }> = await db.$queryRaw`
@@ -215,13 +263,15 @@ export const imageMetrics = createMetricProcessor({
       WHERE r.id IS NOT NULL
     `;
 
+    console.log(affectedImages);
+
     await imagesSearchIndex.queueUpdate(
       affectedImages.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0 WHERE timeframe = 'Day';
+      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedCountAmount" = 0 WHERE timeframe = 'Day';
     `;
   },
   rank: {
@@ -243,6 +293,16 @@ export const imageMetrics = createMetricProcessor({
       'collectedCountWeekRank',
       'collectedCountMonthRank',
       'collectedCountYearRank',
+      'tippedCountAllTimeRank',
+      'tippedCountDayRank',
+      'tippedCountWeekRank',
+      'tippedCountMonthRank',
+      'tippedCountYearRank',
+      'tippedAmountCountAllTimeRank',
+      'tippedAmountCountDayRank',
+      'tippedAmountCountWeekRank',
+      'tippedAmountCountMonthRank',
+      'tippedAmountCountYearRank',
     ],
   },
 });
