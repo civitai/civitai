@@ -183,6 +183,7 @@ export default function UserTrainingModels() {
         style={{ height: 'max(400px, calc(100vh - 600px))' }}
         onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
       >
+        {/* TODO [bw] this should probably be transitioned to a filterable/sortable table, like in reports.tsx */}
         <Table
           verticalSpacing="md"
           fontSize="md"
