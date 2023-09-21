@@ -74,6 +74,8 @@ model UserReferralCode {
   deletedAt DateTime?
 
   referees UserReferral[]
+
+  @@index([userId], type: Hash)
 }
 
 model User {
