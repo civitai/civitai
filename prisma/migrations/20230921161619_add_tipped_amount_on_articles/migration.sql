@@ -10,7 +10,13 @@ ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "ModelMetric" ADD COLUMN     "tippedAmountCount" INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
 
--- Article Rank View
+-- AlterTable
+ALTER TABLE "ModelVersionMetric" ADD COLUMN     "tippedAmountCount" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
+
+------------------------
+-- UPDATE Views
+------------------------
 drop view if exists "ArticleRank_Live";
 create or replace view "ArticleRank_Live" as
 WITH timeframe_stats AS (
@@ -365,3 +371,130 @@ SELECT
 
 FROM timeframe_stats
 GROUP BY "imageId";
+
+drop view if exists "ModelRank_Live";
+create view "ModelRank_Live" as
+WITH model_timeframe_stats AS (
+	SELECT
+		m.id AS "modelId",
+		COALESCE(mm."downloadCount", 0) AS "downloadCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."downloadCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."ratingCount", 0)) DESC, m.id DESC)   AS "downloadCountRank",
+		COALESCE(mm."ratingCount", 0) AS "ratingCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."ratingCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC)   AS "ratingCountRank",
+		COALESCE(mm."favoriteCount", 0) AS "favoriteCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."favoriteCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "favoriteCountRank",
+		COALESCE(mm."commentCount", 0) AS "commentCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."commentCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC)  AS "commentCountRank",
+		COALESCE(mm.rating, 0::double precision) AS rating,
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY ((COALESCE(mm.rating, 0::double precision) * COALESCE(mm."ratingCount", 0)::double precision + (3.5 * 10::numeric)::double precision) / (COALESCE(mm."ratingCount", 0) + 10)::double precision) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "ratingRank",
+		ROW_NUMBER() OVER (ORDER BY (GREATEST(m."lastVersionAt", m."publishedAt")) DESC, m.id DESC) AS "newRank",
+		DATE_PART('day'::text, NOW() - m."publishedAt"::timestamp WITH TIME ZONE) AS age_days,
+		COALESCE(mm."imageCount", 0) AS "imageCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."imageCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "imageCountRank",
+		COALESCE(mm."collectedCount", 0) AS "collectedCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."collectedCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "collectedCountRank",
+		COALESCE(mm."tippedCount", 0) AS "tippedCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."tippedCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "tippedCountRank",
+		COALESCE(mm."tippedAmountCount", 0) AS "tippedAmountCount",
+		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."tippedAmountCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "tippedAmountCountRank",
+		tf.timeframe
+	FROM "Model" m
+	CROSS JOIN (SELECT UNNEST(ENUM_RANGE(NULL::"MetricTimeframe")) AS timeframe) tf
+	LEFT JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = tf.timeframe
+)
+SELECT
+	model_timeframe_stats."modelId",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."downloadCount", NULL::integer)) AS "downloadCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."downloadCount", NULL::integer)) AS "downloadCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."downloadCount", NULL::integer)) AS "downloadCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."downloadCount", NULL::integer)) AS "downloadCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."downloadCount", NULL::integer)) AS "downloadCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."downloadCountRank", NULL::bigint))  AS "downloadCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."downloadCountRank", NULL::bigint))  AS "downloadCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."downloadCountRank", NULL::bigint))  AS "downloadCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."downloadCountRank", NULL::bigint))  AS "downloadCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."downloadCountRank", NULL::bigint))  AS "downloadCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."ratingCount", NULL::integer)) AS "ratingCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."ratingCount", NULL::integer)) AS "ratingCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."ratingCount", NULL::integer)) AS "ratingCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."ratingCount", NULL::integer)) AS "ratingCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."ratingCount", NULL::integer)) AS "ratingCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."ratingCountRank", NULL::bigint))  AS "ratingCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."ratingCountRank", NULL::bigint))  AS "ratingCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."ratingCountRank", NULL::bigint))  AS "ratingCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."ratingCountRank", NULL::bigint))  AS "ratingCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."ratingCountRank", NULL::bigint))  AS "ratingCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats.rating, NULL::double precision))    AS "ratingDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats.rating, NULL::double precision))    AS "ratingWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats.rating, NULL::double precision))    AS "ratingMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats.rating, NULL::double precision))    AS "ratingYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats.rating, NULL::double precision))    AS "ratingAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."ratingRank", NULL::bigint))  AS "ratingDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."ratingRank", NULL::bigint))  AS "ratingWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."ratingRank", NULL::bigint))  AS "ratingMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."ratingRank", NULL::bigint))  AS "ratingYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."ratingRank", NULL::bigint))  AS "ratingAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."favoriteCount", NULL::integer))AS "favoriteCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."favoriteCount", NULL::integer)) AS "favoriteCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."favoriteCount", NULL::integer)) AS "favoriteCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."favoriteCount", NULL::integer)) AS "favoriteCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."favoriteCount", NULL::integer)) AS "favoriteCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."favoriteCountRank", NULL::bigint))  AS "favoriteCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."favoriteCountRank", NULL::bigint))  AS "favoriteCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."favoriteCountRank", NULL::bigint))  AS "favoriteCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."favoriteCountRank", NULL::bigint))  AS "favoriteCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."favoriteCountRank", NULL::bigint))  AS "favoriteCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."commentCount", NULL::integer)) AS "commentCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."commentCount", NULL::integer)) AS "commentCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."commentCount", NULL::integer)) AS "commentCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."commentCount", NULL::integer)) AS "commentCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."commentCount", NULL::integer)) AS "commentCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."commentCountRank", NULL::bigint))  AS "commentCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."commentCountRank", NULL::bigint))  AS "commentCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."commentCountRank", NULL::bigint))  AS "commentCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."commentCountRank", NULL::bigint))  AS "commentCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."commentCountRank", NULL::bigint))  AS "commentCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."imageCount", NULL::int))    AS "imageCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."imageCount", NULL:: int))    AS "imageCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."imageCount", NULL:: int))    AS "imageCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."imageCount", NULL:: int))    AS "imageCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."imageCount", NULL:: int))    AS "imageCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."imageCountRank", NULL::bigint))  AS "imageCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."imageCountRank", NULL::bigint))  AS "imageCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."imageCountRank", NULL::bigint))  AS "imageCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."imageCountRank", NULL::bigint))  AS "imageCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."imageCountRank", NULL::bigint))  AS "imageCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."collectedCount", NULL::int))    AS "collectedCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."collectedCount", NULL:: int))    AS "collectedCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."collectedCount", NULL:: int))    AS "collectedCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."collectedCount", NULL:: int))    AS "collectedCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."collectedCount", NULL:: int))    AS "collectedCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL::int))    AS "tippedCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL:: int))    AS "tippedCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL:: int))    AS "tippedCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL:: int))    AS "tippedCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL:: int))    AS "tippedCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."tippedCountRank", NULL::bigint))  AS "tippedCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."tippedCountRank", NULL::bigint))  AS "tippedCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."tippedCountRank", NULL::bigint))  AS "tippedCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."tippedCountRank", NULL::bigint))  AS "tippedCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."tippedCountRank", NULL::bigint))  AS "tippedCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."tippedAmountCount", NULL::int))    AS "tippedAmountCountDay",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."tippedAmountCount", NULL:: int))    AS "tippedAmountCountWeek",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."tippedAmountCount", NULL:: int))    AS "tippedAmountCountMonth",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."tippedAmountCount", NULL:: int))    AS "tippedAmountCountYear",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."tippedAmountCount", NULL:: int))    AS "tippedAmountCountAllTime",
+	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountDayRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountWeekRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountMonthRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountYearRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."newRank", NULL::bigint))  AS "newRank",
+	MAX(model_timeframe_stats.age_days) AS age_days
+FROM model_timeframe_stats
+GROUP BY model_timeframe_stats."modelId";

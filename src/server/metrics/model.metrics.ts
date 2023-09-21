@@ -42,6 +42,7 @@ const modelMetricProcessors = [
   updateVersionCommentMetrics,
   updateVersionImageMetrics,
   updateCollectMetrics,
+  updateTippedBuzzMetrics,
   updateModelMetrics,
 ];
 
@@ -469,9 +470,70 @@ async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContex
   return modelIds;
 }
 
+async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
+  const affected = await db.$queryRaw<{ modelId: number }[]>`
+    SELECT bt."entityId" as "modelId"
+    FROM "BuzzTip" bt
+    WHERE bt."entityId" IS NOT NULL AND bt."entityType" = 'Model'
+      AND (bt."createdAt" > ${lastUpdate} OR bt."updatedAt" > ${lastUpdate})
+  `;
+
+  console.log(affected);
+
+  const modelIds = affected.map((x) => x.modelId);
+
+  const batches = chunk(modelIds, 1000);
+  for (const batch of batches) {
+    const batchJson = JSON.stringify(batch);
+
+    await db.$executeRaw`
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "tippedCount", "tippedAmountCount")
+      SELECT
+        mv."id",
+        tf.timeframe,
+        COALESCE(SUM(
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN 1
+            WHEN tf.timeframe = 'Year' THEN IIF(i."updatedAt" >= NOW() - interval '1 year', 1, 0)
+            WHEN tf.timeframe = 'Month' THEN IIF(i."updatedAt" >= NOW() - interval '1 month', 1, 0)
+            WHEN tf.timeframe = 'Week' THEN IIF(i."updatedAt" >= NOW() - interval '1 week', 1, 0)
+            WHEN tf.timeframe = 'Day' THEN IIF(i."updatedAt" >= NOW() - interval '1 day', 1, 0)
+          END
+        ), 0),
+        COALESCE(SUM(
+          CASE
+            WHEN tf.timeframe = 'AllTime' THEN i."amount"
+            WHEN tf.timeframe = 'Year' THEN IIF(i."updatedAt" >= NOW() - interval '1 year', i."amount", 0)
+            WHEN tf.timeframe = 'Month' THEN IIF(i."updatedAt" >= NOW() - interval '1 month', i."amount", 0)
+            WHEN tf.timeframe = 'Week' THEN IIF(i."updatedAt" >= NOW() - interval '1 week', i."amount", 0)
+            WHEN tf.timeframe = 'Day' THEN IIF(i."updatedAt" >= NOW() - interval '1 day', i."amount", 0)
+          END
+        ), 0)
+      FROM (
+        SELECT
+          "entityId" as "modelId", 
+          bt."updatedAt",
+          bt."amount"
+        FROM "BuzzTip" bt
+        JOIN "Model" m ON m.id = bt."entityId"
+        WHERE bt."entityType" = 'Model' AND bt."entityId" IS NOT NULL 
+            AND bt."entityId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+       ) i
+      JOIN "ModelVersion" mv ON mv."modelId" = i."modelId"
+      CROSS JOIN (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ) tf
+      GROUP BY mv."id", tf.timeframe
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount";
+    `;
+  }
+
+  return modelIds;
+}
+
 async function updateModelMetrics({ db }: MetricProcessorRunContext) {
   await db.$executeRaw`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount")
     SELECT
       mv."modelId",
       mvm.timeframe,
@@ -481,7 +543,9 @@ async function updateModelMetrics({ db }: MetricProcessorRunContext) {
       MAX(mvm."favoriteCount") "favoriteCount",
       MAX(mvm."commentCount") "commentCount",
       SUM(mvm."imageCount") "imageCount",
-      MAX(mvm."collectedCount") "collectedCount"
+      MAX(mvm."collectedCount") "collectedCount",
+      MAX(mvm."tippedCount") "tippedCount",
+      MAX(mvm."tippedAmountCount") "tippedAmountCount"
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
     GROUP BY mv."modelId", mvm.timeframe
@@ -492,7 +556,9 @@ async function updateModelMetrics({ db }: MetricProcessorRunContext) {
       "favoriteCount" = EXCLUDED."favoriteCount",
       "commentCount" = EXCLUDED."commentCount",
       "imageCount" = EXCLUDED."imageCount",
-      "collectedCount" = EXCLUDED."collectedCount";
+      "collectedCount" = EXCLUDED."collectedCount",
+      "tippedCount" = EXCLUDED."tippedCount",
+      "tippedAmountCount" = EXCLUDED."tippedAmountCount";
   `;
 
   return [];
