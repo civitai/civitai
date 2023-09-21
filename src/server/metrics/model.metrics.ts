@@ -478,8 +478,6 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
       AND (bt."createdAt" > ${lastUpdate} OR bt."updatedAt" > ${lastUpdate})
   `;
 
-  console.log(affected);
-
   const modelIds = affected.map((x) => x.modelId);
 
   const batches = chunk(modelIds, 1000);
