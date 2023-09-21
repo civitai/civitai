@@ -11,7 +11,7 @@ import { trpc } from '~/utils/trpc';
 import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 
-export function CreatorCard({ user }: Props) {
+export function CreatorCard({ user, tipBuzzEntityType, tipBuzzEntityId }: Props) {
   const { data: creator } = trpc.user.getCreator.useQuery(
     { id: user.id },
     {
@@ -48,7 +48,13 @@ export function CreatorCard({ user }: Props) {
               linkToProfile
             />
             <Group spacing={8} noWrap>
-              <TipBuzzButton toUserId={creator.id} size="xs" compact />
+              <TipBuzzButton
+                toUserId={creator.id}
+                size="xs"
+                compact
+                entityId={tipBuzzEntityId}
+                entityType={tipBuzzEntityType}
+              />
               <FollowUserButton userId={creator.id} size="xs" compact />
             </Group>
           </Group>
@@ -97,4 +103,6 @@ export function CreatorCard({ user }: Props) {
 
 type Props = {
   user: UserWithCosmetics;
+  tipBuzzEntityId?: number;
+  tipBuzzEntityType?: string;
 };

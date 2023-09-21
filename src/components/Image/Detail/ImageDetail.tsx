@@ -97,7 +97,13 @@ export function ImageDetail() {
                   linkToProfile
                 />
                 <Group spacing={8} sx={{ [theme.fn.smallerThan('sm')]: { flexGrow: 1 } }} noWrap>
-                  <TipBuzzButton toUserId={image.user.id} size="md" compact />
+                  <TipBuzzButton
+                    toUserId={image.user.id}
+                    entityId={image.id}
+                    entityType="Image"
+                    size="md"
+                    compact
+                  />
                   <FollowUserButton userId={image.user.id} size="md" compact />
                   <CloseButton
                     size="md"

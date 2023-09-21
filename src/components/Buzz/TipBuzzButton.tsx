@@ -7,9 +7,9 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { openSendTipModal } from '../Modals/SendTipModal';
 
-type Props = ButtonProps & { toUserId: number };
+type Props = ButtonProps & { toUserId: number; entityId?: number; entityType?: string };
 
-export function TipBuzzButton({ toUserId, ...buttonProps }: Props) {
+export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }: Props) {
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
@@ -22,7 +22,7 @@ export function TipBuzzButton({ toUserId, ...buttonProps }: Props) {
           'You have insufficient funds to tip. You can buy more Buzz below to send a tip to your favorite creators.',
       });
 
-    openSendTipModal({ toUserId }, { fullScreen: isMobile });
+    openSendTipModal({ toUserId, entityId, entityType }, { fullScreen: isMobile });
   };
 
   if (!features.buzz) return null;

@@ -236,7 +236,11 @@ export default function ArticleDetailsPage({
             </Stack>
           </Grid.Col>
           <Grid.Col xs={12} md={3} offsetMd={1}>
-            <Sidebar creator={article.user} attachments={article.attachments} />
+            <Sidebar
+              creator={article.user}
+              attachments={article.attachments}
+              articleId={article.id}
+            />
           </Grid.Col>
         </Grid>
 
