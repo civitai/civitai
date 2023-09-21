@@ -120,16 +120,22 @@ const presets = [
   { label: 'lg', amount: '1000' },
 ];
 
-const { openModal, Modal } = createContextModal<{ toUserId: number }>({
+const { openModal, Modal } = createContextModal<{
+  toUserId: number;
+  entityId?: number;
+  entityType?: string;
+}>({
   name: 'sendTip',
   centered: true,
   radius: 'lg',
   withCloseButton: false,
-  Element: ({ context, props: { toUserId } }) => {
+  Element: ({ context, props: { toUserId, entityId, entityType } }) => {
     const { classes } = useStyles();
     const currentUser = useCurrentUser();
     const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
     const queryUtils = trpc.useContext();
+
+    console.log(entityId, entityType);
 
     const [loading, setLoading] = useState(false);
 
@@ -186,6 +192,8 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
                 type: TransactionType.Tip,
                 amount: customAmount,
                 description,
+                entityId,
+                entityType,
               });
             },
           });
@@ -206,6 +214,8 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
             type: TransactionType.Tip,
             amount,
             description,
+            entityId,
+            entityType,
           });
         }
       }
@@ -215,6 +225,8 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
         type: TransactionType.Tip,
         amount: Number(amount),
         description,
+        entityId,
+        entityType,
       });
     };
 

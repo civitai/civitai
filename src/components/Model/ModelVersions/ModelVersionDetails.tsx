@@ -756,7 +756,7 @@ export function ModelVersionDetails({
               </Accordion.Item>
             )}
           </Accordion>
-          <CreatorCard user={model.user} />
+          <CreatorCard user={model.user} tipBuzzEntityType="Model" tipBuzzEntityId={model.id} />
 
           <Group position="apart" align="flex-start" noWrap>
             {model.type === 'Checkpoint' && (

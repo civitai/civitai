@@ -196,7 +196,13 @@ export function PostDetail({ postId }: { postId: number }) {
                 linkToProfile
               />
               <Group spacing={8} noWrap>
-                <TipBuzzButton toUserId={post.user.id} size="md" compact />
+                <TipBuzzButton
+                  toUserId={post.user.id}
+                  entityId={post.id}
+                  entityType="Post"
+                  size="md"
+                  compact
+                />
                 <FollowUserButton userId={post.user.id} size="md" compact />
               </Group>
             </Group>
