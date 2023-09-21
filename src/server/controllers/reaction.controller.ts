@@ -5,6 +5,7 @@ import { throwDbError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { ReactionType } from '../clickhouse/client';
 import { NsfwLevel } from '@prisma/client';
+import { encouragementReward, goodContentReward } from '~/server/rewards';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -111,6 +112,16 @@ export const toggleReactionHandler = async ({
         ...trackerEvent,
         type: trackerEvent.type as ReactionType,
       });
+    }
+    if (result == 'created') {
+      await encouragementReward.apply(
+        { type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId },
+        ctx.ip
+      );
+      await goodContentReward.apply(
+        { type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId },
+        ctx.ip
+      );
     }
     return result;
   } catch (error) {

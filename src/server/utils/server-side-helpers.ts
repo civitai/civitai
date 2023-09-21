@@ -20,6 +20,7 @@ export const getServerProxySSGHelpers = async (
       acceptableOrigin: true,
       browsingMode: parseBrowsingMode(ctx.req.cookies, session),
       track: new Tracker(),
+      ip: null as any,
       res: null as any,
       cache: null as any,
     },

@@ -163,3 +163,31 @@ export async function createBuzzTransaction({
   const data: { transactionId: string } = await response.json();
   return data;
 }
+
+export async function createBuzzTransactionMany(
+  transactions: (CreateBuzzTransactionInput & { fromAccountId: number })[]
+) {
+  const body = JSON.stringify(transactions);
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+  if (!response.ok) {
+    const cause: { reason: string } = JSON.parse(await response.text());
+
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError(cause.reason, cause);
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+          cause,
+        });
+    }
+  }
+
+  const data: { transactions: { transactionId: string }[] } = await response.json();
+  return data;
+}
