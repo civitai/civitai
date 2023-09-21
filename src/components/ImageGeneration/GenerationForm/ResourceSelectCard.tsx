@@ -15,7 +15,8 @@ export const ResourceSelectCard = ({
   onRemove?: (id: number) => void;
 }) => {
   const hasTrainedWords = !!resource.trainedWords?.length;
-  const hasStrength = resource.modelType === ModelType.LORA;
+  const hasStrength =
+    resource.modelType === ModelType.LORA || resource.modelType === ModelType.LoCon;
   const hasAdditionalContent = hasTrainedWords || hasStrength;
   const unavailable = resource?.covered === false;
 
