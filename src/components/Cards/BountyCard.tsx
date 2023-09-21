@@ -68,11 +68,16 @@ export function BountyCard({ data }: Props) {
       variant="filled"
       radius="xl"
     >
-      Completed
+      Awarded
     </Badge>
   );
 
-  const deadlineBadge = complete ? completeBadge : expired ? expiredBadge : countdownBadge;
+  const deadlineBadge =
+    complete && !!stats?.entryCountAllTime
+      ? completeBadge
+      : expired
+      ? expiredBadge
+      : countdownBadge;
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">

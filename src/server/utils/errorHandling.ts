@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { log } from 'next-axiom';
 import { isProd } from '~/env/other';
+import { logToAxiom } from '../logging/client';
 
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
@@ -135,6 +136,10 @@ export function throwInsufficientFundsError(message: string | null = null, error
 
 export function handleTrackError(e: Error) {
   const error = new Error('Failed to track clickhouse event: ' + e.message, { cause: e });
-  if (isProd) log.error(error.message, { cause: e });
+  if (isProd)
+    logToAxiom(
+      { name: error.name, message: error.message, stack: error.stack, cause: error.cause },
+      'civitai-prod'
+    ).catch();
   else console.error(error);
 }

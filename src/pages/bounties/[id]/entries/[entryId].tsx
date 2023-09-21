@@ -70,6 +70,8 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -123,6 +125,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
 
       [isMobile]: {
         position: 'absolute',
+        overflow: 'auto',
         top: '100%',
         left: 0,
         width: '100%',
@@ -222,8 +225,8 @@ export default function BountyEntryDetailsPage({
   const userSection = (
     <>
       {user && (
-        <Card.Section py="xs" withBorder inheritPadding>
-          <Stack spacing={0}>
+        <Card.Section px={mobile ? 'xs' : 'md'} py="sm" withBorder>
+          <Stack spacing={8}>
             <Group position="apart">
               <Text size="xs" color="dimmed">
                 Entry added on {formatDate(bountyEntry.createdAt)} by
@@ -251,7 +254,7 @@ export default function BountyEntryDetailsPage({
   const awardSection = (
     <>
       {benefactor && benefactor.awardedToId === bountyEntry.id && (
-        <Alert color="yellow">
+        <Alert color="yellow" radius={0}>
           <Group spacing="xs">
             <ThemeIcon
               // @ts-ignore: transparent variant does work
@@ -268,7 +271,7 @@ export default function BountyEntryDetailsPage({
   );
 
   const shareSection = (
-    <Group spacing={8} noWrap>
+    <Group spacing={8} px={mobile ? 'xs' : 'md'} noWrap>
       {(isOwner || isModerator) && bountyEntry.awardedUnitAmountTotal === 0 && (
         <Button
           size="md"
@@ -384,6 +387,7 @@ export default function BountyEntryDetailsPage({
       multiple
       defaultValue={['files']}
       my={0}
+      px={mobile ? 'xs' : 'md'}
       styles={(theme) => ({
         content: { padding: 0 },
         item: {
@@ -498,6 +502,15 @@ export default function BountyEntryDetailsPage({
     </Accordion>
   );
 
+  const notesSection = bountyEntry.description ? (
+    <>
+      <Divider label="Entry Notes" labelPosition="center" />
+      <ContentClamp maxHeight={200} px="md">
+        <RenderHtml html={bountyEntry.description} />
+      </ContentClamp>
+    </>
+  ) : null;
+
   if (mobile) {
     return (
       <>
@@ -511,33 +524,38 @@ export default function BountyEntryDetailsPage({
         <Paper className={classes.root}>
           <Stack w="100%">
             {userSection}
-            <Stack px="sm" pb="lg">
+            <Stack pb="lg">
               {awardSection}
               {shareSection}
               {filesSection}
-              <ImageCarousel
-                images={bountyEntry.images}
-                nsfw={bounty.nsfw}
-                entityId={bountyEntry.id}
-                entityType="bountyEntry"
-                mobile={true}
-              />
+              <div style={{ padding: '0 10px' }}>
+                <ImageCarousel
+                  images={bountyEntry.images}
+                  nsfw={bounty.nsfw}
+                  entityId={bountyEntry.id}
+                  entityType="bountyEntry"
+                  mobile
+                />
+              </div>
+              {notesSection}
               <Divider label="Discussion" labelPosition="center" />
-              <Reactions
-                entityId={bountyEntry.id}
-                entityType="bountyEntry"
-                reactions={reactions}
-                metrics={{
-                  likeCount: stats?.likeCountAllTime,
-                  dislikeCount: stats?.dislikeCountAllTime,
-                  heartCount: stats?.heartCountAllTime,
-                  laughCount: stats?.laughCountAllTime,
-                  cryCount: stats?.cryCountAllTime,
-                }}
-              />
-              {user?.id && (
-                <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
-              )}
+              <Stack spacing={8} px="xs">
+                <Reactions
+                  entityId={bountyEntry.id}
+                  entityType="bountyEntry"
+                  reactions={reactions}
+                  metrics={{
+                    likeCount: stats?.likeCountAllTime,
+                    dislikeCount: stats?.dislikeCountAllTime,
+                    heartCount: stats?.heartCountAllTime,
+                    laughCount: stats?.laughCountAllTime,
+                    cryCount: stats?.cryCountAllTime,
+                  }}
+                />
+                {user?.id && (
+                  <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
+                )}
+              </Stack>
             </Stack>
           </Stack>
         </Paper>
@@ -568,19 +586,16 @@ export default function BountyEntryDetailsPage({
         </NavigateBack>
         <BountyEntryCarousel bountyEntry={bountyEntry} className={classes.carousel} />
 
-        <Card className={classes.sidebar} pt={0}>
-          <Stack>
+        <Card className={classes.sidebar} p={0}>
+          <Stack style={{ flex: 1, overflow: 'hidden' }}>
             {userSection}
             {awardSection}
             {shareSection}
             {filesSection}
-            <Card.Section
-              component={ScrollArea}
-              style={{ flex: 1, position: 'relative' }}
-              classNames={{ viewport: classes.scrollViewport }}
-            >
-              <Stack spacing="md" pt="md" pb="md" style={{ flex: 1 }}>
-                <div>
+            <Card.Section style={{ overflowY: 'auto' }}>
+              <Stack spacing="md">
+                {notesSection}
+                <div style={{ paddingTop: 8 }}>
                   <Divider
                     label="Discussion"
                     labelPosition="center"
@@ -633,7 +648,6 @@ export function BountyEntryCarousel({
   bountyEntry: BountyEntryGetById;
   className: string;
 }) {
-  // const router = useRouter();
   const { images } = bountyEntry;
   const [currentIdx, setCurrentIdx] = useState(0);
   const current = images[currentIdx];
@@ -668,6 +682,20 @@ export function BountyEntryCarousel({
       </Center>
     );
   }
+
+  const indicators = images.map(({ id }) => (
+    <UnstyledButton
+      key={id}
+      data-active={current.id === id || undefined}
+      className={classes.indicator}
+      aria-hidden
+      tabIndex={-1}
+      onClick={() => {
+        const index = images.findIndex((image) => image.id === id);
+        setCurrentIdx(index);
+      }}
+    />
+  ));
 
   const canNavigate = hasNextImage || hasPrevImage;
 
@@ -736,6 +764,7 @@ export function BountyEntryCarousel({
           );
         }}
       />
+      {images.length > 1 && <div className={classes.indicators}>{indicators}</div>}
     </div>
   );
 }

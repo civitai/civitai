@@ -142,6 +142,7 @@ const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
 export function RichTextEditor({
   id,
   label,
+  labelProps,
   description,
   withAsterisk,
   error,
@@ -349,6 +350,7 @@ export function RichTextEditor({
     <Input.Wrapper
       id={id}
       label={label}
+      labelProps={labelProps}
       description={description}
       withAsterisk={withAsterisk}
       error={error}
@@ -481,7 +483,7 @@ type ControlType =
   | 'polls'
   | 'colors';
 type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
-  Pick<InputWrapperProps, 'label' | 'description' | 'withAsterisk' | 'error'> & {
+  Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
     includeControls?: ControlType[];
     onChange?: (value: string) => void;

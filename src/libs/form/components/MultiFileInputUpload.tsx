@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate, useListState } from '@mantine/hooks';
-import { IconFile, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
+import { IconFileUpload, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 
 import { useS3Upload } from '~/hooks/useS3Upload';
@@ -28,6 +28,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
     onRemove: () => void,
     onUpdate: (file: BaseFileSchema) => void
   ) => React.ReactNode;
+  orientation?: 'horizontal' | 'vertical';
 };
 
 export function MultiFileInputUpload({
@@ -35,6 +36,7 @@ export function MultiFileInputUpload({
   onChange,
   dropzoneProps,
   renderItem,
+  orientation,
   ...props
 }: Props) {
   const theme = useMantineTheme();
@@ -80,6 +82,13 @@ export function MultiFileInputUpload({
 
   const uploadingItems = trackedFiles.filter((file) => file.status === 'uploading');
   const hasErrors = errors.length > 0;
+  const { accept, maxSize, maxFiles } = dropzoneProps ?? {};
+  const fileExtensions = accept
+    ? Array.isArray(accept)
+      ? accept
+      : Object.values(accept).flat()
+    : [];
+  const verticalOrientation = orientation === 'vertical';
 
   return (
     <Stack>
@@ -95,6 +104,7 @@ export function MultiFileInputUpload({
         <Dropzone
           {...dropzoneProps}
           mt={5}
+          accept={accept}
           onDrop={handleDrop}
           onReject={(files) => {
             const errors = removeDuplicates(
@@ -113,37 +123,42 @@ export function MultiFileInputUpload({
                 : undefined,
           })}
         >
-          <Dropzone.Accept>
-            <Group position="center" spacing="xs">
+          <Group
+            position="center"
+            spacing={verticalOrientation ? 8 : 'xl'}
+            style={{
+              minHeight: 120,
+              pointerEvents: 'none',
+              flexDirection: verticalOrientation ? 'column' : 'row',
+            }}
+            noWrap
+          >
+            <Dropzone.Accept>
               <IconUpload
-                size={32}
+                size={50}
                 stroke={1.5}
                 color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
               />
-              <Text>Drop your files here</Text>
-            </Group>
-          </Dropzone.Accept>
-          <Dropzone.Reject>
-            <Group position="center" spacing="xs">
+            </Dropzone.Accept>
+            <Dropzone.Reject>
               <IconX
-                size={32}
+                size={50}
                 stroke={1.5}
                 color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
               />
-              <Text>File not accepted</Text>
-            </Group>
-          </Dropzone.Reject>
-          <Dropzone.Idle>
-            <Group position="center" spacing="xs">
-              <IconFile size={32} stroke={1.5} />
-              <Stack spacing={0}>
-                <Text>Drop your files or click to select</Text>
-                <Text color="dimmed" size="xs">
-                  {`Each file should not exceed ${formatBytes(dropzoneProps?.maxSize ?? 0)}`}
-                </Text>
-              </Stack>
-            </Group>
-          </Dropzone.Idle>
+            </Dropzone.Reject>
+            <Dropzone.Idle>
+              <IconFileUpload size={50} stroke={1.5} />
+            </Dropzone.Idle>
+            <Stack spacing={4} align={verticalOrientation ? 'center' : 'flex-start'}>
+              <Text size="xl">Drop your files or click to select</Text>
+              <Text color="dimmed" size="sm">
+                {maxFiles ? `Attach up to ${maxFiles} files` : 'Attach as many files as you like'}
+                {maxSize && `. Each file should not exceed ${formatBytes(maxSize ?? 0)}`}
+                {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
+              </Text>
+            </Stack>
+          </Group>
         </Dropzone>
       </Input.Wrapper>
       <Stack spacing={8}>

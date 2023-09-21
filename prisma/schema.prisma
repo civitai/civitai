@@ -2073,14 +2073,15 @@ model Bounty {
 }
 
 model BountyEntry {
-  id        Int      @id @default(autoincrement())
-  userId    Int?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  bountyId  Int
-  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  locked    Boolean  @default(false)
+  id          Int      @id @default(autoincrement())
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  bountyId    Int
+  bounty      Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  locked      Boolean  @default(false)
+  description String?
 
   benefactors BountyBenefactor[]
   thread      Thread?

@@ -12,7 +12,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -62,7 +61,6 @@ const useStyles = createStyles((theme) => ({
 export default function BountiesPage() {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
-  const mobile = useIsMobile();
   const router = useRouter();
   const query = router.query;
   const engagement = constants.bounties.engagementTypes.find(

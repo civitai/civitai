@@ -14,14 +14,13 @@ import {
   Accordion,
   Center,
   SimpleGrid,
-  useMantineTheme,
   Loader,
   ThemeIcon,
   Alert,
   ScrollArea,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -91,6 +90,7 @@ import { Collection } from '~/components/Collection/Collection';
 import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { scrollToTop } from '~/utils/scroll-utils';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -124,6 +124,8 @@ export default function BountyDetailsPage({
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
   const { toggle, engagements, toggling } = useBountyEngagement({ bountyId: bounty?.id });
+
+  const discussionSectionRef = useRef<HTMLDivElement>(null);
 
   const isFavorite = !bounty ? false : !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !bounty ? false : !!engagements?.Track?.find((id) => id === bounty.id);
@@ -187,82 +189,83 @@ export default function BountyDetailsPage({
     <>
       {meta}
       <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
-      <Container size="xl">
+      <Container size="xl" mb={32}>
         <Stack spacing="xs" mb="xl">
           <Group position="apart" className={classes.titleWrapper} noWrap>
             <Group spacing="xs">
-              <Title weight="bold" className={classes.title} mr={14} lineClamp={2}>
+              <Title weight="bold" className={classes.title} lineClamp={2}>
                 {bounty.name}
               </Title>
-              {bounty.complete && (
-                <Tooltip
-                  label="This bounty has been completed and entries have been awarded"
-                  maw={250}
-                  multiline
-                  withArrow
-                  withinPortal
-                >
-                  <ThemeIcon color="yellow.7" radius="xl" variant="light">
-                    <IconTrophy size={16} fill="currentColor" />
-                  </ThemeIcon>
-                </Tooltip>
-              )}
-              <Group spacing={2}>
+              <Group spacing={8}>
                 <CurrencyBadge
-                  {...defaultBadgeProps}
+                  size="lg"
+                  radius="sm"
                   currency={currency}
                   unitAmount={totalUnitAmount}
-                  variant={undefined}
+                  variant="light"
                 />
-                {expired ? (
-                  <Badge {...defaultBadgeProps} color="red" variant="filled">
+                {bounty.complete && !!bounty.stats?.entryCountAllTime ? (
+                  <IconBadge
+                    size="lg"
+                    radius="sm"
+                    color="yellow.7"
+                    icon={<IconTrophy size={16} fill="currentColor" />}
+                    style={{ color: theme.colors.yellow[7] }}
+                  >
+                    Awarded
+                  </IconBadge>
+                ) : expired ? (
+                  <Badge size="lg" radius="sm" color="red" variant="filled">
                     Expired
                   </Badge>
                 ) : (
                   <IconBadge
-                    {...defaultBadgeProps}
+                    size="lg"
+                    radius="sm"
                     icon={<IconClockHour4 size={18} />}
                     style={{ color: theme.colors.success[5] }}
                   >
                     <DaysFromNow date={bounty.expiresAt} withoutSuffix />
                   </IconBadge>
                 )}
-                {bounty.stats && (
-                  <>
-                    <LoginRedirect reason="perform-action">
-                      <IconBadge
-                        {...defaultBadgeProps}
-                        icon={
-                          <IconViewfinder
-                            size={18}
-                            color={isTracked ? theme.colors.green[6] : undefined}
-                          />
-                        }
-                        onClick={() => handleEngagementClick('Track')}
-                      >
-                        {abbreviateNumber(bounty.stats.trackCountAllTime)}
-                      </IconBadge>
-                    </LoginRedirect>
-                    <LoginRedirect reason="perform-action">
-                      <IconBadge
-                        {...defaultBadgeProps}
-                        icon={
-                          <IconHeart
-                            size={18}
-                            color={isFavorite ? theme.colors.red[6] : undefined}
-                            style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                          />
-                        }
-                        onClick={() => handleEngagementClick('Favorite')}
-                      >
-                        {abbreviateNumber(bounty.stats.favoriteCountAllTime)}
-                      </IconBadge>
-                    </LoginRedirect>
-                    <IconBadge {...defaultBadgeProps} icon={<IconMessageCircle2 size={18} />}>
-                      {abbreviateNumber(bounty.stats.commentCountAllTime)}
-                    </IconBadge>
-                  </>
-                )}
+                <LoginRedirect reason="perform-action">
+                  <IconBadge
+                    {...defaultBadgeProps}
+                    icon={
+                      <IconViewfinder
+                        size={18}
+                        color={isTracked ? theme.colors.green[6] : undefined}
+                      />
+                    }
+                    onClick={() => handleEngagementClick('Track')}
+                  >
+                    {abbreviateNumber(bounty.stats?.trackCountAllTime ?? 0)}
+                  </IconBadge>
+                </LoginRedirect>
+                <LoginRedirect reason="perform-action">
+                  <IconBadge
+                    {...defaultBadgeProps}
+                    icon={
+                      <IconHeart
+                        size={18}
+                        color={isFavorite ? theme.colors.red[6] : undefined}
+                        style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                      />
+                    }
+                    onClick={() => handleEngagementClick('Favorite')}
+                  >
+                    {abbreviateNumber(bounty.stats?.favoriteCountAllTime ?? 0)}
+                  </IconBadge>
+                </LoginRedirect>
+                <IconBadge
+                  {...defaultBadgeProps}
+                  icon={<IconMessageCircle2 size={18} />}
+                  onClick={() => {
+                    if (discussionSectionRef.current) scrollToTop(discussionSectionRef.current);
+                  }}
+                >
+                  {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}
+                </IconBadge>
               </Group>
             </Group>
             <BountyContextMenu bounty={bounty} position="bottom-end" />
@@ -328,8 +331,8 @@ export default function BountyDetailsPage({
         </Grid>
       </Container>
       <BountyEntries bounty={bounty} />
-      <Container size="xl">
-        <Stack spacing="xl" py={8}>
+      <Container ref={discussionSectionRef} size="xl" mt={32}>
+        <Stack spacing="xl">
           <Group position="apart">
             <Title order={2} size={28} weight={600}>
               Discussion
@@ -603,7 +606,14 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             <div>
               <LoginRedirect reason="perform-action">
                 <Button
-                  onClick={() => handleEngagementClick('Track')}
+                  onClick={async () => {
+                    if (!isTracked)
+                      showSuccessNotification({
+                        title: 'You are now tracking this bounty',
+                        message: "You'll receive notifications for updates to it",
+                      });
+                    await handleEngagementClick('Track');
+                  }}
                   color={isTracked ? 'green' : theme.colorScheme === 'dark' ? 'dark.6' : 'gray.1'}
                   sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                 >
@@ -725,7 +735,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             sx={(theme) => ({
               marginTop: theme.spacing.md,
               marginBottom: theme.spacing.md,
-              borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
             })}
           >
             <Accordion.Control>

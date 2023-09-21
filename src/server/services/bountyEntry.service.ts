@@ -1,15 +1,11 @@
-import { Currency, File, Prisma } from '@prisma/client';
+import { Currency, Prisma } from '@prisma/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { dbRead, dbWrite } from '../db/client';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
-import {
-  throwBadRequestError,
-  throwInsufficientFundsError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
@@ -59,30 +55,19 @@ export const getBountyEntryEarnedBuzz = async ({
   return data;
 };
 
-export const upsertBountyEntry = async ({
+export const upsertBountyEntry = ({
   id,
   bountyId,
   files,
   images,
+  description,
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
-  const bounty = await dbRead.bounty.findUnique({
-    where: { id: bountyId },
-    select: { complete: true },
-  });
-
-  if (!bounty) {
-    throw throwNotFoundError('Bounty not found');
-  }
-
-  if (bounty.complete) {
-    throw throwBadRequestError('Bounty is already complete');
-  }
-
-  return await dbWrite.$transaction(async (tx) => {
+  return dbWrite.$transaction(async (tx) => {
     if (id) {
       // confirm it exists:
-      const entry = await tx.bountyEntry.findUniqueOrThrow({ where: { id } });
+      const entry = await tx.bountyEntry.update({ where: { id }, data: { description } });
+      if (!entry) return null;
 
       if (files) {
         await updateEntityFiles({
@@ -109,11 +94,14 @@ export const upsertBountyEntry = async ({
         data: {
           bountyId,
           userId,
+          description,
         },
       });
+
       if (files) {
         await updateEntityFiles({ tx, entityId: entry.id, entityType: 'BountyEntry', files });
       }
+
       if (images) {
         await createEntityImages({
           images,

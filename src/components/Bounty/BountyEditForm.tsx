@@ -72,7 +72,7 @@ export function BountyEditForm({ bounty }: Props) {
           name="description"
           label="Description"
           editorSize="xl"
-          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'polls', 'colors']}
+          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']}
           withAsterisk
           stickyToolbar
         />

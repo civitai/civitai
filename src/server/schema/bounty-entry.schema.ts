@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { baseFileSchema } from './file.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { Currency } from '@prisma/client';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type BountyEntryFileMeta = z.infer<typeof bountyEntryFileMeta>;
 
@@ -20,8 +21,8 @@ const bountyEntryFileSchema = baseFileSchema.extend({
 });
 export const upsertBountyEntryInputSchema = z.object({
   id: z.number().optional(),
-  // TODO.bounties: Add description.
   bountyId: z.number(),
   files: z.array(bountyEntryFileSchema).min(1),
   images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
+  description: getSanitizedStringSchema().nullish(),
 });
