@@ -1,6 +1,5 @@
 import { createBuzzEvent } from '../base.reward';
 
-// TODO.buzz-merchant: Apply this reward in the right places in code.
 export const imagePostedToModelReward = createBuzzEvent({
   type: 'imagePostedToModel',
   description: 'Image posted to a model you own',
@@ -29,6 +28,7 @@ export const imagePostedToModelReward = createBuzzEvent({
       `;
       input.modelOwnerId = userId;
     }
+    if (input.modelOwnerId === input.posterId) return false;
 
     return {
       toUserId: input.modelOwnerId,

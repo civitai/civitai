@@ -33,6 +33,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 import { dbRead } from '../db/client';
+import { imagePostedToModelReward } from '~/server/rewards';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -113,6 +114,15 @@ export const updatePostHandler = async ({
         postId: updatedPost.id,
         tags: postTags.map((x) => x.tagName),
       });
+      if (updatedPost.modelVersionId) {
+        await imagePostedToModelReward.apply(
+          {
+            modelVersionId: updatedPost.modelVersionId,
+            posterId: updatedPost.userId,
+          },
+          ctx.ip
+        );
+      }
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
