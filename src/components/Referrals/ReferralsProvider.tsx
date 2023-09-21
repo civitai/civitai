@@ -39,12 +39,10 @@ export const ReferralsProvider = ({ children }: { children: React.ReactNode }) =
       const expirationDate = dayjs().add(5, 'day').toDate();
 
       if (ref_id && ref_id !== code) {
-        console.log('Cookie set');
         setCookie('ref_code', ref_id, expirationDate);
         setCode(ref_id);
       }
       if (ref_code && ref_code !== code) {
-        console.log('Cookie set');
         setCookie('ref_code', ref_code, expirationDate);
         setCode(ref_code);
       }

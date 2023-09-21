@@ -9,7 +9,6 @@ interface ExtendedUser {
   image?: string;
   email?: string;
   createdAt?: Date;
-  deletedAt?: Date;
   tos?: boolean;
   isModerator?: boolean;
   customerId?: string;

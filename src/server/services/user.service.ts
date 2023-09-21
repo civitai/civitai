@@ -743,7 +743,7 @@ export const createUserReferral = async ({
     // Confirm userReferralCode is valid:
     const referralCode = !!userReferralCode
       ? await dbRead.userReferralCode.findFirst({
-          where: { code: userReferralCode },
+          where: { code: userReferralCode, deletedAt: null },
         })
       : null;
 
@@ -758,7 +758,7 @@ export const createUserReferral = async ({
           id: user.referral.id,
         },
         data: {
-          userReferralCodeId: referralCode?.id ?? undefined,
+          userReferralCodeId: referralCode.id,
         },
       });
     } else if (!user.referral) {

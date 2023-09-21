@@ -10,11 +10,7 @@ import EmailProvider, { SendVerificationRequestParams } from 'next-auth/provider
 import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
-import {
-  refreshToken,
-  invalidateSession,
-  getSessionFromBearerToken,
-} from '~/server/utils/session-helpers';
+import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
 import {
   createUserReferral,
   getSessionUser,
@@ -26,7 +22,6 @@ import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { isDev } from '~/env/other';
 import { verificationEmail } from '~/server/email/templates';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
-import { getCookie } from 'cookies-next';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -173,7 +168,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       });
 
       if (source) {
-        // Only source will be ser via the auth callback.
+        // Only source will be set via the auth callback.
         // For userReferralCode, the user must finish onboarding.
         await createUserReferral({
           id: parseInt(context.user.id),
