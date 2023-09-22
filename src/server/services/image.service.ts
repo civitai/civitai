@@ -360,6 +360,8 @@ export const getAllImages = async ({
   ids,
   headers,
   includeBaseModel,
+  types,
+  withMeta,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
@@ -414,6 +416,14 @@ export const getAllImages = async ({
 
   if (ids && ids.length > 0) {
     AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
+  }
+
+  if (types && types.length > 0) {
+    AND.push(Prisma.sql`i.type::text IN (${Prisma.join(types)})`);
+  }
+
+  if (include.includes('meta')) {
+    AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
   }
 
   // Filter to specific model/review content

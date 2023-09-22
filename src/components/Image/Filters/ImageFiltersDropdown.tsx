@@ -9,53 +9,41 @@ import {
   Button,
   createStyles,
   Drawer,
+  Switch,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { BountyMode, BountyType, MetricTimeframe } from '@prisma/client';
+import { MediaType, MetricTimeframe } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useCallback, useState } from 'react';
-import { BountyStatus } from '~/server/common/enums';
-import { constants, BaseModel } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
-const supportsBaseModel = [
-  BountyType.ModelCreation,
-  BountyType.LoraCreation,
-  BountyType.EmbedCreation,
-] as const;
+// TODO: adjust filter as we begin to support more media types
+const availableMediaTypes = Object.values(MediaType).filter(
+  (value) => value === 'image' || value === 'video'
+);
 
-const checkSupportsBaseModel = (types: BountyType[]) => {
-  return types.some((type) =>
-    supportsBaseModel.includes(type as (typeof supportsBaseModel)[number])
-  );
-};
-
-export function BountyFiltersDropdown() {
+export function ImageFiltersDropdown() {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
-    filters: state.bounties,
-    setFilters: state.setBountyFilters,
+    filters: state.images,
+    setFilters: state.setImageFilters,
   }));
 
   const filterLength =
     (filters.types?.length ?? 0) +
-    (filters.baseModels?.length ?? 0) +
-    (!!filters.mode ? 1 : 0) +
-    (!!filters.status ? 1 : 0) +
+    (!!filters.withMeta ? 1 : 0) +
     (filters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(
     () =>
       setFilters({
         types: undefined,
-        mode: undefined,
-        status: undefined,
-        baseModels: undefined,
+        withMeta: false,
         period: MetricTimeframe.AllTime,
       }),
     [setFilters]
@@ -66,9 +54,8 @@ export function BountyFiltersDropdown() {
     radius: 'xl',
     variant: 'filled',
     classNames: classes,
+    tt: 'capitalize',
   };
-
-  const showBaseModelFilter = checkSupportsBaseModel(filters.types ?? []);
 
   const target = (
     <Indicator
@@ -113,72 +100,26 @@ export function BountyFiltersDropdown() {
         </Chip.Group>
       </Stack>
       <Stack spacing="md">
-        <Divider label="Bounty type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
           value={filters.types ?? []}
-          onChange={(types: BountyType[]) => {
-            const clearBaseModelFilter = !checkSupportsBaseModel(types);
-            setFilters({
-              types,
-              baseModels: clearBaseModelFilter ? undefined : filters.baseModels,
-            });
+          onChange={(types: MediaType[]) => {
+            setFilters({ types });
           }}
           multiple
         >
-          {Object.values(BountyType).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
+          {availableMediaTypes.map((type, index) => (
+            <Chip {...chipProps} key={index} value={type}>
               {getDisplayName(type)}
             </Chip>
           ))}
         </Chip.Group>
-      </Stack>
-      {showBaseModelFilter && (
-        <Stack spacing="md">
-          <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
-          <Chip.Group
-            spacing={8}
-            value={filters.baseModels ?? []}
-            onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
-            multiple
-          >
-            {constants.baseModels.map((baseModel, index) => (
-              <Chip key={index} value={baseModel} {...chipProps}>
-                {baseModel}
-              </Chip>
-            ))}
-          </Chip.Group>
-        </Stack>
-      )}
-      <Stack spacing="md">
-        <Divider label="Bounty mode" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8}>
-          {Object.values(BountyMode).map((mode, index) => (
-            <Chip
-              {...chipProps}
-              key={index}
-              checked={filters.mode === mode}
-              onChange={(checked) => setFilters({ mode: checked ? mode : undefined })}
-            >
-              {getDisplayName(mode)}
-            </Chip>
-          ))}
-        </Group>
-      </Stack>
-      <Stack spacing="md">
-        <Divider label="Bounty status" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8}>
-          {Object.values(BountyStatus).map((status, index) => (
-            <Chip
-              {...chipProps}
-              key={index}
-              checked={filters.status === status}
-              onChange={(checked) => setFilters({ status: checked ? status : undefined })}
-            >
-              {getDisplayName(status)}
-            </Chip>
-          ))}
-        </Group>
+        <Switch
+          label="Metadata only"
+          checked={filters.withMeta}
+          onChange={({ target }) => setFilters({ withMeta: target.checked })}
+        />
       </Stack>
       {filterLength > 0 && (
         <Button
