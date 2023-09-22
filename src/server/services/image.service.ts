@@ -361,7 +361,6 @@ export const getAllImages = async ({
   headers,
   includeBaseModel,
   types,
-  withMeta,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
