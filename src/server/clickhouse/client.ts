@@ -15,15 +15,24 @@ import {
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
+import { cacheDnsEntries } from '~/server/http/dns-cache';
 
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
-export const clickhouse = shouldConnect
-  ? createClient({
-      host: env.CLICKHOUSE_HOST,
-      username: env.CLICKHOUSE_USERNAME,
-      password: env.CLICKHOUSE_PASSWORD,
-    })
-  : null;
+export const clickhouse = (() => {
+  console.log('Connecting to Clickhouse...');
+  let cachingActive = false;
+  if (!cachingActive) {
+    cachingActive = true;
+    cacheDnsEntries();
+  }
+  return shouldConnect
+    ? createClient({
+        host: env.CLICKHOUSE_HOST,
+        username: env.CLICKHOUSE_USERNAME,
+        password: env.CLICKHOUSE_PASSWORD,
+      })
+    : null;
+})();
 
 export type ViewType =
   | 'ProfileView'
