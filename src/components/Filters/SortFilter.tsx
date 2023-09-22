@@ -1,9 +1,10 @@
 import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
+import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import {
   ArticleSort,
+  BountySort,
   CollectionSort,
   ImageSort,
   ModelSort,
@@ -22,29 +23,48 @@ const sortOptions = {
   questions: Object.values(QuestionSort),
   articles: Object.values(ArticleSort),
   collections: Object.values(CollectionSort),
+  bounties: Object.values(BountySort),
 };
 
 export function SortFilter(props: SortFilterProps) {
   if (props.value) return <DumbSortFilter {...props} />;
-  return <StatefulSortFilter type={props.type} />;
+  return <StatefulSortFilter {...props} type={props.type} />;
 }
 
 type DumbProps = {
   type: FilterSubTypes;
-  value: ModelSort | PostSort | ImageSort | QuestionSort | ArticleSort | CollectionSort;
+  variant?: 'menu' | 'button';
+  value:
+    | ModelSort
+    | PostSort
+    | ImageSort
+    | QuestionSort
+    | ArticleSort
+    | CollectionSort
+    | BountySort;
   onChange: (
-    value: ModelSort | PostSort | ImageSort | QuestionSort | ArticleSort | CollectionSort
+    value:
+      | ModelSort
+      | PostSort
+      | ImageSort
+      | QuestionSort
+      | ArticleSort
+      | CollectionSort
+      | BountySort
   ) => void;
 };
-function DumbSortFilter({ type, value, onChange }: DumbProps) {
+function DumbSortFilter({ type, value, onChange, variant = 'menu' }: DumbProps) {
+  const sharedProps = {
+    label: value,
+    options: sortOptions[type].map((x) => ({ label: x, value: x })),
+    onClick: onChange,
+    value,
+  };
+
   return (
     <IsClient>
-      <SelectMenu
-        label={value}
-        options={sortOptions[type].map((x) => ({ label: x, value: x }))}
-        onClick={onChange}
-        value={value}
-      />
+      {variant === 'menu' && <SelectMenu {...sharedProps} />}
+      {variant === 'button' && <SelectMenuV2 {...sharedProps} />}
     </IsClient>
   );
 }
@@ -53,8 +73,9 @@ type StatefulProps = {
   type: FilterSubTypes;
   value?: undefined;
   onChange?: undefined;
+  variant?: 'menu' | 'button';
 };
-function StatefulSortFilter({ type }: StatefulProps) {
+function StatefulSortFilter({ type, variant }: StatefulProps) {
   const { query, pathname, replace } = useRouter();
   const globalSort = useFiltersContext((state) => state[type].sort);
   const querySort = query.sort as typeof globalSort | undefined;
@@ -69,5 +90,5 @@ function StatefulSortFilter({ type }: StatefulProps) {
   };
 
   const sort = querySort ? querySort : globalSort;
-  return <DumbSortFilter type={type} value={sort} onChange={setSort} />;
+  return <DumbSortFilter type={type} value={sort} onChange={setSort} variant={variant} />;
 }

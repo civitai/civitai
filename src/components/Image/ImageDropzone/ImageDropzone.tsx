@@ -16,6 +16,7 @@ export function ImageDropzone({
   description,
   accept = IMAGE_MIME_TYPE,
   maxSize = constants.imageUpload.maxFileSize,
+  orientation,
   ...props
 }: Props) {
   const { classes, cx, theme } = useStyles();
@@ -40,6 +41,8 @@ export function ImageDropzone({
     onDrop?.(files.slice(0, max - count));
   };
 
+  const verticalOrientation = orientation === 'vertical';
+
   return (
     <Stack spacing={5}>
       <Dropzone
@@ -52,7 +55,16 @@ export function ImageDropzone({
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}
       >
-        <Group position="center" spacing="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
+        <Group
+          position="center"
+          spacing={verticalOrientation ? 8 : 'xl'}
+          style={{
+            minHeight: 120,
+            pointerEvents: 'none',
+            flexDirection: verticalOrientation ? 'column' : 'row',
+          }}
+          noWrap
+        >
           <Dropzone.Accept>
             <IconUpload
               size={50}
@@ -71,7 +83,7 @@ export function ImageDropzone({
             <IconPhoto size={50} stroke={1.5} />
           </Dropzone.Idle>
 
-          <div>
+          <Stack spacing={4} align={verticalOrientation ? 'center' : 'flex-start'}>
             <Text size="xl" inline>
               {label ?? 'Drag images here or click to select files'}
             </Text>
@@ -81,7 +93,7 @@ export function ImageDropzone({
               {`, image files should not exceed ${formatBytes(maxSize)}`}
               {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
             </Text>
-          </div>
+          </Stack>
         </Group>
       </Dropzone>
       {error && <Input.Error>{error}</Input.Error>}
@@ -112,4 +124,5 @@ type Props = Omit<DropzoneProps, 'children'> & {
   label?: string;
   description?: React.ReactNode;
   accept?: string[];
+  orientation?: 'vertical' | 'horizontal';
 };

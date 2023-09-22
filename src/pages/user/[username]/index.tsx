@@ -224,7 +224,6 @@ export function UserImagesPage() {
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
               }}
-              withTags={!viewingReactions && (currentUser?.isModerator || isSameUser)}
             />
           </Stack>
         </MasonryContainer>

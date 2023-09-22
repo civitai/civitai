@@ -1,5 +1,6 @@
 import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
+import React from 'react';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square';
 const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number }> = {
@@ -58,4 +59,5 @@ type Props = CardProps & {
   children: React.ReactNode;
   href?: string;
   aspectRatio?: AspectRatio;
+  onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 };

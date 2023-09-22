@@ -6,6 +6,8 @@ import { answerRouter } from './answer.router';
 import { apiKeyRouter } from './apiKey.router';
 import { articleRouter } from './article.router';
 import { authRouter } from './auth.router';
+import { bountyRouter } from './bounty.router';
+import { bountyEntryRouter } from './bountyEntry.router';
 import { buzzRouter } from './buzz.router';
 import { collectionRouter } from './collection.router';
 import { commentRouter } from './comment.router';
@@ -44,6 +46,8 @@ export const appRouter = router({
   apiKey: apiKeyRouter,
   article: articleRouter,
   auth: authRouter,
+  bounty: bountyRouter,
+  bountyEntry: bountyEntryRouter,
   buzz: buzzRouter,
   collection: collectionRouter,
   comment: commentRouter,
