@@ -66,7 +66,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       transition: 'transform 200ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-      zIndex: 1000,
+      zIndex: 200,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
 
       [theme.fn.smallerThan('sm')]: {
