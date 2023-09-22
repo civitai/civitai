@@ -1,19 +1,14 @@
 import { createStore, useStore } from 'zustand';
 import { createContext, useContext, useRef, useEffect, SetStateAction } from 'react';
 import { immer } from 'zustand/middleware/immer';
-import { v4 as uuidv4 } from 'uuid';
 import { PostEditDetail, PostEditImage } from '~/server/controllers/post.controller';
 import { devtools } from 'zustand/middleware';
-import { loadImage, blurHashImage } from '~/utils/blurhash';
-import { auditMetaData } from '~/utils/metadata/audit';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
 import { PostImage } from '~/server/selectors/post.selector';
-import { getMetadata } from '~/utils/metadata';
-import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
+import { getDataFromFile } from '~/utils/metadata';
 import { MediaType } from '@prisma/client';
-import { showErrorNotification } from '~/utils/notifications';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -171,6 +166,8 @@ const createEditPostStore = ({
               await Promise.all(
                 files.map(async (file, i) => {
                   const data = await getDataFromFile(file);
+                  if (!data) return null;
+
                   return {
                     ...data,
                     index: images.length + i,
@@ -298,32 +295,3 @@ export function useEditPostContext<T>(selector: (state: EditPostState) => T) {
   if (!store) throw new Error('Missing EditPostContext.Provider in the tree');
   return useStore(store, selector);
 }
-
-const getDataFromFile = async (file: File) => {
-  const processed = await preprocessFile(file);
-  const { blockedFor } = await auditImageMeta(
-    processed.type === MediaType.image ? processed.meta : undefined,
-    false
-  );
-  if (processed.type === 'video') {
-    const { metadata } = processed;
-    try {
-      if (metadata.duration && metadata.duration > 60)
-        throw new Error('video duration can not be longer than 60s');
-      if (metadata.width > 1920 || metadata.height > 1920)
-        throw new Error('please reduce image dimensions');
-    } catch (error: any) {
-      showErrorNotification({ error });
-      return null;
-    }
-  }
-  return {
-    file,
-    uuid: uuidv4(),
-    status: blockedFor ? 'blocked' : 'uploading',
-    message: blockedFor?.filter(isDefined).join(', '),
-    ...processed,
-    ...processed.metadata,
-    url: processed.objectUrl,
-  };
-};
