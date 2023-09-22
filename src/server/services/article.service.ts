@@ -205,7 +205,6 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     const articleCategories = await getCategoryTags('article');
     return {
       ...article,
-      attachments: [], // TODO: Remove
       tags: article.tags.map(({ tag }) => ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),

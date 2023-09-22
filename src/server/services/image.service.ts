@@ -320,6 +320,7 @@ type GetAllImagesRaw = {
   dislikeCount: number;
   heartCount: number;
   commentCount: number;
+  tippedAmountCount: number;
   reactions?: ReviewReactions[];
   cursorId?: bigint;
   type: MediaType;
@@ -735,6 +736,7 @@ export const getAllImages = async ({
       dislikeCount,
       heartCount,
       commentCount,
+      tippedAmountCount,
       ...i
     }) => ({
       ...i,
@@ -752,6 +754,7 @@ export const getAllImages = async ({
         dislikeCountAllTime: dislikeCount,
         heartCountAllTime: heartCount,
         commentCountAllTime: commentCount,
+        tippedAmountCountAllTime: tippedAmountCount,
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
@@ -808,6 +811,7 @@ export const getImage = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       u.id "userId",
       u.username,
       u.image "userImage",
@@ -841,6 +845,7 @@ export const getImage = async ({
       dislikeCount,
       heartCount,
       commentCount,
+      tippedAmountCount,
       ...firstRawImage
     },
   ] = rawImages;
@@ -874,6 +879,7 @@ export const getImage = async ({
       dislikeCountAllTime: dislikeCount,
       heartCountAllTime: heartCount,
       commentCountAllTime: commentCount,
+      tippedAmountCountAllTime: tippedAmountCount,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };

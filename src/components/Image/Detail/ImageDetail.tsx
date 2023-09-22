@@ -240,6 +240,7 @@ export function ImageDetail() {
                           heartCount: image.stats?.heartCountAllTime,
                           laughCount: image.stats?.laughCountAllTime,
                           cryCount: image.stats?.cryCountAllTime,
+                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                         }}
                       />
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />

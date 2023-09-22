@@ -32,8 +32,7 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
       favoriteCountAllTime: true,
     },
   },
-  // TODO: Remove comment
-  // attachments: {
-  //   select: { id: true, name: true, url: true, sizeKB: true },
-  // },
+  attachments: {
+    select: { id: true, name: true, url: true, sizeKB: true },
+  },
 });

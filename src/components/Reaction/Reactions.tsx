@@ -16,6 +16,7 @@ export type ReactionMetrics = {
   heartCount?: number;
   laughCount?: number;
   cryCount?: number;
+  tippedAmountCount?: number;
 };
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
