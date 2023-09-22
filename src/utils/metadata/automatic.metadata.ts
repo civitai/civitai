@@ -4,6 +4,7 @@ import { unescape } from 'lodash';
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
+const civitaiResources = /, Civitai resources:\s*(\[[^\]]+\])/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const stripKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.]+):([0-9.]+)>/g;
@@ -22,6 +23,7 @@ const automaticSDEncodeMap = new Map<keyof ImageMetaProps, string>(
 );
 const excludedKeys = [
   'hashes',
+  'civitaiResources',
   'scheduler',
   'vaes',
   'additionalResources',
@@ -58,6 +60,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
   parse(exif) {
     const metadata: ImageMetaProps = {};
     const generationDetails = exif.generationDetails as string;
+    console.log(generationDetails);
     if (!generationDetails) return metadata;
     const metaLines = generationDetails.split('\n').filter((line) => {
       // filter out empty lines and any lines that start with a key we want to strip
@@ -78,6 +81,13 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     if (hashes && detailsLine) {
       metadata.hashes = JSON.parse(hashes);
       detailsLine = detailsLine.replace(hashesRegex, '');
+    }
+
+    // Extract Civitai Resources
+    const civitaiResourcesMatch = detailsLine?.match(civitaiResources)?.[1];
+    if (civitaiResourcesMatch && detailsLine) {
+      metadata.civitaiResources = JSON.parse(civitaiResourcesMatch);
+      detailsLine = detailsLine.replace(civitaiResources, '');
     }
 
     // Extract fine details

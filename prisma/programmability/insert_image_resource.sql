@@ -17,6 +17,19 @@ BEGIN
 
 		UNION
 
+    SELECT
+		  id,
+		  (civitai_resource->>'modelVersionId')::int as model_version_id,
+		  civitai_resource->>'type' as name,
+			null as hash,
+		  true as detected
+		FROM
+		  "Image" i,
+			jsonb_array_elements(meta->'civitaiResources') AS civitai_resource
+		WHERE jsonb_typeof(meta->'civitaiResources') = 'array' AND i.id = image_id
+
+    UNION
+
 		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), LOWER(mf.hash) "hash", false as detected
 		FROM "Image" i
 		JOIN "Post" p ON i."postId" = p.id
