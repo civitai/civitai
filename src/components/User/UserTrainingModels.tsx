@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Center,
-  CopyButton,
   createStyles,
   Divider,
   Group,
@@ -22,7 +21,14 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { TrainingStatus } from '@prisma/client';
-import { IconAlertCircle, IconCheck, IconCircleCheck, IconTrash, IconX } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconCircleCheck,
+  IconExternalLink,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
@@ -509,24 +515,23 @@ export default function UserTrainingModels() {
                             </>
                           )}
                           {thisModelVersion.trainingStatus === TrainingStatus.Failed && (
-                            <CopyButton value={`Training failed. Model file is: ${thisFile.id}`}>
-                              {({ copy, copied }) => (
-                                <Button
-                                  size="xs"
-                                  color="gray"
-                                  py={0}
-                                  sx={{ fontSize: 12, fontWeight: 600, height: 20, width: 90 }}
-                                  onMouseUp={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    if (e.button !== 0) return;
-                                    copy();
-                                  }}
-                                >
-                                  {copied ? 'Copied!' : 'Copy Info'}
-                                </Button>
-                              )}
-                            </CopyButton>
+                            <Button
+                              size="xs"
+                              color="gray"
+                              py={0}
+                              sx={{ fontSize: 12, fontWeight: 600, height: 20 }}
+                              component="a"
+                              href={`https://forms.clickup.com/8459928/f/825mr-7951/OKTROKPXB4DXQQ18U8?Model%20File%20ID=${thisFile.id}`}
+                              target="_blank"
+                              onMouseUp={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                            >
+                              <Group spacing={6}>
+                                Open Support Ticket <IconExternalLink size={12} />
+                              </Group>
+                            </Button>
                           )}
                         </Group>
                       ) : (
