@@ -1,4 +1,4 @@
-import { Anchor, Container, Text } from '@mantine/core';
+import { Container, Text } from '@mantine/core';
 
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -35,13 +35,9 @@ export default function BountyCreate() {
         color="blue"
         content={
           <Text>
-            Want to keep creating cool stuff but don&apost have the power or expertise? You can post
-            a bounty to let other people from the community help you out. Learn more about them by
-            reading{' '}
-            <Anchor href="" span>
-              this article
-            </Anchor>
-            .
+            Use bounties to make requests of the community. For example you could request a custom
+            model, a curated data set, or even just some cool pictures in styles you&apos;re not
+            able to replicate, then offer compensation to the people who helped you.
           </Text>
         }
       />
