@@ -140,7 +140,10 @@ export function SelectMenuV2<T extends string | number>({
                 <UnstyledButton
                   key={option.value.toString()}
                   className={cx(classes.option, { [classes.activeOption]: active })}
-                  onClick={() => onClick(option.value)}
+                  onClick={() => {
+                    onClick(option.value);
+                    setOpened(false);
+                  }}
                 >
                   <Group position="apart">
                     <Text inline>{option.label}</Text>
