@@ -128,7 +128,7 @@ const useStyles = createStyles((theme) => ({
   },
 
   targetSelectorRoot: {
-    width: '20%',
+    width: '100px',
 
     [theme.fn.smallerThan('md')]: {
       display: 'none', // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
@@ -148,6 +148,7 @@ const useStyles = createStyles((theme) => ({
     borderTopRightRadius: 0,
     borderBottomRightRadius: 0,
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
+    paddingRight: '18px',
 
     '&:not(:focus)': {
       borderRightStyle: 'none',
