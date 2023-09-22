@@ -58,7 +58,7 @@ export const imageGenerationSchema = z.object({
   //   .array()
   //   .optional(),
   hashes: z.record(z.string()).optional(),
-  comfy: z.union([z.string().optional(), comfyMetaSchema]), // stored as stringified JSON
+  comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
@@ -184,7 +184,7 @@ export const ingestImageSchema = z.object({
 });
 
 // #region [new schemas]
-const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report']);
+const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report', 'meta']);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z
@@ -218,11 +218,17 @@ export const getInfiniteImagesSchema = z
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
     ids: z.array(z.number()).optional(),
     includeBaseModel: z.boolean().optional(),
+    types: z.array(z.nativeEnum(MediaType)).optional(),
+    withMeta: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
       if (!value.include) value.include = [];
       value.include.push('tags');
+    }
+    if (value.withMeta) {
+      if (!value.include) value.include = [];
+      value.include.push('meta');
     }
     return value;
   });

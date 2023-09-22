@@ -1,4 +1,4 @@
-import { ActionIcon, Tooltip } from '@mantine/core';
+import { ActionIcon, ActionIconProps, Tooltip } from '@mantine/core';
 import { IconLayoutGrid, IconLayoutList } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -10,11 +10,11 @@ import {
 } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
-type Props = {
+type Props = Omit<ActionIconProps, 'onClick'> & {
   type: ViewAdjustableTypes;
 };
 
-export function ViewToggle({ type }: Props) {
+export function ViewToggle({ type, ...actionIconProps }: Props) {
   const { query, pathname, replace } = useRouter();
   const globalView = useFiltersContext((state) => state[type].view);
   const queryView = query.view as ViewMode | undefined;
@@ -37,7 +37,13 @@ export function ViewToggle({ type }: Props) {
         position="bottom"
         withArrow
       >
-        <ActionIcon color="dark" variant="transparent" sx={{ width: 40 }} onClick={toggleView}>
+        <ActionIcon
+          color="dark"
+          variant="transparent"
+          {...actionIconProps}
+          sx={!actionIconProps.size ? { width: 40 } : undefined}
+          onClick={toggleView}
+        >
           {view === 'categories' ? (
             <IconLayoutGrid size={20} stroke={2.5} />
           ) : (

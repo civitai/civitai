@@ -48,7 +48,7 @@ const tooltipProps: Partial<TooltipProps> = {
 
 const schema = z.object({
   hideMeta: z.boolean().default(false),
-  meta: imageGenerationSchema.partial(),
+  meta: imageGenerationSchema.partial().omit({ comfy: true }),
 });
 
 export function EditImageDrawer() {

@@ -5,6 +5,7 @@ import {
   MetricTimeframe,
   ModelStatus,
   ModelType,
+  MediaType,
 } from '@prisma/client';
 import {
   ArticleSort,
@@ -58,11 +59,13 @@ const questionFilterSchema = z.object({
 type ImageFilterSchema = z.infer<typeof imageFilterSchema>;
 const imageFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
-  periodMode: periodModeSchema,
+  periodMode: periodModeSchema.optional(),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
   view: viewModeSchema.default('categories'),
   excludeCrossPosts: z.boolean().optional(),
+  types: z.array(z.nativeEnum(MediaType)).optional(),
+  withMeta: z.boolean().optional(),
 });
 
 const modelImageFilterSchema = imageFilterSchema.extend({
