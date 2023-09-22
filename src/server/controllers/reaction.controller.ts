@@ -93,6 +93,12 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         nsfw: NsfwLevel.None,
         ...shared,
       };
+    case 'bountyEntry':
+      return {
+        type: `BountyEntry_${action}`,
+        nsfw: NsfwLevel.None,
+        ...shared,
+      };
   }
 }
 

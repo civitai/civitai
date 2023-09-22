@@ -19,6 +19,13 @@ const stringToNumber = z.preprocess(
 
 const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
 
+// TODO: update accordingly once new entities follow this pattern
+export const ImageEntityType = {
+  Bounty: 'Bounty',
+  BountyEntry: 'BountyEntry',
+} as const;
+export type ImageEntityType = (typeof ImageEntityType)[keyof typeof ImageEntityType];
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -231,6 +238,7 @@ export const getImagesByCategorySchema = z.object({
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),
+  withoutPost: z.boolean().optional(),
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
   // browsingMode: z.nativeEnum(BrowsingMode).optional(),

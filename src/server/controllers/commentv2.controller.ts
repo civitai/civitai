@@ -80,6 +80,10 @@ export const upsertCommentV2Handler = async ({
           ? 'Comment'
           : input.entityType === 'review'
           ? 'Review'
+          : input.entityType === 'bounty'
+          ? 'Bounty'
+          : input.entityType === 'bountyEntry'
+          ? 'BountyEntry'
           : null;
 
       if (type) {

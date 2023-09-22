@@ -1,4 +1,4 @@
-import { TagEngagementType, ArticleEngagementType } from '@prisma/client';
+import { TagEngagementType, ArticleEngagementType, BountyEngagementType } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
@@ -108,6 +108,16 @@ export const getUserArticleEngagementsSchema = z.object({
 export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticleEngagementSchema>;
 export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema.extend({
   articleId: z.number(),
+});
+
+export type GetUserBountyEngagementsInput = z.infer<typeof getUserBountyEngagementsSchema>;
+export const getUserBountyEngagementsSchema = z.object({
+  type: z.nativeEnum(BountyEngagementType),
+});
+
+export type ToggleUserBountyEngagementsInput = z.infer<typeof toggleUserBountyEngagementSchema>;
+export const toggleUserBountyEngagementSchema = getUserBountyEngagementsSchema.extend({
+  bountyId: z.number(),
 });
 
 export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;

@@ -2,7 +2,7 @@ import { CloseButton, NumberInput, NumberInputProps, Text } from '@mantine/core'
 import { useMergedRef } from '@mantine/hooks';
 import { forwardRef, useEffect, useMemo, useRef } from 'react';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { DEFAULT_CURRENCY } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 
 type Props = NumberInputProps & {
   format?: 'default' | 'delimited' | 'currency';
@@ -20,7 +20,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
       onClear,
       onChange,
       value,
-      currency = DEFAULT_CURRENCY,
+      currency = constants.defaultCurrency,
       ...props
     },
     ref

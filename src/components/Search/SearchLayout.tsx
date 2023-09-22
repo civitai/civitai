@@ -106,10 +106,6 @@ const useStyles = createStyles((theme, _, getRef) => {
 });
 
 function renderSearchComponent(props: RenderSearchComponentProps) {
-  // if (true) {
-  //   return null;
-  // }
-
   return <CustomSearchBox {...props} />;
 }
 

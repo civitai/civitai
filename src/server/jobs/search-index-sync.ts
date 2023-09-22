@@ -1,5 +1,6 @@
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 import * as searchIndex from '~/server/search-index';
+import { bountiesSearchIndex } from '~/server/search-index';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
@@ -7,6 +8,7 @@ const searchIndexSets = {
   articles: searchIndex.articlesSearchIndex,
   images: searchIndex.imagesSearchIndex,
   collections: searchIndex.collectionsSearchIndex,
+  bounties: searchIndex.bountiesSearchIndex,
 };
 
 export const searchIndexJobs = Object.entries(searchIndexSets)
