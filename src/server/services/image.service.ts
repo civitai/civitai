@@ -219,7 +219,7 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
     console.log('skip ingest');
     return true;
   }
-  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT, {
+  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -247,6 +247,47 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
     });
     return false;
   }
+};
+
+export const ingestImageBulk = async ({
+  images,
+}: {
+  images: IngestImageInput[];
+}): Promise<boolean> => {
+  if (!env.IMAGE_SCANNING_ENDPOINT)
+    throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
+
+  const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
+  if (!isProd && !callbackUrl) {
+    console.log('skip ingest');
+    return true;
+  }
+
+  const scanRequestedAt = new Date();
+  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue-bulk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(
+      images.map((image) => ({
+        imageId: image.id,
+        imageKey: image.url,
+        type: image.type,
+        width: image.width,
+        height: image.height,
+        scans: [ImageScanType.WD14],
+        callbackUrl,
+      }))
+    ),
+  });
+  if (response.status === 202) {
+    const ids = images.map((image) => image.id);
+    await dbWrite.image.updateMany({
+      where: { id: { in: ids } },
+      data: { scanRequestedAt },
+    });
+    return true;
+  }
+  return false;
 };
 
 // #region [new service methods]
@@ -1529,9 +1570,9 @@ export const getImagesByEntity = async ({
           i.id,
           ic."entityId",
           row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num
-        FROM "Image" i        
-        JOIN "ImageConnection" ic ON ic."imageId" = i.id 
-            AND ic."entityType" = ${type} 
+        FROM "Image" i
+        JOIN "ImageConnection" ic ON ic."imageId" = i.id
+            AND ic."entityType" = ${type}
             AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
       ) ranked
       WHERE ranked.row_num <= ${imagesPerId}
@@ -1556,7 +1597,7 @@ export const getImagesByEntity = async ({
       i."userId",
       i."index",
       t."entityId"
-    FROM targets t 
+    FROM targets t
     JOIN "Image" i ON i.id = t.id`;
 
   return images;

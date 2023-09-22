@@ -3,7 +3,7 @@ import { chunk } from 'lodash';
 import { isProd } from '~/env/other';
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
-import { deleteImageById, ingestImage } from '~/server/services/image.service';
+import { deleteImageById, ingestImageBulk } from '~/server/services/image.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
@@ -32,9 +32,9 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     return;
   }
 
-  const batches = chunk(images, 50);
+  const batches = chunk(images, 1000);
   for (const batch of batches) {
-    await Promise.all(batch.map((image) => ingestImage({ image })));
+    await ingestImageBulk({ images: batch });
   }
 });
 
