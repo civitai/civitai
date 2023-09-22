@@ -18,20 +18,26 @@ export const goodContentReward = createBuzzEvent({
   getKey: async (input: ReactionEvent, { db }) => {
     const table = typeToTable[input.type];
     if (!table) return false;
-    const [{ userId }] = await db.$queryRawUnsafe<{ userId: number }[]>(`
-      SELECT "userId"
-      FROM "${table}"
-      WHERE "createdAt" >= NOW() - INTERVAL '${CUTOFF_DAYS} days'
-        AND id = ${input.entityId}
-    `);
-    if (!userId) return false;
+    try {
+      const [{ userId } = { userId: undefined }] = await db.$queryRawUnsafe<{ userId?: number }[]>(`
+        SELECT "userId"
+        FROM "${table}"
+        WHERE "createdAt" >= NOW() - INTERVAL '${CUTOFF_DAYS} days'
+          AND id = ${input.entityId} AND "userId" != ${input.reactorId}
+      `);
 
-    return {
-      toUserId: userId,
-      forId: input.entityId,
-      byUserId: input.reactorId,
-      type: `${type}:${input.type}`,
-    };
+      if (!userId) return false;
+
+      return {
+        toUserId: userId,
+        forId: input.entityId,
+        byUserId: input.reactorId,
+        type: `${type}:${input.type}`,
+      };
+    } catch (e) {
+      console.log(e);
+      return false;
+    }
   },
   // We already check for qualified entities in the getKey function
   // Leaving this as an example preprocessor

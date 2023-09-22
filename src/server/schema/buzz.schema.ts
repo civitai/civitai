@@ -55,7 +55,7 @@ export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInp
 export const createBuzzTransactionInput = z
   .object({
     // To user id (0 is central bank)
-    toAccountId: z.number().min(0),
+    toAccountId: z.number().optional(),
     type: z.nativeEnum(TransactionType),
     amount: z.number().min(1),
     description: z.string().trim().nonempty().nullish(),

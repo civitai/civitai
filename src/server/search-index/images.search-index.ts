@@ -143,6 +143,7 @@ type ImageForSearchIndex = {
     laughCountAllTime: number;
     likeCountAllTime: number;
     commentCountAllTime: number;
+    tippedAmountCountAllTime: number;
   } | null;
   rank: {
     commentCountAllTimeRank: number;
@@ -235,7 +236,8 @@ const onFetchItemsToIndex = async ({
           'heartCountAllTime', SUM("heartCount"),
           'dislikeCountAllTime', SUM("dislikeCount"),
           'likeCountAllTime', SUM("likeCount"),
-          'cryCountAllTime', SUM("cryCount")
+          'cryCountAllTime', SUM("cryCount"),
+          'tippedAmountCountAllTime', SUM("tippedAmountCount")
         ) stats
       FROM "ImageMetric" im 
       WHERE im."imageId" IN (SELECT id FROM target) 

@@ -616,6 +616,7 @@ export const getAllImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -1087,6 +1088,7 @@ export const getImagesForPosts = async ({
       dislikeCount: number;
       heartCount: number;
       commentCount: number;
+      tippedAmountCount: number;
       type: MediaType;
       metadata: Prisma.JsonValue;
       reactions?: ReviewReactions[];
@@ -1120,6 +1122,7 @@ export const getImagesForPosts = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -1237,6 +1240,7 @@ type GetImageByCategoryRaw = {
   dislikeCount: number;
   heartCount: number;
   commentCount: number;
+  tippedAmountCount: number;
 };
 export const getImagesByCategory = async ({
   userId,
@@ -1380,6 +1384,7 @@ export const getImagesByCategory = async ({
         COALESCE(im."dislikeCount", 0) "dislikeCount",
         COALESCE(im."heartCount", 0) "heartCount",
         COALESCE(im."commentCount", 0) "commentCount"
+        COALESCE(im."tippedAmountCount", 0) "tippedAmountCount"
       FROM targets t
       JOIN "Image" i ON i.id = t."imageId"
       JOIN "Post" p ON p.id = i."postId"

@@ -548,7 +548,7 @@ export default function ModelDetailsV2({
                     toUserId={model.user.id}
                     entityId={model.id}
                     entityType="Model"
-                    onTipSent={(amount) => {
+                    onTipSent={({ amount }) => {
                       queryUtils.model.getById.setData({ id }, (old) =>
                         old
                           ? {

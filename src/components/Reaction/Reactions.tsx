@@ -1,7 +1,7 @@
-import { Button, Group, Text, GroupProps } from '@mantine/core';
+import { Button, Group, Text, GroupProps, useMantineTheme } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
+import { IconBolt, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
@@ -9,6 +9,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -66,8 +72,20 @@ export function Reactions({
   entityType,
   entityId,
   readonly,
+  targetUserId,
+  onTipSent,
   ...groupProps
-}: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
+}: ReactionsProps &
+  Omit<GroupProps, 'children' | 'onClick'> & {
+    targetUserId?: number;
+    onTipSent?: ({
+      queryUtils,
+      amount,
+    }: {
+      queryUtils: ReturnType<typeof trpc.useContext>;
+      amount: number;
+    }) => void;
+  }) {
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -86,6 +104,8 @@ export function Reactions({
 
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
+
+  const supportsBuzzTipping = ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -128,6 +148,15 @@ export function Reactions({
         >
           {ReactionBadge}
         </ReactionsList>
+        {supportsBuzzTipping && (
+          <BuzzTippingBadge
+            toUserId={targetUserId}
+            tippedAmountCount={metrics?.tippedAmountCount ?? 0}
+            entityType={entityType}
+            entityId={entityId}
+            onTipSent={onTipSent}
+          />
+        )}
       </Group>
     </LoginPopover>
   );
@@ -167,6 +196,7 @@ function ReactionsList({
           const userReaction = reactions.find(
             (x) => x.userId === currentUser?.id && x.reaction === reaction
           );
+
           return (
             <ReactionButton
               key={reaction}
@@ -230,6 +260,45 @@ function ReactionBadge({
         </Text>
       </Group>
     </Button>
+  );
+}
+
+function BuzzTippingBadge({
+  tippedAmountCount,
+  entityId,
+  entityType,
+  toUserId,
+  ...props
+}: {
+  tippedAmountCount: number;
+  toUserId?: number;
+  entityType: string;
+  entityId: number;
+  onTipSent?: ({
+    queryUtils,
+    amount,
+  }: {
+    queryUtils: ReturnType<typeof trpc.useContext>;
+    amount: number;
+  }) => void;
+}) {
+  const theme = useMantineTheme();
+  const entityTypeCapitalized = capitalize(entityType);
+  const tippedAmount = useBuzzTippingStore({ entityType: entityTypeCapitalized, entityId });
+  return (
+    <InteractiveTipBuzzButton
+      toUserId={toUserId}
+      entityType={entityTypeCapitalized}
+      entityId={entityId}
+      {...props}
+    >
+      <Button size="xs" radius="xs" variant="subtle" pl={2} pr={3} color="yellow.7" compact>
+        <Group spacing={4} align="center" noWrap>
+          <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
+          <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
+        </Group>
+      </Button>
+    </InteractiveTipBuzzButton>
   );
 }
 

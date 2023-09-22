@@ -124,6 +124,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                                   heartCount: image.stats?.heartCountAllTime,
                                   laughCount: image.stats?.laughCountAllTime,
                                   cryCount: image.stats?.cryCountAllTime,
+                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                                 }}
                                 readonly={!safe}
                                 className={classes.reactions}

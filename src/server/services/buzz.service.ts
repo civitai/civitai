@@ -95,14 +95,44 @@ export async function getUserBuzzTransactions({
 export async function createBuzzTransaction({
   entityId,
   entityType,
+  toAccountId,
   ...payload
 }: CreateBuzzTransactionInput & { fromAccountId: number }) {
-  const body = JSON.stringify(payload);
+  if (entityType && entityId && !toAccountId) {
+    const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
+      [{ userId?: number }]
+    >(`
+        SELECT i."userId"
+        FROM "${entityType}" i 
+        WHERE i.id = ${entityId}
+      `);
+
+    if (!userId) {
+      throw throwBadRequestError('Entity not found');
+    }
+
+    toAccountId = userId;
+  }
+
+  if (!toAccountId) {
+    throw throwBadRequestError('No target account provided');
+  }
+
+  if (toAccountId === payload.fromAccountId) {
+    throw throwBadRequestError('You cannot send buzz to the same account');
+  }
+
+  const body = JSON.stringify({
+    ...payload,
+    toAccountId,
+  });
+
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transaction`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
   });
+
   if (!response.ok) {
     const cause: { reason: string } = JSON.parse(await response.text());
 
@@ -153,7 +183,7 @@ export async function createBuzzTransaction({
           amount: payload.amount,
           entityId,
           entityType,
-          toUserId: payload.toAccountId,
+          toUserId: toAccountId,
           fromUserId: payload.fromAccountId,
         },
       });
@@ -161,6 +191,7 @@ export async function createBuzzTransaction({
   }
 
   const data: { transactionId: string } = await response.json();
+
   return data;
 }
 

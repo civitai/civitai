@@ -271,7 +271,7 @@ export const imageMetrics = createMetricProcessor({
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedCountAmount" = 0 WHERE timeframe = 'Day';
+      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day';
     `;
   },
   rank: {

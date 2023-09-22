@@ -10,7 +10,7 @@ import {
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { IconBolt } from '@tabler/icons-react';
 import { useInterval } from '@mantine/hooks';
 import { showConfirmNotification, showErrorNotification } from '~/utils/notifications';
@@ -18,12 +18,67 @@ import { v4 as uuidv4 } from 'uuid';
 import { hideNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { devtools } from 'zustand/middleware';
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 
 type Props = UnstyledButtonProps & {
-  toUserId: number;
+  toUserId?: number;
   entityId?: number;
   entityType?: string;
-  onTipSent?: (buzzAmount: number) => void;
+  onTipSent?: ({
+    queryUtils,
+    amount,
+  }: {
+    queryUtils: ReturnType<typeof trpc.useContext>;
+    amount: number;
+  }) => void;
+};
+
+/**NOTES**
+ Why use zustand?
+ - When a user adds a reaction, we're not going to invalidate the react-query cache of parent data. This means that, if a user were to navigate to another page and then come back, the reaction data from the react-query cache would not be accurate.
+ */
+type BuzzTippingStore = {
+  tips: Record<string, number>;
+  onTip: ({
+    entityType,
+    entityId,
+    amount,
+  }: {
+    entityType: string;
+    entityId: number;
+    amount: number;
+  }) => void;
+};
+
+const getTippingKey = ({ entityType, entityId }: { entityType: string; entityId: number }) =>
+  `${entityType}_${entityId}`;
+
+const useStore = create<BuzzTippingStore>()(
+  devtools(
+    immer((set) => ({
+      tips: {},
+      onTip: ({ entityType, entityId, amount }) => {
+        const key = getTippingKey({ entityType, entityId });
+        set((state) => {
+          if (!state.tips[key]) state.tips[key] = amount;
+          else state.tips[key] += amount;
+        });
+      },
+    }))
+  )
+);
+
+export const useBuzzTippingStore = ({
+  entityType,
+  entityId,
+}: {
+  entityType: string;
+  entityId: number;
+}) => {
+  const key = getTippingKey({ entityType, entityId });
+  return useStore(useCallback((state) => state.tips[key] ?? 0, [key]));
 };
 
 const steps: [number, number][] = [
@@ -57,10 +112,15 @@ export function InteractiveTipBuzzButton({
     });
   }, 150);
   const queryUtils = trpc.useContext();
+  const onTip = useStore((state) => state.onTip);
 
   const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
     async onSuccess(_, { amount }) {
       await queryUtils.buzz.getUserAccount.cancel();
+      if (entityType && entityId) {
+        onTip({ entityType, entityId, amount });
+      }
+
       queryUtils.buzz.getUserAccount.setData(undefined, (old) =>
         old
           ? {
@@ -71,7 +131,7 @@ export function InteractiveTipBuzzButton({
       );
 
       if (onTipSent) {
-        onTipSent(amount);
+        onTipSent({ amount, queryUtils });
       }
     },
     onError(error) {
@@ -177,9 +237,12 @@ export function InteractiveTipBuzzButton({
           <Popover.Dropdown>
             <Group spacing={0}>
               <Text color="yellow.7" weight={500}>
-                Tipping {buzzCounter}
+                Tipping
               </Text>
               <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" />
+              <Text color="yellow.7" weight={500} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {buzzCounter}
+              </Text>
             </Group>
           </Popover.Dropdown>
         </Popover>
