@@ -22,7 +22,6 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { user, images, awardedUnitAmountTotal } = data;
-  // TODO.bounty: applyUserPreferences on bounty entry image
   const cover = images?.[0];
   const reactions = data?.reactions ?? [];
   const stats = data?.stats ?? null;

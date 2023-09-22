@@ -32,7 +32,6 @@ export function BountyCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, name, images, user, type, expiresAt, stats, complete } = data;
-  // TODO.bounty: applyUserPreferences on bounty image
   const cover = images?.[0];
   const expired = expiresAt < new Date();
 

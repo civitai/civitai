@@ -394,9 +394,8 @@ export const addBenefactorUnitAmount = async ({
 };
 
 export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] }) => {
-  // TODO.bounty: correctly handle image ingestion
   const connections = await dbRead.imageConnection.findMany({
-    where: { entityType: 'Bounty', entityId: { in: bountyIds }, image: { ingestion: 'Pending' } },
+    where: { entityType: 'Bounty', entityId: { in: bountyIds }, image: { ingestion: 'Scanned' } },
     select: {
       entityId: true,
       image: { select: imageSelect },

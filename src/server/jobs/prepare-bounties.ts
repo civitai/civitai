@@ -37,10 +37,8 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
     >`SELECT currency FROM "BountyBenefactor" bf WHERE bf."bountyId" = ${id} AND bf."userId" = ${userId} LIMIT 1; `;
 
     const { currency } = mainBenefactor;
-
     log('got currency: ', currency);
 
-    // TODO.bounty: Need to check stats in case awardedUnitAmount is equal on multiple items.
     const [winnerEntry] = await dbWrite.$queryRaw<
       {
         id: number;
