@@ -160,9 +160,9 @@ export const constants = {
   imageGeneration: {
     drawerZIndex: 301,
     requestBlocking: {
-      warned: 10,
-      notified: 20,
-      muted: 50,
+      warned: 5,
+      notified: 10,
+      muted: 30,
     },
   },
   tagVoting: {

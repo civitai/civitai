@@ -1,6 +1,8 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import blockedNSFW from '../blocklist-nsfw.json';
-import blocked from '../blocklist.json';
+import blockedNSFW from './lists/blocklist-nsfw.json';
+import blocked from './lists/blocklist.json';
+import nsfwWords from './lists/words-nsfw.json';
+import youngWords from './lists/words-young.json';
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -22,6 +24,8 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
   if (nsfw) {
     const { found, age } = includesMinor(meta.prompt);
     if (found) return { blockedFor: [`${age} year old`], success: false };
+    if (includesInappropriate(meta.prompt, true))
+      return { blockedFor: ['Inappropriate minor content'], success: false };
   }
 
   const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
@@ -34,6 +38,9 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
 export const auditPrompt = (prompt: string) => {
   const { found, age } = includesMinor(prompt);
   if (found) return { blockedFor: [`${age} year old`], success: false };
+
+  const inappropriate = includesInappropriate(prompt);
+  if (inappropriate) return { blockedFor: ['Inappropriate minor content'], success: false };
 
   for (const { word, regex } of blockedNSFWRegex) {
     if (regex.test(prompt)) return { blockedFor: [word], success: false };
@@ -74,7 +81,7 @@ const ages = [
   { age: 11, matches: ['eleven', 'eleve', 'elevn', '1{teen}', 'elvn', '11'] },
   { age: 10, matches: ['ten', 'tenn', 'tene', '10'] },
   { age: 9, matches: ['nine', 'nien', 'nein', 'niene', '9'] },
-  { age: 8, matches: ['eight', 'ate', 'eigt', 'eigh', '8'] },
+  { age: 8, matches: ['eight', 'eigt', 'eigh', '8'] },
   { age: 7, matches: ['seven', 'sevn', 'sevem', 'seve', '7'] },
   { age: 6, matches: ['six', 'sicks', 'sixe', '6'] },
   { age: 5, matches: ['five', 'fiv', 'fife', 'fivve', '5'] },
@@ -156,3 +163,46 @@ export function includesMinor(prompt: string | undefined) {
   return { found, age };
 }
 // #endregion
+
+// #region [inappropriate]
+export function checkable(words: string[], options?: { pluralize?: boolean }) {
+  const regexes = words.map((word) => {
+    let regexStr = word;
+    regexStr = regexStr.replace(/\s+/g, `[^\\w]*`);
+    if (!word.includes('[')) {
+      regexStr = regexStr
+        .replace(/i/g, '[i|l|1]')
+        .replace(/o/g, '[o|0]')
+        .replace(/s/g, '[s|z]')
+        .replace(/e/g, '[e|3]');
+    }
+    if (options?.pluralize) regexStr += '[s|z]*';
+    regexStr = `([^\\w]+|^)` + regexStr + `([^\\w]+|$)`;
+    return new RegExp(regexStr, 'i');
+  });
+  function inPrompt(prompt: string) {
+    prompt = prompt.trim();
+    for (const regex of regexes) {
+      if (regex.test(prompt)) return true;
+    }
+    return false;
+  }
+  return { inPrompt };
+}
+
+const words = {
+  nsfw: checkable(nsfwWords),
+  young: {
+    adjectives: checkable(youngWords.adjectives),
+    nouns: checkable(youngWords.nouns, { pluralize: true }),
+    partialNouns: checkable(youngWords.partialNouns, { pluralize: true }),
+  },
+};
+
+export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
+  if (!prompt) return false;
+  if (!nsfw && !words.nsfw.inPrompt(prompt)) return false;
+  if (words.young.nouns.inPrompt(prompt)) return true;
+  return words.young.adjectives.inPrompt(prompt) && words.young.partialNouns.inPrompt(prompt);
+}
+// #endregion [inappropriate]

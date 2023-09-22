@@ -803,6 +803,7 @@ export const reportProhibitedRequestHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   await ctx.track.prohibitedRequest(input);
+  if (ctx.user.isModerator) return false;
 
   try {
     const userId = ctx.user.id;
