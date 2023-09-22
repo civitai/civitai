@@ -170,8 +170,8 @@ export function InteractiveTipBuzzButton({
   const stopCounter = () => {
     if (interval.active) {
       interval.stop();
-
-      if (buzzCounter > 0 && !timeoutRef.current) {
+      const amount = buzzCounter > 0 ? buzzCounter : 10;
+      if (amount && !timeoutRef.current) {
         const uuid = uuidv4();
 
         showConfirmNotification({
@@ -180,7 +180,7 @@ export function InteractiveTipBuzzButton({
           title: 'Please confirm your tip:',
           message: (
             <Group spacing={4}>
-              <Text>You are about to tip {buzzCounter} Buzz.</Text>
+              <Text>You are about to tip {amount} Buzz.</Text>
               {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
               <ThemeIcon color="yellow.4" variant="transparent">
                 <IconBolt size={18} fill="currentColor" />
@@ -193,7 +193,7 @@ export function InteractiveTipBuzzButton({
             </Group>
           ),
           onConfirm: () => {
-            onSendTip(buzzCounter);
+            onSendTip(amount);
             hideNotification(uuid);
             reset();
           },
@@ -204,7 +204,7 @@ export function InteractiveTipBuzzButton({
         });
 
         timeoutRef.current = setTimeout(() => {
-          onSendTip(buzzCounter);
+          onSendTip(amount);
           reset();
         }, 8000);
       }
