@@ -131,6 +131,7 @@ const useStyles = createStyles((theme) => ({
     width: '20%',
 
     [theme.fn.smallerThan('md')]: {
+      display: 'none', // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
       height: '100%',
 
       '&, & > [role="combobox"], & > [role="combobox"] *': {
