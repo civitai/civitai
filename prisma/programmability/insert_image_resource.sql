@@ -67,7 +67,7 @@ BEGIN
 	  hash,
 	  detected
 	FROM image_resource_id iri
-	WHERE row_number = 1
+	WHERE (row_number = 1 OR iri.hash IS NULL)
 		AND NOT EXISTS (
 		  SELECT 1 FROM "ImageResource" ir
 		  WHERE "imageId" = iri.id

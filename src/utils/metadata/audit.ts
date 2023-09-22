@@ -190,19 +190,19 @@ export function checkable(words: string[], options?: { pluralize?: boolean }) {
   return { inPrompt };
 }
 
+const composedNouns = youngWords.partialNouns.flatMap((word) => {
+  return youngWords.adjectives.map((adj) => adj + '([\\s|\\w]*|[^\\w]+)' + word);
+});
 const words = {
   nsfw: checkable(nsfwWords),
   young: {
-    adjectives: checkable(youngWords.adjectives),
-    nouns: checkable(youngWords.nouns, { pluralize: true }),
-    partialNouns: checkable(youngWords.partialNouns, { pluralize: true }),
+    nouns: checkable(youngWords.nouns.concat(composedNouns), { pluralize: true }),
   },
 };
 
-export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
+export function includesInappropriate(prompt: string | undefined) {
   if (!prompt) return false;
-  if (!nsfw && !words.nsfw.inPrompt(prompt)) return false;
-  if (words.young.nouns.inPrompt(prompt)) return true;
-  return words.young.adjectives.inPrompt(prompt) && words.young.partialNouns.inPrompt(prompt);
+  if (!words.nsfw.inPrompt(prompt)) return false;
+  return words.young.nouns.inPrompt(prompt);
 }
 // #endregion [inappropriate]

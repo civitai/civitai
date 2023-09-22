@@ -1,9 +1,11 @@
 import { ActionIcon, Card, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconX } from '@tabler/icons-react';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { Generation } from '~/server/services/generation/generation.types';
+import { generationPanel } from '~/store/generation.store';
 
 export const ResourceSelectCard = ({
   resource,
@@ -23,7 +25,7 @@ export const ResourceSelectCard = ({
   return (
     <Card p="xs" withBorder>
       <Stack spacing={6}>
-        <Group spacing="xs" position="apart">
+        <Group spacing="xs" position="apart" noWrap>
           {unavailable && (
             <ThemeIcon color="red" w="auto" size="sm" px={4}>
               <Group spacing={4}>
@@ -34,7 +36,15 @@ export const ResourceSelectCard = ({
               </Group>
             </ThemeIcon>
           )}
-          <Text lineClamp={1} size="sm" weight={500}>
+          <Text
+            component={NextLink}
+            sx={{ cursor: 'pointer' }}
+            href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+            onClick={() => generationPanel.close()}
+            lineClamp={1}
+            size="sm"
+            weight={500}
+          >
             {resource.modelName} - {resource.name}
           </Text>
           {onRemove && (
