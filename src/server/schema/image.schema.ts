@@ -58,7 +58,7 @@ export const imageGenerationSchema = z.object({
   //   .array()
   //   .optional(),
   hashes: z.record(z.string()).optional(),
-  comfy: z.union([z.string().optional(), comfyMetaSchema]), // stored as stringified JSON
+  comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
