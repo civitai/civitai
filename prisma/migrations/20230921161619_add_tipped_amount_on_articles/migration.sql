@@ -497,6 +497,8 @@ SELECT
 	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountMonthRank",
 	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountYearRank",
 	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."collectedCountRank", NULL::bigint))  AS "collectedCountAllTimeRank",
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."newRank", NULL::bigint))  AS "newRank",
+  MAX(model_timeframe_stats.age_days) AS age_days,
 	MAX(iif(model_timeframe_stats.timeframe = 'Day'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL::int))    AS "tippedCountDay",
 	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL:: int))    AS "tippedCountWeek",
 	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."tippedCount", NULL:: int))    AS "tippedCountMonth",
@@ -516,8 +518,6 @@ SELECT
 	MAX(iif(model_timeframe_stats.timeframe = 'Week'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountWeekRank",
 	MAX(iif(model_timeframe_stats.timeframe = 'Month'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountMonthRank",
 	MAX(iif(model_timeframe_stats.timeframe = 'Year'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountYearRank",
-	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountAllTimeRank",
-	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."newRank", NULL::bigint))  AS "newRank",
-	MAX(model_timeframe_stats.age_days) AS age_days
+	MAX(iif(model_timeframe_stats.timeframe = 'AllTime'::"MetricTimeframe", model_timeframe_stats."tippedAmountCountRank", NULL::bigint))  AS "tippedAmountCountAllTimeRank"
 FROM model_timeframe_stats
 GROUP BY model_timeframe_stats."modelId";
