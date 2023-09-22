@@ -1,4 +1,4 @@
-import { UiState } from 'instantsearch.js';
+import { IndexUiState, UiState } from 'instantsearch.js';
 import { z } from 'zod';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
@@ -17,6 +17,7 @@ const defaultSortBy = ImagesSearchIndexSortBy[0];
 
 const imageSearchParamsSchema = searchParamsSchema
   .extend({
+    imageId: z.coerce.number(),
     index: z.literal('images'),
     sortBy: z.enum(ImagesSearchIndexSortBy),
     tags: z
@@ -28,6 +29,10 @@ const imageSearchParamsSchema = searchParamsSchema
   })
   .partial();
 
+type ImageUiState = UiState & {
+  [IMAGES_SEARCH_INDEX]?: IndexUiState & { imageId?: number | null };
+};
+
 export type ImageSearchParams = z.output<typeof imageSearchParamsSchema>;
 
 export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
@@ -38,28 +43,36 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     return { [IMAGES_SEARCH_INDEX]: removeEmpty(imageSearchIndexData) };
   },
-  routeToState: (routeState: UiState) => {
+  routeToState: (routeState: ImageUiState) => {
     const images: ImageSearchParams = (routeState[IMAGES_SEARCH_INDEX] || {}) as ImageSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
       'tags.name': images.tags,
       'user.username': images.users,
     });
 
-    const { query, sortBy } = images;
+    const { query, sortBy, imageId } = images;
 
     return {
       [IMAGES_SEARCH_INDEX]: {
         sortBy: sortBy ?? defaultSortBy,
         refinementList,
         query,
+        imageId,
       },
     };
   },
-  stateToRoute: (uiState: UiState) => {
+  stateToRoute: (uiState: ImageUiState) => {
+    if (!uiState[IMAGES_SEARCH_INDEX]) {
+      return {
+        [IMAGES_SEARCH_INDEX]: {},
+      };
+    }
+
     const tags = uiState[IMAGES_SEARCH_INDEX].refinementList?.['tags.name'];
     const users = uiState[IMAGES_SEARCH_INDEX].refinementList?.['user.username'];
     const sortBy =
       (uiState[IMAGES_SEARCH_INDEX].sortBy as ImageSearchParams['sortBy']) || defaultSortBy;
+    const imageId = uiState[IMAGES_SEARCH_INDEX].imageId || undefined;
 
     const { query } = uiState[IMAGES_SEARCH_INDEX];
 
@@ -68,6 +81,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       users,
       sortBy,
       query,
+      imageId,
     };
 
     return { [IMAGES_SEARCH_INDEX]: state };

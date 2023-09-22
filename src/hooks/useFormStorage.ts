@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 
-export function useFormStorage<TSchema extends z.AnyZodObject, TContext>({
+export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TContext>({
   schema,
   timeout,
   form,

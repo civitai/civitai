@@ -15,6 +15,7 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
+import { NextLink } from '@mantine/next';
 import { IconBolt, IconPhoto, IconPlayerPlayFilled, IconTrash, IconX } from '@tabler/icons-react';
 import { useEffect } from 'react';
 
@@ -27,7 +28,7 @@ import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetail
 import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
-import { generationStore } from '~/store/generation.store';
+import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
@@ -193,7 +194,13 @@ export function QueueItem({ request }: Props) {
           items={request.resources}
           limit={3}
           renderItem={(resource: any) => (
-            <Badge size="sm">
+            <Badge
+              size="sm"
+              sx={{ maxWidth: 200, cursor: 'pointer' }}
+              component={NextLink}
+              href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+              onClick={() => generationPanel.close()}
+            >
               {resource.modelName} - {resource.name}
             </Badge>
           )}

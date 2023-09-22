@@ -1,4 +1,5 @@
 import {
+  Currency,
   MetricTimeframe,
   ModelStatus,
   ModelType,
@@ -8,6 +9,8 @@ import {
 } from '@prisma/client';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
+import { MantineTheme } from '@mantine/core';
 import {
   ArticleSort,
   BrowsingMode,
@@ -97,6 +100,7 @@ export const constants = {
     model: 320,
     image: 320,
     articles: 450,
+    bounty: 332,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {
@@ -160,9 +164,9 @@ export const constants = {
   imageGeneration: {
     drawerZIndex: 301,
     requestBlocking: {
-      warned: 10,
-      notified: 20,
-      muted: 50,
+      warned: 5,
+      notified: 10,
+      muted: 30,
     },
   },
   tagVoting: {
@@ -176,6 +180,11 @@ export const constants = {
   imageUpload: {
     maxFileSize: 32 * 1024 ** 2, // 32MB
   },
+  bounties: {
+    engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
+    minCreateAmount: 5000,
+  },
+  defaultCurrency: 'USD',
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;
@@ -277,7 +286,7 @@ export const generation = {
 
 export const generationConfig = {
   SD1: {
-    additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion],
+    additionalResourceTypes: [ModelType.LORA, ModelType.TextualInversion, ModelType.LoCon],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
@@ -304,6 +313,7 @@ export const IMAGES_SEARCH_INDEX = 'images_v2';
 export const ARTICLES_SEARCH_INDEX = 'articles_v2';
 export const USERS_SEARCH_INDEX = 'users_v2';
 export const COLLECTIONS_SEARCH_INDEX = 'collections';
+export const BOUNTIES_SEARCH_INDEX = 'bounties';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',
@@ -322,4 +332,10 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
   [ModelVersionSponsorshipSettingsType.Bidding]: 'Bidding',
 };
 
-export const DEFAULT_CURRENCY = 'USD';
+export const CurrencyConfig: Record<
+  Currency,
+  { icon: (props: TablerIconsProps) => JSX.Element; color: (theme: MantineTheme) => string }
+> = {
+  [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
+  [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
+};

@@ -19,6 +19,25 @@ const stringToNumber = z.preprocess(
 
 const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
 
+// TODO: update accordingly once new entities follow this pattern
+export const ImageEntityType = {
+  Bounty: 'Bounty',
+  BountyEntry: 'BountyEntry',
+} as const;
+export type ImageEntityType = (typeof ImageEntityType)[keyof typeof ImageEntityType];
+
+export type ComfyMetaSchema = z.infer<typeof comfyMetaSchema>;
+export const comfyMetaSchema = z
+  .object({
+    prompt: z.object({}).passthrough(),
+    workflow: z
+      .object({
+        nodes: z.object({}).passthrough().array().optional(),
+      })
+      .passthrough(),
+  })
+  .partial();
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -39,6 +58,7 @@ export const imageGenerationSchema = z.object({
   //   .array()
   //   .optional(),
   hashes: z.record(z.string()).optional(),
+  comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
@@ -164,7 +184,7 @@ export const ingestImageSchema = z.object({
 });
 
 // #region [new schemas]
-const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report']);
+const imageInclude = z.enum(['tags', 'count', 'cosmetics', 'report', 'meta']);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z
@@ -198,11 +218,17 @@ export const getInfiniteImagesSchema = z
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
     ids: z.array(z.number()).optional(),
     includeBaseModel: z.boolean().optional(),
+    types: z.array(z.nativeEnum(MediaType)).optional(),
+    withMeta: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
       if (!value.include) value.include = [];
       value.include.push('tags');
+    }
+    if (value.withMeta) {
+      if (!value.include) value.include = [];
+      value.include.push('meta');
     }
     return value;
   });
@@ -231,6 +257,7 @@ export const getImagesByCategorySchema = z.object({
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),
+  withoutPost: z.boolean().optional(),
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
   // browsingMode: z.nativeEnum(BrowsingMode).optional(),

@@ -22,6 +22,7 @@ import {
 } from '~/components/Search/parsers/user.parser';
 import {
   ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -31,6 +32,10 @@ import {
   CollectionSearchParams,
   collectionsInstantSearchRoutingParser,
 } from '~/components/Search/parsers/collection.parser';
+import {
+  bountiesInstantSearchRoutingParser,
+  BountySearchParams,
+} from '~/components/Search/parsers/bounties.parser';
 
 type StoreState = {
   models: ModelSearchParams;
@@ -38,12 +43,14 @@ type StoreState = {
   articles: ArticleSearchParams;
   users: UserSearchParams;
   collections: CollectionSearchParams;
+  bounties: BountySearchParams;
   setSearchParamsByUiState: (uiState: UiState) => void;
   setModelsSearchParams: (filters: Partial<ModelSearchParams>) => void;
   setImagesSearchParams: (filters: Partial<ImageSearchParams>) => void;
   setArticleSearchParams: (filters: Partial<ArticleSearchParams>) => void;
   setUserSearchParams: (filters: Partial<UserSearchParams>) => void;
   setCollectionSearchParams: (filters: Partial<CollectionSearchParams>) => void;
+  setBountiesSearchParams: (filters: Partial<BountySearchParams>) => void;
 };
 
 export const SearchPathToIndexMap = {
@@ -52,6 +59,7 @@ export const SearchPathToIndexMap = {
   ['articles']: ARTICLES_SEARCH_INDEX,
   ['users']: USERS_SEARCH_INDEX,
   ['collections']: COLLECTIONS_SEARCH_INDEX,
+  ['bounties']: BOUNTIES_SEARCH_INDEX,
 };
 
 export const IndexToLabel = {
@@ -60,6 +68,7 @@ export const IndexToLabel = {
   [ARTICLES_SEARCH_INDEX]: 'Articles',
   [USERS_SEARCH_INDEX]: 'Users',
   [COLLECTIONS_SEARCH_INDEX]: 'Collections',
+  [BOUNTIES_SEARCH_INDEX]: 'Bounties',
 };
 
 export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingParser => {
@@ -74,6 +83,8 @@ export const getRoutingForIndex = (index: SearchIndex): InstantSearchRoutingPars
       return usersInstantSearchRoutingParser;
     case COLLECTIONS_SEARCH_INDEX:
       return collectionsInstantSearchRoutingParser;
+    case BOUNTIES_SEARCH_INDEX:
+      return bountiesInstantSearchRoutingParser;
   }
 };
 
@@ -87,6 +98,7 @@ export const useSearchStore = create<StoreState>()(
         articles: {},
         users: {},
         collections: {},
+        bounties: {},
         // methods
         setSearchParamsByUiState: (uiState: UiState) => {
           const [index] = Object.keys(uiState);
@@ -131,6 +143,13 @@ export const useSearchStore = create<StoreState>()(
                 ] as CollectionSearchParams;
               });
               break;
+            case BOUNTIES_SEARCH_INDEX:
+              set((state) => {
+                state.bounties = routing.stateToRoute(uiState)[
+                  BOUNTIES_SEARCH_INDEX
+                ] as BountySearchParams;
+              });
+              break;
           }
         },
         setModelsSearchParams: (params) =>
@@ -152,6 +171,10 @@ export const useSearchStore = create<StoreState>()(
         setCollectionSearchParams: (params) =>
           set((state) => {
             state.collections = params;
+          }),
+        setBountiesSearchParams: (params) =>
+          set((state) => {
+            state.bounties = params;
           }),
       };
     })
@@ -183,6 +206,8 @@ export const routing: InstantSearchProps['routing'] = {
           query = QS.stringify(routeState[USERS_SEARCH_INDEX]);
         } else if (routeState[COLLECTIONS_SEARCH_INDEX]) {
           query = QS.stringify(routeState[COLLECTIONS_SEARCH_INDEX]);
+        } else if (routeState[BOUNTIES_SEARCH_INDEX]) {
+          query = QS.stringify(routeState[BOUNTIES_SEARCH_INDEX]);
         }
 
         // Needs to be absolute url, otherwise instantsearch complains
@@ -224,6 +249,9 @@ export const routing: InstantSearchProps['routing'] = {
       }
       if (routeState[COLLECTIONS_SEARCH_INDEX]) {
         return getRoutingForIndex(COLLECTIONS_SEARCH_INDEX).routeToState(routeState);
+      }
+      if (routeState[BOUNTIES_SEARCH_INDEX]) {
+        return getRoutingForIndex(BOUNTIES_SEARCH_INDEX).routeToState(routeState);
       }
 
       return routeState;

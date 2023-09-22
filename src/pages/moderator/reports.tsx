@@ -452,13 +452,14 @@ const getReportLink = (report: ReportDetail) => {
     return `/models/${report.comment.modelId}/?modal=commentThread&commentId=${
       report.comment.parentId ?? report.comment.id
     }&highlight=${report.comment.id}`;
-  else if (report.image) {
-    return `/images/${report.image.id}`;
-  } else if (report.article) {
-    return `/articles/${report.article.id}`;
-  } else if (report.post) {
-    return `/posts/${report.post.id}`;
-  } else if (report.reportedUser) return `/user/${report.reportedUser.username}`;
+  else if (report.image) return `/images/${report.image.id}`;
+  else if (report.article) return `/articles/${report.article.id}`;
+  else if (report.post) return `/posts/${report.post.id}`;
+  else if (report.reportedUser) return `/user/${report.reportedUser.username}`;
+  else if (report.collection) return `/collections/${report.collection.id}`;
+  else if (report.bounty) return `/bounties/${report.bounty.id}`;
+  else if (report.bountyEntry)
+    return `/bounties/${report.bountyEntry.bountyId}/entries/${report.bountyEntry.id}`;
 };
 
 function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?: MantineSize }) {

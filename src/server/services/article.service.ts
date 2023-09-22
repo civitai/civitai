@@ -32,6 +32,7 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { getFilesByEntity } from './file.service';
 
 export const getArticles = async ({
   limit,
@@ -203,8 +204,11 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
     const articleCategories = await getCategoryTags('article');
+    const attachments = await getFilesByEntity({ id, type: 'Article' });
+
     return {
       ...article,
+      attachments,
       tags: article.tags.map(({ tag }) => ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
@@ -261,13 +265,62 @@ export const upsertArticle = async ({
 }: UpsertArticleInput & { userId: number }) => {
   try {
     if (!id) {
-      return dbWrite.article.create({
+      const result = await dbWrite.$transaction(async (tx) => {
+        const article = await tx.article.create({
+          data: {
+            ...data,
+            userId,
+            tags: tags
+              ? {
+                  create: tags.map((tag) => {
+                    const name = tag.name.toLowerCase().trim();
+                    return {
+                      tag: {
+                        connectOrCreate: {
+                          where: { name },
+                          create: { name, target: [TagTarget.Article] },
+                        },
+                      },
+                    };
+                  }),
+                }
+              : undefined,
+          },
+        });
+
+        if (attachments) {
+          await tx.file.createMany({
+            data: attachments.map((attachment) => ({
+              ...attachment,
+              entityId: article.id,
+              entityType: 'Article',
+            })),
+          });
+        }
+
+        return article;
+      });
+
+      return result;
+    }
+
+    const result = await dbWrite.$transaction(async (tx) => {
+      const article = await tx.article.update({
+        where: { id },
         data: {
           ...data,
-          userId,
           tags: tags
             ? {
-                create: tags.map((tag) => {
+                deleteMany: {
+                  tagId: {
+                    notIn: tags.filter(isTag).map((x) => x.id),
+                  },
+                },
+                connectOrCreate: tags.filter(isTag).map((tag) => ({
+                  where: { tagId_articleId: { tagId: tag.id, articleId: id as number } },
+                  create: { tagId: tag.id },
+                })),
+                create: tags.filter(isNotTag).map((tag) => {
                   const name = tag.name.toLowerCase().trim();
                   return {
                     tag: {
@@ -280,83 +333,47 @@ export const upsertArticle = async ({
                 }),
               }
             : undefined,
-          attachments: attachments
-            ? {
-                connectOrCreate: attachments.map((attachment) => ({
-                  where: { id: attachment.id },
-                  create: attachment,
-                })),
-              }
-            : undefined,
         },
       });
-    }
+      if (!article) return null;
 
-    const article = await dbWrite.article.update({
-      where: { id },
-      data: {
-        ...data,
-        tags: tags
-          ? {
-              deleteMany: {
-                tagId: {
-                  notIn: tags.filter(isTag).map((x) => x.id),
-                },
-              },
-              connectOrCreate: tags.filter(isTag).map((tag) => ({
-                where: { tagId_articleId: { tagId: tag.id, articleId: id as number } },
-                create: { tagId: tag.id },
-              })),
-              create: tags.filter(isNotTag).map((tag) => {
-                const name = tag.name.toLowerCase().trim();
-                return {
-                  tag: {
-                    connectOrCreate: {
-                      where: { name },
-                      create: { name, target: [TagTarget.Article] },
-                    },
-                  },
-                };
-              }),
-            }
-          : undefined,
-        attachments: attachments
-          ? {
-              deleteMany: { id: { notIn: attachments.map((x) => x.id).filter(isDefined) } },
-              connectOrCreate: attachments
-                .filter((x) => !!x.id)
-                .map((attachment) => ({
-                  where: { id: attachment.id },
-                  create: attachment,
-                })),
-              create: attachments
-                .filter((x) => !x.id)
-                .map((attachment) => ({
-                  ...attachment,
-                })),
-            }
-          : undefined,
-      },
+      if (attachments) {
+        // Delete any attachments that were removed.
+        await tx.file.deleteMany({
+          where: {
+            entityId: id,
+            entityType: 'Article',
+            id: { notIn: attachments.map((x) => x.id).filter(isDefined) },
+          },
+        });
+
+        // Create any new attachments.
+        await tx.file.createMany({
+          data: attachments
+            .filter((x) => !x.id)
+            .map((attachment) => ({
+              ...attachment,
+              entityId: article.id,
+              entityType: 'Article',
+            })),
+        });
+      }
+
+      return article;
     });
-    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
-    if (article) {
-      // If it was unpublished, need to remove it from the queue.
-      if (!article.publishedAt) {
-        await articlesSearchIndex.queueUpdate([
-          { id, action: SearchIndexUpdateQueueAction.Delete },
-        ]);
-      }
-
-      // If tags changed, need to set is so it updates the queue.
-      if (tags) {
-        await articlesSearchIndex.queueUpdate([
-          { id, action: SearchIndexUpdateQueueAction.Update },
-        ]);
-      }
+    // If it was unpublished, need to remove it from the queue.
+    if (!result.publishedAt) {
+      await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
     }
 
-    return article;
+    // If tags changed, need to set is so it updates the queue.
+    if (tags) {
+      await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -365,12 +382,19 @@ export const upsertArticle = async ({
 
 export const deleteArticleById = async ({ id }: GetByIdInput) => {
   try {
-    const article = await dbWrite.article.delete({ where: { id } });
-    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    const deleted = await dbWrite.$transaction(async (tx) => {
+      const article = await tx.article.delete({ where: { id } });
+      if (!article) return null;
+
+      await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
+
+      return article;
+    });
+    if (!deleted) throw throwNotFoundError(`No article with id ${id}`);
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
-    return article;
+    return deleted;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

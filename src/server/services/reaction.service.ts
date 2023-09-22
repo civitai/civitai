@@ -5,10 +5,12 @@ import { playfab } from '~/server/playfab/client';
 import {
   answerMetrics,
   articleMetrics,
+  bountyEntryMetrics,
   imageMetrics,
   postMetrics,
   questionMetrics,
 } from '~/server/metrics';
+import { ReviewReactions } from '@prisma/client';
 
 export const toggleReaction = async ({
   entityType,
@@ -18,7 +20,13 @@ export const toggleReaction = async ({
 }: ToggleReactionInput & { userId: number }) => {
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
-    await deleteReaction({ entityType, id: existing.id, entityId });
+    await deleteReaction({
+      entityType,
+      id: 'id' in existing ? existing.id : undefined,
+      entityId,
+      userId,
+      reaction,
+    });
     return 'removed';
   } else {
     await createReaction({ entityType, entityId, userId, reaction });
@@ -78,6 +86,11 @@ const getReaction = async ({
         where: { userId, reaction, articleId: entityId },
         select: { id: true },
       });
+    case 'bountyEntry':
+      return await dbRead.bountyEntryReaction.findFirst({
+        where: { userId, reaction, bountyEntryId: entityId },
+        select: { userId: true },
+      });
     default:
       throw throwBadRequestError();
   }
@@ -87,40 +100,78 @@ const deleteReaction = async ({
   entityType,
   entityId,
   id,
+  reaction,
+  userId,
 }: {
   entityType: ReactionEntityType;
   entityId: number;
-  id: number;
+  id?: number;
+  reaction?: ReviewReactions;
+  userId?: number;
 }) => {
   switch (entityType) {
     case 'question':
+      if (!id) {
+        return;
+      }
       await dbWrite.questionReaction.deleteMany({ where: { id } });
       await questionMetrics.queueUpdate(entityId);
       return;
     case 'answer':
+      if (!id) {
+        return;
+      }
       await dbWrite.answerReaction.deleteMany({ where: { id } });
       await answerMetrics.queueUpdate(entityId);
       return;
     case 'commentOld':
+      if (!id) {
+        return;
+      }
       await dbWrite.commentReaction.deleteMany({ where: { id } });
       return;
     case 'comment':
+      if (!id) {
+        return;
+      }
       await dbWrite.commentV2Reaction.deleteMany({ where: { id } });
       return;
     case 'image':
+      if (!id) {
+        return;
+      }
       await dbWrite.imageReaction.deleteMany({ where: { id } });
       await imageMetrics.queueUpdate(entityId);
       return;
     case 'post':
+      if (!id) {
+        return;
+      }
       await dbWrite.postReaction.deleteMany({ where: { id } });
       await postMetrics.queueUpdate(entityId);
       return;
     case 'resourceReview':
+      if (!id) {
+        return;
+      }
       await dbWrite.resourceReviewReaction.deleteMany({ where: { id } });
       return;
     case 'article':
+      if (!id) {
+        return;
+      }
       await dbWrite.articleReaction.deleteMany({ where: { id } });
       await articleMetrics.queueUpdate(entityId);
+      return;
+    case 'bountyEntry':
+      if (!entityId || !userId || !reaction) {
+        return;
+      }
+
+      await dbWrite.bountyEntryReaction.deleteMany({
+        where: { userId, reaction, bountyEntryId: entityId },
+      });
+      await bountyEntryMetrics.queueUpdate(entityId);
       return;
     default:
       throw throwBadRequestError();
@@ -171,6 +222,11 @@ const createReaction = async ({
     case 'article':
       return await dbWrite.articleReaction.create({
         data: { ...data, articleId: entityId },
+        select: { reaction: true },
+      });
+    case 'bountyEntry':
+      return await dbWrite.bountyEntryReaction.create({
+        data: { ...data, bountyEntryId: entityId },
         select: { reaction: true },
       });
     default:

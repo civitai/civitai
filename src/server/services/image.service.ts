@@ -20,7 +20,7 @@ import { ImageScanType, ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
-import { UpdateImageInput } from '~/server/schema/image.schema';
+import { ImageEntityType, ImageUploadProps, UpdateImageInput } from '~/server/schema/image.schema';
 import { imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -45,6 +45,7 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
+import { chunk } from 'lodash-es';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -359,6 +360,7 @@ export const getAllImages = async ({
   ids,
   headers,
   includeBaseModel,
+  types,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
@@ -413,6 +415,14 @@ export const getAllImages = async ({
 
   if (ids && ids.length > 0) {
     AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
+  }
+
+  if (types && types.length > 0) {
+    AND.push(Prisma.sql`i.type::text IN (${Prisma.join(types)})`);
+  }
+
+  if (include.includes('meta')) {
+    AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
   }
 
   // Filter to specific model/review content
@@ -769,6 +779,7 @@ export const getImage = async ({
   id,
   userId,
   isModerator,
+  withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i.id = ${id}`];
   if (!isModerator)
@@ -820,8 +831,10 @@ export const getImage = async ({
       ) reactions
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    JOIN "Post" p ON p.id = i."postId" ${Prisma.raw(
-      !isModerator ? 'AND p."publishedAt" < now()' : ''
+    ${Prisma.raw(
+      withoutPost
+        ? ''
+        : `JOIN "Post" p ON p.id = i."postId" ${!isModerator ? 'AND p."publishedAt" < now()' : ''}`
     )}
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -1468,4 +1481,137 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
   }
 
   return dictionary;
+};
+
+type GetImageConnectionRaw = {
+  id: number;
+  name: string;
+  url: string;
+  nsfw: NsfwLevel;
+  width: number;
+  height: number;
+  hash: string;
+  meta: ImageMetaProps;
+  hideMeta: boolean;
+  generationProcess: ImageGenerationProcess;
+  createdAt: Date;
+  mimeType: string;
+  scannedAt: Date;
+  needsReview: string | null;
+  userId: number;
+  index: number;
+  type: MediaType;
+  metadata: Prisma.JsonValue;
+  entityId: number;
+};
+export const getImagesByEntity = async ({
+  id,
+  ids,
+  type,
+  imagesPerId = 4,
+}: {
+  id?: number;
+  ids?: number[];
+  type: ImageEntityType;
+  imagesPerId?: number;
+}) => {
+  if (!id && (!ids || ids.length === 0)) {
+    return [];
+  }
+
+  const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
+    WITH targets AS (
+      SELECT
+        id,
+        "entityId"
+      FROM (
+        SELECT
+          i.id,
+          ic."entityId",
+          row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num
+        FROM "Image" i        
+        JOIN "ImageConnection" ic ON ic."imageId" = i.id 
+            AND ic."entityType" = ${type} 
+            AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
+      ) ranked
+      WHERE ranked.row_num <= ${imagesPerId}
+    )
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i.nsfw,
+      i.width,
+      i.height,
+      i.hash,
+      i.meta,
+      i."hideMeta",
+      i."generationProcess",
+      i."createdAt",
+      i."mimeType",
+      i.type,
+      i.metadata,
+      i."scannedAt",
+      i."needsReview",
+      i."userId",
+      i."index",
+      t."entityId"
+    FROM targets t 
+    JOIN "Image" i ON i.id = t.id`;
+
+  return images;
+};
+
+export const createEntityImages = async ({
+  tx,
+  entityId,
+  entityType,
+  images,
+  userId,
+}: {
+  tx: Prisma.TransactionClient;
+  entityId: number;
+  entityType: string;
+  images: ImageUploadProps[];
+  userId: number;
+}) => {
+  await tx.image.createMany({
+    data: images.map((image) => ({
+      ...image,
+      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      userId,
+      resources: undefined,
+    })),
+  });
+
+  const imageRecords = await tx.image.findMany({
+    select: { id: true, ingestion: true, url: true },
+    where: {
+      url: {
+        in: images.map((i) => i.url),
+      },
+      userId,
+    },
+  });
+
+  const batches = chunk(imageRecords, 50);
+  for (const batch of batches) {
+    await Promise.all(
+      batch.map((image) => {
+        if (image.ingestion === ImageIngestionStatus.Pending) {
+          return ingestImage({ image });
+        }
+
+        return;
+      })
+    );
+  }
+
+  await tx.imageConnection.createMany({
+    data: imageRecords.map((image) => ({
+      imageId: image.id,
+      entityId,
+      entityType,
+    })),
+  });
 };
