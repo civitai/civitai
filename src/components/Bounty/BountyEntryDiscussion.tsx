@@ -4,14 +4,15 @@ import { CommentsProvider, CreateComment, Comment } from '~/components/CommentsV
 type Props = {
   bountyEntryId: number;
   userId?: number;
+  showEmptyState?: boolean;
 };
 
-export function BountyEntryDiscussion({ bountyEntryId, userId }: Props) {
+export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }: Props) {
   return (
     <CommentsProvider
       entityType="bountyEntry"
       entityId={bountyEntryId}
-      limit={20}
+      limit={3}
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
       {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
@@ -44,7 +45,7 @@ export function BountyEntryDiscussion({ bountyEntryId, userId }: Props) {
                   <Comment key={comment.id} comment={comment} />
                 ))}
               </>
-            ) : (
+            ) : showEmptyState ? (
               <Paper
                 p="xl"
                 radius="md"
@@ -65,7 +66,7 @@ export function BountyEntryDiscussion({ bountyEntryId, userId }: Props) {
                   </Text>
                 </Stack>
               </Paper>
-            )}
+            ) : null}
           </Stack>
         )
       }

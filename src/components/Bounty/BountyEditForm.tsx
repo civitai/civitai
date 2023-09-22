@@ -72,7 +72,7 @@ export function BountyEditForm({ bounty }: Props) {
           name="description"
           label="Description"
           editorSize="xl"
-          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'polls', 'colors']}
+          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']}
           withAsterisk
           stickyToolbar
         />
@@ -114,8 +114,6 @@ export function BountyEditForm({ bounty }: Props) {
               'application/json': ['.json'],
               'application/x-yaml': ['.yaml', '.yml'],
               'text/plain': ['.txt'],
-              'text/markdown': ['.md'],
-              'text/x-python-script': ['.py'],
             },
           }}
           renderItem={(file, onRemove) => (

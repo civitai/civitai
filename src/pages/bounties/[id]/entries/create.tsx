@@ -27,11 +27,9 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-
     if (session.user?.muted) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.query);
-
     if (!result.success) return { notFound: true };
 
     if (ssg) await ssg.bounty.getById.prefetch({ id: result.data.id });

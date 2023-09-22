@@ -1,7 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '../createContext';
 import { GetByIdInput } from '../schema/base.schema';
-import { handleTrackError, throwDbError, throwNotFoundError } from '../utils/errorHandling';
+import {
+  handleTrackError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
 import {
@@ -12,10 +17,10 @@ import {
   getEntryById,
   upsertBountyEntry,
 } from '../services/bountyEntry.service';
-import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
+import { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { MetricTimeframe } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
+import { getBountyById } from '../services/bounty.service';
 
 export const getBountyEntryHandler = async ({
   input,
@@ -29,6 +34,7 @@ export const getBountyEntryHandler = async ({
       input,
       select: {
         id: true,
+        description: true,
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
@@ -88,10 +94,18 @@ export const upsertBountyEntryHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const bounty = await getBountyById({
+      id: input.bountyId,
+      select: { complete: true },
+    });
+    if (!bounty) throw throwNotFoundError('Bounty not found');
+    if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
+
     const entry = await upsertBountyEntry({
       ...input,
       userId: ctx.user.id,
     });
+    if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
     ctx.track
       .bountyEntry({

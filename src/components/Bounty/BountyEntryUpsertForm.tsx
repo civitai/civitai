@@ -8,17 +8,17 @@ import {
   Paper,
   ActionIcon,
   Progress,
-  Divider,
   Anchor,
   Tooltip,
   Switch,
+  Input,
 } from '@mantine/core';
 import { IconInfoCircle, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 
-import { BackButton } from '~/components/BackButton/BackButton';
-import { Form, InputMultiFileUpload, useForm } from '~/libs/form';
+import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
+import { Form, InputMultiFileUpload, InputRTE, useForm } from '~/libs/form';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -36,10 +36,21 @@ import {
 } from '~/server/schema/bounty-entry.schema';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { getBountyCurrency, getMainBountyAmount } from '~/components/Bounty/bounty.utils';
-import { BountyEntryMode, Currency } from '@prisma/client';
+import { BountyEntryMode, BountyType, Currency } from '@prisma/client';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { formatKBytes } from '~/utils/number-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+
+const dropzoneOptionsByModelType: Record<BountyType, string[]> = {
+  ModelCreation: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml', '.onnx'],
+  LoraCreation: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
+  EmbedCreation: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+  DataSetCreation: ['.zip'],
+  DataSetCaption: ['.zip'],
+  ImageCreation: ['.zip'],
+  VideoCreation: ['.zip'],
+  Other: ['.zip'],
+};
 
 const formSchema = upsertBountyEntryInputSchema.omit({
   images: true,
@@ -60,6 +71,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const form = useForm({
     schema: formSchema,
     defaultValues: {
+      ...bountyEntry,
       files: (bountyEntry?.files ?? []).map((f) => ({ ...f, url: f.url || '' })),
     },
     shouldUnregister: false,
@@ -71,7 +83,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
   const handleSubmit = ({ ...data }: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
       .filter((file) => file.status === 'success')
-      .map(({ id, url, ...file }) => ({ ...file, url: id })); ///
+      .map(({ id, url, ...file }) => ({ ...file, url: id }));
 
     bountyEntryCreateMutation.mutate(
       { ...data, bountyId: bounty.id, images: filteredImages },
@@ -100,24 +112,40 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
     );
   };
 
+  const acceptedFileTypes =
+    dropzoneOptionsByModelType[bounty.type] ?? dropzoneOptionsByModelType.Other;
+
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing="xl">
-        <Group spacing={4}>
+        <Group spacing="md">
           <BackButton url={`/bounties/${bounty.id}`} />
-          <Title>Submit new entry</Title>
+          <Title inline>Submit new entry</Title>
         </Group>
-        <Divider label="Bounty Images" />
-        <Text>
-          Please add at least 1 image to your bounty entry. This will serve as a reference point for
-          Hunters and will also be used as your cover image.
-        </Text>
-        <ImageDropzone
-          label="Drag & drop images here or click to browse"
-          onDrop={handleDropImages}
-          count={imageFiles.length}
-          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+        <InputRTE
+          name="description"
+          label="Notes"
+          editorSize="xl"
+          labelProps={{ size: 'xl' }}
+          description="Please describe your entry in detail. This will help participants understand what you are offering and how to use it."
+          includeControls={['colors', 'formatting', 'heading', 'link', 'list']}
+          stickyToolbar
         />
+        <Input.Wrapper
+          label="Example Images"
+          labelProps={{ size: 'xl' }}
+          description="Please add at least 1 image to your bounty entry. This will serve as a reference point for participants and will also be used as your cover image."
+          withAsterisk
+        >
+          <ImageDropzone
+            label="Drag & drop images here or click to browse"
+            onDrop={handleDropImages}
+            count={imageFiles.length}
+            mt={5}
+            orientation="vertical"
+            accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+          />
+        </Input.Wrapper>
         {imageFiles.length > 0 && (
           <SimpleGrid
             spacing="sm"
@@ -183,39 +211,14 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               ))}
           </SimpleGrid>
         )}
-        <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" mb={0}>
-          {bounty.entryMode === BountyEntryMode.Open && (
-            <Text>
-              In this bounty, any and all users can award you for your entry, even if they are not
-              supporters. This means that even after the bounty ends, you can earn rewards. However,
-              this also means that after a file is unlocked, even by providing a small amount of
-              awards, anyone can download it.
-            </Text>
-          )}
-          {bounty.entryMode === BountyEntryMode.BenefactorsOnly && (
-            <Text>
-              In this bounty, only people who are marked as supporters can award your entry. Because
-              of this, the number of possible awards may be limited. You can set your files to only
-              be available to those who give you awards and only unlocked after a certain amount of
-              awards is reached.
-            </Text>
-          )}
-        </AlertWithIcon>
         <InputMultiFileUpload
           name="files"
           label="Files"
+          orientation="vertical"
+          labelProps={{ size: 'xl' }}
           dropzoneProps={{
-            maxSize: 100 * 1024 ** 2, // 100MB
             maxFiles: 10,
-            accept: {
-              'application/pdf': ['.pdf'],
-              'application/zip': ['.zip'],
-              'application/json': ['.json'],
-              'application/x-yaml': ['.yaml', '.yml'],
-              'text/plain': ['.txt'],
-              'text/markdown': ['.md'],
-              'text/x-python-script': ['.py'],
-            },
+            accept: { 'mime/type': acceptedFileTypes },
           }}
           renderItem={(file, onRemove, onUpdate) => {
             const metadata = (file.metadata ?? {}) as BountyEntryFileMeta;
@@ -297,15 +300,40 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               </Paper>
             );
           }}
+          withAsterisk
         />
+        <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" mb={0}>
+          {bounty.entryMode === BountyEntryMode.Open && (
+            <Text>
+              In this bounty, any and all users can award you for your entry, even if they are not
+              supporters. This means that even after the bounty ends, you can earn rewards. However,
+              this also means that after a file is unlocked, even by providing a small amount of
+              awards, anyone can download it.
+            </Text>
+          )}
+          {bounty.entryMode === BountyEntryMode.BenefactorsOnly && (
+            <Text>
+              In this bounty, only people who are marked as supporters can award your entry. Because
+              of this, the number of possible awards may be limited. You can set your files to only
+              be available to those who give you awards and only unlocked after a certain amount of
+              awards is reached.
+            </Text>
+          )}
+        </AlertWithIcon>
 
         <Group mt="xl" position="right">
+          <NavigateBack url={`/bounties/${bounty.id}`}>
+            {({ onClick }) => (
+              <Button variant="light" color="gray" onClick={onClick}>
+                Discard Changes
+              </Button>
+            )}
+          </NavigateBack>
           <Button
             loading={bountyEntryCreateMutation.isLoading && !creating}
             disabled={bountyEntryCreateMutation.isLoading}
             onClick={() => setCreating(false)}
             type="submit"
-            fullWidth
           >
             Save
           </Button>

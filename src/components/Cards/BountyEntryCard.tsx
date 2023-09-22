@@ -1,11 +1,11 @@
-import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
-import { BountyEntryGetById } from '~/types/router';
+import { BountyGetEntries } from '~/types/router';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -22,7 +22,6 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { user, images, awardedUnitAmountTotal } = data;
-  // TODO.bounty: applyUserPreferences on bounty entry image
   const cover = images?.[0];
   const reactions = data?.reactions ?? [];
   const stats = data?.stats ?? null;
@@ -150,7 +149,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
 }
 
 type Props = {
-  data: Omit<BountyEntryGetById, 'files'>;
+  data: Omit<BountyGetEntries[number], 'files'>;
   currency: Currency;
-  renderActions?: (bountyEntry: Omit<BountyEntryGetById, 'files'>) => React.ReactNode;
+  renderActions?: (bountyEntry: Omit<BountyGetEntries[number], 'files'>) => React.ReactNode;
 };

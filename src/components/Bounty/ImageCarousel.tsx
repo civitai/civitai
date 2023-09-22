@@ -216,7 +216,10 @@ export function ImageCarousel({
                         ) : (
                           <ImagePreview
                             image={image}
-                            edgeImageProps={{ width: 450 }}
+                            edgeImageProps={{
+                              width: 450,
+                              style: { objectPosition: mobile ? 'top' : 'center' },
+                            }}
                             radius="md"
                             style={{ width: '100%' }}
                             aspectRatio={1}

@@ -144,6 +144,7 @@ export function ImagePreview({
   // }
 
   const edgeImageStyle: CSSProperties = {
+    ...edgeImageProps.style,
     maxHeight: '100%',
     maxWidth: '100%',
   };

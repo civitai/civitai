@@ -1,9 +1,10 @@
-import { Container } from '@mantine/core';
+import { Container, Text } from '@mantine/core';
 
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { BountyCreateForm } from '~/components/Bounty/BountyCreateForm';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -25,6 +26,21 @@ export const getServerSideProps = createServerSideProps({
 export default function BountyCreate() {
   return (
     <Container size="md">
+      <DismissibleAlert
+        id="faq-create-bounty"
+        title="What are bounties?"
+        emoji="❕"
+        mb="xl"
+        size="md"
+        color="blue"
+        content={
+          <Text>
+            Use bounties to make requests of the community. For example you could request a custom
+            model, a curated data set, or even just some cool pictures in styles you&apos;re not
+            able to replicate, then offer compensation to the people who helped you.
+          </Text>
+        }
+      />
       <BountyCreateForm />
     </Container>
   );

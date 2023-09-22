@@ -8,19 +8,17 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Title,
   Tooltip,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
 import { IconLock, IconLockOpen, IconStar } from '@tabler/icons-react';
-import React, { forwardRef } from 'react';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { trpc } from '~/utils/trpc';
-import { BountyEntryGetById } from '~/types/router';
+import { BountyGetEntries } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 
-type Props = { bountyEntry: Omit<BountyEntryGetById, 'files' | 'stats' | 'reactions'> };
+type Props = { bountyEntry: Omit<BountyGetEntries[number], 'files' | 'stats' | 'reactions'> };
 
 const { openModal: openBountyEntryFilesModal, Modal } = createContextModal<Props>({
   name: 'bountyEntryFiles',

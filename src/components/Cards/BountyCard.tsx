@@ -32,7 +32,6 @@ export function BountyCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
   const { id, name, images, user, type, expiresAt, stats, complete } = data;
-  // TODO.bounty: applyUserPreferences on bounty image
   const cover = images?.[0];
   const expired = expiresAt < new Date();
 
@@ -68,11 +67,16 @@ export function BountyCard({ data }: Props) {
       variant="filled"
       radius="xl"
     >
-      Completed
+      Awarded
     </Badge>
   );
 
-  const deadlineBadge = complete ? completeBadge : expired ? expiredBadge : countdownBadge;
+  const deadlineBadge =
+    complete && !!stats?.entryCountAllTime
+      ? completeBadge
+      : expired
+      ? expiredBadge
+      : countdownBadge;
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">

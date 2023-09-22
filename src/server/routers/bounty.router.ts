@@ -14,7 +14,6 @@ import {
   addBenefactorUnitAmountInputSchema,
   createBountyInputSchema,
   getBountyEntriesInputSchema,
-  GetBountyEntriesInputSchema,
   getInfiniteBountySchema,
   updateBountyInputSchema,
 } from '~/server/schema/bounty.schema';
