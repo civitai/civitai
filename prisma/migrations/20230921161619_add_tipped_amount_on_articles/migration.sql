@@ -14,6 +14,29 @@ ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "ModelVersionMetric" ADD COLUMN     "tippedAmountCount" INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN     "tippedCount" INTEGER NOT NULL DEFAULT 0;
 
+-- AlterTable
+ALTER TABLE "ModelRank"
+  ADD COLUMN "tippedCountDay" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountWeek" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountMonth" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountYear" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountAllTime" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountDayRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountWeekRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountMonthRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountYearRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedCountAllTimeRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountDay" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountWeek" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountMonth" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountYear" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountAllTime" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountDayRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountWeekRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountMonthRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountYearRank" INTEGER NOT NULL DEFAULT 0,
+	ADD COLUMN "tippedAmountCountAllTimeRank" INTEGER NOT NULL DEFAULT 0;
+
 ------------------------
 -- UPDATE Views
 ------------------------
@@ -388,7 +411,7 @@ WITH model_timeframe_stats AS (
 		COALESCE(mm.rating, 0::double precision) AS rating,
 		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY ((COALESCE(mm.rating, 0::double precision) * COALESCE(mm."ratingCount", 0)::double precision + (3.5 * 10::numeric)::double precision) / (COALESCE(mm."ratingCount", 0) + 10)::double precision) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "ratingRank",
 		ROW_NUMBER() OVER (ORDER BY (GREATEST(m."lastVersionAt", m."publishedAt")) DESC, m.id DESC) AS "newRank",
-		DATE_PART('day'::text, NOW() - m."publishedAt"::timestamp WITH TIME ZONE) AS age_days,
+		COALESCE(DATE_PART('day'::text, NOW() - m."publishedAt"::timestamp WITH TIME ZONE), 0) AS age_days,
 		COALESCE(mm."imageCount", 0) AS "imageCount",
 		ROW_NUMBER() OVER (PARTITION BY tf.timeframe ORDER BY (COALESCE(mm."imageCount", 0)) DESC, (COALESCE(mm.rating, 0::double precision)) DESC, (COALESCE(mm."downloadCount", 0)) DESC, m.id DESC) AS "imageCountRank",
 		COALESCE(mm."collectedCount", 0) AS "collectedCount",

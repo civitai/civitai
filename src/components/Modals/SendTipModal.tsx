@@ -135,8 +135,6 @@ const { openModal, Modal } = createContextModal<{
     const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
     const queryUtils = trpc.useContext();
 
-    console.log(entityId, entityType);
-
     const [loading, setLoading] = useState(false);
 
     const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({

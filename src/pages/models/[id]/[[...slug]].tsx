@@ -44,6 +44,7 @@ import {
   IconReload,
   IconPlaylistAdd,
   IconInfoCircle,
+  IconBolt,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -102,6 +103,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { env } from '~/env/client.mjs';
+import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -542,6 +544,45 @@ export default function ModelDetailsV2({
                       </IconBadge>
                     </LoginRedirect>
                   )}
+                  <InteractiveTipBuzzButton
+                    toUserId={model.user.id}
+                    entityId={model.id}
+                    entityType="Model"
+                    onTipSent={(amount) => {
+                      queryUtils.model.getById.setData({ id }, (old) =>
+                        old
+                          ? {
+                              ...old,
+                              rank: old.rank
+                                ? {
+                                    ...old.rank,
+                                    tippedAmountCountAllTime:
+                                      (old.rank.tippedAmountCountAllTime ?? 0) + amount,
+                                  }
+                                : old.rank,
+                            }
+                          : old
+                      );
+                    }}
+                  >
+                    <IconBadge
+                      radius="sm"
+                      color={isFavorite ? 'red' : 'gray'}
+                      size="lg"
+                      icon={
+                        <IconBolt
+                          size={18}
+                          color="yellow.7"
+                          style={{ fill: theme.colors.yellow[7] }}
+                        />
+                      }
+                    >
+                      <Text className={classes.modelBadgeText}>
+                        {abbreviateNumber(model.rank?.tippedAmountCountAllTime ?? 0)}
+                      </Text>
+                    </IconBadge>
+                  </InteractiveTipBuzzButton>
+
                   {!model.locked && (
                     <ResourceReviewSummary modelId={model.id}>
                       <ResourceReviewSummary.Simple

@@ -467,6 +467,7 @@ export const getModelsWithVersionsHandler = async ({
           commentCount: rank?.commentCountAllTime ?? 0,
           ratingCount: rank?.ratingCountAllTime ?? 0,
           rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+          tippedAmountCount: rank?.tippedAmountCountAllTimeRank ?? 0,
         },
       })),
     };

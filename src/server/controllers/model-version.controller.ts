@@ -109,7 +109,6 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       },
     });
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
-    console.log(version.monetization?.unitAmount);
 
     return {
       ...version,

@@ -1,4 +1,4 @@
-import { Group, ThemeIcon } from '@mantine/core';
+import { Button, Group, Stack, ThemeIcon } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconX } from '@tabler/icons-react';
 
@@ -61,5 +61,44 @@ export function showBuzzNotification({
       </Group>
     ),
     title,
+  });
+}
+
+export function showConfirmNotification({
+  id,
+  message,
+  title = 'Please confirm your action',
+  color,
+  onConfirm,
+  onCancel,
+  autoClose = 8000,
+}: {
+  message: React.ReactNode;
+  title?: string;
+  color?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  autoClose?: number | false;
+  id?: string;
+}) {
+  showNotification({
+    id,
+    color,
+    message: (
+      <Stack>
+        {message}
+        <Group position="right">
+          <Button onClick={onCancel} variant="outline" color="red">
+            Cancel
+          </Button>
+          <Button color={color} variant="filled" onClick={onConfirm}>
+            Confirm
+          </Button>
+        </Group>
+      </Stack>
+    ),
+    title,
+    autoClose,
+    disallowClose: true,
   });
 }

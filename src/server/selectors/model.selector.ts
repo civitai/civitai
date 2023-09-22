@@ -25,6 +25,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
       favoriteCountAllTime: true,
       ratingCountAllTime: true,
       ratingAllTime: true,
+      tippedAmountCountAllTimeRank: true,
     },
   },
   user: {
