@@ -200,9 +200,9 @@ const words = {
   },
 };
 
-export function includesInappropriate(prompt: string | undefined) {
+export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
   if (!prompt) return false;
-  if (!words.nsfw.inPrompt(prompt)) return false;
+  if (!nsfw && !words.nsfw.inPrompt(prompt)) return false;
   return words.young.nouns.inPrompt(prompt);
 }
 // #endregion [inappropriate]
