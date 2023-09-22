@@ -70,7 +70,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 const querySchema = z.object({
@@ -505,9 +504,17 @@ export default function BountyEntryDetailsPage({
   const notesSection = bountyEntry.description ? (
     <>
       <Divider label="Entry Notes" labelPosition="center" />
-      <ContentClamp maxHeight={200} px="md">
+      <Paper
+        component={ScrollArea}
+        radius="md"
+        p="xs"
+        mx={mobile ? 'xs' : 'md'}
+        h={200}
+        offsetScrollbars
+        withBorder={mobile}
+      >
         <RenderHtml html={bountyEntry.description} />
-      </ContentClamp>
+      </Paper>
     </>
   ) : null;
 
