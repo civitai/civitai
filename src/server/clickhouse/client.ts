@@ -1,30 +1,36 @@
 import { createClient } from '@clickhouse/client';
-import { env } from '~/env/server.mjs';
-import requestIp from 'request-ip';
-import { NextApiRequest, NextApiResponse } from 'next';
 import {
-  ReviewReactions,
-  ReportReason,
-  ReportStatus,
-  NsfwLevel,
   ArticleEngagementType,
   BountyEngagementType,
   BountyMode,
   BountyType,
+  NsfwLevel,
+  ReportReason,
+  ReportStatus,
+  ReviewReactions,
 } from '@prisma/client';
-import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { NextApiRequest, NextApiResponse } from 'next';
+import requestIp from 'request-ip';
+import { env } from '~/env/server.mjs';
+import { cacheDnsEntries } from '~/server/http/dns-cache';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
-import { cacheDnsEntries } from '~/server/http/dns-cache';
+import { getServerAuthSession } from '../utils/get-server-auth-session';
+
+const _installCaching = (() => {
+  let cachingActive = false;
+  return () => {
+    if (!cachingActive) {
+      cachingActive = true;
+      cacheDnsEntries();
+    }
+  };
+})();
 
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 export const clickhouse = (() => {
-  console.log('Connecting to Clickhouse...');
-  let cachingActive = false;
-  if (!cachingActive) {
-    cachingActive = true;
-    cacheDnsEntries();
-  }
+  _installCaching();
+
   return shouldConnect
     ? createClient({
         host: env.CLICKHOUSE_HOST,

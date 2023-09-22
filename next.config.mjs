@@ -1,6 +1,5 @@
 // @ts-check
-import { withPlausibleProxy } from 'next-plausible';
-import { withAxiom } from 'next-axiom';
+import { withAxiom } from "next-axiom";
 
 /**
  * Don't be scared of the generics here.
