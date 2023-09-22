@@ -92,9 +92,13 @@ export function Reactions({
     defaultValue: false,
   });
 
+  const ignoredKeys = ['tippedAmountCount'];
   const hasAllReactions =
     !!metrics &&
     Object.entries(metrics).every(([key, value]) => {
+      if (ignoredKeys.includes(key)) {
+        return true;
+      }
       // ie. converts the key `likeCount` to `Like`
       const reactionType = capitalize(key).replace(/count/, '');
       const hasReaction =
