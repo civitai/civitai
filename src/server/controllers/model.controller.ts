@@ -778,6 +778,7 @@ export const getMyTrainingModelsHandler = async ({
             trainingStatus: true,
             files: {
               select: {
+                id: true,
                 url: true,
                 type: true,
                 metadata: true,

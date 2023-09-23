@@ -4,9 +4,9 @@ import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { CreateTrainingRequestInput } from '~/server/schema/training.schema';
+import { CreateTrainingRequestInput, MoveAssetInput } from '~/server/schema/training.schema';
 import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
-import { getGetUrl } from '~/utils/s3-utils';
+import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
 
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
@@ -22,6 +22,59 @@ type TrainingRequest = {
   trainingUrl: string;
   fileId: number;
   fileMetadata: FileMetadata | null;
+};
+
+type moveAssetResponse = {
+  found?: boolean;
+  fileSize?: number;
+};
+
+const assetUrlRegex =
+  /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
+
+export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
+  const urlMatch = url.match(assetUrlRegex);
+  if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
+  const { jobId, assetName } = urlMatch.groups;
+
+  const { url: destinationUri } = await getPutUrl(`model/${modelId}/${assetName}`);
+
+  const reqBody = {
+    $type: 'copyAsset',
+    jobId,
+    assetName,
+    destinationUri,
+  };
+
+  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs?wait=true`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+    },
+    body: JSON.stringify(reqBody),
+  });
+
+  if (response.status === 429) {
+    throw throwRateLimitError();
+  }
+
+  if (!response.ok) {
+    throw throwBadRequestError('Failed to move asset');
+  }
+  const data = await response.json();
+  const result: moveAssetResponse | undefined = data.result;
+
+  if (!result || !result.found) {
+    throw throwBadRequestError('Failed to move asset');
+  }
+
+  const newUrl = destinationUri.split('?')[0];
+
+  return {
+    newUrl,
+    fileSize: result.fileSize,
+  };
 };
 
 export const createTrainingRequest = async ({
