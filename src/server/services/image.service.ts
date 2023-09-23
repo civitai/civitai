@@ -269,6 +269,7 @@ export const ingestImageBulk = async ({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(
       images.map((image) => ({
+        // TODO.briant Add priority handling here so that we can prioritize images that are being ingested based on a param
         imageId: image.id,
         imageKey: image.url,
         type: image.type,
