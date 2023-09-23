@@ -1,4 +1,4 @@
-import { beehiiv } from '~/server/integrations/beehiiv';
+import { mailchimp } from '~/server/integrations/mailchimp';
 import { UpdateSubscriptionSchema } from '~/server/schema/newsletter.schema';
 
 export async function updateSubscription({
@@ -7,13 +7,13 @@ export async function updateSubscription({
 }: UpdateSubscriptionSchema & { email?: string }) {
   if (!email) throw new Error('No email provided');
 
-  await beehiiv.setSubscription({ email, subscribed: input.subscribed });
+  await mailchimp.setSubscription({ email, subscribed: input.subscribed });
 }
 
 export async function getSubscription(email?: string) {
   if (!email) throw new Error('No email provided');
 
-  const subscription = await beehiiv.getSubscription(email);
-  const subscribed = subscription?.status === 'active';
+  const subscription = await mailchimp.getSubscription(email);
+  const subscribed = subscription && ['subscribed', 'pending'].includes(subscription.status);
   return { subscribed };
 }
