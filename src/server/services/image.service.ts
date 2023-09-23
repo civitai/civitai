@@ -459,7 +459,7 @@ export const getAllImages = async ({
   }
 
   if (types && types.length > 0) {
-    AND.push(Prisma.sql`i.type::text IN (${Prisma.join(types)})`);
+    AND.push(Prisma.sql`i.type = ANY(ARRAY[${Prisma.join(types)}]::"MediaType"[])`);
   }
 
   if (include.includes('meta')) {
