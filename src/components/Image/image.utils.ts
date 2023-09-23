@@ -19,6 +19,7 @@ export const imagesQueryParamSchema = z
     collectionId: numericString(),
     username: z.coerce.string().transform(postgresSlugify),
     prioritizedUserIds: numericStringArray(),
+    limit: numericString(),
     period: z.nativeEnum(MetricTimeframe),
     periodMode: periodModeSchema,
     sort: z.nativeEnum(ImageSort),
