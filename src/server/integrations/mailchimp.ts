@@ -26,11 +26,16 @@ function newsletterHandler<T, R>(fn: (input: T) => Promise<R>) {
 }
 
 const getSubscription = newsletterHandler(async (email: string) => {
-  const res = await client.lists.getListMember(
-    env.NEWSLETTER_ID as string,
-    createSubscriberHash(email)
-  );
-  return res.status === 404 ? undefined : (res as client.lists.MembersSuccessResponse);
+  try {
+    const res = await client.lists.getListMember(
+      env.NEWSLETTER_ID as string,
+      createSubscriberHash(email)
+    );
+    return res as client.lists.MembersSuccessResponse;
+  } catch (err) {
+    if ((err as client.ErrorResponse).status === 404) return undefined;
+    throw err;
+  }
 });
 
 const setSubscription = newsletterHandler(
