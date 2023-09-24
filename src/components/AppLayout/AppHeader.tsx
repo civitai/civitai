@@ -343,7 +343,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       {
         href: '/bounties?engagement=favorite',
         as: '/bounties',
-        visible: !!currentUser,
+        visible: !!currentUser && features.bounties,
         label: (
           <Group align="center" spacing="xs">
             <IconMoneybag stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
