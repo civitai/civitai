@@ -172,6 +172,7 @@ export const getBountyEntriesHandler = async ({
             laughCountAllTime: true,
             cryCountAllTime: true,
             unitAmountCountAllTime: true,
+            tippedAmountCountAllTime: true,
           },
         },
       },

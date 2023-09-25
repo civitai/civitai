@@ -7,7 +7,7 @@ import { capitalize } from 'lodash-es';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import {
   InteractiveTipBuzzButton,
@@ -110,7 +110,8 @@ export function Reactions({
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
 
-  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
+  const supportsBuzzTipping =
+    targetUserId !== currentUser?.id && ['image', 'bountyEntry'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -288,12 +289,17 @@ function BuzzTippingBadge({
   }) => void;
 }) {
   const theme = useMantineTheme();
-  const entityTypeCapitalized = capitalize(entityType);
-  const tippedAmount = useBuzzTippingStore({ entityType: entityTypeCapitalized, entityId });
+  const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {
+    image: 'Image',
+    bountyEntry: 'BountyEntry',
+  };
+  const buzzTipEntryType = typeToBuzzTipType[entityType];
+
+  const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType, entityId });
   return (
     <InteractiveTipBuzzButton
       toUserId={toUserId}
-      entityType={entityTypeCapitalized}
+      entityType={buzzTipEntryType}
       entityId={entityId}
       {...props}
     >

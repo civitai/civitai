@@ -140,6 +140,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
               heartCount: stats?.heartCountAllTime,
               laughCount: stats?.laughCountAllTime,
               cryCount: stats?.cryCountAllTime,
+              tippedAmountCount: stats?.tippedAmountCountAllTime,
             }}
           />
         </Stack>
