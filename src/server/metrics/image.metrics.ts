@@ -263,8 +263,6 @@ export const imageMetrics = createMetricProcessor({
       WHERE r.id IS NOT NULL
     `;
 
-    console.log(affectedImages);
-
     await imagesSearchIndex.queueUpdate(
       affectedImages.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
