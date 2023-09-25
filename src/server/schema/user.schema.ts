@@ -64,6 +64,8 @@ export const userUpdateSchema = z.object({
     })
     .optional(),
   leaderboardShowcase: z.string().nullish(),
+  userReferralCode: z.string().optional(),
+  source: z.string().optional(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
@@ -124,3 +126,6 @@ export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedReques
 export const reportProhibitedRequestSchema = z.object({
   prompt: z.string(),
 });
+
+export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
+export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;

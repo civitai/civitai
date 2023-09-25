@@ -38,6 +38,7 @@ import { trackRouter } from './track.router';
 import { trainingRouter } from './training.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
+import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -78,6 +79,7 @@ export const appRouter = router({
   newsletter: newsletterRouter,
   system: systemRouter,
   hiddenPreferences: hiddenPreferencesRouter,
+  userReferralCode: userReferralCodeRouter,
 });
 
 // export type definition of API
