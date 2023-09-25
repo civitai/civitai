@@ -149,6 +149,10 @@ export function InteractiveTipBuzzButton({
       amount: Number(tipAmount),
       entityId,
       entityType,
+      details: {
+        entityId,
+        entityType,
+      },
     });
   };
 
