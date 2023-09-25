@@ -110,6 +110,7 @@ const onFetchItemsToIndex = async ({
           laughCountAllTime: true,
           cryCountAllTime: true,
           viewCountAllTime: true,
+          tippedAmountCountAllTime: true,
         },
       },
     },
@@ -150,6 +151,7 @@ const onFetchItemsToIndex = async ({
             laughCount: stats.laughCountAllTime,
             cryCount: stats.cryCountAllTime,
             viewCount: stats.viewCountAllTime,
+            tippedAmountCount: stats.tippedAmountCountAllTime,
           }
         : undefined,
       // Flatten tags:

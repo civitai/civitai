@@ -295,6 +295,10 @@ function BuzzTippingBadge({
   };
   const buzzTipEntryType = typeToBuzzTipType[entityType];
 
+  if (!buzzTipEntryType) {
+    return null;
+  }
+
   const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType, entityId });
   return (
     <InteractiveTipBuzzButton
