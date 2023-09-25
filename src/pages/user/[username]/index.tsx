@@ -151,6 +151,8 @@ export function UserImagesPage() {
       sort = ImageSort.Newest,
       username = '',
       reactions,
+      types = [],
+      withMeta = false,
       ...query
     },
   } = useImageQueryParams();
@@ -214,7 +216,7 @@ export function UserImagesPage() {
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
                 <ImageFiltersDropdown
-                  query={{ ...query, period }}
+                  query={{ ...query, period, types, withMeta }}
                   onChange={(filters) => replace(filters)}
                 />
               </Group>
@@ -224,6 +226,8 @@ export function UserImagesPage() {
                 ...query,
                 period,
                 sort,
+                types,
+                withMeta,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
               }}
