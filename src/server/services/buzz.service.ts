@@ -98,7 +98,8 @@ export async function createBuzzTransaction({
   toAccountId,
   ...payload
 }: CreateBuzzTransactionInput & { fromAccountId: number }) {
-  if (entityType && entityId && !toAccountId) {
+  console.log(toAccountId);
+  if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
       [{ userId?: number }]
     >(`
@@ -114,7 +115,7 @@ export async function createBuzzTransaction({
     toAccountId = userId;
   }
 
-  if (!toAccountId) {
+  if (toAccountId === undefined) {
     throw throwBadRequestError('No target account provided');
   }
 

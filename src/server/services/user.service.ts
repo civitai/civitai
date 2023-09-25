@@ -41,6 +41,7 @@ import {
   usersSearchIndex,
 } from '~/server/search-index';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -775,6 +776,17 @@ export const createUserReferral = async ({
     return;
   }
 
+  const applyRewards = ({ refereeId, referrerId }: { refereeId: number; referrerId: number }) => {
+    refereeCreatedReward.apply({
+      refereeId,
+      referrerId,
+    });
+    userReferredReward.apply({
+      refereeId,
+      referrerId,
+    });
+  };
+
   if (userReferralCode || source) {
     // Confirm userReferralCode is valid:
     const referralCode = !!userReferralCode
@@ -789,7 +801,7 @@ export const createUserReferral = async ({
 
     if (user.referral && referralCode) {
       // Allow to update a referral with a user-referral-code:
-      return await dbWrite.userReferral.update({
+      await dbWrite.userReferral.update({
         where: {
           id: user.referral.id,
         },
@@ -797,15 +809,27 @@ export const createUserReferral = async ({
           userReferralCodeId: referralCode.id,
         },
       });
+
+      applyRewards({
+        refereeId: id,
+        referrerId: referralCode.userId,
+      });
     } else if (!user.referral) {
       // Create new referral:
-      return await dbWrite.userReferral.create({
+      await dbWrite.userReferral.create({
         data: {
           userId: id,
           source,
           userReferralCodeId: referralCode?.id ?? undefined,
         },
       });
+
+      if (referralCode?.id) {
+        applyRewards({
+          refereeId: id,
+          referrerId: referralCode.userId,
+        });
+      }
     }
   }
 };
