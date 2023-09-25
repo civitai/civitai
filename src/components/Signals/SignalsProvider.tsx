@@ -69,12 +69,10 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
       createSignalWorker({
         token: data.accessToken,
         onConnected: () => {
-          console.log('Well well well');
           setConnected(true);
         },
         onReconnected: () => {
-          console.log('Reconnected o/');
-          if (session.data?.user) {
+          if (session.data?.user?.id) {
             queryUtils.buzz.getUserAccount.invalidate();
           }
         },
