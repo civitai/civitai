@@ -12,7 +12,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { ArticleEngagementType } from '@prisma/client';
-import { IconBookmark, IconShare3 } from '@tabler/icons-react';
+import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
@@ -46,6 +46,10 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -76,6 +80,7 @@ export default function ArticleDetailsPage({
   const mobile = useIsMobile();
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
   // TODO.articles: add meta description
   const meta = (
@@ -105,6 +110,19 @@ export default function ArticleDetailsPage({
 
   const actionButtons = (
     <Group spacing={4} noWrap>
+      <InteractiveTipBuzzButton toUserId={article.user.id} entityType={'Article'} entityId={id}>
+        <IconBadge
+          radius="sm"
+          sx={{ cursor: 'pointer' }}
+          color="gray"
+          size="lg"
+          icon={<IconBolt />}
+        >
+          <Text className={classes.badgeText}>
+            {abbreviateNumber((article.stats?.tippedAmountCountAllTime ?? 0) + tippedAmount)}
+          </Text>
+        </IconBadge>
+      </InteractiveTipBuzzButton>
       <LoginRedirect reason="favorite-model">
         <ToggleArticleEngagement articleId={article.id}>
           {({ toggle, isToggled }) => {
@@ -235,7 +253,7 @@ export default function ArticleDetailsPage({
               </Group>
             </Stack>
           </Grid.Col>
-          <Grid.Col xs={12} md={3} offsetMd={1}>
+          <Grid.Col xs={12} md={4}>
             <Sidebar
               creator={article.user}
               attachments={article.attachments}

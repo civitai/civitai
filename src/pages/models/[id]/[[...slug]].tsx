@@ -103,7 +103,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { env } from '~/env/client.mjs';
-import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -164,6 +167,7 @@ export default function ModelDetailsV2({
       },
     }
   );
+
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
@@ -187,6 +191,7 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
 
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
@@ -548,22 +553,6 @@ export default function ModelDetailsV2({
                     toUserId={model.user.id}
                     entityId={model.id}
                     entityType="Model"
-                    onTipSent={({ amount }) => {
-                      queryUtils.model.getById.setData({ id }, (old) =>
-                        old
-                          ? {
-                              ...old,
-                              rank: old.rank
-                                ? {
-                                    ...old.rank,
-                                    tippedAmountCountAllTime:
-                                      (old.rank.tippedAmountCountAllTime ?? 0) + amount,
-                                  }
-                                : old.rank,
-                            }
-                          : old
-                      );
-                    }}
                   >
                     <IconBadge
                       radius="sm"
@@ -578,7 +567,9 @@ export default function ModelDetailsV2({
                       }
                     >
                       <Text className={classes.modelBadgeText}>
-                        {abbreviateNumber(model.rank?.tippedAmountCountAllTime ?? 0)}
+                        {abbreviateNumber(
+                          (model.rank?.tippedAmountCountAllTime ?? 0) + tippedAmount
+                        )}
                       </Text>
                     </IconBadge>
                   </InteractiveTipBuzzButton>
