@@ -18,6 +18,7 @@ import { useCallback, useState } from 'react';
 import { BountyStatus } from '~/server/common/enums';
 import { constants, BaseModel } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { PeriodFilter } from '~/components/Filters';
 
 const supportsBaseModel = [
   BountyType.ModelCreation,
@@ -100,17 +101,7 @@ export function BountyFiltersDropdown() {
     <Stack spacing="lg">
       <Stack spacing="md">
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Chip.Group
-          spacing={8}
-          value={filters.period}
-          onChange={(period: MetricTimeframe) => setFilters({ period })}
-        >
-          {Object.values(MetricTimeframe).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
-            </Chip>
-          ))}
-        </Chip.Group>
+        <PeriodFilter type="bounties" variant="chips" />
       </Stack>
       <Stack spacing="md">
         <Divider label="Bounty type" labelProps={{ weight: 'bold', size: 'sm' }} />
