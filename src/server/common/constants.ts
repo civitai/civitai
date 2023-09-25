@@ -185,6 +185,10 @@ export const constants = {
     minCreateAmount: 5000,
   },
   defaultCurrency: 'USD',
+  referrals: {
+    referralCodeMinLength: 6,
+    referralCodeMaxCount: 3,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;
