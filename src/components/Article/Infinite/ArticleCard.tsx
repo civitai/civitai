@@ -1,5 +1,11 @@
 import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
-import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconBookmark,
+  IconEye,
+  IconMessageCircle2,
+  IconMoodSmile,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -10,18 +16,24 @@ import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
 
 export function ArticleCard({ data, height = 450 }: Props) {
   const { id, title, cover, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
-  const { commentCount, viewCount, favoriteCount, ...reactionStats } = stats || {
+  const { commentCount, viewCount, favoriteCount, tippedAmountCount, ...reactionStats } = stats || {
     commentCount: 0,
     viewCount: 0,
     favoriteCount: 0,
     likeCount: 0,
+    tippedAmountCount: 0,
   };
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
   const { classes } = useStyles();
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
   return (
     <Link href={`/articles/${id}/${slugit(title)}`} passHref>
@@ -78,6 +90,11 @@ export function ArticleCard({ data, height = 450 }: Props) {
                 <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
                   <Text size="xs">{abbreviateNumber(commentCount)}</Text>
                 </IconBadge>
+                <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
+                  <IconBadge icon={<IconBolt size={14} />} color="dark">
+                    <Text size="xs">{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
+                  </IconBadge>
+                </InteractiveTipBuzzButton>
               </Group>
               <IconBadge icon={<IconEye size={14} />} color="dark">
                 <Text size="xs">{abbreviateNumber(viewCount)}</Text>

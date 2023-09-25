@@ -86,6 +86,7 @@ export function Reactions({
       amount: number;
     }) => void;
   }) {
+  const currentUser = useCurrentUser();
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -109,7 +110,7 @@ export function Reactions({
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
 
-  const supportsBuzzTipping = ['image'].includes(entityType);
+  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>

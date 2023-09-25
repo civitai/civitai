@@ -19,6 +19,7 @@ import {
   IconBrush,
   IconPlaylistAdd,
   IconInfoCircle,
+  IconBolt,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -54,6 +55,10 @@ import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToCollectionDropdown } from '~/components/Collections/AddToCollectionDropdown';
 import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
@@ -76,6 +81,7 @@ export function ModelCard({ data }: Props) {
   const queryResult = querySchema.safeParse(router.query);
   const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
   const modelId = queryResult.success ? queryResult.data.model : undefined;
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
@@ -424,6 +430,17 @@ export function ModelCard({ data }: Props) {
                         modelId={data.id}
                         type={CollectionType.Model}
                       />
+                      <InteractiveTipBuzzButton
+                        toUserId={data.user.id}
+                        entityType={'Model'}
+                        entityId={data.id}
+                      >
+                        <IconBadge className={classes.iconBadge} icon={<IconBolt size={14} />}>
+                          <Text size="xs">
+                            {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                          </Text>
+                        </IconBadge>
+                      </InteractiveTipBuzzButton>
                     </Group>
                   </Group>
                 </Stack>

@@ -126,6 +126,7 @@ export function ImagesCard({ data: image, height }: { data: ImagesInfiniteModel;
                                   cryCount: image.stats?.cryCountAllTime,
                                   tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                                 }}
+                                targetUserId={image.user.id}
                                 readonly={!safe}
                                 className={classes.reactions}
                               />
