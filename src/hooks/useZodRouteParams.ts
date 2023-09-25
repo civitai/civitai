@@ -10,11 +10,12 @@ export function useZodRouteParams<TSchema extends z.AnyZodObject>(schema: TSchem
     const result = schema.safeParse(query);
     const data = result.success ? result.data : {};
 
-    const replaceParams = (params: Partial<z.infer<TSchema>>) =>
+    const replaceParams = (params: Partial<z.infer<TSchema>>) => {
       replace({ pathname, query: removeEmpty({ ...query, ...params }) }, undefined, {
         shallow: true,
         scroll: false,
       });
+    };
 
     // const clearParams = () => {
     //   const clearable = Object.keys(data).reduce<Record<string, undefined>>(
