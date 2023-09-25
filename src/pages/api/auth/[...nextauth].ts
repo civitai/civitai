@@ -11,7 +11,11 @@ import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { getRandomInt } from '~/utils/number-helpers';
 import { refreshToken, invalidateSession } from '~/server/utils/session-helpers';
-import { getSessionUser, updateAccountScope } from '~/server/services/user.service';
+import {
+  createUserReferral,
+  getSessionUser,
+  updateAccountScope,
+} from '~/server/services/user.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
@@ -49,6 +53,7 @@ export function createAuthOptions(): NextAuthOptions {
     events: {
       createUser: async ({ user }) => {
         const startingUsername = user.email?.trim() ?? user.name?.trim() ?? `civ_`;
+
         if (startingUsername) {
           let username: string | undefined = undefined;
           while (!username) username = await setUserName(Number(user.id), startingUsername);
@@ -153,14 +158,26 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   const customAuthOptions = createAuthOptions();
   customAuthOptions.events ??= {};
   customAuthOptions.events.signIn = async (context) => {
+    const source = req.cookies['ref_source'] as string;
+
     if (context.isNewUser) {
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
         targetUserId: parseInt(context.user.id),
       });
+
+      if (source) {
+        // Only source will be set via the auth callback.
+        // For userReferralCode, the user must finish onboarding.
+        await createUserReferral({
+          id: parseInt(context.user.id),
+          source,
+        });
+      }
     }
   };
+
   return await NextAuth(req, res, customAuthOptions);
 }
 

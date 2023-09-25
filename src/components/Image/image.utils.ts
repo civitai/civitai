@@ -1,4 +1,4 @@
-import { MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -30,6 +30,11 @@ export const imagesQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.nativeEnum(ReviewReactions))
     ),
+    types: z.preprocess(
+      (val) => (Array.isArray(val) ? val : [val]),
+      z.array(z.nativeEnum(MediaType))
+    ),
+    withMeta: z.coerce.boolean(),
     section: z.enum(['images', 'reactions']),
   })
   .partial();

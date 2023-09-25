@@ -1,7 +1,11 @@
-import { ToggleUserArticleEngagementsInput } from './../schema/user.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  ToggleUserArticleEngagementsInput,
+  UserByReferralCodeSchema,
+} from './../schema/user.schema';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   ArticleEngagementType,
+  BountyEngagementType,
   ModelEngagementType,
   Prisma,
   SearchIndexUpdateQueueAction,
@@ -14,9 +18,9 @@ import {
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
-  GetUserArticleEngagementsInput,
   GetUserCosmeticsSchema,
   ToggleBlockedTagSchema,
+  ToggleUserBountyEngagementsInput,
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
@@ -36,6 +40,7 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -163,7 +168,7 @@ export const acceptTOS = ({ id }: { id: number }) => {
   });
 };
 
-export const completeOnboarding = ({ id }: { id: number }) => {
+export const completeOnboarding = async ({ id }: { id: number }) => {
   return dbWrite.user.update({
     where: { id },
     data: { onboarded: true },
@@ -451,6 +456,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     where,
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
+      referral: { select: { id: true } },
     },
   });
 
@@ -695,3 +701,111 @@ export const toggleUserArticleEngagement = async ({
   return !exists;
 };
 // #endregion
+
+//#region [bounty engagement]
+export const getUserBountyEngagements = async ({ userId }: { userId: number }) => {
+  const engagements = await dbRead.bountyEngagement.findMany({
+    where: { userId },
+    select: { bountyId: true, type: true },
+  });
+
+  return engagements.reduce<Partial<Record<BountyEngagementType, number[]>>>(
+    (acc, { bountyId, type }) => ({ ...acc, [type]: [...(acc[type] ?? []), bountyId] }),
+    {}
+  );
+};
+
+export const toggleUserBountyEngagement = async ({
+  type,
+  bountyId,
+  userId,
+}: ToggleUserBountyEngagementsInput & { userId: number }) => {
+  const engagement = await dbRead.bountyEngagement.findUnique({
+    where: { type_bountyId_userId: { userId, bountyId, type } },
+    select: { type: true },
+  });
+
+  if (!engagement) {
+    await dbWrite.bountyEngagement.create({ data: { userId, bountyId, type } });
+    return true;
+  } else {
+    await dbWrite.bountyEngagement.delete({
+      where: { type_bountyId_userId: { userId, bountyId, type } },
+    });
+    return false;
+  }
+};
+//#endregion
+
+// #region [user referrals]
+export const userByReferralCode = async ({ userReferralCode }: UserByReferralCodeSchema) => {
+  const referralCode = await dbRead.userReferralCode.findFirst({
+    where: { code: userReferralCode, deletedAt: null },
+    select: {
+      userId: true,
+      user: {
+        select: userWithCosmeticsSelect,
+      },
+    },
+  });
+
+  if (!referralCode) {
+    throw throwBadRequestError('Referral code is not valid');
+  }
+
+  return referralCode.user;
+};
+// #endregion
+
+export const createUserReferral = async ({
+  id,
+  userReferralCode,
+  source,
+}: {
+  id: number;
+  userReferralCode?: string;
+  source?: string;
+}) => {
+  const user = await dbRead.user.findUniqueOrThrow({
+    where: { id },
+    select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
+  });
+
+  if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {
+    return;
+  }
+
+  if (userReferralCode || source) {
+    // Confirm userReferralCode is valid:
+    const referralCode = !!userReferralCode
+      ? await dbRead.userReferralCode.findFirst({
+          where: { code: userReferralCode, deletedAt: null },
+        })
+      : null;
+
+    if (!referralCode && !source) {
+      return;
+    }
+
+    if (user.referral && referralCode) {
+      // Allow to update a referral with a user-referral-code:
+      return await dbWrite.userReferral.update({
+        where: {
+          id: user.referral.id,
+        },
+        data: {
+          userReferralCodeId: referralCode.id,
+        },
+      });
+    } else if (!user.referral) {
+      // Create new referral:
+      return await dbWrite.userReferral.create({
+        data: {
+          userId: id,
+          source,
+          userReferralCodeId: referralCode?.id ?? undefined,
+        },
+      });
+    }
+  }
+};

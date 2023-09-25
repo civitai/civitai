@@ -69,4 +69,4 @@ export function AttachmentCard({ id, name, sizeKB, url }: Props) {
   );
 }
 
-type Props = ArticleGetById['attachments'][number];
+type Props = Pick<ArticleGetById['attachments'][number], 'id' | 'name' | 'sizeKB' | 'url'>;

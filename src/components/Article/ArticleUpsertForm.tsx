@@ -12,9 +12,11 @@ import {
   Tooltip,
   TooltipProps,
   createStyles,
+  ActionIcon,
+  Paper,
 } from '@mantine/core';
 import { TagTarget } from '@prisma/client';
-import { IconQuestionMark } from '@tabler/icons-react';
+import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';
@@ -237,15 +239,26 @@ export function ArticleUpsertForm({ article }: Props) {
                   'text/x-python-script': ['.py'],
                 },
               }}
-              renderItem={(file) =>
-                article && file.id ? (
-                  <Anchor href={`/api/download/attachments/${file.id}`} lineClamp={1} download>
-                    {file.name}
-                  </Anchor>
-                ) : (
-                  file.name
-                )
-              }
+              renderItem={(file, onRemove) => (
+                <Paper key={file.id} radius="sm" p={0} w="100%">
+                  <Group position="apart">
+                    {article && file.id ? (
+                      <Anchor href={`/api/download/attachments/${file.id}`} lineClamp={1} download>
+                        {file.name}
+                      </Anchor>
+                    ) : (
+                      <Text size="sm" weight={500} lineClamp={1}>
+                        {file.name}
+                      </Text>
+                    )}
+                    <Tooltip label="Remove">
+                      <ActionIcon size="sm" color="red" variant="transparent" onClick={onRemove}>
+                        <IconTrash />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+                </Paper>
+              )}
             />
             <ActionButtons
               article={article}

@@ -15,6 +15,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 
 export default function Account({ providers }: Props) {
   const { apiKeys } = useFeatureFlags();
@@ -34,6 +35,7 @@ export default function Account({ providers }: Props) {
             </Text>
           </Stack>
           <ProfileCard />
+          <UserReferralCodesCard />
           <SocialProfileCard />
           <SettingsCard />
           <ModerationCard />

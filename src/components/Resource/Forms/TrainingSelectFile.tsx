@@ -11,18 +11,14 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { showNotification, updateNotification } from '@mantine/notifications';
 import { TrainingStatus } from '@prisma/client';
-import { IconCheck, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/image-resource-training';
-import { ModelFileType } from '~/server/common/constants';
-import { UploadType } from '~/server/common/enums';
-import { useS3UploadStore } from '~/store/s3-upload.store';
+import { getModelFileFormat } from '~/utils/file-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -126,7 +122,6 @@ export default function TrainingSelectFile({
   onNextClick: () => void;
 }) {
   const queryUtils = trpc.useContext();
-  const { upload } = useS3UploadStore();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const modelVersion = model?.modelVersions?.[0];
@@ -136,8 +131,6 @@ export default function TrainingSelectFile({
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
   );
-
-  const notificationId = `${modelVersion?.id || 1}-uploading-file-notification`;
 
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
@@ -157,25 +150,13 @@ export default function TrainingSelectFile({
       };
 
       upsertVersionMutation.mutate(versionMutateData);
-
-      updateNotification({
-        id: notificationId,
-        icon: <IconCheck size={18} />,
-        color: 'teal',
-        title: 'Selection complete!',
-        message: '',
-        autoClose: 3000,
-        disallowClose: false,
-      });
     },
     onError(error) {
       setAwaitInvalidate(false);
-      updateNotification({
-        id: notificationId,
-        icon: <IconX size={18} />,
-        color: 'red',
+      showErrorNotification({
         title: 'Failed to create file.',
-        message: error.message,
+        error: new Error(error.message),
+        autoClose: false,
       });
     },
   });
@@ -198,6 +179,8 @@ export default function TrainingSelectFile({
       });
     },
   });
+
+  const moveAssetMutation = trpc.training.moveAsset.useMutation();
 
   const handleSubmit = async () => {
     if (!model || !modelVersion) {
@@ -222,60 +205,34 @@ export default function TrainingSelectFile({
 
     setAwaitInvalidate(true);
 
-    showNotification({
-      id: notificationId,
-      loading: true,
-      autoClose: false,
-      disallowClose: true,
-      title: 'Applying selected model file...',
-      message: '',
-    });
-
-    const result = await fetch(selectedFile);
-    if (!result.ok) {
-      setAwaitInvalidate(false);
-      updateNotification({
-        id: notificationId,
-        icon: <IconX size={18} />,
-        color: 'red',
-        title: 'Failed to create file.',
-        message: 'Please try again.',
-      });
-      console.log(result);
-      return;
-    }
-    const blob = await result.blob();
-    const blobFile = new File([blob], `${selectedFile.split('/').pop()}`, {
-      type: blob.type,
-    });
-
-    await upload(
+    moveAssetMutation.mutate(
       {
-        file: blobFile,
-        type: UploadType.Model,
-        meta: {
-          versionId: modelVersion.id,
-          // TODO more
-        },
+        url: selectedFile,
+        modelId: model.id,
       },
-      async ({ meta, size, ...result }) => {
-        const { versionId, type, uuid, ...metadata } = meta as {
-          versionId: number;
-          type: ModelFileType;
-          uuid: string;
-        };
-        const updatedMetadata = {
-          ...metadata,
-          selectedEpochUrl: selectedFile,
-        };
-        upsertFileMutation.mutate({
-          ...result,
-          ...(existingModelFile && { id: existingModelFile.id }),
-          sizeKB: bytesToKB(size),
-          modelVersionId: versionId,
-          type: 'Model',
-          metadata: updatedMetadata,
-        });
+      {
+        onSuccess: (data) => {
+          upsertFileMutation.mutate({
+            ...(existingModelFile && { id: existingModelFile.id }),
+            url: data.newUrl,
+            name: data.newUrl.split('/').pop() ?? 'model-file',
+            sizeKB: bytesToKB(data.fileSize ?? 0),
+            modelVersionId: modelVersion.id,
+            type: 'Model',
+            metadata: {
+              format: getModelFileFormat(data.newUrl),
+              selectedEpochUrl: selectedFile,
+            },
+          });
+        },
+        onError: (error) => {
+          setAwaitInvalidate(false);
+          showErrorNotification({
+            title: 'Failed to create file.',
+            error: new Error(error.message),
+            autoClose: false,
+          });
+        },
       }
     );
   };

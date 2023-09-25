@@ -3,6 +3,8 @@ import { createStyles } from '@mantine/core';
 export const useCardStyles = createStyles<string, { aspectRatio: number }>(
   (theme, params, getRef) => {
     const imageRef = getRef('image');
+    const headerRef = getRef('header');
+    const topRef = getRef('top');
     const { aspectRatio } = params;
 
     return {
@@ -24,6 +26,28 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         objectPosition: aspectRatio < 1 ? 'top-center' : 'center',
         transition: 'transform 400ms ease',
         minWidth: '100%',
+      },
+
+      header: {
+        ref: headerRef,
+        padding: '12px',
+        background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[2],
+        width: '100%',
+      },
+
+      withHeader: {
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+
+        [`& .${headerRef}`]: {
+          height: '60px',
+        },
+        [`& .${imageRef}`]: {
+          height: 'calc(100% - 60px)',
+        },
+        [`& .${topRef}`]: {
+          top: '60px',
+        },
       },
 
       noImage: {
@@ -59,7 +83,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         padding: theme.spacing.sm,
       },
 
-      top: { top: 0 },
+      top: { top: 0, ref: topRef },
       bottom: { bottom: 0 },
 
       iconBadge: { color: 'white', backgroundColor: theme.fn.rgba('#000', 0.31) },

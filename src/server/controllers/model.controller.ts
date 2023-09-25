@@ -119,12 +119,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       ...model,
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
-      tagsOnModels: model.tagsOnModels.map(({ tag }) => ({
-        tag: {
-          ...tag,
-          isCategory: modelCategories.some((c) => c.id === tag.id),
-        },
-      })),
+      tagsOnModels: model.tagsOnModels
+        .filter(({ tag }) => !tag.unlisted)
+        .map(({ tag }) => ({
+          tag: {
+            id: tag.id,
+            name: tag.name,
+            isCategory: modelCategories.some((c) => c.id === tag.id),
+          },
+        })),
       modelVersions: filteredVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel
           ? getEarlyAccessDeadline({
@@ -776,6 +779,7 @@ export const getMyTrainingModelsHandler = async ({
             trainingStatus: true,
             files: {
               select: {
+                id: true,
                 url: true,
                 type: true,
                 metadata: true,

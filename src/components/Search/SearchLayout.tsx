@@ -66,7 +66,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       transition: 'transform 200ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-      zIndex: 1000,
+      zIndex: 200,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
 
       [theme.fn.smallerThan('sm')]: {
@@ -106,10 +106,6 @@ const useStyles = createStyles((theme, _, getRef) => {
 });
 
 function renderSearchComponent(props: RenderSearchComponentProps) {
-  // if (true) {
-  //   return null;
-  // }
-
   return <CustomSearchBox {...props} />;
 }
 
@@ -132,7 +128,7 @@ export function SearchLayout({
         indexName={indexName}
         routing={routing}
       >
-        <Configure hitsPerPage={50} />
+        <Configure hitsPerPage={50} attributesToHighlight={[]} />
         <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>

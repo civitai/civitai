@@ -163,7 +163,7 @@ export const createGenerationRequestSchema = z.object({
     .object({
       id: z.number(),
       modelType: z.nativeEnum(ModelType),
-      strength: z.number().min(-1).max(2).optional(),
+      strength: z.number().min(-1).max(2).default(1),
       triggerWord: z.string().optional(),
     })
     .array()

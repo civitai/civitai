@@ -13,6 +13,7 @@ import {
   IconFileText,
   IconHome,
   IconLayoutList,
+  IconMoneybag,
   IconPhoto,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -24,6 +25,7 @@ const homeOptions = {
   images: '/images',
   posts: '/posts',
   articles: '/articles',
+  bounties: '/bounties',
 } as const;
 type HomeOptions = keyof typeof homeOptions;
 
@@ -68,6 +70,7 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
   const { set } = useHomeSelection();
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/').pop() || 'home';
+  const { engagement } = router.query;
 
   const data: SegmentedControlItem[] = [
     {
@@ -138,9 +141,7 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
       ),
       value: 'posts',
     },
-  ];
-  if (features.articles)
-    data.push({
+    {
       label: (
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
@@ -156,7 +157,36 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         </Group>
       ),
       value: 'articles',
-    });
+    },
+    {
+      label: (
+        <Group
+          align="center"
+          spacing={8}
+          onClick={
+            // Workaround to clear out any query filters
+            activePath === 'bounties' && engagement
+              ? () => router.push('/bounties', undefined, { shallow: true })
+              : undefined
+          }
+          noWrap
+        >
+          <ThemeIcon
+            size={30}
+            color={activePath === 'bounties' ? theme.colors.dark[7] : 'transparent'}
+            p={6}
+          >
+            <IconMoneybag />
+          </ThemeIcon>
+          <Text size="sm" inline>
+            Bounties
+          </Text>
+        </Group>
+      ),
+      value: 'bounties',
+      disabled: !features.bounties,
+    },
+  ];
 
   return (
     <SegmentedControl
@@ -167,7 +197,7 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
       size="md"
       classNames={classes}
       value={activePath}
-      data={data}
+      data={data.filter((item) => item.disabled === undefined || item.disabled === false)}
       onChange={(value) => {
         const url = set(value as HomeOptions);
         router.push(url);

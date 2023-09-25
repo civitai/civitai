@@ -42,6 +42,9 @@ const schema = modelUpsertSchema
   .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
+  })
+  .refine((data) => !(data.nsfw && data.poi), {
+    message: 'Mature content depicting actual people is not permitted.',
   });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),

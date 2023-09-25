@@ -90,8 +90,10 @@ export const serverSchema = z.object({
   FEATUREBASE_URL: z.string().url().optional(),
   NEWSLETTER_ID: z.string().optional(),
   NEWSLETTER_KEY: z.string().optional(),
+  NEWSLETTER_SERVER: z.string().optional(),
   BUZZ_ENDPOINT: z.string().url().optional(),
   SIGNALS_ENDPOINT: z.string().url().optional(),
+  CACHE_DNS: z.coerce.boolean().default(false),
 });
 
 /**
@@ -119,6 +121,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_USER_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
+  NEXT_PUBLIC_BASE_URL: z.string().optional(),
 });
 
 /**
@@ -147,4 +150,5 @@ export const clientEnv = {
   NEXT_PUBLIC_USER_LOOKUP_URL: process.env.NEXT_PUBLIC_USER_LOOKUP_URL,
   NEXT_PUBLIC_MODEL_LOOKUP_URL: process.env.NEXT_PUBLIC_MODEL_LOOKUP_URL,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
+  NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
 };

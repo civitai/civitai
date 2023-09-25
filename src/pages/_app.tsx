@@ -51,6 +51,7 @@ import { GenerationPanel } from '~/components/ImageGeneration/GenerationPanel';
 import { HiddenPreferencesProvider } from '../providers/HiddenPreferencesProvider';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
+import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -150,21 +151,23 @@ function MyApp(props: CustomAppProps) {
             <CivitaiSessionProvider>
               <CivitaiPosthogProvider>
                 <CookiesProvider value={cookies}>
-                  <FiltersProvider value={filters}>
-                    <HiddenPreferencesProvider>
-                      <CivitaiLinkProvider>
-                        <CustomModalsProvider>
-                          <NotificationsProvider>
-                            <FreezeProvider>
-                              <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
-                            </FreezeProvider>
-                            <GenerationPanel />
-                            <RoutedContextProvider2 />
-                          </NotificationsProvider>
-                        </CustomModalsProvider>
-                      </CivitaiLinkProvider>
-                    </HiddenPreferencesProvider>
-                  </FiltersProvider>
+                  <ReferralsProvider>
+                    <FiltersProvider value={filters}>
+                      <HiddenPreferencesProvider>
+                        <CivitaiLinkProvider>
+                          <CustomModalsProvider>
+                            <NotificationsProvider>
+                              <FreezeProvider>
+                                <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
+                              </FreezeProvider>
+                              <GenerationPanel />
+                              <RoutedContextProvider2 />
+                            </NotificationsProvider>
+                          </CustomModalsProvider>
+                        </CivitaiLinkProvider>
+                      </HiddenPreferencesProvider>
+                    </FiltersProvider>
+                  </ReferralsProvider>
                 </CookiesProvider>
               </CivitaiPosthogProvider>
             </CivitaiSessionProvider>
@@ -228,6 +231,18 @@ function MyApp(props: CustomAppProps) {
                 '#C37E2D',
                 '#A27036',
                 '#88643B',
+              ],
+              success: [
+                '#9EC3B8',
+                '#84BCAC',
+                '#69BAA2',
+                '#4CBD9C',
+                '#32BE95',
+                '#1EBD8E',
+                '#299C7A',
+                '#2F826A',
+                '#326D5C',
+                '#325D51',
               ],
             },
           }}

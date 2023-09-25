@@ -22,6 +22,9 @@ import {
   toggleUserArticleEngagement,
   updateLeaderboardRank,
   toggleBan,
+  toggleUserBountyEngagement,
+  userByReferralCode,
+  createUserReferral,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -37,11 +40,14 @@ import {
   ToggleModelEngagementInput,
   GetUserCosmeticsSchema,
   ToggleUserArticleEngagementsInput,
+  ToggleUserBountyEngagementsInput,
   ReportProhibitedRequestInput,
+  UserByReferralCodeSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
 import {
+  handleTrackError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -201,7 +207,7 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, showNsfw, username, ...data } = input;
+  const { id, badgeId, nameplateId, showNsfw, username, source, userReferralCode, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
   if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
@@ -239,6 +245,13 @@ export const updateUserHandler = async ({
     });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
+    if (userReferralCode || source) {
+      await createUserReferral({
+        id: updatedUser.id,
+        userReferralCode,
+        source,
+      });
+    }
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
@@ -795,6 +808,30 @@ export const toggleArticleEngagementHandler = async ({
   }
 };
 
+export const toggleBountyEngagementHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleUserBountyEngagementsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const on = await toggleUserBountyEngagement({ ...input, userId: ctx.user.id });
+
+    // Not awaiting here to avoid slowing down the response
+    ctx.track
+      .bountyEngagement({
+        ...input,
+        type: on ? input.type : `Delete${input.type}`,
+      })
+      .catch(handleTrackError);
+
+    return on;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
 export const reportProhibitedRequestHandler = async ({
   input,
   ctx,
@@ -803,6 +840,7 @@ export const reportProhibitedRequestHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   await ctx.track.prohibitedRequest(input);
+  if (ctx.user.isModerator) return false;
 
   try {
     const userId = ctx.user.id;
@@ -838,4 +876,12 @@ export const reportProhibitedRequestHandler = async ({
   }
 
   return false;
+};
+
+export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {
+  try {
+    return await userByReferralCode(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

@@ -1,4 +1,4 @@
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import {
   Stack,
   Text,
@@ -21,6 +21,7 @@ import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generationPanel } from '~/store/generation.store';
 import { encodeMetadata } from '~/utils/metadata';
+import { fromJson } from '~/utils/json-helpers';
 
 type Props = {
   meta: ImageMetaProps;
@@ -68,6 +69,7 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
 
     let hasControlNet = Object.keys(meta).some((x) => x.startsWith('ControlNet'));
     if (meta.comfy) {
+      // @ts-ignore: ignoring because ts is acting up with meta.comfy not being defined
       medium.push({ label: 'Workflow', value: <ComfyNodes meta={meta} /> });
       hasControlNet = (meta.controlNets as string[])?.length > 0;
     }
@@ -216,14 +218,16 @@ export function ImageMeta({ meta, imageId, generationProcess = 'txt2img' }: Prop
 
 function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
   const { copied, copy } = useClipboard();
-  const workflow = (meta.comfy as any).workflow;
+  const comfy = typeof meta.comfy === 'string' ? fromJson<ComfyMetaSchema>(meta.comfy) : meta.comfy;
+  const { workflow } = comfy ?? {};
+
   return (
     <Group
       onClick={() => copy(JSON.stringify(workflow))}
       spacing={4}
       sx={{ justifyContent: 'flex-end', cursor: 'pointer' }}
     >
-      {workflow.nodes.length} Nodes
+      {workflow?.nodes?.length ?? 0} Nodes
       {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
     </Group>
   );

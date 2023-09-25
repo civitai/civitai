@@ -79,6 +79,8 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Article]: 'article',
   [ReportEntity.Post]: 'post',
   [ReportEntity.Collection]: 'collection',
+  [ReportEntity.Bounty]: 'bounty',
+  [ReportEntity.BountyEntry]: 'bountyEntry',
 };
 
 export const createReport = async ({
@@ -231,6 +233,25 @@ export const createReport = async ({
         await tx.collectionReport.create({
           data: {
             collection: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.Bounty:
+        if (data.reason === ReportReason.NSFW)
+          await tx.bounty.update({ where: { id }, data: { nsfw: true } });
+
+        await tx.bountyReport.create({
+          data: {
+            bounty: { connect: { id } },
+            report,
+          },
+        });
+        break;
+      case ReportEntity.BountyEntry:
+        await tx.bountyEntryReport.create({
+          data: {
+            bountyEntry: { connect: { id } },
             report,
           },
         });

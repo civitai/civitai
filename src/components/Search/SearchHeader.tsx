@@ -24,6 +24,7 @@ import {
   IconFilter,
   IconUsers,
   IconLayoutCollage,
+  IconMoneybag,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -31,6 +32,7 @@ import { useSearchLayout, useSearchLayoutStyles } from '~/components/Search/Sear
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -199,6 +201,26 @@ export const SearchHeader = () => {
       ),
       value: COLLECTIONS_SEARCH_INDEX,
     },
+    features.bounties
+      ? {
+          label: (
+            <Group align="center" spacing={8} noWrap>
+              <ThemeIcon
+                size={30}
+                color={index === BOUNTIES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+                p={6}
+                radius="xl"
+              >
+                <IconMoneybag />
+              </ThemeIcon>
+              <Text size="sm" inline>
+                Bounties
+              </Text>
+            </Group>
+          ),
+          value: BOUNTIES_SEARCH_INDEX,
+        }
+      : undefined,
     {
       label: (
         <Group align="center" spacing={8} noWrap>
