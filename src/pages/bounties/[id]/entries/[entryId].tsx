@@ -219,6 +219,7 @@ export default function BountyEntryDetailsPage({
     heartCountAllTime: number;
     laughCountAllTime: number;
     cryCountAllTime: number;
+    tippedAmountCountAllTime: number;
   } | null = bountyEntry?.stats ?? null;
 
   const userSection = (
@@ -557,6 +558,7 @@ export default function BountyEntryDetailsPage({
                     heartCount: stats?.heartCountAllTime,
                     laughCount: stats?.laughCountAllTime,
                     cryCount: stats?.cryCountAllTime,
+                    tippedAmountCount: stats?.tippedAmountCountAllTime,
                   }}
                 />
                 {user?.id && (
@@ -625,6 +627,7 @@ export default function BountyEntryDetailsPage({
                           heartCount: stats?.heartCountAllTime,
                           laughCount: stats?.laughCountAllTime,
                           cryCount: stats?.cryCountAllTime,
+                          tippedAmountCount: stats?.tippedAmountCountAllTime,
                         }}
                       />
                       {user?.id && (
