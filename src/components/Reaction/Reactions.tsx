@@ -1,4 +1,4 @@
-import { Button, Group, Text, GroupProps, useMantineTheme } from '@mantine/core';
+import { Button, Group, Text, GroupProps, useMantineTheme, Badge } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
 import { IconBolt, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
@@ -300,6 +300,7 @@ function BuzzTippingBadge({
   }
 
   const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType, entityId });
+
   return (
     <InteractiveTipBuzzButton
       toUserId={toUserId}
@@ -307,12 +308,12 @@ function BuzzTippingBadge({
       entityId={entityId}
       {...props}
     >
-      <Button size="xs" radius="xs" variant="subtle" pl={2} pr={3} color="yellow.7" compact>
-        <Group spacing={4} align="center" noWrap>
+      <Badge size="md" radius="xs" variant="light" py={10} px={3} color="yellow.7">
+        <Group spacing={2} align="center" noWrap>
           <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
           <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
         </Group>
-      </Button>
+      </Badge>
     </InteractiveTipBuzzButton>
   );
 }

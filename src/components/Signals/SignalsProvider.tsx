@@ -61,13 +61,23 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
   const { data } = trpc.signals.getAccessToken.useQuery(undefined, {
     enabled: !!session.data?.user,
   });
+  const queryUtils = trpc.useContext();
 
   useEffect(() => {
     if (!workerRef.current && data?.accessToken && firstRunRef.current) {
       firstRunRef.current = false;
       createSignalWorker({
         token: data.accessToken,
-        onConnected: () => setConnected(true),
+        onConnected: () => {
+          console.log('Well well well');
+          setConnected(true);
+        },
+        onReconnected: () => {
+          console.log('Reconnected o/');
+          if (session.data?.user) {
+            queryUtils.buzz.getUserAccount.invalidate();
+          }
+        },
         onClosed: (message) => setConnected(false),
         onError: (message) => console.error({ type: 'signal service error', message }),
       }).then((worker) => {

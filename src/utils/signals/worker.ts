@@ -19,6 +19,7 @@ const emitter = new EventEmitter<{
   connectionReady: undefined;
   connectionClosed: { message?: string };
   connectionError: { message?: string };
+  connectionReconnected: undefined;
   eventReceived: { target: string; payload: any };
 }>();
 
@@ -36,7 +37,10 @@ const getConnection = async ({ token }: { token: string }) => {
 
   try {
     await connection.start();
-    connection.onreconnected(() => emitter.emit('connectionReady', undefined));
+    connection.onreconnected(() => {
+      emitter.emit('connectionReady', undefined);
+      emitter.emit('connectionReconnected', undefined);
+    });
     connection.onclose((error) =>
       emitter.emit('connectionError', { message: JSON.stringify(error) })
     );
@@ -68,6 +72,7 @@ const start = async (port: MessagePort) => {
   postMessage({ type: 'worker:ready' });
 
   const emitterOffHandlers = [
+    emitter.on('connectionReconnected', () => postMessage({ type: 'connection:reconnected' })),
     emitter.on('connectionReady', () => postMessage({ type: 'connection:ready' })),
     emitter.on('connectionClosed', ({ message }) =>
       postMessage({ type: 'connection:closed', message })

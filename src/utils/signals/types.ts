@@ -16,6 +16,10 @@ type SignalWorkerError = {
   message?: string;
 };
 
+type SignalWorkerReconnected = {
+  type: 'connection:reconnected';
+};
+
 type SignalEventReceived<T = unknown> = {
   type: 'event:received';
   target: string;
@@ -27,6 +31,7 @@ export type WorkerOutgoingMessage =
   | SignalConnectionStarted
   | SignalConnectionClosed
   | SignalWorkerError
+  | SignalWorkerReconnected
   | SignalEventReceived;
 
 export type WorkerIncomingMessage =
