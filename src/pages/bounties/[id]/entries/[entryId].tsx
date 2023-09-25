@@ -461,7 +461,7 @@ export default function BountyEntryDetailsPage({
                             </Stack>
                           </Group>
 
-                          <Group spacing={0}>
+                          <Group spacing={0} noWrap>
                             {file.metadata.benefactorsOnly && (
                               <Tooltip
                                 label="Only users who award this entry will have access to this file"
