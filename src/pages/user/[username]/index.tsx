@@ -46,7 +46,7 @@ import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -76,6 +76,7 @@ import { trpc } from '~/utils/trpc';
 import { formatDate } from '~/utils/date-helpers';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { env } from '~/env/client.mjs';
+import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -150,8 +151,6 @@ export function UserImagesPage() {
       sort = ImageSort.Newest,
       username = '',
       reactions,
-      types = undefined,
-      withMeta = undefined,
       ...query
     },
   } = useImageQueryParams();
@@ -174,49 +173,51 @@ export function UserImagesPage() {
       >
         <MasonryContainer fluid>
           <Stack spacing="xs">
-            <Group spacing={8}>
-              {isSameUser && (
-                <ContentToggle
-                  size="xs"
-                  value={section}
-                  onChange={(section) => replace({ section })}
-                />
-              )}
-              {viewingReactions && (
-                <Chip.Group
-                  spacing={4}
-                  value={reactions ?? []}
-                  onChange={(reactions: ReviewReactions[]) => replace({ reactions })}
-                  className={classes.chipGroup}
-                  multiple
-                  noWrap
-                >
-                  {availableReactions.map((reaction, index) => (
-                    <Chip
-                      key={index}
-                      value={reaction}
-                      classNames={classes}
-                      variant="filled"
-                      radius="sm"
-                      size="xs"
-                    >
-                      {constants.availableReactions[reaction as ReviewReactions]}
-                    </Chip>
-                  ))}
-                </Chip.Group>
-              )}
-              <SortFilter
-                type="images"
-                value={sort}
-                onChange={(x) => replace({ sort: x as ImageSort })}
-              />
-              <Box ml="auto">
-                <PeriodFilter
+            <Group spacing={8} position="apart">
+              <Group spacing={8}>
+                {isSameUser && (
+                  <ContentToggle
+                    size="xs"
+                    value={section}
+                    onChange={(section) => replace({ section })}
+                  />
+                )}
+                {viewingReactions && (
+                  <Chip.Group
+                    spacing={4}
+                    value={reactions ?? []}
+                    onChange={(reactions: ReviewReactions[]) => replace({ reactions })}
+                    className={classes.chipGroup}
+                    multiple
+                    noWrap
+                  >
+                    {availableReactions.map((reaction, index) => (
+                      <Chip
+                        key={index}
+                        value={reaction}
+                        classNames={classes}
+                        variant="filled"
+                        radius="sm"
+                        size="xs"
+                      >
+                        {constants.availableReactions[reaction as ReviewReactions]}
+                      </Chip>
+                    ))}
+                  </Chip.Group>
+                )}
+              </Group>
+              <Group spacing={8} noWrap>
+                <SortFilter
                   type="images"
-                  value={period}
-                  onChange={(x) => replace({ period: x })}
+                  variant="button"
+                  value={sort}
+                  onChange={(x) => replace({ sort: x as ImageSort })}
                 />
-              </Box>
+                <ImageFiltersDropdown
+                  query={{ ...query, period }}
+                  onChange={(filters) => replace(filters)}
+                />
+              </Group>
             </Group>
             <ImagesInfinite
               filters={{
@@ -225,8 +226,6 @@ export function UserImagesPage() {
                 sort,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
-                types,
-                withMeta,
               }}
             />
           </Stack>

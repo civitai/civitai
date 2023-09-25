@@ -1,3 +1,4 @@
+import { Chip, createStyles } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useCallback } from 'react';
@@ -19,8 +20,26 @@ type PeriodFilterProps = StatefulProps | DumbProps;
 const periodOptions = Object.values(MetricTimeframe);
 export function PeriodFilter(props: PeriodFilterProps) {
   if (props.value) return <DumbPeriodFilter {...props} />;
-  return <StatefulPeriodFilter type={props.type} disabled={props.disabled} />;
+  return <StatefulPeriodFilter {...props} type={props.type} />;
 }
+
+const useStyles = createStyles((theme) => ({
+  label: {
+    fontSize: 12,
+    fontWeight: 600,
+
+    '&[data-checked]': {
+      '&, &:hover': {
+        color: theme.white,
+        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
+      },
+
+      '&[data-variant="filled"]': {
+        backgroundColor: 'transparent',
+      },
+    },
+  },
+}));
 
 type DumbProps = {
   type: FilterSubTypes;
@@ -28,21 +47,50 @@ type DumbProps = {
   onChange: (value: MetricTimeframe) => void;
   disabled?: boolean;
   hideMode?: boolean;
+  variant?: 'menu' | 'chips';
 };
-function DumbPeriodFilter({ value, onChange, disabled, type, hideMode }: DumbProps) {
+function DumbPeriodFilter({
+  value,
+  onChange,
+  disabled,
+  type,
+  hideMode,
+  variant = 'menu',
+}: DumbProps) {
+  const { classes } = useStyles();
   const showPeriodMode = !hideMode && hasPeriodMode(type);
+  const options = periodOptions.map((x) => ({ label: getDisplayName(x), value: x }));
 
   return (
     <IsClient>
-      <SelectMenu
-        label={getDisplayName(value)}
-        options={periodOptions.map((x) => ({ label: getDisplayName(x), value: x }))}
-        onClick={onChange}
-        value={value}
-        disabled={disabled}
-      >
-        {showPeriodMode && <PeriodModeToggle type={type as PeriodModeType} />}
-      </SelectMenu>
+      {variant === 'menu' && (
+        <SelectMenu
+          label={getDisplayName(value)}
+          options={options}
+          onClick={onChange}
+          value={value}
+          disabled={disabled}
+        >
+          {showPeriodMode && <PeriodModeToggle type={type as PeriodModeType} />}
+        </SelectMenu>
+      )}
+      {variant === 'chips' && (
+        <Chip.Group spacing={8} value={value} onChange={onChange}>
+          {options.map((x, index) => (
+            <Chip
+              key={index}
+              value={x.value}
+              classNames={classes}
+              size="sm"
+              radius="xl"
+              variant="filled"
+              tt="capitalize"
+            >
+              {x.label}
+            </Chip>
+          ))}
+        </Chip.Group>
+      )}
     </IsClient>
   );
 }
@@ -53,8 +101,9 @@ type StatefulProps = {
   value?: undefined;
   onChange?: undefined;
   hideMode?: boolean;
+  variant?: 'menu' | 'chips';
 };
-function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
+function StatefulPeriodFilter({ type, disabled, hideMode, variant }: StatefulProps) {
   const { query, pathname, replace } = useRouter();
 
   const globalPeriod = useFiltersContext(
@@ -81,6 +130,7 @@ function StatefulPeriodFilter({ type, disabled, hideMode }: StatefulProps) {
       onChange={setPeriod}
       disabled={disabled}
       hideMode={hideMode}
+      variant={variant}
     />
   );
 }
