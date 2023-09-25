@@ -9,7 +9,7 @@ import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schem
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { numericString, numericStringArray } from '~/utils/zod-helpers';
+import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -34,7 +34,7 @@ export const imagesQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.nativeEnum(MediaType))
     ),
-    withMeta: z.coerce.boolean(),
+    withMeta: booleanString(),
     section: z.enum(['images', 'reactions']),
   })
   .partial();

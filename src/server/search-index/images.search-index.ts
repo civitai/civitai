@@ -181,7 +181,6 @@ const onFetchItemsToIndex = async ({
     Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
     Prisma.sql`i."tosViolation" = false`,
     Prisma.sql`i."type" = 'image'`,
-    Prisma.sql`i."scannedAt" IS NOT NULL`,
     Prisma.sql`i."needsReview" IS NULL`,
     Prisma.sql`p."publishedAt" IS NOT NULL`,
   ];
@@ -214,7 +213,7 @@ const onFetchItemsToIndex = async ({
       FROM "Image" i
       JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
       WHERE ${Prisma.join(WHERE, ' AND ')}
-    ORDER BY i."id"  
+    ORDER BY i."id"
     LIMIT ${READ_BATCH_SIZE}
   ), ranks AS MATERIALIZED (
     SELECT
@@ -239,8 +238,8 @@ const onFetchItemsToIndex = async ({
           'cryCountAllTime', SUM("cryCount"),
           'tippedAmountCountAllTime', SUM("tippedAmountCount")
         ) stats
-      FROM "ImageMetric" im 
-      WHERE im."imageId" IN (SELECT id FROM target) 
+      FROM "ImageMetric" im
+      WHERE im."imageId" IN (SELECT id FROM target)
       GROUP BY im."imageId"
   ), users AS MATERIALIZED (
     SELECT
@@ -274,7 +273,7 @@ const onFetchItemsToIndex = async ({
   )
   SELECT
     t.*,
-    (SELECT rank FROM ranks r WHERE r."imageId" = t.id), 
+    (SELECT rank FROM ranks r WHERE r."imageId" = t.id),
     (SELECT stats FROM stats s WHERE s."imageId" = t.id),
     (SELECT "user" FROM users u WHERE u.id = t."userId"),
     (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
@@ -326,7 +325,7 @@ const onFetchItemsToIndex = async ({
   }
 
   const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
-    const parsed = imageGenerationSchema.partial().safeParse(meta);
+    const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
 
     return {
       ...imageRecord,

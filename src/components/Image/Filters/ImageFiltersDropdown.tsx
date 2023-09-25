@@ -17,13 +17,43 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { PeriodFilter } from '~/components/Filters';
+import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
   (value) => value === 'image' || value === 'video'
 );
 
-export function ImageFiltersDropdown() {
+const useStyles = createStyles((theme) => ({
+  label: {
+    fontSize: 12,
+    fontWeight: 600,
+
+    '&[data-checked]': {
+      '&, &:hover': {
+        color: theme.white,
+        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
+      },
+
+      '&[data-variant="filled"]': {
+        backgroundColor: 'transparent',
+      },
+    },
+  },
+  opened: {
+    transform: 'rotate(180deg)',
+    transition: 'transform 200ms ease',
+  },
+
+  actionButton: {
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+    },
+  },
+}));
+
+export function ImageFiltersDropdown({ query, onChange }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
 
@@ -34,20 +64,23 @@ export function ImageFiltersDropdown() {
     setFilters: state.setImageFilters,
   }));
 
-  const filterLength =
-    (filters.types?.length ?? 0) +
-    (!!filters.withMeta ? 1 : 0) +
-    (filters.period !== MetricTimeframe.AllTime ? 1 : 0);
+  const mergedFilters = query || filters;
 
-  const clearFilters = useCallback(
-    () =>
-      setFilters({
-        types: undefined,
-        withMeta: false,
-        period: MetricTimeframe.AllTime,
-      }),
-    [setFilters]
-  );
+  const filterLength =
+    (mergedFilters.types?.length ?? 0) +
+    (mergedFilters.withMeta ? 1 : 0) +
+    (mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
+
+  const clearFilters = useCallback(() => {
+    const reset = {
+      types: undefined,
+      withMeta: false,
+      period: MetricTimeframe.AllTime,
+    };
+
+    if (onChange) onChange(reset);
+    else setFilters(reset);
+  }, [onChange, setFilters]);
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -87,26 +120,25 @@ export function ImageFiltersDropdown() {
     <Stack spacing="lg">
       <Stack spacing="md">
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Chip.Group
-          spacing={8}
-          value={filters.period}
-          onChange={(period: MetricTimeframe) => setFilters({ period })}
-        >
-          {Object.values(MetricTimeframe).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
-            </Chip>
-          ))}
-        </Chip.Group>
+        {query?.period && onChange ? (
+          <PeriodFilter
+            type="images"
+            variant="chips"
+            value={query.period}
+            onChange={(period) => onChange({ period })}
+          />
+        ) : (
+          <PeriodFilter type="images" variant="chips" />
+        )}
       </Stack>
       <Stack spacing="md">
         <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
-          value={filters.types ?? []}
-          onChange={(types: MediaType[]) => {
-            setFilters({ types });
-          }}
+          value={mergedFilters.types ?? []}
+          onChange={(types: MediaType[]) =>
+            onChange ? onChange({ types }) : setFilters({ types })
+          }
           multiple
         >
           {availableMediaTypes.map((type, index) => (
@@ -117,8 +149,12 @@ export function ImageFiltersDropdown() {
         </Chip.Group>
         <Switch
           label="Metadata only"
-          checked={filters.withMeta}
-          onChange={({ target }) => setFilters({ withMeta: target.checked })}
+          checked={mergedFilters.withMeta}
+          onChange={({ target }) =>
+            onChange
+              ? onChange({ withMeta: target.checked })
+              : setFilters({ withMeta: target.checked })
+          }
         />
       </Stack>
       {filterLength > 0 && (
@@ -175,30 +211,7 @@ export function ImageFiltersDropdown() {
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.white,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-}));
+type Props = {
+  query?: Partial<GetInfiniteImagesInput>;
+  onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
+};
