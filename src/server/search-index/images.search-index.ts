@@ -324,7 +324,7 @@ const onFetchItemsToIndex = async ({
   }
 
   const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
-    const parsed = imageGenerationSchema.partial().safeParse(meta);
+    const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
 
     return {
       ...imageRecord,
