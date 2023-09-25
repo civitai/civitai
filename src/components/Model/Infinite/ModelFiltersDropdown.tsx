@@ -16,7 +16,7 @@ import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons-react'
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ModelFilterSchema, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
+import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
@@ -38,8 +38,10 @@ export function ModelFiltersDropdown() {
   const flags = useFeatureFlags();
   const { set: setQueryFilters, ...queryFilters } = useModelQueryParams();
 
-  const filters = useFiltersContext((state) => state.models);
-  const setFilters = useSetFilters('models');
+  const { filters, setFilters } = useFiltersContext((state) => ({
+    filters: state.models,
+    setFilters: state.setModelFilters,
+  }));
   const showCheckpointType = !filters.types?.length || filters.types.includes('Checkpoint');
 
   const filterLength =

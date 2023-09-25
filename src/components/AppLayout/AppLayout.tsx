@@ -21,12 +21,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDebouncedState, useWindowEvent } from '@mantine/hooks';
 import { getScrollPosition } from '~/utils/window-helpers';
+import { useRouter } from 'next/router';
 
 export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
   const theme = useMantineTheme();
   const user = useCurrentUser();
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
+  const router = useRouter();
 
   const [hasFooter, setHasFooter] = useDebouncedState(true, 200);
 
@@ -34,6 +36,8 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
     const scroll = getScrollPosition();
     setHasFooter(scroll.y < 10);
   });
+
+  const atCreatePath = router.pathname.includes('/create');
 
   return (
     <AppShell
@@ -67,7 +71,7 @@ export function AppLayout({ children, navbar, renderSearchComponent }: Props) {
               style={{ transition: 'bottom 300ms linear' }}
             >
               {flags.assistant && <AssistantButton mr={4} />}
-              {flags.imageGeneration && <GenerationButton />}
+              {flags.imageGeneration && !atCreatePath && <GenerationButton />}
             </Affix>
           )}
         </>

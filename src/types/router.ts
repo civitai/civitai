@@ -79,3 +79,11 @@ export type CollectionGetInfinite = CollectionRouter['getInfinite']['items'];
 
 type TrainingRouter = RouterOutput['training'];
 export type TrainingModelData = TrainingRouter['getModelBasic'];
+
+type BountyRouter = RouterOutput['bounty'];
+export type BountyGetAll = BountyRouter['getInfinite']['items'];
+export type BountyGetById = BountyRouter['getById'];
+export type BountyGetEntries = BountyRouter['getEntries'];
+
+type BountyEntryRouter = RouterOutput['bountyEntry'];
+export type BountyEntryGetById = BountyEntryRouter['getById'];

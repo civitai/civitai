@@ -33,6 +33,7 @@ import {
   IconHistory,
   IconInfoSquareRounded,
   IconLogout,
+  IconMoneybag,
   IconMoonStars,
   IconPalette,
   IconPhotoUp,
@@ -53,7 +54,7 @@ import { useRouter } from 'next/router';
 import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
-import { useHomeSelection } from '~/components/HomeContentToggle/HomeContentToggle';
+import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
@@ -68,7 +69,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { UserBuzz } from '../User/UserBuzz';
-import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 
 const HEADER_HEIGHT = 70;
 
@@ -194,6 +194,7 @@ type MenuLink = {
   href: string;
   redirectReason?: LoginRedirectReason;
   visible?: boolean;
+  as?: string;
 };
 
 function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSearchComponentProps) {
@@ -273,8 +274,19 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           </Group>
         ),
       },
+      {
+        href: '/bounties/create',
+        visible: !isMuted && features.bounties,
+        redirectReason: 'create-bounty',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconMoneybag stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
+            Create a bounty
+          </Group>
+        ),
+      },
     ],
-    [isMuted, theme]
+    [features.bounties, features.imageTraining, isMuted, theme]
   );
   const links = useMemo<MenuLink[]>(
     () => [
@@ -325,6 +337,17 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconBookmark stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Bookmarked articles
+          </Group>
+        ),
+      },
+      {
+        href: '/bounties?engagement=favorite',
+        as: '/bounties',
+        visible: !!currentUser && features.bounties,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconMoneybag stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My bounties
           </Group>
         ),
       },
@@ -405,7 +428,14 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
     ],
-    [currentUser, router.asPath, theme, features.alternateHome]
+    [
+      currentUser,
+      features.imageTraining,
+      features.alternateHome,
+      features.buzz,
+      router.asPath,
+      theme,
+    ]
   );
 
   const burgerMenuItems = useMemo(
@@ -415,7 +445,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         .filter(({ visible }) => visible !== false)
         .map((link, index) => {
           const item = link.href ? (
-            <Link key={link.href} href={link.href} passHref>
+            <Link key={link.href} href={link.href} as={link.as} passHref>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
@@ -444,7 +474,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         .filter(({ visible }) => visible !== false)
         .map((link, index) =>
           link.href ? (
-            <Menu.Item key={link.href} component={NextLink} href={link.href}>
+            <Menu.Item key={link.href} component={NextLink} href={link.href} as={link.as}>
               {link.label}
             </Menu.Item>
           ) : (
@@ -567,6 +597,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                           key={!link.redirectReason ? index : undefined}
                           component={NextLink}
                           href={link.href}
+                          as={link.as}
                         >
                           {link.label}
                         </Menu.Item>

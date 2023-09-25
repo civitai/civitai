@@ -73,7 +73,6 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
       for (const request of requests) {
         for (const page of old.pages) {
           const index = page.items.findIndex((x) => x.id === request.id);
-          console.log({ index }, request.id);
           if (index > -1) {
             // page.items[index] = request;
             const item = page.items[index];

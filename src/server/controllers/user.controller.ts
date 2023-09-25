@@ -22,6 +22,7 @@ import {
   toggleUserArticleEngagement,
   updateLeaderboardRank,
   toggleBan,
+  toggleUserBountyEngagement,
   userByReferralCode,
   createUserReferral,
 } from '~/server/services/user.service';
@@ -39,11 +40,14 @@ import {
   ToggleModelEngagementInput,
   GetUserCosmeticsSchema,
   ToggleUserArticleEngagementsInput,
+  ToggleUserBountyEngagementsInput,
+  ReportProhibitedRequestInput,
   UserByReferralCodeSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
 import {
+  handleTrackError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -57,6 +61,8 @@ import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import { dbWrite } from '~/server/db/client';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { redis } from '~/server/redis/client';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -800,6 +806,76 @@ export const toggleArticleEngagementHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const toggleBountyEngagementHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleUserBountyEngagementsInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const on = await toggleUserBountyEngagement({ ...input, userId: ctx.user.id });
+
+    // Not awaiting here to avoid slowing down the response
+    ctx.track
+      .bountyEngagement({
+        ...input,
+        type: on ? input.type : `Delete${input.type}`,
+      })
+      .catch(handleTrackError);
+
+    return on;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const reportProhibitedRequestHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ReportProhibitedRequestInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  await ctx.track.prohibitedRequest(input);
+  if (ctx.user.isModerator) return false;
+
+  try {
+    const userId = ctx.user.id;
+    const countRes = await clickhouse?.query({
+      query: `
+        SELECT
+          COUNT(*) as count
+        FROM prohibitedRequests
+        WHERE userId = ${userId} AND time > subtractHours(now(), 24);
+      `,
+      format: 'JSONEachRow',
+    });
+    const count = ((await countRes?.json()) as [{ count: number }])?.[0]?.count ?? 0;
+    const limit =
+      constants.imageGeneration.requestBlocking.muted -
+      constants.imageGeneration.requestBlocking.notified;
+    if (count >= limit) {
+      await updateUserById({ id: userId, data: { muted: true } });
+      await invalidateSession(userId);
+
+      await ctx.track.userActivity({
+        type: 'Muted',
+        targetUserId: userId,
+      });
+
+      return true;
+    }
+  } catch (error) {
+    throw new TRPCError({
+      message: 'Error checking prohibited request count',
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  }
+
+  return false;
 };
 
 export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {

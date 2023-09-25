@@ -67,6 +67,41 @@ const baseGenerationParamsSchema = z.object({
   aspectRatio: z.string(),
 });
 
+export const blockedRequest = (() => {
+  let isBlocked = false;
+  let instances: number[] = [];
+  const updateStorage = () => {
+    localStorage.setItem('brc', JSON.stringify(instances));
+  };
+  const increment = () => {
+    if (isBlocked) return instances.length;
+    isBlocked = true;
+    instances.push(Date.now());
+    updateStorage();
+    return instances.length;
+  };
+  const clear = () => (isBlocked = false);
+  const status = () => {
+    const count = instances.length;
+    if (count > constants.imageGeneration.requestBlocking.muted) return 'muted';
+    if (count > constants.imageGeneration.requestBlocking.notified) return 'notified';
+    if (count > constants.imageGeneration.requestBlocking.warned) return 'warned';
+    return 'ok';
+  };
+  if (typeof window !== 'undefined') {
+    const storedInstances = JSON.parse(localStorage.getItem('brc') ?? '[]');
+    const cutOff = Date.now() - 1000 * 60 * 60 * 24;
+    instances = storedInstances.filter((x: number) => x > cutOff);
+    updateStorage();
+  }
+
+  return {
+    clear,
+    status,
+    increment,
+  };
+})();
+
 const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
   prompt: z
     .string()
@@ -74,11 +109,24 @@ const sharedGenerationParamsSchema = baseGenerationParamsSchema.extend({
     .max(1500, 'Prompt cannot be longer than 1500 characters')
     .superRefine((val, ctx) => {
       const { blockedFor, success } = auditPrompt(val);
-      if (!success)
+      if (!success) {
+        let message = `Blocked for: ${blockedFor.join(', ')}`;
+        const count = blockedRequest.increment();
+        const status = blockedRequest.status();
+        if (status === 'warned') {
+          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+        } else if (status === 'notified') {
+          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+        }
+
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `Blocked for: ${blockedFor.join(', ')}`,
+          message,
+          params: { count },
         });
+      } else {
+        blockedRequest.clear();
+      }
     }),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30),
@@ -115,7 +163,7 @@ export const createGenerationRequestSchema = z.object({
     .object({
       id: z.number(),
       modelType: z.nativeEnum(ModelType),
-      strength: z.number().min(-1).max(2).optional(),
+      strength: z.number().min(-1).max(2).default(1),
       triggerWord: z.string().optional(),
     })
     .array()

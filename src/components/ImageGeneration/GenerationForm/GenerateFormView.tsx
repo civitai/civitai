@@ -53,9 +53,11 @@ import { getDisplayName } from '~/utils/string-helpers';
 export function GenerateFormView({
   form,
   onSubmit,
+  onError,
 }: {
   form: UseFormReturn<GenerateFormModel>;
   onSubmit: (data: GenerateFormModel) => void;
+  onError?: (error: unknown) => void;
 }) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
@@ -92,6 +94,7 @@ export function GenerateFormView({
     <PersistentForm
       form={form}
       onSubmit={onSubmit}
+      onError={onError}
       style={{ height: '100%' }}
       name="generation-form"
       storage={typeof window !== 'undefined' ? window.localStorage : undefined}

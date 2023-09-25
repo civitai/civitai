@@ -2,7 +2,7 @@ import { Box, Center, Loader, Stack, Text, ThemeIcon, Title, UnstyledButton } fr
 import { useEffect, useMemo } from 'react';
 import { useInfiniteHits, useInstantSearch } from 'react-instantsearch';
 import { useInView } from 'react-intersection-observer';
-import { ImageCard, UnroutedImageCard } from '~/components/Cards/ImageCard';
+import { ImageCard } from '~/components/Cards/ImageCard';
 import {
   SearchableMultiSelectRefinementList,
   SortBy,
@@ -12,16 +12,13 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { applyUserPreferencesImages } from '~/components/Search/search.utils';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { CollectionContributorPermission } from '@prisma/client';
 
 export default function ImageSearch() {
   return (

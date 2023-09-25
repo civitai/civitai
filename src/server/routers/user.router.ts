@@ -5,12 +5,8 @@ import {
   getUserTagsHandler,
   getUserCreatorHandler,
   getUserFollowingListHandler,
-  getUserHiddenListHandler,
   getUserListsHandler,
   toggleFollowUserHandler,
-  toggleHideUserHandler,
-  toggleBlockedTagHandler,
-  batchBlockTagsHandler,
   getUserEngagedModelsHandler,
   getUserEngagedModelVersionsHandler,
   toggleBanHandler,
@@ -20,6 +16,8 @@ import {
   acceptTOSHandler,
   completeOnboardingHandler,
   toggleArticleEngagementHandler,
+  toggleBountyEngagementHandler,
+  reportProhibitedRequestHandler,
   userByReferralCodeHandler,
 } from '~/server/controllers/user.controller';
 import {
@@ -42,9 +40,15 @@ import {
   getUserTagsSchema,
   getUserCosmeticsSchema,
   toggleUserArticleEngagementSchema,
+  toggleUserBountyEngagementSchema,
+  reportProhibitedRequestSchema,
   userByReferralCodeSchema,
 } from '~/server/schema/user.schema';
-import { getUserArticleEngagements, removeAllContent } from '~/server/services/user.service';
+import {
+  getUserArticleEngagements,
+  getUserBountyEngagements,
+  removeAllContent,
+} from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const userRouter = router({
@@ -95,9 +99,18 @@ export const userRouter = router({
   getArticleEngagement: protectedProcedure.query(({ ctx }) =>
     getUserArticleEngagements({ userId: ctx.user.id })
   ),
+  getBountyEngagement: protectedProcedure.query(({ ctx }) =>
+    getUserBountyEngagements({ userId: ctx.user.id })
+  ),
   toggleArticleEngagement: protectedProcedure
     .input(toggleUserArticleEngagementSchema)
     .mutation(toggleArticleEngagementHandler),
+  toggleBountyEngagement: protectedProcedure
+    .input(toggleUserBountyEngagementSchema)
+    .mutation(toggleBountyEngagementHandler),
+  reportProhibitedRequest: protectedProcedure
+    .input(reportProhibitedRequestSchema)
+    .mutation(reportProhibitedRequestHandler),
   userByReferralCode: publicProcedure
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),

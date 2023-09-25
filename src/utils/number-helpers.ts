@@ -1,3 +1,5 @@
+import { Currency } from '@prisma/client';
+
 /**
  * @see https://gist.github.com/zentala/1e6f72438796d74531803cc3833c039c
  * @returns The file size in human-readable format
@@ -84,4 +86,17 @@ export const findClosest = (array: number[], target: number) => {
   return array.reduce((a, b) => {
     return Math.abs(b - target) < Math.abs(a - target) ? b : a;
   });
+};
+
+export const formatCurrencyForDisplay = (value: number, currency?: Currency) => {
+  if (!currency) {
+    numberWithCommas(value);
+  }
+
+  if (currency === Currency.BUZZ) {
+    return numberWithCommas(value);
+  }
+
+  const [intPart, decimalPart] = (value / 100).toFixed(2).split('.');
+  return `${numberWithCommas(intPart)}.${decimalPart}`;
 };

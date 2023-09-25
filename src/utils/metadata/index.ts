@@ -7,6 +7,7 @@ import { isDefined } from '~/utils/type-guards';
 import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { MediaType } from '@prisma/client';
 import { showErrorNotification } from '~/utils/notifications';
+import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
@@ -45,7 +46,7 @@ export const parsePromptMetadata = async (generationDetails: string) => {
   return await automaticMetadataProcessor.parse({ generationDetails });
 };
 
-export const getImageDataFromFile = async (file: File) => {
+export const getDataFromFile = async (file: File) => {
   const processed = await preprocessFile(file);
   const { blockedFor } = await auditImageMeta(
     processed.type === MediaType.image ? processed.meta : undefined,
@@ -63,6 +64,21 @@ export const getImageDataFromFile = async (file: File) => {
       return null;
     }
   }
+
+  if (processed.type === 'image' && processed.meta.comfy) {
+    const { comfy } = processed.meta;
+    // if comfy metadata is larger than 1MB, we don't want to store it
+    const tooLarge = calculateSizeInMegabytes(comfy) > 1;
+    try {
+      if (tooLarge)
+        throw new Error('Comfy metadata is too large. Please consider updating your workflow');
+    } catch (e) {
+      const error = e as Error;
+      showErrorNotification({ title: 'Unable to parse image metadata', error });
+      return null;
+    }
+  }
+
   return {
     file,
     uuid: uuidv4(),

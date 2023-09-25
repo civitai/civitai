@@ -129,3 +129,24 @@ export enum SignalMessages {
   ImageGenStatusUpdate = 'image-gen:status-update',
   TrainingUpdate = 'training:update',
 }
+
+export enum BountySort {
+  EndingSoon = 'Ending Soon',
+  HighestBounty = 'Highest Bounty',
+  MostLiked = 'Most Liked',
+  MostDiscussed = 'Most Discussed',
+  MostContributors = 'Most Contributors',
+  MostTracked = 'Most Tracked',
+  Newest = 'Newest',
+}
+
+export enum BountyBenefactorSort {
+  HighestAmount = 'Highest Amount',
+  Newest = 'Newest',
+}
+
+export enum BountyStatus {
+  Open = 'Open',
+  Expired = 'Expired',
+  Awarded = 'Awarded',
+}

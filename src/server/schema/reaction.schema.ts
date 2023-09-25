@@ -14,6 +14,7 @@ export const toggleReactionSchema = z.object({
     'post',
     'resourceReview',
     'article',
+    'bountyEntry',
   ]),
   reaction: z.nativeEnum(ReviewReactions),
 });

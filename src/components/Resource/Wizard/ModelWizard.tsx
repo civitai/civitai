@@ -1,8 +1,7 @@
 import { Button, Container, Group, Stack, Stepper, Title } from '@mantine/core';
 import { ModelUploadType, TrainingStatus } from '@prisma/client';
-import produce from 'immer';
 import { NextRouter, useRouter } from 'next/router';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
@@ -12,9 +11,6 @@ import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostUpsertForm } from '~/components/Resource/Forms/PostUpsertForm';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
-import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { SignalMessages } from '~/server/common/enums';
-import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -26,34 +22,6 @@ export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
 
 type WizardState = {
   step: number;
-};
-
-const TrainingSignals = () => {
-  const queryUtils = trpc.useContext();
-
-  const onUpdate = useCallback((updated: TrainingUpdateSignalSchema) => {
-    queryUtils.model.getById.setData(
-      { id: updated.modelId },
-      produce((old) => {
-        if (!old) return old;
-        const mv = old.modelVersions[0];
-        if (mv) {
-          mv.trainingStatus = updated.status;
-          const mFile = mv.files.find((f) => f.type === 'Training Data');
-          if (mFile) {
-            // TODO [bw] why is this complaining about null in ModelFileFormat?
-            // @ts-ignore
-            mFile.metadata = updated.fileMetadata;
-          }
-        }
-      })
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useSignalConnection(SignalMessages.TrainingUpdate, onUpdate);
-
-  return null;
 };
 
 const CreateSteps = ({
@@ -349,19 +317,16 @@ export function ModelWizard() {
             </Title>
 
             {model?.uploadType === ModelUploadType.Trained ? (
-              <>
-                <TrainSteps
-                  model={modelFlatTags!}
-                  modelVersion={modelVersion!}
-                  goBack={goBack}
-                  goNext={goNext}
-                  modelId={id}
-                  step={state.step}
-                  router={router}
-                  postId={postId}
-                />
-                <TrainingSignals />
-              </>
+              <TrainSteps
+                model={modelFlatTags!}
+                modelVersion={modelVersion!}
+                goBack={goBack}
+                goNext={goNext}
+                modelId={id}
+                step={state.step}
+                router={router}
+                postId={postId}
+              />
             ) : (
               <CreateSteps
                 model={modelFlatTags}

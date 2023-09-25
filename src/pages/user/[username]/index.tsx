@@ -150,6 +150,8 @@ export function UserImagesPage() {
       sort = ImageSort.Newest,
       username = '',
       reactions,
+      types = undefined,
+      withMeta = undefined,
       ...query
     },
   } = useImageQueryParams();
@@ -223,8 +225,9 @@ export function UserImagesPage() {
                 sort,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
+                types,
+                withMeta,
               }}
-              withTags={!viewingReactions && (currentUser?.isModerator || isSameUser)}
             />
           </Stack>
         </MasonryContainer>

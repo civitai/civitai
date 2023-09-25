@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { AddViewSchema } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
 
-export function TrackView({ type, entityType, entityId }: AddViewSchema) {
+export function TrackView({ type, entityType, entityId, details }: AddViewSchema) {
   const trackMutation = trpc.track.addView.useMutation();
   const observedEntityId = useRef<number | null>(null);
 
@@ -13,9 +13,10 @@ export function TrackView({ type, entityType, entityId }: AddViewSchema) {
         type,
         entityType,
         entityId,
+        details,
       });
     }
-  }, [entityId, type, entityType]);
+  }, [entityId, type, entityType, details]);
 
   return null;
 }

@@ -1,6 +1,6 @@
-import { Group, Stack } from '@mantine/core';
+import { createStyles, Group, Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ImageCategoriesInfinite } from '~/components/Image/Categories/ImageCategoriesInfinite';
@@ -12,14 +12,26 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
+// import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
+import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
+
+const useStyles = createStyles((theme) => ({
+  filtersWrapper: {
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+
+      '> *': { flexGrow: 1 },
+    },
+  },
+}));
 
 export default function ImagesPage() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { view } = useImageFilters('images');
+  const { classes, theme } = useStyles();
 
   return (
     <>
@@ -46,22 +58,18 @@ export default function ImagesPage() {
                 },
               })}
             />
-            <Group position="left">
-              {features.alternateHome ? (
-                <FullHomeContentToggle />
-              ) : (
-                <HomeContentToggle sx={showMobile} />
-              )}
-            </Group>
-            <Group position="apart" spacing={0}>
-              <Group>
-                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
-                <SortFilter type="images" />
-              </Group>
-              <Group spacing={4}>
-                <PeriodFilter type="images" />
-                <ViewToggle type="images" />
-                {/* <ImageFiltersDropdown /> */}
+            <Group position="apart" spacing={8}>
+              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+              <Group className={classes.filtersWrapper} spacing={8} noWrap>
+                <SortFilter type="images" variant="button" />
+                <ImageFiltersDropdown />
+                <ViewToggle
+                  type="images"
+                  color="gray"
+                  radius="xl"
+                  size={36}
+                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                />
               </Group>
             </Group>
             <IsClient>

@@ -21,25 +21,26 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { TrainingStatus } from '@prisma/client';
-import { IconAlertCircle, IconCircleCheck, IconTrash } from '@tabler/icons-react';
-import { useQueryClient } from '@tanstack/react-query';
-import { getQueryKey } from '@trpc/react-query';
-import produce from 'immer';
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconCircleCheck,
+  IconExternalLink,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { constants } from '~/server/common/constants';
-import { SignalMessages } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
 } from '~/server/common/model-helpers';
 import { TrainingDetailsObj, TrainingDetailsParams } from '~/server/schema/model-version.schema';
-import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -123,35 +124,6 @@ const minsWait = 5 * 60 * 1000;
 const minsPerEpoch = 1 * 60 * 1000;
 const minsPerEpochSDXL = 5 * 60 * 1000;
 
-const TrainingSignals = () => {
-  const queryClient = useQueryClient();
-
-  const onUpdate = useCallback(
-    (updated: TrainingUpdateSignalSchema) => {
-      const queryKey = getQueryKey(trpc.model.getMyTrainingModels);
-      queryClient.setQueriesData(
-        { queryKey, exact: false },
-        produce((old: MyTrainingModelGetAll | undefined) => {
-          const model = old?.items?.find((x) => x.id == updated.modelId);
-          const mv = model?.modelVersions[0];
-          if (mv) {
-            mv.trainingStatus = updated.status;
-            const mFile = mv.files[0];
-            if (mFile) {
-              mFile.metadata = updated.fileMetadata;
-            }
-          }
-        })
-      );
-    },
-    [queryClient]
-  );
-
-  useSignalConnection(SignalMessages.TrainingUpdate, onUpdate);
-
-  return null;
-};
-
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
@@ -218,6 +190,7 @@ export default function UserTrainingModels() {
         style={{ height: 'max(400px, calc(100vh - 600px))' }}
         onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
       >
+        {/* TODO [bw] this should probably be transitioned to a filterable/sortable table, like in reports.tsx */}
         <Table
           verticalSpacing="md"
           fontSize="md"
@@ -378,6 +351,45 @@ export default function UserTrainingModels() {
                                 value: modalData.file?.metadata?.numCaptions || 0,
                               },
                               {
+                                label: 'Privacy',
+                                value: (
+                                  <Group>
+                                    <Badge
+                                      color={
+                                        modalData.file?.metadata?.ownRights === true
+                                          ? 'green'
+                                          : 'red'
+                                      }
+                                      leftSection={
+                                        modalData.file?.metadata?.ownRights === true ? (
+                                          <IconCheck size={14} />
+                                        ) : (
+                                          <IconX size={14} />
+                                        )
+                                      }
+                                    >
+                                      Own Rights
+                                    </Badge>
+                                    <Badge
+                                      color={
+                                        modalData.file?.metadata?.shareDataset === true
+                                          ? 'green'
+                                          : 'red'
+                                      }
+                                      leftSection={
+                                        modalData.file?.metadata?.shareDataset === true ? (
+                                          <IconCheck size={14} />
+                                        ) : (
+                                          <IconX size={14} />
+                                        )
+                                      }
+                                    >
+                                      Share Dataset
+                                    </Badge>
+                                  </Group>
+                                ),
+                              },
+                              {
                                 label: 'Dataset',
                                 value: modalData.file?.url ? (
                                   <DownloadButton
@@ -455,10 +467,9 @@ export default function UserTrainingModels() {
                     </td>
                     <td>
                       {thisModelVersion.trainingStatus ? (
-                        <HoverCard shadow="md" width={300} zIndex={100} withArrow>
-                          <HoverCard.Target>
-                            <Group spacing="sm">
-                              {/*<Stack>*/}
+                        <Group spacing="sm">
+                          <HoverCard shadow="md" width={300} zIndex={100} withArrow>
+                            <HoverCard.Target>
                               <Badge
                                 color={
                                   trainingStatusFields[thisModelVersion.trainingStatus]?.color ??
@@ -476,28 +487,53 @@ export default function UserTrainingModels() {
                                       TrainingStatus.Processing) && <Loader size={12} />}
                                 </Group>
                               </Badge>
-                              {thisModelVersion.trainingStatus === TrainingStatus.Processing && (
-                                <>
-                                  <Divider size="sm" orientation="vertical" />
+                            </HoverCard.Target>
+                            <HoverCard.Dropdown>
+                              <Text>
+                                {trainingStatusFields[thisModelVersion.trainingStatus]
+                                  ?.description ?? 'N/A'}
+                              </Text>
+                            </HoverCard.Dropdown>
+                          </HoverCard>
+                          {thisModelVersion.trainingStatus === TrainingStatus.Processing && (
+                            <>
+                              <Divider size="sm" orientation="vertical" />
+                              <HoverCard shadow="md" width={250} zIndex={100} withArrow>
+                                <HoverCard.Target>
                                   <Badge
                                     variant="filled"
                                     // color={`gray.${Math.max(Math.min(epochsPct, 9), 0)}`}
                                     color={'gray'}
                                   >
-                                    {`Step ${epochsDone}/${numEpochs}`}
+                                    {`Progress: ${epochsDone}/${numEpochs}`}
                                   </Badge>
-                                </>
-                              )}
-                            </Group>
-                            {/*</Stack>*/}
-                          </HoverCard.Target>
-                          <HoverCard.Dropdown>
-                            <Text>
-                              {trainingStatusFields[thisModelVersion.trainingStatus]?.description ??
-                                'N/A'}
-                            </Text>
-                          </HoverCard.Dropdown>
-                        </HoverCard>
+                                </HoverCard.Target>
+                                <HoverCard.Dropdown>
+                                  <Text>Number of Epochs remaining</Text>
+                                </HoverCard.Dropdown>
+                              </HoverCard>
+                            </>
+                          )}
+                          {thisModelVersion.trainingStatus === TrainingStatus.Failed && (
+                            <Button
+                              size="xs"
+                              color="gray"
+                              py={0}
+                              sx={{ fontSize: 12, fontWeight: 600, height: 20 }}
+                              component="a"
+                              href={`https://forms.clickup.com/8459928/f/825mr-7951/OKTROKPXB4DXQQ18U8?Model%20File%20ID=${thisFile.id}`}
+                              target="_blank"
+                              onMouseUp={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                            >
+                              <Group spacing={6}>
+                                Open Support Ticket <IconExternalLink size={12} />
+                              </Group>
+                            </Button>
+                          )}
+                        </Group>
                       ) : (
                         <Badge color="gray">N/A</Badge>
                       )}
@@ -572,7 +608,6 @@ export default function UserTrainingModels() {
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
-      <TrainingSignals />
     </Stack>
   );
 }
