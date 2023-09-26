@@ -18,7 +18,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 
 export default function Account({ providers }: Props) {
-  const { apiKeys } = useFeatureFlags();
+  const { apiKeys, buzz } = useFeatureFlags();
   const currentUser = useCurrentUser();
 
   return (
@@ -35,7 +35,7 @@ export default function Account({ providers }: Props) {
             </Text>
           </Stack>
           <ProfileCard />
-          <UserReferralCodesCard />
+          {buzz && <UserReferralCodesCard />}
           <SocialProfileCard />
           <SettingsCard />
           <ModerationCard />
