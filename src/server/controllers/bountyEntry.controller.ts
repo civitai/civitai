@@ -93,17 +93,26 @@ export const upsertBountyEntryHandler = async ({
   input: UpsertBountyEntryInput;
   ctx: DeepNonNullable<Context>;
 }) => {
+  const { id: userId } = ctx.user;
   try {
     const bounty = await getBountyById({
       id: input.bountyId,
-      select: { complete: true },
+      select: { complete: true, entryLimit: true, entries: { select: { userId: true } } },
     });
     if (!bounty) throw throwNotFoundError('Bounty not found');
     if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
 
+    // if the current user has more entries than allowed, throw an error
+    if (
+      bounty.entryLimit &&
+      bounty.entries.filter((entry) => entry.userId === userId).length >= bounty.entryLimit
+    ) {
+      throw throwBadRequestError('You have reached the maximum number of entries for this bounty');
+    }
+
     const entry = await upsertBountyEntry({
       ...input,
-      userId: ctx.user.id,
+      userId,
     });
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 

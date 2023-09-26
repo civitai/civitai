@@ -134,20 +134,10 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           await router.push(`/bounties/${bounty.id}`);
         },
         onError(error) {
-          if (error instanceof TRPCClientError) {
-            const parsedError = JSON.parse(error.message);
-            showErrorNotification({
-              title: 'Failed to create bounty',
-              error: new Error(
-                Array.isArray(parsedError) ? parsedError[0].message : parsedError.message
-              ),
-            });
-          } else {
-            showErrorNotification({
-              title: 'Failed to create bounty',
-              error: new Error(error.message),
-            });
-          }
+          showErrorNotification({
+            title: 'Failed to create bounty',
+            error: new Error(error.message),
+          });
         },
       }
     );

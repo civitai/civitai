@@ -144,7 +144,7 @@ export function BountyCard({ data }: Props) {
           {user ? (
             user?.id !== -1 && (
               <UnstyledButton
-                sx={{ color: 'white' }}
+                sx={{ color: 'white', alignSelf: 'flex-start' }}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
