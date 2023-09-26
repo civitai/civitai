@@ -5,7 +5,7 @@ import {
   Checkbox,
   createStyles,
   Group,
-  Image,
+  Image as MImage,
   Loader,
   Pagination,
   Paper,
@@ -206,6 +206,17 @@ const imageExts: { [key: string]: string } = {
   // webp: 'image/webp',
 };
 
+const maxWidth = 1024;
+const maxHeight = 1024;
+
+const createImage = (url: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(image));
+    image.addEventListener('error', (error) => reject(error));
+    image.src = url;
+  });
+
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const {
     updateImage,
@@ -309,6 +320,40 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const thisStep = 2;
   const maxImgPerPage = 9;
 
+  const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
+    const imgUrl = URL.createObjectURL(data);
+    const img = await createImage(imgUrl);
+    let { width, height } = img;
+    if (width <= maxWidth && height <= maxHeight) return imgUrl;
+
+    if (width > height) {
+      if (width > maxWidth) {
+        height = height * (maxWidth / width);
+        width = maxWidth;
+      }
+    } else {
+      if (height > maxHeight) {
+        width = width * (maxHeight / height);
+        height = maxHeight;
+      }
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Error resizing image');
+    ctx.drawImage(img, 0, 0, width, height);
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((file) => {
+        if (!file) reject();
+        else resolve(URL.createObjectURL(file));
+      }, type);
+    });
+  };
+
   const handleZip = async (f: FileWithPath, showNotif = true) => {
     // could set loadingZip here too
     const parsedFiles: ImageDataType[] = [];
@@ -323,15 +368,22 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         const baseFileName = fileSplit.join('.');
         if (fileExt in imageExts) {
           const imgBlob = await zf.async('blob');
-          const czFile = zipReader.file(`${baseFileName}.txt`);
-          let captionStr = '';
-          if (czFile) captionStr = await czFile.async('string');
-          parsedFiles.push({
-            name: zname,
-            type: imageExts[fileExt],
-            url: URL.createObjectURL(imgBlob),
-            caption: captionStr,
-          });
+          try {
+            const scaledUrl = await getResizedImgUrl(imgBlob, imageExts[fileExt]);
+            const czFile = zipReader.file(`${baseFileName}.txt`);
+            let captionStr = '';
+            if (czFile) captionStr = await czFile.async('string');
+            parsedFiles.push({
+              name: zname,
+              type: imageExts[fileExt],
+              url: scaledUrl,
+              caption: captionStr,
+            });
+          } catch {
+            showErrorNotification({
+              error: new Error(`An error occurred while parsing "${zname}".`),
+            });
+          }
         }
       })
     );
@@ -359,11 +411,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         if (ZIP_MIME_TYPE.includes(f.type as never)) {
           return await handleZip(f);
         } else {
-          return { name: f.name, type: f.type, url: URL.createObjectURL(f), caption: '' };
+          try {
+            const scaledUrl = await getResizedImgUrl(f, f.type);
+            return { name: f.name, type: f.type, url: scaledUrl, caption: '' } as ImageDataType;
+          } catch {
+            showErrorNotification({
+              error: new Error(`An error occurred while parsing "${f.name}".`),
+            });
+          }
         }
       })
     );
-    setImageList(model.id, imageList.concat(newFiles.flat()));
+    // typescript, you real dumb sometimes
+    const filteredFiles = newFiles.filter((nf) => nf !== undefined) as (
+      | ImageDataType
+      | ImageDataType[]
+    )[];
+    setImageList(model.id, imageList.concat(filteredFiles.flat()));
   };
 
   const updateFileMutation = trpc.modelFile.update.useMutation({
@@ -700,7 +764,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       >
                         <IconTrash />
                       </ActionIcon>
-                      <Image
+                      <MImage
                         alt={imgData.name}
                         src={imgData.url}
                         imageProps={{
