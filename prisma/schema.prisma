@@ -494,7 +494,7 @@ model ModelVersionMonetization {
   modelVersionId      Int                              @unique
   modelVersion        ModelVersion                     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   type                ModelVersionMonetizationType     @default(PaidAccess)
-  currency            String
+  currency            Currency                         @default(BUZZ)
   unitAmount          Int?
   sponsorshipSettings ModelVersionSponsorshipSettings?
 }
@@ -541,7 +541,7 @@ model ModelVersion {
   modelVersionExploration ModelVersionExploration[]
   vaeFor                  ModelVersion[]            @relation("vae")
   generationCoverage      GenerationCoverage?
-  ModelVersionPurchase    ModelVersionPurchase[]
+  purchases               ModelVersionPurchase[]
 
   @@index([modelId], type: Hash)
 }

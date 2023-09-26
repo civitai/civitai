@@ -1,4 +1,4 @@
-BEGIN
+BEGIN;
 -- CreateTable
 CREATE TABLE "ModelVersionPurchase" (
     "id" SERIAL NOT NULL,
