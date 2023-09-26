@@ -15,6 +15,7 @@ import { IconFileUpload, IconTrash, IconUpload, IconX } from '@tabler/icons-reac
 import { useState } from 'react';
 
 import { useS3Upload } from '~/hooks/useS3Upload';
+import { MIME_TYPES } from '~/server/common/mime-types';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
@@ -83,11 +84,14 @@ export function MultiFileInputUpload({
   const uploadingItems = trackedFiles.filter((file) => file.status === 'uploading');
   const hasErrors = errors.length > 0;
   const { accept, maxSize, maxFiles } = dropzoneProps ?? {};
-  const fileExtensions = accept
+  const rawFileExtensions = accept
     ? Array.isArray(accept)
       ? accept
       : Object.values(accept).flat()
     : [];
+  const fileExtensions = rawFileExtensions
+    .filter((t) => t !== MIME_TYPES.xZipCompressed && t !== MIME_TYPES.xZipMultipart)
+    .map((type) => type.replace(/.*\//, '.'));
   const verticalOrientation = orientation === 'vertical';
 
   return (

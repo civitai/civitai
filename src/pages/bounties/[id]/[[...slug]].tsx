@@ -482,6 +482,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           {getDisplayName(bounty.mode)}
         </Badge>
       ),
+      // TODO.bounty: show this once we allow splitting bounties
+      visible: false,
     },
     {
       label: isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started',
@@ -674,7 +676,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       <Accordion
         variant="separated"
         multiple
-        defaultValue={['details']}
+        defaultValue={['details', 'benefactors']}
         styles={(theme) => ({
           content: { padding: 0 },
           item: {

@@ -303,7 +303,7 @@ export default function BountyEntryDetailsPage({
             });
           }}
         >
-          <Group spacing={4}>
+          <Group spacing={4} noWrap>
             <IconTrash size={14} />
             <Text size="xs">Delete</Text>
           </Group>
@@ -325,10 +325,12 @@ export default function BountyEntryDetailsPage({
             fullWidth
             onClick={onClick}
           >
-            <Group spacing={4}>
+            <Group spacing={4} noWrap>
               <ThemeIcon
                 // @ts-ignore: transparent variant does work
                 variant="transparent"
+                // @ts-ignore: overrides size to fit content
+                size="auto"
                 color="yellow.6"
               >
                 <IconTrophy size={14} fill="currentColor" />
@@ -347,7 +349,7 @@ export default function BountyEntryDetailsPage({
           compact
           fullWidth
         >
-          <Group spacing={4}>
+          <Group spacing={4} noWrap>
             <IconShare3 size={14} />
             <Text size="xs">Share</Text>
           </Group>
@@ -462,7 +464,7 @@ export default function BountyEntryDetailsPage({
                             </Stack>
                           </Group>
 
-                          <Group spacing={0}>
+                          <Group spacing={0} noWrap>
                             {file.metadata.benefactorsOnly && (
                               <Tooltip
                                 label="Only users who award this entry will have access to this file"
@@ -476,12 +478,13 @@ export default function BountyEntryDetailsPage({
                                 </ThemeIcon>
                               </Tooltip>
                             )}
-                            {(file.metadata.unlockAmount ?? 0) > 0 && (
+                            {/* TODO.bounty: bring this back once we allowing split bounties */}
+                            {/* {(file.metadata.unlockAmount ?? 0) > 0 && (
                               <CurrencyBadge
                                 currency={file.metadata.currency ?? Currency.BUZZ}
                                 unitAmount={file.metadata.unlockAmount ?? 0}
                               />
-                            )}
+                            )} */}
                           </Group>
                         </Group>
                       </Stack>

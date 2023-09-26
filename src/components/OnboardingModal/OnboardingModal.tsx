@@ -34,6 +34,7 @@ import { usernameInputSchema } from '~/server/schema/user.schema';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { constants } from '~/server/common/constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -48,7 +49,8 @@ const schema = z.object({
     .transform((code) => (code ? code.trim() : code))
     .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
       message: `Referral codes must be at least ${constants.referrals.referralCodeMinLength} characters long`,
-    }),
+    })
+    .optional(),
   source: z.string().optional(),
 });
 
@@ -57,6 +59,7 @@ export default function OnboardingModal() {
   const utils = trpc.useContext();
   const { code, source } = useReferralsContext();
   const { classes } = useStyles();
+  const features = useFeatureFlags();
 
   const form = useForm({
     schema,
@@ -91,6 +94,7 @@ export default function OnboardingModal() {
     { userReferralCode: debouncedUserReferralCode as string },
     {
       enabled:
+        features.buzz &&
         !user?.referral &&
         !!debouncedUserReferralCode &&
         debouncedUserReferralCode.length > constants.referrals.referralCodeMinLength,
@@ -231,7 +235,7 @@ export default function OnboardingModal() {
                     }
                     withAsterisk
                   />
-                  {!user?.referral && (
+                  {features.buzz && !user?.referral && (
                     <InputText
                       size="lg"
                       name="userReferralCode"
