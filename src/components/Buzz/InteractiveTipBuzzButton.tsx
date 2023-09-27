@@ -13,10 +13,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { IconBolt } from '@tabler/icons-react';
-import { useInterval } from '@mantine/hooks';
+import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showConfirmNotification, showErrorNotification } from '~/utils/notifications';
 import { v4 as uuidv4 } from 'uuid';
-import { hideNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { devtools } from 'zustand/middleware';
@@ -116,6 +116,10 @@ export function InteractiveTipBuzzButton({
   }, 150);
   const queryUtils = trpc.useContext();
   const onTip = useStore((state) => state.onTip);
+  const [dismissed, setDismissed] = useLocalStorage({
+    key: `interactive-tip-buzz-tutorial`,
+    defaultValue: false,
+  });
 
   const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
     async onSuccess(_, { amount }) {
@@ -175,10 +179,30 @@ export function InteractiveTipBuzzButton({
   };
 
   const stopCounter = () => {
+    const isClick = buzzCounter === 0;
+
     if (interval.active) {
       interval.stop();
       const amount = buzzCounter > 0 ? buzzCounter : 10;
       const requiresConfirmation = amount >= CONFIRMATION_TRHESHOLD;
+
+      if (!dismissed && isClick) {
+        showNotification({
+          title: "Looks like you're onto your first tip!",
+          message: (
+            <Text>
+              To send more than 10 buzz{' '}
+              <ThemeIcon color="yellow.4" variant="transparent">
+                <IconBolt size={18} fill="currentColor" />
+              </ThemeIcon>
+              , hold the button for as long as you like
+            </Text>
+          ),
+        });
+      }
+
+      setDismissed(true);
+
       if (amount && !timeoutRef.current) {
         const uuid = uuidv4();
 
