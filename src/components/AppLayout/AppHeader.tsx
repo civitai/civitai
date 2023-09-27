@@ -69,6 +69,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { UserBuzz } from '../User/UserBuzz';
+import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 
 const HEADER_HEIGHT = 70;
 
@@ -513,6 +514,11 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           sx={(theme) => ({
             backgroundColor:
               theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
+
+            [theme.fn.largerThan('md')]: {
+              borderTopLeftRadius: theme.radius.lg,
+              borderTopRightRadius: theme.radius.lg,
+            },
           })}
           noWrap
           {...groupProps}
@@ -527,22 +533,22 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             />
           </Group>
           {/* TODO.buzz: Replace this with button below when buying is available */}
-          <Paper radius="xl" py={4} px={12}>
+          {/* <Paper radius="xl" py={4} px={12}>
             <Text size="xs" weight={600}>
               Available Buzz
             </Text>
-          </Paper>
+          </Paper> */}
           {/* TODO.buzz: Once buying is available, uncomment this block */}
-          {/* <Button
+          <Button
             variant="white"
             radius="xl"
-            size={buttonSize}
+            size="xs"
             px={12}
             onClick={() => openBuyBuzzModal({})}
             compact
           >
             Buy More Buzz
-          </Button> */}
+          </Button>
         </Group>
       );
     },
@@ -661,6 +667,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
+              radius="lg"
               onClose={() => setUserMenuOpened(false)}
             >
               <Menu.Target>

@@ -556,7 +556,6 @@ export default function ModelDetailsV2({
                   >
                     <IconBadge
                       radius="sm"
-                      color={isFavorite ? 'red' : 'gray'}
                       size="lg"
                       icon={
                         <IconBolt

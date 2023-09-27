@@ -130,7 +130,7 @@ const { openModal, Modal } = createContextModal<{
   radius: 'lg',
   withCloseButton: false,
   Element: ({ context, props: { toUserId, entityId, entityType } }) => {
-    const { classes } = useStyles();
+    const { classes, theme } = useStyles();
     const currentUser = useCurrentUser();
     const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
     const queryUtils = trpc.useContext();
@@ -196,21 +196,10 @@ const { openModal, Modal } = createContextModal<{
             },
           });
         } else {
-          if (amount > (currentUser?.balance ?? 0)) {
-            return form.setError(
-              'amount',
-              {
-                message: 'You have insufficient funds to tip',
-                type: 'value',
-              },
-              { shouldFocus: true }
-            );
-          }
-
           return createBuzzTransactionMutation.mutate({
             toAccountId: toUserId,
             type: TransactionType.Tip,
-            amount,
+            amount: customAmount,
             description,
             entityId,
             entityType,
@@ -218,10 +207,21 @@ const { openModal, Modal } = createContextModal<{
         }
       }
 
+      if (amount > (currentUser?.balance ?? 0)) {
+        return form.setError(
+          'amount',
+          {
+            message: 'You have insufficient funds to tip',
+            type: 'value',
+          },
+          { shouldFocus: true }
+        );
+      }
+
       return createBuzzTransactionMutation.mutate({
         toAccountId: toUserId,
         type: TransactionType.Tip,
-        amount: Number(amount),
+        amount,
         description,
         entityId,
         entityType,
@@ -244,7 +244,7 @@ const { openModal, Modal } = createContextModal<{
                 Available Buzz
               </Text>
             </Badge>
-            <CloseButton iconSize={22} onClick={handleClose} />
+            <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
         <Divider mx="-lg" />
@@ -277,7 +277,13 @@ const { openModal, Modal } = createContextModal<{
                 name="customAmount"
                 placeholder="Your tip"
                 variant="filled"
-                icon={<IconBolt size={18} fill="currentColor" />}
+                icon={
+                  <IconBolt
+                    size={18}
+                    color={theme.colors.accent[5]}
+                    fill={theme.colors.accent[5]}
+                  />
+                }
                 rightSectionWidth="10%"
                 min={1}
                 max={currentUser?.balance}

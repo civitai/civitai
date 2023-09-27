@@ -18,13 +18,14 @@ import {
 import { ModelType } from '@prisma/client';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -89,6 +90,19 @@ export function GenerateFormView({
     }
   };
   // #endregion
+
+  // #region [Handle check user funds]
+  const checkUserFunds: React.MouseEventHandler<HTMLButtonElement> = (e) => {
+    // TODO.buzz: properly calculate the amount to generate based on the form values
+    if (currentUser?.balance && currentUser.balance < 1000) {
+      e.preventDefault();
+
+      openBuyBuzzModal(
+        { message: 'You do not have enough Buzz to generate images.' },
+        { sx: { zIndex: 400 } }
+      );
+    }
+  };
 
   return (
     <PersistentForm
@@ -298,6 +312,7 @@ export function GenerateFormView({
                   loading={isSubmitting}
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
+                  onClick={checkUserFunds}
                 >
                   Generate
                 </Button>
