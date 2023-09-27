@@ -4,25 +4,28 @@ import {
   Tooltip,
   createPolymorphicComponent,
   useMantineTheme,
+  ThemeIcon,
 } from '@mantine/core';
 import { IconBolt, IconDownload } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 
 const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
-  ({ iconOnly, canDownload, downloadRequiresPurchase, ...buttonProps }, ref) => {
+  ({ iconOnly, canDownload, downloadRequiresPurchase, children, ...buttonProps }, ref) => {
     const theme = useMantineTheme();
     const purchaseIcon = (
-      <IconBolt
-        size={20}
+      <ThemeIcon
+        radius="xl"
+        size="sm"
+        color="yellow.7"
         style={{
           position: 'absolute',
-          fill: theme.colors.yellow[7],
-          color: theme.colors.yellow[7],
           top: '-8px',
           right: '-8px',
         }}
-      />
+      >
+        <IconBolt size={16} />
+      </ThemeIcon>
     );
     const button = iconOnly ? (
       <Tooltip label="Download options" withArrow>
@@ -34,10 +37,11 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
     ) : (
       <Button pos="relative" ref={ref} {...buttonProps} leftIcon={<IconDownload size={20} />}>
         {downloadRequiresPurchase && <>{purchaseIcon}</>}
+        {children}
       </Button>
     );
 
-    return canDownload ? button : <JoinPopover>{button}</JoinPopover>;
+    return canDownload || downloadRequiresPurchase ? button : <JoinPopover>{button}</JoinPopover>;
   }
 );
 _DownloadButton.displayName = 'DownloadButton';

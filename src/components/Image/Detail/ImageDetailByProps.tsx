@@ -254,6 +254,7 @@ export function ImageDetailByProps({
                               laughCount: stats?.laughCountAllTime,
                               cryCount: stats?.cryCountAllTime,
                             }}
+                            targetUserId={user?.id}
                           />
                           {user?.id && <ImageDetailComments imageId={image.id} userId={user.id} />}
                         </Stack>

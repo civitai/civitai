@@ -64,6 +64,7 @@ export function ImageCategoryCard({ data }: { data: ImageGetByCategoryImageModel
                   cryCount: image.cryCount,
                 }}
                 reactions={image.reactions}
+                targetUserId={image.userId}
               />
               {!image.hideMeta && image.meta && (
                 <ImageMetaPopover

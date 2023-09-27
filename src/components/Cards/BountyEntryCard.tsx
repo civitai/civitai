@@ -142,6 +142,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
               cryCount: stats?.cryCountAllTime,
               tippedAmountCount: stats?.tippedAmountCountAllTime,
             }}
+            targetUserId={data.user?.id}
           />
         </Stack>
       </div>

@@ -10,6 +10,7 @@ export const useModelVersionPurchase = ({ modelVersionId }: { modelVersionId: nu
       { id: modelVersionId },
       { enabled: !!modelVersionId }
     );
+  const queryUtils = trpc.useContext();
 
   const { canDownload, downloadRequiresPurchase } = modelVersionWithPurchaseDetails ?? {};
 
@@ -38,6 +39,7 @@ export const useModelVersionPurchase = ({ modelVersionId }: { modelVersionId: nu
       openPurchaseModelVersionModal({
         modelVersionId,
         onSuccess: () => {
+          queryUtils.modelVersion.getPurchaseDetails.invalidate({ id: modelVersionId });
           showSuccessNotification({
             message: 'Purchase successful! Your download will start right away!',
           });

@@ -91,7 +91,11 @@ const { openModal, Modal } = createContextModal<{
             <Button variant="light" color="gray" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={onPurchase} loading={purchaseModelVersionMutation.isLoading}>
+            <Button
+              onClick={onPurchase}
+              loading={purchaseModelVersionMutation.isLoading}
+              color="yellow.7"
+            >
               Purchase
             </Button>
           </Group>

@@ -71,7 +71,7 @@ import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes } from '~/utils/number-helpers';
+import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useModelVersionPurchase } from '~/components/Model/ModelVersions/useModelVersionPurchase';
@@ -88,7 +88,7 @@ export function ModelVersionDetails({
   const router = useRouter();
   const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
-  const { canDownload, onDownloadFile, downloadRequiresPurchase } = useModelVersionPurchase({
+  const { canDownload, price, onDownloadFile, downloadRequiresPurchase } = useModelVersionPurchase({
     modelVersionId: version.id,
   });
 
@@ -494,6 +494,7 @@ export function ModelVersionDetails({
                         disabled={!primaryFile || archived}
                         iconOnly
                         downloadRequiresPurchase={downloadRequiresPurchase}
+                        color={downloadRequiresPurchase ? 'yellow.7' : undefined}
                       />
                     </Menu.Target>
                     <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
@@ -506,9 +507,14 @@ export function ModelVersionDetails({
                     downloadRequiresPurchase={downloadRequiresPurchase}
                     disabled={!primaryFile || archived}
                     sx={{ flex: 1 }}
+                    color={downloadRequiresPurchase ? 'yellow.7' : undefined}
                   >
                     <Text align="center">
-                      {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
+                      {downloadRequiresPurchase && primaryFile
+                        ? `Get for ${numberWithCommas(price?.unitAmount ?? 0)} BUZZ`
+                        : primaryFile
+                        ? `Download (${formatKBytes(primaryFile.sizeKB)})`
+                        : 'No file'}
                     </Text>
                   </DownloadButton>
                 )}
