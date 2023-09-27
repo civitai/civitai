@@ -408,17 +408,17 @@ export const getPurchaseDetailsHandler = async ({
     const { purchases = [], monetization } = version;
     const userId = ctx.user?.id;
 
+    const bypassPayment = ctx.user?.isModerator || (!!userId && version?.model?.userId === userId);
     const baseDownloadRequirements =
-      ctx.user?.isModerator ||
-      (version?.model?.status === 'Published' && version?.status === 'Published') ||
-      (!!userId && version?.model?.userId === userId);
+      bypassPayment || (version?.model?.status === 'Published' && version?.status === 'Published');
 
     const userHasPurchasedModel =
-      purchases.length > 0 &&
-      purchases.some((p) => {
-        const details = p.transactionDetails as ModelVersionPurchaseTransactionDetailsSchema;
-        return details?.monetizationType === monetization?.type;
-      });
+      bypassPayment ||
+      (purchases.length > 0 &&
+        purchases.some((p) => {
+          const details = p.transactionDetails as ModelVersionPurchaseTransactionDetailsSchema;
+          return details?.monetizationType === monetization?.type;
+        }));
 
     // if !baseDownloadRequirementsMet, then the user is not allowed to download this model version at all.
     const downloadRequiresPurchase =

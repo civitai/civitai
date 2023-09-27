@@ -120,8 +120,7 @@ export default RateLimitedEndpoint(
     const isOwner = userId === modelVersion.model.userId;
     const { monetization, purchases } = modelVersion;
 
-    // TODO: allow moderators/owners to download ignoreing this check.
-    if (monetization?.type === ModelVersionMonetizationType.PaidAccess) {
+    if (!(isOwner || isMod) && monetization?.type === ModelVersionMonetizationType.PaidAccess) {
       if (!session?.user) {
         return errorResponse(401, 'Unauthorized. This model requires a purchase.');
       }
