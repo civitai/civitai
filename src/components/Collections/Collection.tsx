@@ -60,12 +60,15 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { getRandom } from '~/utils/array-helpers';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ModelSort.Newest;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  const sort = isContestCollection
+    ? getRandom(Object.values(ModelSort))
+    : query.sort ?? ModelSort.Newest;
 
   return (
     <Stack spacing="xs">
@@ -108,7 +111,9 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
-  const sort = query.sort ?? ImageSort.Newest;
+  const sort = isContestCollection
+    ? getRandom(Object.values(ImageSort))
+    : query.sort ?? ImageSort.Newest;
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const utils = trpc.useContext();
@@ -198,7 +203,9 @@ const ImageCollection = ({
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? PostSort.Newest;
+  const sort = isContestCollection
+    ? getRandom(Object.values(PostSort))
+    : query.sort ?? PostSort.Newest;
   const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
@@ -235,7 +242,9 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ArticleSort.Newest;
+  const sort = isContestCollection
+    ? getRandom(Object.values(ArticleSort))
+    : query.sort ?? ArticleSort.Newest;
   const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
