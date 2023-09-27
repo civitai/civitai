@@ -432,7 +432,6 @@ export const getPurchaseDetailsHandler = async ({
 
     return { ...version, canDownload, downloadRequiresPurchase };
   } catch (error) {
-    console.log(error);
     if (error instanceof TRPCError) error;
     else throw throwDbError(error);
   }
