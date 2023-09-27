@@ -76,8 +76,8 @@ export function showConfirmNotification({
   message: React.ReactNode;
   title?: string;
   color?: string;
-  onConfirm: () => void;
-  onCancel: () => void;
+  onConfirm?: () => void;
+  onCancel?: () => void;
   autoClose?: number | false;
   id?: string;
 }) {
@@ -88,12 +88,16 @@ export function showConfirmNotification({
       <Stack>
         {message}
         <Group position="right">
-          <Button onClick={onCancel} variant="outline" color="red">
-            Cancel
-          </Button>
-          <Button color={color} variant="filled" onClick={onConfirm}>
-            Confirm
-          </Button>
+          {onCancel && (
+            <Button onClick={onCancel} variant="outline" color="red">
+              Cancel
+            </Button>
+          )}
+          {onConfirm && (
+            <Button color={color} variant="filled" onClick={onConfirm}>
+              Confirm
+            </Button>
+          )}
         </Group>
       </Stack>
     ),

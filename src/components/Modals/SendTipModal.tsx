@@ -164,7 +164,6 @@ const { openModal, Modal } = createContextModal<{
 
     const handleClose = () => context.close();
     const handleSubmit = (data: z.infer<typeof schema>) => {
-      console.log(data);
       const { customAmount, description } = data;
       const amount = Number(data.amount);
 

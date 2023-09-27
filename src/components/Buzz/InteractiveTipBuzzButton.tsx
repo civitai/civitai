@@ -1,6 +1,7 @@
 import {
   Group,
   Popover,
+  Stack,
   Text,
   ThemeIcon,
   UnstyledButton,
@@ -34,6 +35,8 @@ type Props = UnstyledButtonProps & {
     amount: number;
   }) => void;
 };
+
+const CONFIRMATION_TRHESHOLD = 100;
 
 /**NOTES**
  Why use zustand?
@@ -175,6 +178,7 @@ export function InteractiveTipBuzzButton({
     if (interval.active) {
       interval.stop();
       const amount = buzzCounter > 0 ? buzzCounter : 10;
+      const requiresConfirmation = amount >= CONFIRMATION_TRHESHOLD;
       if (amount && !timeoutRef.current) {
         const uuid = uuidv4();
 
@@ -183,34 +187,42 @@ export function InteractiveTipBuzzButton({
           color: 'yellow.7',
           title: 'Please confirm your tip:',
           message: (
-            <Group spacing={4}>
-              <Text>You are about to tip {amount} Buzz.</Text>
-              {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
-              <ThemeIcon color="yellow.4" variant="transparent">
-                <IconBolt size={18} fill="currentColor" />
-              </ThemeIcon>
-
+            <Stack spacing={'xs'}>
+              <Group spacing={4}>
+                <Text>You are about to tip {amount} Buzz.</Text>
+                {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
+                <ThemeIcon color="yellow.4" variant="transparent">
+                  <IconBolt size={18} fill="currentColor" />
+                </ThemeIcon>
+              </Group>
               <Text> Are you sure?</Text>
-              <Text color="red">
-                This action will be confirmed automatically if you do nothing.
-              </Text>
-            </Group>
+              {!requiresConfirmation && (
+                <Text color="red">
+                  This action will be confirmed automatically if you do nothing.
+                </Text>
+              )}
+            </Stack>
           ),
-          onConfirm: () => {
-            onSendTip(amount);
-            hideNotification(uuid);
-            reset();
-          },
+          onConfirm: requiresConfirmation
+            ? () => {
+                onSendTip(amount);
+                hideNotification(uuid);
+                reset();
+              }
+            : undefined,
           onCancel: () => {
             hideNotification(uuid);
             reset();
           },
         });
 
-        timeoutRef.current = setTimeout(() => {
-          onSendTip(amount);
-          reset();
-        }, 8000);
+        if (!requiresConfirmation) {
+          timeoutRef.current = setTimeout(() => {
+            hideNotification(uuid);
+            onSendTip(amount);
+            reset();
+          }, 8000);
+        }
       }
     }
   };
