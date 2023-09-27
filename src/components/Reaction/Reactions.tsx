@@ -110,8 +110,7 @@ export function Reactions({
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
 
-  const supportsBuzzTipping =
-    targetUserId !== currentUser?.id && ['image', 'bountyEntry'].includes(entityType);
+  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -291,7 +290,6 @@ function BuzzTippingBadge({
   const theme = useMantineTheme();
   const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {
     image: 'Image',
-    bountyEntry: 'BountyEntry',
   };
   const buzzTipEntryType = typeToBuzzTipType[entityType];
 
