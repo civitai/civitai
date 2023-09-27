@@ -136,8 +136,8 @@ const ageRegexes = templates.map((template) => {
   for (const [key, value] of Object.entries(partRegexStrings)) {
     regexStr = regexStr.replace(`{${key}}`, `(?<${key}>${value})`);
   }
-  regexStr = regexStr.replace(/\s+/g, `[^\\w]*`);
-  regexStr = `([^\\w]+|^)` + regexStr + `([^\\w]+|$)`;
+  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
+  regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
   return new RegExp(regexStr, 'i');
 });
 
@@ -168,7 +168,7 @@ export function includesMinor(prompt: string | undefined) {
 export function checkable(words: string[], options?: { pluralize?: boolean }) {
   const regexes = words.map((word) => {
     let regexStr = word;
-    regexStr = regexStr.replace(/\s+/g, `[^\\w]*`);
+    regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
     if (!word.includes('[')) {
       regexStr = regexStr
         .replace(/i/g, '[i|l|1]')
@@ -177,7 +177,8 @@ export function checkable(words: string[], options?: { pluralize?: boolean }) {
         .replace(/e/g, '[e|3]');
     }
     if (options?.pluralize) regexStr += '[s|z]*';
-    regexStr = `([^\\w]+|^)` + regexStr + `([^\\w]+|$)`;
+    regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
+    if (regexStr.includes('high')) console.log(regexStr);
     return new RegExp(regexStr, 'i');
   });
   function inPrompt(prompt: string) {
