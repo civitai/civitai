@@ -30,6 +30,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
     onUpdate: (file: BaseFileSchema) => void
   ) => React.ReactNode;
   orientation?: 'horizontal' | 'vertical';
+  showDropzoneStatus?: boolean;
 };
 
 export function MultiFileInputUpload({
@@ -38,6 +39,7 @@ export function MultiFileInputUpload({
   dropzoneProps,
   renderItem,
   orientation,
+  showDropzoneStatus = true,
   ...props
 }: Props) {
   const theme = useMantineTheme();
@@ -126,6 +128,16 @@ export function MultiFileInputUpload({
                   }
                 : undefined,
           })}
+          sx={
+            !showDropzoneStatus
+              ? (theme) => ({
+                  '&[data-reject], &[data-reject]:hover, &[data-accept], &[data-accept]:hover': {
+                    background: theme.colors.dark[5],
+                    borderColor: theme.colors.dark[4],
+                  },
+                })
+              : undefined
+          }
         >
           <Group
             position="center"
@@ -137,23 +149,29 @@ export function MultiFileInputUpload({
             }}
             noWrap
           >
-            <Dropzone.Accept>
-              <IconUpload
-                size={50}
-                stroke={1.5}
-                color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
-              />
-            </Dropzone.Accept>
-            <Dropzone.Reject>
-              <IconX
-                size={50}
-                stroke={1.5}
-                color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
-              />
-            </Dropzone.Reject>
-            <Dropzone.Idle>
+            {showDropzoneStatus ? (
+              <>
+                <Dropzone.Accept>
+                  <IconUpload
+                    size={50}
+                    stroke={1.5}
+                    color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+                  />
+                </Dropzone.Accept>
+                <Dropzone.Reject>
+                  <IconX
+                    size={50}
+                    stroke={1.5}
+                    color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+                  />
+                </Dropzone.Reject>
+                <Dropzone.Idle>
+                  <IconFileUpload size={50} stroke={1.5} />
+                </Dropzone.Idle>
+              </>
+            ) : (
               <IconFileUpload size={50} stroke={1.5} />
-            </Dropzone.Idle>
+            )}
             <Stack spacing={4} align={verticalOrientation ? 'center' : 'flex-start'}>
               <Text size="xl">Drop your files or click to select</Text>
               <Text color="dimmed" size="sm">
