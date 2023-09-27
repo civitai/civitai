@@ -12,6 +12,7 @@ import {
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
   CollectionContributorPermission,
+  CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
@@ -36,7 +37,13 @@ import {
 } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { PrivacyData, collectionReadPrivacyData } from './collection.utils';
+import {
+  PrivacyData,
+  collectionReadPrivacyData,
+  collectionWritePrivacyData,
+} from './collection.utils';
+import { getDisplayName } from '~/utils/string-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -271,6 +278,7 @@ function NewCollectionForm({
   onBack,
   ...props
 }: Props & { onSubmit: VoidFunction; onBack: VoidFunction }) {
+  const currentUser = useCurrentUser();
   const form = useForm({
     schema: upsertCollectionInput,
     defaultValues: {
@@ -354,6 +362,26 @@ function NewCollectionForm({
             data={Object.values(collectionReadPrivacyData)}
             itemComponent={SelectItem}
           />
+          {currentUser?.isModerator && (
+            <>
+              <InputSelect
+                name="write"
+                label="Add permissions"
+                data={Object.values(collectionWritePrivacyData)}
+              />
+              <InputSelect
+                name="mode"
+                label="Mode"
+                data={[
+                  ...Object.values(CollectionMode).map((value) => ({
+                    value,
+                    label: getDisplayName(value),
+                  })),
+                ]}
+                clearable
+              />
+            </>
+          )}
           <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
         </Stack>
         <Group position="right">

@@ -1929,6 +1929,10 @@ enum CollectionType {
   Image
 }
 
+enum CollectionMode {
+  Contest
+}
+
 model Collection {
   id          Int                          @id @default(autoincrement())
   createdAt   DateTime?                    @default(now())
@@ -1943,6 +1947,7 @@ model Collection {
   write       CollectionWriteConfiguration @default(Private)
   read        CollectionReadConfiguration  @default(Private)
   type        CollectionType?
+  mode        CollectionMode?
 
   items        CollectionItem[]
   contributors CollectionContributor[]

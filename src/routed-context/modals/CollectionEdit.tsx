@@ -2,7 +2,10 @@ import { Button, Center, Group, Loader, Modal, Stack, Text } from '@mantine/core
 import { z } from 'zod';
 
 import { useEffect } from 'react';
-import { collectionReadPrivacyData } from '~/components/Collections/collection.utils';
+import {
+  collectionReadPrivacyData,
+  collectionWritePrivacyData,
+} from '~/components/Collections/collection.utils';
 import {
   Form,
   InputCheckbox,
@@ -16,7 +19,14 @@ import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/co
 import { trpc } from '~/utils/trpc';
 import { createRoutedContext } from '../create-routed-context';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { CollectionType } from '@prisma/client';
+import {
+  BountyType,
+  CollectionMode,
+  CollectionType,
+  CollectionWriteConfiguration,
+} from '@prisma/client';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export default createRoutedContext({
   authGuard: true,
@@ -25,6 +35,7 @@ export default createRoutedContext({
   }),
   Element: ({ context, props: { collectionId } }) => {
     const queryUtils = trpc.useContext();
+    const currentUser = useCurrentUser();
     const { data, isLoading } = trpc.collection.getById.useQuery(
       { id: collectionId },
       { enabled: !!collectionId }
@@ -38,7 +49,7 @@ export default createRoutedContext({
     const upsertCollectionMutation = trpc.collection.upsert.useMutation();
     const handleSubmit = (data: UpsertCollectionInput) => {
       upsertCollectionMutation.mutate(
-        { ...data },
+        { ...data, mode: data.mode || null },
         {
           onSuccess: async () => {
             await queryUtils.collection.getInfinite.invalidate();
@@ -54,6 +65,7 @@ export default createRoutedContext({
         const result = upsertCollectionInput.safeParse({
           ...data.collection,
           type: data.collection.type ?? CollectionType.Model,
+          mode: data.collection.mode,
         });
         if (result.success) form.reset({ ...result.data });
         else console.error(result.error);
@@ -90,8 +102,28 @@ export default createRoutedContext({
                 name="read"
                 label="Privacy"
                 data={Object.values(collectionReadPrivacyData)}
-                // itemComponent={SelectItem}
               />
+
+              {currentUser?.isModerator && (
+                <>
+                  <InputSelect
+                    name="write"
+                    label="Add permissions"
+                    data={Object.values(collectionWritePrivacyData)}
+                  />
+                  <InputSelect
+                    name="mode"
+                    label="Mode"
+                    data={[
+                      ...Object.values(CollectionMode).map((value) => ({
+                        value,
+                        label: getDisplayName(value),
+                      })),
+                    ]}
+                    clearable
+                  />
+                </>
+              )}
               <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
               <Group position="right">
                 <Button type="submit" loading={upsertCollectionMutation.isLoading}>

@@ -316,6 +316,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       user: { select: userWithCosmeticsSelect },
       nsfw: true,
       image: { select: imageSelect },
+      mode: true,
     },
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
@@ -491,6 +492,7 @@ export const upsertCollection = async ({
     write,
     type,
     nsfw,
+    mode,
     ...collectionItem
   } = input;
 
@@ -511,6 +513,7 @@ export const upsertCollection = async ({
         nsfw,
         read,
         write,
+        mode,
         image: imageId
           ? { connect: { id: imageId } }
           : image !== undefined
@@ -568,6 +571,7 @@ export const upsertCollection = async ({
       write,
       userId,
       type,
+      mode,
       contributors: {
         create: {
           userId,
