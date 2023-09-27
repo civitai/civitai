@@ -271,7 +271,7 @@ export function InteractiveTipBuzzButton({
         {...buttonProps}
         onClick={undefined}
       >
-        <Popover withArrow withinPortal radius="md" opened={interval.active}>
+        <Popover withArrow withinPortal radius="md" opened={interval.active} zIndex={999}>
           <Popover.Target>
             <div>{children}</div>
           </Popover.Target>
