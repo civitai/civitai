@@ -411,7 +411,7 @@ export const getPurchaseDetailsHandler = async ({
     const baseDownloadRequirements =
       ctx.user?.isModerator ||
       (version?.model?.status === 'Published' && version?.status === 'Published') ||
-      (userId && version?.model?.userId === userId);
+      (!!userId && version?.model?.userId === userId);
 
     const userHasPurchasedModel =
       purchases.length > 0 &&
@@ -429,8 +429,6 @@ export const getPurchaseDetailsHandler = async ({
     const canDownload = downloadRequiresPurchase
       ? userHasPurchasedModel && baseDownloadRequirements
       : baseDownloadRequirements;
-
-    console.log({ canDownload });
 
     return { ...version, canDownload, downloadRequiresPurchase };
   } catch (error) {

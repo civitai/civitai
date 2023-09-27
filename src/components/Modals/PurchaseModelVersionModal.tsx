@@ -53,7 +53,13 @@ const { openModal, Modal } = createContextModal<{
       }
     }, [price]);
 
-    if (!price) return null;
+    if (!price || !price.unitAmount) {
+      return (
+        <Stack spacing="md">
+          <Text>Sorry, it looks like you&rsquo;re in the wrong place</Text>
+        </Stack>
+      );
+    }
 
     return (
       <Stack spacing="md">
