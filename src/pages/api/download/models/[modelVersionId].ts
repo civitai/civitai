@@ -25,6 +25,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { ModelVersionPurchaseTransactionDetailsSchema } from '~/server/schema/model-version-purchase.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -114,13 +115,18 @@ export default RateLimitedEndpoint(
     if (!modelVersion) return errorResponse(404, 'Model not found');
 
     // Handle non-published models
+    const features = getFeatureFlags({ user: session?.user });
     const isMod = session?.user?.isModerator;
     const userId = session?.user?.id;
     const archived = modelVersion.model.mode === ModelModifier.Archived;
     const isOwner = userId === modelVersion.model.userId;
     const { monetization, purchases } = modelVersion;
 
-    if (!(isOwner || isMod) && monetization?.type === ModelVersionMonetizationType.PaidAccess) {
+    if (
+      features.modelMonetization &&
+      !(isOwner || isMod) &&
+      monetization?.type === ModelVersionMonetizationType.PaidAccess
+    ) {
       if (!session?.user) {
         return errorResponse(401, 'Unauthorized. This model requires a purchase.');
       }
