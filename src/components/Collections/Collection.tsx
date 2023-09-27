@@ -65,18 +65,27 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
   const { set, ...query } = useModelQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? ModelSort.Newest;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
-        <Group position="apart" spacing={0}>
-          <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as ModelSort })} />
-          <Group spacing="xs">
-            <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
-            <ModelFiltersDropdown />
-          </Group>
-        </Group>
-        <CategoryTags />
+        {!isContestCollection && (
+          <>
+            <Group position="apart" spacing={0}>
+              <SortFilter
+                type="models"
+                value={sort}
+                onChange={(x) => set({ sort: x as ModelSort })}
+              />
+              <Group spacing="xs">
+                <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
+                <ModelFiltersDropdown />
+              </Group>
+            </Group>
+            <CategoryTags />
+          </>
+        )}
         <ModelsInfinite
           filters={{
             ...query,
@@ -97,13 +106,12 @@ const ImageCollection = ({
   collection: NonNullable<CollectionByIdModel>;
   permissions?: CollectionContributorPermissionFlags;
 }) => {
+  const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
-  const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? ImageSort.Newest;
+  const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const utils = trpc.useContext();
-
-  const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
     <ImageGuardReportContext.Provider
@@ -191,23 +199,34 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const { set, ...query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? PostSort.Newest;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
-        <Group position="apart" spacing={0}>
-          <SortFilter type="posts" value={sort} onChange={(sort) => set({ sort: sort as any })} />
-          <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
-        </Group>
-        <PostCategories />
-        <PostsInfinite
-          filters={{
-            ...query,
-            period,
-            sort,
-            collectionId: collection.id,
-          }}
-        />
+        {!isContestCollection && (
+          <>
+            <Group position="apart" spacing={0}>
+              <SortFilter
+                type="posts"
+                value={sort}
+                onChange={(sort) => set({ sort: sort as any })}
+              />
+              <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
+            </Group>
+            <PostCategories />
+          </>
+        )}
+        <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+          <PostsInfinite
+            filters={{
+              ...query,
+              period,
+              sort,
+              collectionId: collection.id,
+            }}
+          />
+        </ReactionSettingsProvider>
       </IsClient>
     </Stack>
   );
@@ -217,19 +236,24 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const { set, ...query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? ArticleSort.Newest;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
-        <Group position="apart" spacing={0}>
-          <SortFilter
-            type="articles"
-            value={sort}
-            onChange={(x) => set({ sort: x as ArticleSort })}
-          />
-          <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
-        </Group>
-        <ArticleCategories />
+        {!isContestCollection && (
+          <>
+            <Group position="apart" spacing={0}>
+              <SortFilter
+                type="articles"
+                value={sort}
+                onChange={(x) => set({ sort: x as ArticleSort })}
+              />
+              <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
+            </Group>
+            <ArticleCategories />
+          </>
+        )}
         <ArticlesInfinite
           filters={{
             ...query,
