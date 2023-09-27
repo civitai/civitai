@@ -3,6 +3,7 @@ import {
   deleteModelVersionHandler,
   getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
+  getPurchaseDetailsHandler,
   publishModelVersionHandler,
   requestReviewHandler,
   toggleNotifyEarlyAccessHandler,
@@ -95,4 +96,5 @@ export const modelVersionRouter = router({
   getModelVersionsByModelType: protectedProcedure
     .input(getModelVersionByModelTypeSchema)
     .query(({ input }) => getModelVersionsByModelType(input)),
+  getPurchaseDetails: protectedProcedure.input(getByIdSchema).query(getPurchaseDetailsHandler),
 });

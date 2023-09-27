@@ -1,4 +1,4 @@
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus, ModelVersionMonetizationType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { BaseModel, BaseModelType } from '~/server/common/constants';
 
@@ -28,6 +28,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ModelVersionPurchaseTransactionDetailsSchema } from '~/server/schema/model-version-purchase.schema';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -356,6 +357,84 @@ export const declineReviewHandler = async ({
 
     return updatedModel;
   } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getPurchaseDetailsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    const version = await getVersionById({
+      id: input.id,
+      select: {
+        id: true,
+        status: true,
+        model: {
+          select: {
+            userId: true,
+            status: true,
+          },
+        },
+        monetization: {
+          select: {
+            id: true,
+            unitAmount: true,
+            currency: true,
+            type: true,
+          },
+        },
+        purchases: ctx.user?.id
+          ? {
+              select: {
+                id: true,
+                transactionDetails: true,
+              },
+              where: {
+                userId: ctx.user?.id,
+              },
+            }
+          : undefined,
+      },
+    });
+
+    if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
+
+    const { purchases = [], monetization } = version;
+    const userId = ctx.user?.id;
+
+    const baseDownloadRequirements =
+      ctx.user?.isModerator ||
+      (version?.model?.status === 'Published' && version?.status === 'Published') ||
+      (userId && version?.model?.userId === userId);
+
+    const userHasPurchasedModel =
+      purchases.length > 0 &&
+      purchases.some((p) => {
+        const details = p.transactionDetails as ModelVersionPurchaseTransactionDetailsSchema;
+        return details?.monetizationType === monetization?.type;
+      });
+
+    // if !baseDownloadRequirementsMet, then the user is not allowed to download this model version at all.
+    const downloadRequiresPurchase =
+      baseDownloadRequirements &&
+      monetization?.type === ModelVersionMonetizationType.PaidAccess &&
+      !userHasPurchasedModel;
+
+    const canDownload = downloadRequiresPurchase
+      ? userHasPurchasedModel && baseDownloadRequirements
+      : baseDownloadRequirements;
+
+    console.log({ canDownload });
+
+    return { ...version, canDownload, downloadRequiresPurchase };
+  } catch (error) {
+    console.log(error);
     if (error instanceof TRPCError) error;
     else throw throwDbError(error);
   }

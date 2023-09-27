@@ -74,6 +74,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useModelVersionPurchase } from '~/components/Model/ModelVersions/useModelVersionPurchase';
 
 export function ModelVersionDetails({
   model,
@@ -87,6 +88,9 @@ export function ModelVersionDetails({
   const router = useRouter();
   const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
+  const { canDownload, onDownloadFile, downloadRequiresPurchase } = useModelVersionPurchase({
+    modelVersionId: version.id,
+  });
 
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -112,7 +116,6 @@ export function ModelVersionDetails({
     { enabled: features.imageGeneration && !!version }
   );
   const canGenerate = features.imageGeneration && !!resourceCovered;
-
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -311,12 +314,12 @@ export function ModelVersionDetails({
         component="a"
         py={4}
         icon={<VerifiedText file={file} iconOnly />}
-        href={createModelFileDownloadUrl({
-          versionId: version.id,
-          type: file.type,
-          meta: file.metadata,
-        })}
-        download
+        onClick={() =>
+          onDownloadFile({
+            type: file.type,
+            meta: file.metadata,
+          })
+        }
       >
         {`${startCase(file.type)}${
           ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
@@ -348,13 +351,13 @@ export function ModelVersionDetails({
             component="a"
             variant="subtle"
             size="xs"
-            href={createModelFileDownloadUrl({
-              versionId: version.id,
-              type: file.type,
-              meta: file.metadata,
-            })}
+            onClick={() =>
+              onDownloadFile({
+                type: file.type,
+                meta: file.metadata,
+              })
+            }
             disabled={archived}
-            download
             compact
           >
             Download
@@ -487,9 +490,10 @@ export function ModelVersionDetails({
                   <Menu position="bottom-end">
                     <Menu.Target>
                       <DownloadButton
-                        canDownload={version.canDownload}
+                        canDownload={canDownload}
                         disabled={!primaryFile || archived}
                         iconOnly
+                        downloadRequiresPurchase={downloadRequiresPurchase}
                       />
                     </Menu.Target>
                     <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
@@ -497,11 +501,9 @@ export function ModelVersionDetails({
                 ) : (
                   <DownloadButton
                     component="a"
-                    href={createModelFileDownloadUrl({
-                      versionId: version.id,
-                      primary: true,
-                    })}
-                    canDownload={version.canDownload}
+                    onClick={() => onDownloadFile({ primary: true })}
+                    canDownload={canDownload}
+                    downloadRequiresPurchase={downloadRequiresPurchase}
                     disabled={!primaryFile || archived}
                     sx={{ flex: 1 }}
                   >
