@@ -156,7 +156,7 @@ function MyApp(props: CustomAppProps) {
                       <HiddenPreferencesProvider>
                         <CivitaiLinkProvider>
                           <CustomModalsProvider>
-                            <NotificationsProvider zIndex={99999}>
+                            <NotificationsProvider zIndex={9999}>
                               <FreezeProvider>
                                 <TosProvider>{getLayout(<Component {...pageProps} />)}</TosProvider>
                               </FreezeProvider>
