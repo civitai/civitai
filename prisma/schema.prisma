@@ -162,7 +162,7 @@ model User {
   engagedBounties         BountyEngagement[]
   bountyEntryReactions    BountyEntryReaction[]
   referralCodes           UserReferralCode[]
-  ModelVersionPurchase    ModelVersionPurchase[]
+  modelPurchases    ModelVersionPurchase[]
 }
 
 model CustomerSubscription {
@@ -2070,6 +2070,9 @@ model ModelVersionPurchase {
   updatedAt          DateTime     @updatedAt
   transactionDetails Json?
   files              ModelFile[]
+
+  @@index([userId], type: Hash)
+  @@index([modelVersionId], type: Hash)
 }
 
 enum Currency {

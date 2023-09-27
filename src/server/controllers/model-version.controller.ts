@@ -29,6 +29,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ModelVersionPurchaseTransactionDetailsSchema } from '~/server/schema/model-version-purchase.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -370,6 +371,8 @@ export const getPurchaseDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const features = getFeatureFlags({ user: ctx.user });
+
     const version = await getVersionById({
       id: input.id,
       select: {
@@ -426,9 +429,10 @@ export const getPurchaseDetailsHandler = async ({
       monetization?.type === ModelVersionMonetizationType.PaidAccess &&
       !userHasPurchasedModel;
 
-    const canDownload = downloadRequiresPurchase
-      ? userHasPurchasedModel && baseDownloadRequirements
-      : baseDownloadRequirements;
+    const canDownload =
+      features.buzz && downloadRequiresPurchase
+        ? userHasPurchasedModel && baseDownloadRequirements
+        : baseDownloadRequirements;
 
     return { ...version, canDownload, downloadRequiresPurchase };
   } catch (error) {

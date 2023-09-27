@@ -21,10 +21,13 @@ const { openModal, Modal } = createContextModal<{
   Element: ({ context, props: { modelVersionId, onSuccess } }) => {
     const currentUser = useCurrentUser();
     const { price, isLoading } = useModelVersionPurchase({ modelVersionId });
+
+    const onClose = () => context.close();
+
     const purchaseModelVersionMutation = trpc.modelVersionPurchase.purchase.useMutation({
       async onSuccess() {
         onSuccess?.();
-        context.close();
+        onClose();
       },
       onError(error) {
         showErrorNotification({
@@ -34,7 +37,6 @@ const { openModal, Modal } = createContextModal<{
       },
     });
 
-    const onClose = () => context.close();
     const onPurchase = () => {
       if (!currentUser || !price?.unitAmount) return;
 

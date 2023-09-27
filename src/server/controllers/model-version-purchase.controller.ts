@@ -12,11 +12,7 @@ export const purchaseHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    if (input.userId !== ctx.user.id && !ctx.user.isModerator) {
-      throw throwAuthorizationError('You are not authorized to perform this action.');
-    }
-
-    await purchaseModelVersion({ ...input, userId: input.userId || ctx.user.id });
+    return purchaseModelVersion({ ...input, userId: input.userId || ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) error;
     else throw throwDbError(error);

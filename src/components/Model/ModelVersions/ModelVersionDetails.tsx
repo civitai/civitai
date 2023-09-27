@@ -311,7 +311,6 @@ export function ModelVersionDetails({
     !archived ? (
       <Menu.Item
         key={file.id}
-        component="a"
         py={4}
         icon={<VerifiedText file={file} iconOnly />}
         onClick={() =>
@@ -348,7 +347,6 @@ export function ModelVersionDetails({
             {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
           </Text>
           <Button
-            component="a"
             variant="subtle"
             size="xs"
             onClick={() =>
@@ -501,7 +499,6 @@ export function ModelVersionDetails({
                   </Menu>
                 ) : (
                   <DownloadButton
-                    component="a"
                     onClick={() => onDownloadFile({ primary: true })}
                     canDownload={canDownload}
                     downloadRequiresPurchase={downloadRequiresPurchase}
