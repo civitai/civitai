@@ -184,7 +184,7 @@ export const constants = {
     engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
     minCreateAmount: 5000,
   },
-  defaultCurrency: 'USD',
+  defaultCurrency: Currency.BUZZ,
   referrals: {
     referralCodeMinLength: 6,
     referralCodeMaxCount: 3,

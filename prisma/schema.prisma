@@ -162,6 +162,7 @@ model User {
   engagedBounties         BountyEngagement[]
   bountyEntryReactions    BountyEntryReaction[]
   referralCodes           UserReferralCode[]
+  modelPurchases    ModelVersionPurchase[]
 }
 
 model CustomerSubscription {
@@ -493,7 +494,7 @@ model ModelVersionMonetization {
   modelVersionId      Int                              @unique
   modelVersion        ModelVersion                     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   type                ModelVersionMonetizationType     @default(PaidAccess)
-  currency            String
+  currency            Currency                         @default(BUZZ)
   unitAmount          Int?
   sponsorshipSettings ModelVersionSponsorshipSettings?
 }
@@ -540,6 +541,7 @@ model ModelVersion {
   modelVersionExploration ModelVersionExploration[]
   vaeFor                  ModelVersion[]            @relation("vae")
   generationCoverage      GenerationCoverage?
+  purchases               ModelVersionPurchase[]
 
   @@index([modelId], type: Hash)
 }
@@ -592,25 +594,26 @@ enum ModelFileVisibility {
 }
 
 model ModelFile {
-  id                Int                 @id @default(autoincrement())
+  id                Int                    @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime            @default(now())
-  type              String              @default("Model")
+  createdAt         DateTime               @default(now())
+  type              String                 @default("Model")
   modelVersionId    Int
-  modelVersion      ModelVersion        @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode      @default(Pending)
+  modelVersion      ModelVersion           @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode         @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode      @default(Pending)
+  virusScanResult   ScanResultCode         @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
-  visibility        ModelFileVisibility @default(Public)
+  visibility        ModelFileVisibility    @default(Public)
+  purchases         ModelVersionPurchase[]
 
   @@index([modelVersionId], type: Hash)
 }
@@ -2055,6 +2058,21 @@ model BuzzTip {
 
   @@id([entityType, entityId, fromUserId])
   @@index([toUserId])
+}
+
+model ModelVersionPurchase {
+  id                 Int          @id @default(autoincrement())
+  userId             Int
+  user               User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId     Int
+  modelVersion       ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  transactionDetails Json?
+  files              ModelFile[]
+
+  @@index([userId], type: Hash)
+  @@index([modelVersionId], type: Hash)
 }
 
 enum Currency {

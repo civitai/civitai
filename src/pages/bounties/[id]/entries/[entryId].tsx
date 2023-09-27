@@ -563,6 +563,7 @@ export default function BountyEntryDetailsPage({
                     cryCount: stats?.cryCountAllTime,
                     tippedAmountCount: stats?.tippedAmountCountAllTime,
                   }}
+                  targetUserId={bountyEntry.user?.id}
                 />
                 {user?.id && (
                   <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
@@ -632,6 +633,7 @@ export default function BountyEntryDetailsPage({
                           cryCount: stats?.cryCountAllTime,
                           tippedAmountCount: stats?.tippedAmountCountAllTime,
                         }}
+                        targetUserId={bountyEntry.user?.id}
                       />
                       {user?.id && (
                         <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />

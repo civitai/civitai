@@ -71,9 +71,10 @@ import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes } from '~/utils/number-helpers';
+import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useModelVersionPurchase } from '~/components/Model/ModelVersions/useModelVersionPurchase';
 
 export function ModelVersionDetails({
   model,
@@ -87,6 +88,9 @@ export function ModelVersionDetails({
   const router = useRouter();
   const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
+  const { canDownload, price, onDownloadFile, downloadRequiresPurchase } = useModelVersionPurchase({
+    modelVersionId: version.id,
+  });
 
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
@@ -112,7 +116,6 @@ export function ModelVersionDetails({
     { enabled: features.imageGeneration && !!version }
   );
   const canGenerate = features.imageGeneration && !!resourceCovered;
-
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -308,15 +311,14 @@ export function ModelVersionDetails({
     !archived ? (
       <Menu.Item
         key={file.id}
-        component="a"
         py={4}
         icon={<VerifiedText file={file} iconOnly />}
-        href={createModelFileDownloadUrl({
-          versionId: version.id,
-          type: file.type,
-          meta: file.metadata,
-        })}
-        download
+        onClick={() =>
+          onDownloadFile({
+            type: file.type,
+            meta: file.metadata,
+          })
+        }
       >
         {`${startCase(file.type)}${
           ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
@@ -345,16 +347,15 @@ export function ModelVersionDetails({
             {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
           </Text>
           <Button
-            component="a"
             variant="subtle"
             size="xs"
-            href={createModelFileDownloadUrl({
-              versionId: version.id,
-              type: file.type,
-              meta: file.metadata,
-            })}
+            onClick={() =>
+              onDownloadFile({
+                type: file.type,
+                meta: file.metadata,
+              })
+            }
             disabled={archived}
-            download
             compact
           >
             Download
@@ -487,26 +488,30 @@ export function ModelVersionDetails({
                   <Menu position="bottom-end">
                     <Menu.Target>
                       <DownloadButton
-                        canDownload={version.canDownload}
+                        canDownload={canDownload}
                         disabled={!primaryFile || archived}
                         iconOnly
+                        downloadRequiresPurchase={downloadRequiresPurchase}
+                        color={downloadRequiresPurchase ? 'yellow.7' : undefined}
                       />
                     </Menu.Target>
                     <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
                   </Menu>
                 ) : (
                   <DownloadButton
-                    component="a"
-                    href={createModelFileDownloadUrl({
-                      versionId: version.id,
-                      primary: true,
-                    })}
-                    canDownload={version.canDownload}
+                    onClick={() => onDownloadFile({ primary: true })}
+                    canDownload={canDownload}
+                    downloadRequiresPurchase={downloadRequiresPurchase}
                     disabled={!primaryFile || archived}
                     sx={{ flex: 1 }}
+                    color={downloadRequiresPurchase ? 'yellow.7' : undefined}
                   >
                     <Text align="center">
-                      {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
+                      {downloadRequiresPurchase && primaryFile
+                        ? `Get for ${numberWithCommas(price?.unitAmount ?? 0)} BUZZ`
+                        : primaryFile
+                        ? `Download (${formatKBytes(primaryFile.sizeKB)})`
+                        : 'No file'}
                     </Text>
                   </DownloadButton>
                 )}

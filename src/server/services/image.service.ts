@@ -1296,6 +1296,7 @@ type GetImageByCategoryRaw = {
   heartCount: number;
   commentCount: number;
   tippedAmountCount: number;
+  userId?: number;
 };
 export const getImagesByCategory = async ({
   userId,
@@ -1433,12 +1434,13 @@ export const getImagesByCategory = async ({
         u.image AS "userImage",
         i."createdAt",
         p."publishedAt",
+        u.id AS "userId",
         COALESCE(im."cryCount", 0) "cryCount",
         COALESCE(im."laughCount", 0) "laughCount",
         COALESCE(im."likeCount", 0) "likeCount",
         COALESCE(im."dislikeCount", 0) "dislikeCount",
         COALESCE(im."heartCount", 0) "heartCount",
-        COALESCE(im."commentCount", 0) "commentCount"
+        COALESCE(im."commentCount", 0) "commentCount",
         COALESCE(im."tippedAmountCount", 0) "tippedAmountCount"
       FROM targets t
       JOIN "Image" i ON i.id = t."imageId"
@@ -1463,6 +1465,7 @@ export const getImagesByCategory = async ({
       .filter((x) => x.tagId === c.id)
       .map((x) => ({
         ...x,
+        userId: x.userId || undefined,
         reactions: userId
           ? reactions
               .filter((r) => r.imageId === x.id)
