@@ -83,7 +83,7 @@ export function createSearchIndexUpdateProcessor({
           VALUES ${batch
             .map(
               ({ id, action }) =>
-                `(${indexName}, ${id}, ${action ?? SearchIndexUpdateQueueAction.Update})`
+                `('${indexName}', ${id}, '${action ?? SearchIndexUpdateQueueAction.Update}')`
             )
             .join(', ')}
           ON CONFLICT ("type", "id", "action") DO NOTHING;
