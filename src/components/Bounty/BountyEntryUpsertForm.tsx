@@ -29,7 +29,6 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { TRPCClientError } from '@trpc/client';
 import { z } from 'zod';
 import { BountyEntryGetById, BountyGetById } from '~/types/router';
 import {
@@ -42,17 +41,28 @@ import { getBountyCurrency, getMainBountyAmount } from '~/components/Bounty/boun
 import { BountyEntryMode, BountyType, Currency } from '@prisma/client';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { formatKBytes } from '~/utils/number-helpers';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+// import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
-const dropzoneOptionsByModelType: Record<BountyType, string[]> = {
-  ModelCreation: ['.ckpt', '.pt', '.safetensors', '.bin', '.yaml', '.yml', '.onnx', '.zip'],
-  LoraCreation: ['.ckpt', '.pt', '.safetensors', '.bin', '.yaml', '.yml', '.zip'],
-  EmbedCreation: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
-  DataSetCreation: ['.zip'],
-  DataSetCaption: ['.zip'],
-  ImageCreation: [...IMAGE_MIME_TYPE.map((type) => type.replace(/.*\//, '.')), '.zip'],
-  VideoCreation: [...VIDEO_MIME_TYPE.map((type) => type.replace(/.*\//, '.')), '.zip'],
-  Other: ['.zip'],
+const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
+  ModelCreation: {
+    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.bin', '.onnx'],
+    'application/zip': ['.zip'],
+    'application/x-yaml': ['.yaml', '.yml'],
+  },
+  LoraCreation: {
+    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.bin'],
+    'application/zip': ['.zip'],
+    'application/x-yaml': ['.yaml', '.yml'],
+  },
+  EmbedCreation: {
+    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.bin'],
+    'application/zip': ['.zip'],
+  },
+  DataSetCreation: ZIP_MIME_TYPE,
+  DataSetCaption: ZIP_MIME_TYPE,
+  ImageCreation: [...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE],
+  VideoCreation: [...VIDEO_MIME_TYPE, ...ZIP_MIME_TYPE],
+  Other: ZIP_MIME_TYPE,
 };
 
 const formSchema = z
@@ -244,121 +254,6 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         )}
         <Group spacing="md" align="flex-start" sx={{ '& > *': { flexGrow: 1 } }}>
           <InputMultiFileUpload
-            name="bountyFiles"
-            label={
-              <Group spacing={8} noWrap>
-                <Text size="xl">Bounty Files</Text>
-                <HoverCard width={300}>
-                  <HoverCard.Target>
-                    <ThemeIcon radius="xl" size="xs" color="gray">
-                      <IconQuestionMark />
-                    </ThemeIcon>
-                  </HoverCard.Target>
-                  <HoverCard.Dropdown>
-                    <Stack spacing={4}>
-                      <Text size="md" color="yellow">
-                        What&apos;s this?
-                      </Text>
-                      <Text>
-                        Bounty Files are the files that will be given to the Supporter when they
-                        award you the bounty
-                      </Text>
-                    </Stack>
-                  </HoverCard.Dropdown>
-                </HoverCard>
-              </Group>
-            }
-            orientation="vertical"
-            labelProps={{ size: 'xl', sx: { display: 'inline-flex', gap: 8 } }}
-            dropzoneProps={{
-              maxFiles: 10,
-              accept: { 'mime/type': acceptedFileTypes },
-            }}
-            renderItem={(file, onRemove, onUpdate) => {
-              const metadata = (file.metadata ?? {}) as BountyEntryFileMeta;
-              // const currency = metadata.currency || getBountyCurrency(bounty);
-              // const unlockAmount = metadata.unlockAmount || 0;
-
-              return (
-                <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
-                  <Stack>
-                    <Group position="apart">
-                      <Stack spacing={0}>
-                        {bountyEntry && file.id ? (
-                          <Anchor
-                            href={`/api/download/attachments/${file.id}`}
-                            lineClamp={1}
-                            download
-                          >
-                            {file.name}
-                          </Anchor>
-                        ) : (
-                          <Text size="sm" weight={500} lineClamp={1}>
-                            {file.name}
-                          </Text>
-                        )}
-                        <Text color="dimmed" size="xs">
-                          {formatKBytes(file.sizeKB)}
-                        </Text>
-                      </Stack>
-                      <Group>
-                        {openEntry && (
-                          <Tooltip label="Only people who award this entry will have access to this file">
-                            <div>
-                              <Switch
-                                label="Requires contribution"
-                                checked={metadata.benefactorsOnly}
-                                onChange={(event) =>
-                                  onUpdate({
-                                    ...file,
-                                    metadata: {
-                                      ...metadata,
-                                      benefactorsOnly: event.currentTarget.checked,
-                                    },
-                                  })
-                                }
-                              />
-                            </div>
-                          </Tooltip>
-                        )}
-                        <Tooltip label="Remove">
-                          <ActionIcon
-                            size="md"
-                            color="red"
-                            variant="light"
-                            radius="xl"
-                            onClick={onRemove}
-                          >
-                            <IconTrash size="1rem" />
-                          </ActionIcon>
-                        </Tooltip>
-                      </Group>
-                    </Group>
-                    {/* <NumberInputWrapper
-                      label="Unlock amount"
-                      description="Only after this amount of awards is reached, the file will be unlocked. For sample files, it's always safest to use 0."
-                      icon={<CurrencyIcon currency={currency} size={18} />}
-                      format={currency !== Currency.BUZZ ? 'currency' : undefined}
-                      currency={currency}
-                      value={unlockAmount}
-                      max={getMainBountyAmount(bounty)}
-                      onChange={(value) => {
-                        onUpdate({
-                          ...file,
-                          metadata: {
-                            ...metadata,
-                            unlockAmount: value,
-                          },
-                        });
-                      }}
-                    /> */}
-                  </Stack>
-                </Paper>
-              );
-            }}
-            withAsterisk
-          />
-          <InputMultiFileUpload
             name="sampleFiles"
             label={
               <Group spacing={8} noWrap>
@@ -448,6 +343,122 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               );
             }}
           />
+          <InputMultiFileUpload
+            name="bountyFiles"
+            label={
+              <Group spacing={8} noWrap>
+                <Text size="xl">Bounty Files</Text>
+                <HoverCard width={300}>
+                  <HoverCard.Target>
+                    <ThemeIcon radius="xl" size="xs" color="gray">
+                      <IconQuestionMark />
+                    </ThemeIcon>
+                  </HoverCard.Target>
+                  <HoverCard.Dropdown>
+                    <Stack spacing={4}>
+                      <Text size="md" color="yellow">
+                        What&apos;s this?
+                      </Text>
+                      <Text size="sm">
+                        Bounty Files are the files that will be given to the Supporter when they
+                        award you the bounty
+                      </Text>
+                    </Stack>
+                  </HoverCard.Dropdown>
+                </HoverCard>
+              </Group>
+            }
+            orientation="vertical"
+            labelProps={{ size: 'xl', sx: { display: 'inline-flex', gap: 8 } }}
+            dropzoneProps={{
+              maxFiles: 10,
+              accept: acceptedFileTypes,
+            }}
+            renderItem={(file, onRemove, onUpdate) => {
+              const metadata = (file.metadata ?? {}) as BountyEntryFileMeta;
+              // const currency = metadata.currency || getBountyCurrency(bounty);
+              // const unlockAmount = metadata.unlockAmount || 0;
+
+              return (
+                <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
+                  <Stack>
+                    <Group position="apart">
+                      <Stack spacing={0}>
+                        {bountyEntry && file.id ? (
+                          <Anchor
+                            href={`/api/download/attachments/${file.id}`}
+                            lineClamp={1}
+                            download
+                          >
+                            {file.name}
+                          </Anchor>
+                        ) : (
+                          <Text size="sm" weight={500} lineClamp={1}>
+                            {file.name}
+                          </Text>
+                        )}
+                        <Text color="dimmed" size="xs">
+                          {formatKBytes(file.sizeKB)}
+                        </Text>
+                      </Stack>
+                      <Group>
+                        {openEntry && (
+                          <Tooltip label="Only people who award this entry will have access to this file">
+                            <div>
+                              <Switch
+                                label="Requires contribution"
+                                checked={metadata.benefactorsOnly}
+                                onChange={(event) =>
+                                  onUpdate({
+                                    ...file,
+                                    metadata: {
+                                      ...metadata,
+                                      benefactorsOnly: event.currentTarget.checked,
+                                    },
+                                  })
+                                }
+                              />
+                            </div>
+                          </Tooltip>
+                        )}
+                        <Tooltip label="Remove">
+                          <ActionIcon
+                            size="md"
+                            color="red"
+                            variant="light"
+                            radius="xl"
+                            onClick={onRemove}
+                          >
+                            <IconTrash size="1rem" />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </Group>
+                    {/* <NumberInputWrapper
+                      label="Unlock amount"
+                      description="Only after this amount of awards is reached, the file will be unlocked. For sample files, it's always safest to use 0."
+                      icon={<CurrencyIcon currency={currency} size={18} />}
+                      format={currency !== Currency.BUZZ ? 'currency' : undefined}
+                      currency={currency}
+                      value={unlockAmount}
+                      max={getMainBountyAmount(bounty)}
+                      onChange={(value) => {
+                        onUpdate({
+                          ...file,
+                          metadata: {
+                            ...metadata,
+                            unlockAmount: value,
+                          },
+                        });
+                      }}
+                    /> */}
+                  </Stack>
+                </Paper>
+              );
+            }}
+            showDropzoneStatus={false}
+            withAsterisk
+          />
         </Group>
         {openEntry && (
           <NumberInputWrapper
@@ -462,16 +473,16 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             max={maxAmount}
           />
         )}
-        <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" mb={0}>
-          {openEntry && (
+        {/* TODO.bounty: maybe bring this back once we have open entry bounties */}
+        {/* <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" mb={0}>
+          {openEntry ? (
             <Text>
               In this bounty, any and all users can award you for your entry, even if they are not
               supporters. This means that even after the bounty ends, you can earn rewards. However,
               this also means that after a file is unlocked, even by providing a small amount of
               awards, anyone can download it.
             </Text>
-          )}
-          {bounty.entryMode === BountyEntryMode.BenefactorsOnly && (
+          ) : (
             <Text>
               In this bounty, only people who are marked as supporters can award your entry. Because
               of this, the number of possible awards may be limited. You can set your files to only
@@ -479,7 +490,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               awards is reached.
             </Text>
           )}
-        </AlertWithIcon>
+        </AlertWithIcon> */}
 
         <Group mt="xl" position="right">
           <NavigateBack url={`/bounties/${bounty.id}`}>

@@ -11,7 +11,7 @@ import {
   Drawer,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { BountyMode, BountyType, MetricTimeframe } from '@prisma/client';
+import { BountyType, MetricTimeframe } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useCallback, useState } from 'react';
@@ -46,7 +46,7 @@ export function BountyFiltersDropdown() {
   const filterLength =
     (filters.types?.length ?? 0) +
     (filters.baseModels?.length ?? 0) +
-    (!!filters.mode ? 1 : 0) +
+    // (!!filters.mode ? 1 : 0) +
     (!!filters.status ? 1 : 0) +
     (filters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
@@ -54,7 +54,7 @@ export function BountyFiltersDropdown() {
     () =>
       setFilters({
         types: undefined,
-        mode: undefined,
+        // mode: undefined,
         status: undefined,
         baseModels: undefined,
         period: MetricTimeframe.AllTime,
@@ -141,7 +141,8 @@ export function BountyFiltersDropdown() {
           </Chip.Group>
         </Stack>
       )}
-      <Stack spacing="md">
+      {/* TODO.bounty: turn this on once we accept split bounties */}
+      {/* <Stack spacing="md">
         <Divider label="Bounty mode" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Group spacing={8}>
           {Object.values(BountyMode).map((mode, index) => (
@@ -155,7 +156,7 @@ export function BountyFiltersDropdown() {
             </Chip>
           ))}
         </Group>
-      </Stack>
+      </Stack> */}
       <Stack spacing="md">
         <Divider label="Bounty status" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Group spacing={8}>
