@@ -13,7 +13,12 @@ import {
   createStyles,
   Menu,
 } from '@mantine/core';
-import { CollectionContributorPermission, CollectionType, MetricTimeframe } from '@prisma/client';
+import {
+  CollectionContributorPermission,
+  CollectionMode,
+  CollectionType,
+  MetricTimeframe,
+} from '@prisma/client';
 import {
   IconCirclePlus,
   IconCloudOff,
@@ -54,6 +59,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { showSuccessNotification } from '~/utils/notifications';
+import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -96,6 +102,8 @@ const ImageCollection = ({
   const sort = query.sort ?? ImageSort.Newest;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const utils = trpc.useContext();
+
+  const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
     <ImageGuardReportContext.Provider
@@ -145,25 +153,35 @@ const ImageCollection = ({
     >
       <Stack spacing="xs">
         <IsClient>
-          <Group position="apart" spacing={0}>
-            <SortFilter
-              type="images"
-              value={sort}
-              onChange={(x) => replace({ sort: x as ImageSort })}
+          {!isContestCollection && (
+            <>
+              <Group position="apart" spacing={0}>
+                <SortFilter
+                  type="images"
+                  value={sort}
+                  onChange={(x) => replace({ sort: x as ImageSort })}
+                />
+                <PeriodFilter
+                  type="images"
+                  value={period}
+                  onChange={(x) => replace({ period: x })}
+                />
+              </Group>
+              <ImageCategories />
+            </>
+          )}
+          <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+            <ImagesInfinite
+              filters={{
+                ...query,
+                period,
+                sort,
+                collectionId: collection.id,
+                types: undefined,
+                withMeta: undefined,
+              }}
             />
-            <PeriodFilter type="images" value={period} onChange={(x) => replace({ period: x })} />
-          </Group>
-          <ImageCategories />
-          <ImagesInfinite
-            filters={{
-              ...query,
-              period,
-              sort,
-              collectionId: collection.id,
-              types: undefined,
-              withMeta: undefined,
-            }}
-          />
+          </ReactionSettingsProvider>
         </IsClient>
       </Stack>
     </ImageGuardReportContext.Provider>
