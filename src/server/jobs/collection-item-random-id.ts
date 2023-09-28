@@ -13,7 +13,7 @@ export const updateCollectionItemRandomId = createJob(
       AND c."mode" = 'Contest'
       AND ci."status" = 'ACCEPTED'
       AND (
-        (c."metadata"->'endsAt') IS NULL OR DATE(c."metadata"->>'endsAt') <= NOW()::DATE
+        (c."metadata"->'endsAt') IS NULL OR DATE(c."metadata"->>'endsAt') >= NOW()::DATE
       )
   `;
   }
