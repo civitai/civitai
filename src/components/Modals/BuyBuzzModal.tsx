@@ -11,6 +11,7 @@ import {
   Chip,
   NumberInput,
   Loader,
+  Input,
 } from '@mantine/core';
 import { Price } from '@prisma/client';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
@@ -22,7 +23,6 @@ import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { UserBuzz } from '../User/UserBuzz';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { isNumber } from '~/utils/type-guards';
-import { constants } from '~/server/common/constants';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 
 const useStyles = createStyles((theme) => ({
@@ -60,7 +60,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-type SelectablePackage = Pick<Price, 'id'>;
+type SelectablePackage = Pick<Price, 'id' | 'unitAmount'>;
 
 const { openModal, Modal } = createContextModal<{ message?: string }>({
   name: 'buyBuzz',
@@ -71,28 +71,25 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
     const currentUser = useCurrentUser();
     const { classes } = useStyles();
 
-    const [selectedPackage, setSelectedPackage] = useState<SelectablePackage | null>(null);
-    const [customMessage, setCustomMessage] = useState<string>(message ?? '');
+    const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
+    const [error, setError] = useState('');
     const [customAmount, setCustomAmount] = useState<number | undefined>();
 
-    const { packages, isLoading, createBuyingSession, creatingSession } = useQueryBuzzPackages();
+    const { packages, isLoading, createCheckoutSession, creatingSession } = useQueryBuzzPackages();
 
     const handleClose = () => context.close();
     const handleSubmit = async () => {
-      if (selectedPackage) {
-        await createBuyingSession({
-          priceId: selectedPackage.id,
-          returnUrl: location.href,
-        }).catch(() => ({}));
-      } else if (customAmount) {
-        const oneTimePrice = packages.find((item) => item.type === 'one_time');
-        if (!oneTimePrice) return;
+      if (selectedPrice) {
+        if (!selectedPrice.unitAmount && !customAmount)
+          return setError('Please enter the amount you wish to buy');
 
-        await createBuyingSession({
-          priceId: oneTimePrice.id,
+        return createCheckoutSession({
+          priceId: selectedPrice.id,
           returnUrl: location.href,
           customAmount,
         }).catch(() => ({}));
+      } else {
+        return setError('Please choose one option');
       }
     };
 
@@ -113,105 +110,111 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
           </Group>
         </Group>
         <Divider mx="-lg" />
-        {customMessage && (
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
-            {customMessage}
+        {message && (
+          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
+            {message}
           </AlertWithIcon>
         )}
+        <Stack spacing={0}>
+          <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
+          <Text size="sm" color="dimmed">
+            ($1 USD = 1,000 Buzz)
+          </Text>
+        </Stack>
         {isLoading ? (
           <Center py="xl">
             <Loader variant="bars" />
           </Center>
         ) : (
-          <Stack spacing="xl">
-            <Stack spacing={0}>
-              <Text size="sm" weight={590}>
-                Subscriptions
-              </Text>
-              <Text size="sm" color="dimmed">
-                Subscribe and save! Get more buzz for your buck with a subscription.
-              </Text>
-            </Stack>
-            <Chip.Group
-              className={classes.chipGroup}
-              value={selectedPackage?.id ?? ''}
-              onChange={(packageId) => {
-                const buzzPackage = packages.find((item) => item.id === packageId);
-                if (buzzPackage) setSelectedPackage(buzzPackage);
-              }}
-            >
-              {packages.map((buzzPackage, index) => {
-                if (!buzzPackage.unitAmount) return null;
-                const price = (buzzPackage.unitAmount ?? 0) / 100;
+          <Input.Wrapper error={error}>
+            <Stack spacing="xl" mb={error ? 5 : undefined}>
+              <Chip.Group
+                className={classes.chipGroup}
+                value={selectedPrice?.id ?? ''}
+                onChange={(priceId: string) => {
+                  const selectedPackage = packages.find((p) => p.id === priceId);
+                  setCustomAmount(undefined);
+                  setError('');
+                  setSelectedPrice(selectedPackage ?? null);
+                }}
+              >
+                {packages.map((buzzPackage, index) => {
+                  const price = (buzzPackage.unitAmount ?? 0) / 100;
 
-                return (
-                  <Chip
-                    key={buzzPackage.id}
-                    value={buzzPackage.id}
-                    classNames={{ label: classes.chipLabel, iconWrapper: classes.chipCheckmark }}
-                    variant="filled"
-                  >
-                    <Group align="center">
-                      <Text color="accent.5">
-                        <IconBolt
-                          color="currentColor"
-                          fill="currentColor"
-                          style={{ verticalAlign: 'middle' }}
-                        />
-                      </Text>
-                      <Stack spacing={0}>
-                        <Text size="lg" color="white" weight={590}>
-                          {buzzPackage.name ?? `Tier ${index + 1}`}
-                          <Text sx={{ fontVariantNumeric: 'tabular-nums' }} span>
-                            {` ($${price.toFixed(2)} / Month)`}
-                          </Text>
+                  return (
+                    <Chip
+                      key={buzzPackage.id}
+                      value={buzzPackage.id}
+                      classNames={{ label: classes.chipLabel, iconWrapper: classes.chipCheckmark }}
+                      variant="filled"
+                    >
+                      <Group align="center">
+                        <Text color="accent.5">
+                          <IconBolt
+                            color="currentColor"
+                            fill="currentColor"
+                            style={{ verticalAlign: 'middle' }}
+                          />
                         </Text>
-                        <Text size="md">
-                          {buzzPackage.buzzAmount ? buzzPackage.buzzAmount.toLocaleString() : 0}{' '}
-                          Buzz / Month
-                          <Text span>{` (${buzzPackage.description})`}</Text>
-                        </Text>
-                      </Stack>
-                    </Group>
-                  </Chip>
-                );
-              })}
-            </Chip.Group>
-            <Stack spacing={0}>
-              <Text size="sm" weight={590}>
-                One-off
-              </Text>
-              <Text size="sm" color="dimmed">
-                Buy buzz as a one-off purchase. No commitment, no strings attached.
-              </Text>
-              <Text size="sm" color="dimmed">
-                ($1 USD = 1,000 Buzz)
-              </Text>
-            </Stack>
+                        <Stack spacing={0}>
+                          {price ? (
+                            <>
+                              <Text size="lg" color="white" weight={590}>
+                                {buzzPackage.name ?? `Tier ${index + 1}`}
+                                <Text sx={{ fontVariantNumeric: 'tabular-nums' }} span>
+                                  {` ($${price.toFixed(2)})`}
+                                </Text>
+                              </Text>
+                              <Text size="md">
+                                {buzzPackage.buzzAmount
+                                  ? buzzPackage.buzzAmount.toLocaleString()
+                                  : 0}{' '}
+                                Buzz
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <Text size="lg" color="white" weight={590}>
+                                Custom amount
+                              </Text>
+                              <Text size="md" color="dimmed">
+                                You choose how much Buzz you want to buy
+                              </Text>
+                            </>
+                          )}
+                        </Stack>
+                      </Group>
+                    </Chip>
+                  );
+                })}
+              </Chip.Group>
 
-            <NumberInput
-              placeholder="Minimum $5 USD"
-              variant="filled"
-              icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
-              value={customAmount}
-              min={5}
-              precision={2}
-              disabled={creatingSession}
-              parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-              formatter={(value) =>
-                value && isNumber(value)
-                  ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                  : ''
-              }
-              onChange={(value) => {
-                setSelectedPackage(null);
-                setCustomAmount(value ?? 0);
-              }}
-              rightSectionWidth="10%"
-              rightSection={<Text size="xs">{constants.defaultCurrency}</Text>}
-              hideControls
-            />
-          </Stack>
+              {selectedPrice && !selectedPrice.unitAmount && (
+                <NumberInput
+                  placeholder="Minimum $5 USD"
+                  variant="filled"
+                  icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
+                  value={customAmount}
+                  min={5}
+                  precision={2}
+                  disabled={creatingSession}
+                  parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
+                  formatter={(value) =>
+                    value && isNumber(value)
+                      ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
+                      : ''
+                  }
+                  onChange={(value) => {
+                    setError('');
+                    setCustomAmount(value ?? 0);
+                  }}
+                  rightSectionWidth="10%"
+                  rightSection={<Text size="xs">USD</Text>}
+                  hideControls
+                />
+              )}
+            </Stack>
+          </Input.Wrapper>
         )}
         <Group position="right">
           <Button variant="filled" color="gray" onClick={handleClose}>

@@ -24,14 +24,14 @@ export const useQueryBuzzPackages = () => {
     },
   });
 
-  const createBuyingSession = (data: CreateBuzzSessionInput) => {
+  const createCheckoutSession = (data: CreateBuzzSessionInput) => {
     return createBuzzSessionMutation.mutateAsync(data);
   };
 
   return {
     packages,
     isLoading,
-    createBuyingSession,
+    createCheckoutSession,
     creatingSession: createBuzzSessionMutation.isLoading,
   };
 };

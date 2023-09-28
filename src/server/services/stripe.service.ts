@@ -219,7 +219,7 @@ export const createBuzzSession = async ({
 
   const price = await dbRead.price.findUnique({
     where: { id: priceId },
-    select: { productId: true, currency: true },
+    select: { productId: true, currency: true, type: true },
   });
   if (!price)
     throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
@@ -239,7 +239,7 @@ export const createBuzzSession = async ({
           }
         : { price: priceId, quantity: 1 },
     ],
-    mode: customAmount ? 'payment' : 'subscription',
+    mode: price.type === 'recurring' ? 'subscription' : 'payment',
     success_url: returnUrl,
   });
 
@@ -495,7 +495,6 @@ export const getBuzzPackages = async () => {
         select: {
           id: true,
           description: true,
-          type: true,
           unitAmount: true,
           currency: true,
           metadata: true,
