@@ -79,18 +79,15 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
 
     const handleClose = () => context.close();
     const handleSubmit = async () => {
-      if (selectedPrice) {
-        if (!selectedPrice.unitAmount && !customAmount)
-          return setError('Please enter the amount you wish to buy');
+      if (!selectedPrice) return setError('Please choose one option');
+      if (!selectedPrice.unitAmount && !customAmount)
+        return setError('Please enter the amount you wish to buy');
 
-        return createCheckoutSession({
-          priceId: selectedPrice.id,
-          returnUrl: location.href,
-          customAmount,
-        }).catch(() => ({}));
-      } else {
-        return setError('Please choose one option');
-      }
+      return createCheckoutSession({
+        priceId: selectedPrice.id,
+        returnUrl: location.href,
+        customAmount,
+      }).catch(() => ({}));
     };
 
     return (

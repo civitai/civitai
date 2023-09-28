@@ -532,13 +532,6 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               withTooltip
             />
           </Group>
-          {/* TODO.buzz: Replace this with button below when buying is available */}
-          {/* <Paper radius="xl" py={4} px={12}>
-            <Text size="xs" weight={600}>
-              Available Buzz
-            </Text>
-          </Paper> */}
-          {/* TODO.buzz: Once buying is available, uncomment this block */}
           <Button
             variant="white"
             radius="xl"

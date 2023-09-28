@@ -36,7 +36,6 @@ export function JoinPopover({
   const toggleKey = useStore((state) => state.toggleKey);
 
   const handleClick = (e: React.MouseEvent) => {
-    console.log('showing join popover');
     e.stopPropagation();
     e.preventDefault();
     e.nativeEvent.stopImmediatePropagation();
