@@ -16,6 +16,7 @@ export function Meta({ title, description, image, links = [] }: Props) {
       <meta property="twitter:title" content={title} />
       <meta property="twitter:description" content={description} />
       <meta property="twitter:image" content={image} />
+      {image && <meta name="robots" content="max-image-preview:large" />}
 
       {links.map((link, index) => (
         <link key={link.href || index} {...link} />

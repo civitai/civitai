@@ -1,0 +1,11 @@
+User-agent: *
+Disallow: /api/
+Disallow: /tag/
+Disallow: /*/create/
+Disallow: /cdn-cgi/
+Disallow: /user/account/
+Disallow: /user/notifications/
+Disallow: /user/downloads/
+Disallow: /user/transactions/
+Disallow: /models/train/
+Disallow: /moderator/
