@@ -21,6 +21,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { UserBuzz } from '../User/UserBuzz';
 import { openConfirmModal } from '@mantine/modals';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -210,12 +211,16 @@ const { openModal, Modal } = createContextModal<{
           return createBuzzTransactionMutation.mutate({
             toAccountId: toUserId,
             type: TransactionType.Tip,
-            amount,
+            amount: customAmount,
             description,
             entityId,
             entityType,
           });
         }
+      }
+
+      if (amount === -1) {
+        return;
       }
 
       return createBuzzTransactionMutation.mutate({
@@ -275,19 +280,13 @@ const { openModal, Modal } = createContextModal<{
             {amount === '-1' && (
               <InputNumber
                 name="customAmount"
-                placeholder="Your tip"
+                placeholder="Your tip. Minimum 1000 BUZZ"
                 variant="filled"
-                icon={<IconBolt size={18} fill="currentColor" />}
                 rightSectionWidth="10%"
-                min={1}
+                min={1000}
                 max={currentUser?.balance}
                 disabled={sending}
-                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                formatter={(value) =>
-                  value && !Number.isNaN(parseFloat(value))
-                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                    : ''
-                }
+                icon={<CurrencyIcon currency="BUZZ" size={16} />}
                 hideControls
               />
             )}

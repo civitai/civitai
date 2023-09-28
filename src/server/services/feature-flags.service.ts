@@ -57,7 +57,7 @@ const featureFlags = createFeatureFlags({
   },
   profileCollections: ['mod', 'founder'],
   imageSearch: ['dev'],
-  buzz: ['mod'],
+  buzz: ['public'],
   signal: ['user'],
   assistant: {
     toggleable: true,
@@ -67,6 +67,7 @@ const featureFlags = createFeatureFlags({
     availability: ['mod', 'founder'],
   },
   bounties: ['mod'],
+  modelMonetization: ['dev'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

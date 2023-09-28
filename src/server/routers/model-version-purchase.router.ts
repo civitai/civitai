@@ -5,6 +5,6 @@ import { purchaseHandler } from '~/server/controllers/model-version-purchase.con
 export const modelVersionPurchaseRouter = router({
   purchase: protectedProcedure
     .input(purchaseModelVersionInput)
-    .use(isFlagProtected('buzz'))
+    .use(isFlagProtected('modelMonetization'))
     .mutation(purchaseHandler),
 });

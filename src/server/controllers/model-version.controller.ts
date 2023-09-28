@@ -425,14 +425,14 @@ export const getPurchaseDetailsHandler = async ({
 
     // if !baseDownloadRequirementsMet, then the user is not allowed to download this model version at all.
     const downloadRequiresPurchase =
+      features.modelMonetization &&
       baseDownloadRequirements &&
       monetization?.type === ModelVersionMonetizationType.PaidAccess &&
       !userHasPurchasedModel;
 
-    const canDownload =
-      features.buzz && downloadRequiresPurchase
-        ? userHasPurchasedModel && baseDownloadRequirements
-        : baseDownloadRequirements;
+    const canDownload = downloadRequiresPurchase
+      ? userHasPurchasedModel && baseDownloadRequirements
+      : baseDownloadRequirements;
 
     return { ...version, canDownload, downloadRequiresPurchase };
   } catch (error) {
