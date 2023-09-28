@@ -71,7 +71,7 @@ export function ImageDetailProvider({
   );
 
   const { data: collectionData, isLoading: isLoadingCollection } = trpc.collection.getById.useQuery(
-    { id: collectionId },
+    { id: collectionId as number },
     { enabled: !!collectionId }
   );
 
