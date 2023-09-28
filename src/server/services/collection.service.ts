@@ -725,7 +725,8 @@ export const getCollectionItemsByCollectionId = async ({
       createdAt: true,
     },
     where,
-    orderBy: { createdAt: 'desc' },
+    orderBy:
+      collection.mode === CollectionMode.Contest ? { randomId: 'desc' } : { createdAt: 'desc' },
   });
 
   if (collectionItems.length === 0) {
