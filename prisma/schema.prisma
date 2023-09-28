@@ -1948,6 +1948,7 @@ model Collection {
   read        CollectionReadConfiguration  @default(Private)
   type        CollectionType?
   mode        CollectionMode?
+  metadata    Json                         @default("{}")
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -1985,8 +1986,12 @@ model CollectionItem {
   addedBy      User?                @relation(fields: [addedById], references: [id], onDelete: SetNull)
   note         String?
   status       CollectionItemStatus @default(ACCEPTED)
+  randomId     Int?
 
   @@unique([collectionId, articleId, postId, imageId, modelId])
+  @@index([addedById])
+  @@index([imageId])
+  @@index([modelId])
 }
 
 enum CollectionContributorPermission {

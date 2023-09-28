@@ -21,6 +21,7 @@ import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
+import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
@@ -61,6 +62,7 @@ export const jobs: Job[] = [
   ...metricJobs,
   ...searchIndexJobs,
   ...bountyJobs,
+  updateCollectionItemRandomId,
 ];
 
 const log = createLogger('jobs', 'green');

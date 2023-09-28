@@ -45,6 +45,7 @@ export enum ImageSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
+  Random = 'Random',
 }
 
 export enum PostSort {
