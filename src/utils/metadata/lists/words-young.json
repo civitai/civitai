@@ -36,14 +36,15 @@
     "pre pubescent",
     "not mature",
     "not old",
-    "disney"
+    "disney",
+    "kindergartens*"
   ],
   "partialNouns": [
-    "girl",
-    "boy"
+    "girl*",
+    "boy*"
   ],
   "nouns": [
-    "kg2",
+    "kg[0-9]+",
     "infant",
     "kindergartener",
     "kindergarten",
@@ -78,7 +79,7 @@
     "bab*y",
     "babies",
     "tod*le*r",
-    "child",
+    "child\\w*",
     "children",
     "juven*ile",
     "kiddy",

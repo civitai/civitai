@@ -30,7 +30,7 @@
   "poo",
   "shit",
   "nude",
-  "naked",
+  "\\w*naked",
   "undress",
   "undressed",
   "pubic",
@@ -70,6 +70,7 @@
   "masturbate",
   "masturbation",
   "orgasm",
+  "ahegao",
   "view from below",
   "microkini",
   "bikini",
@@ -79,6 +80,8 @@
   "skirt lift",
   "nipples",
   "cum",
+  "cummed",
+  "cumming",
   "sexy",
   "cock",
   "pussy",
@@ -125,5 +128,6 @@
   "pornography",
   "private",
   "privates",
-  "strips"
+  "strips",
+  "raped*"
 ]
