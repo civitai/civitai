@@ -1,8 +1,7 @@
-import { TrainingStatus } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
-import { env } from '~/env/server.mjs';
+import { ModelFileVisibility } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { createTrainingRequest } from '~/server/services/training.service';
+import { deleteAssets } from '~/server/services/training.service';
+import { deleteObject, parseKey } from '~/utils/s3-utils';
 import { createJob } from './job';
 
 export const deleteOldTrainingData = createJob(
@@ -10,49 +9,74 @@ export const deleteOldTrainingData = createJob(
   '5 13 * * *',
   async () => {
     const oldTraining = await dbWrite.$queryRaw<
-      { id: number; metadata: FileMetadata | null; userId: number }[]
+      {
+        mf_id: number;
+        history: NonNullable<FileMetadata['trainingResults']>['history'];
+        visibility: ModelFileVisibility;
+        url: string;
+      }[]
     >`
-        SELECT mv.id,
-               mf.metadata,
-               m."userId"
-        FROM "ModelVersion" mv
+        SELECT
+          mf.id as mf_id,
+          mf.metadata -> 'trainingResults' -> 'history' as history,
+          mf.visibility,
+          mf.url
+      FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-        WHERE mv."trainingStatus" in ('InReview', 'Approved')
-          AND mf.metadata -> 'trainingResults' ->> 'end_time'
+      WHERE
+          m."uploadType" = 'Trained'
+          AND mv."trainingStatus" in ('InReview', 'Approved')
+          AND (timezone('utc', current_timestamp) - (mf.metadata -> 'trainingResults' ->> 'end_time')::timestamp) > '30 days'
+          AND mf."dataPurged" is not true
     `;
 
-    for (const { id, metadata, userId } of oldTraining) {
-      const endTime = metadata?.trainingResults?.end_time;
+    console.log(`DeleteOldTrainingData :: found ${oldTraining.length} jobs`);
 
-      if (endTime) {
-      }
+    let goodJobs = 0;
+    let errorJobs = 0;
+    for (const { mf_id, history, visibility, url } of oldTraining) {
+      let hasError = false;
 
-      const jobHistory = metadata?.trainingResults?.history?.slice(-1);
-      if (jobHistory && jobHistory.length) {
-        const jobToken = jobHistory[0].jobToken;
-        const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs/${jobToken}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
-          },
-        });
-        if (response.status === 404) {
-          try {
-            await createTrainingRequest({ modelVersionId: id, userId });
-          } catch (error) {
-            const message = error instanceof TRPCError ? error.message : `${error}`;
-            console.error(`Failed to resubmit training job for model version ${id}: ${message}`);
-            dbWrite.modelVersion.update({
-              where: { id: id },
-              data: {
-                trainingStatus: TrainingStatus.Failed,
-              },
-            });
+      const seenJobs: string[] = [];
+      if (history) {
+        for (const h of history) {
+          const { jobId } = h;
+          if (!seenJobs.includes(jobId)) {
+            try {
+              const result = await deleteAssets(jobId);
+              if (!result || !result.total) {
+                hasError = true;
+              }
+              seenJobs.push(jobId);
+            } catch (e) {
+              hasError = true;
+              console.error(e);
+            }
           }
         }
       }
+
+      if (visibility !== ModelFileVisibility.Public) {
+        const { key, bucket } = parseKey(url);
+        await deleteObject(bucket, key);
+      }
+
+      if (!hasError) {
+        await dbWrite.modelFile.update({
+          where: { id: mf_id },
+          data: {
+            dataPurged: true,
+          },
+        });
+        goodJobs += 1;
+      } else {
+        errorJobs += 1;
+      }
     }
+    console.log(
+      `DeleteOldTrainingData :: finished. successes: ${goodJobs}, failures: ${errorJobs}`
+    );
+    return { status: 'ok' };
   }
 );
