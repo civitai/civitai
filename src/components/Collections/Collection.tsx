@@ -61,6 +61,7 @@ import { ImageUploadProps } from '~/server/schema/image.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { getRandom } from '~/utils/array-helpers';
+import ReactMarkdown from 'react-markdown';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -360,7 +361,13 @@ export function Collection({
                   </Title>
                   {collection?.description && (
                     <Text size="xs" color="dimmed">
-                      {collection.description}
+                      <ReactMarkdown
+                        allowedElements={['a', 'p']}
+                        unwrapDisallowed
+                        className="markdown-content"
+                      >
+                        {collection.description}
+                      </ReactMarkdown>
                     </Text>
                   )}
                 </Stack>
