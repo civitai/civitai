@@ -17,7 +17,7 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
-import { IconArrowLeft, IconPlus } from '@tabler/icons-react';
+import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
@@ -29,6 +29,7 @@ import {
   InputText,
   InputTextArea,
   useForm,
+  InputDatePicker,
 } from '~/libs/form';
 import {
   AddCollectionItemInput,
@@ -325,6 +326,8 @@ function NewCollectionForm({
     });
   };
 
+  const mode = form.watch('mode');
+
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing="xl">
@@ -380,6 +383,15 @@ function NewCollectionForm({
                 ]}
                 clearable
               />
+              {mode === CollectionMode.Contest && (
+                <InputDatePicker
+                  name="metadata.endsAt"
+                  label="End Date"
+                  placeholder="Select an end date"
+                  icon={<IconCalendar size={16} />}
+                  withAsterisk
+                />
+              )}
             </>
           )}
           <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />

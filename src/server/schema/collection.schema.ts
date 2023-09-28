@@ -85,6 +85,9 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
+export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
+export const collectionMetadataSchema = z.object({ endsAt: z.coerce.date().optional() });
+
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z
   .object({
@@ -98,6 +101,7 @@ export const upsertCollectionInput = z
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
     mode: z.nativeEnum(CollectionMode).nullable().optional(),
+    metadata: collectionMetadataSchema.optional(),
   })
   .merge(collectionItemSchema);
 

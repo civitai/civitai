@@ -202,10 +202,10 @@ const ImageCollection = ({
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
     ? getRandom(Object.values(PostSort))
     : query.sort ?? PostSort.Newest;
-  const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
     <Stack spacing="xs">
@@ -241,10 +241,10 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
     ? getRandom(Object.values(ArticleSort))
     : query.sort ?? ArticleSort.Newest;
-  const isContestCollection = collection.mode === CollectionMode.Contest;
 
   return (
     <Stack spacing="xs">

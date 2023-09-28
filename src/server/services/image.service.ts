@@ -523,7 +523,6 @@ export const getAllImages = async ({
       ? ` OR (ci."status" = 'REVIEW' AND ci."addedById" = ${userId})`
       : '';
     const useRandomCursor = cursor && sort === ImageSort.Random;
-    console.log(cursor);
 
     WITH.push(
       Prisma.sql`

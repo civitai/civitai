@@ -9,6 +9,7 @@ import {
 import {
   Form,
   InputCheckbox,
+  InputDatePicker,
   InputSelect,
   InputSimpleImageUpload,
   InputText,
@@ -27,6 +28,7 @@ import {
 } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
+import { IconCalendar } from '@tabler/icons-react';
 
 export default createRoutedContext({
   authGuard: true,
@@ -45,6 +47,8 @@ export default createRoutedContext({
       schema: upsertCollectionInput,
       shouldUnregister: false,
     });
+
+    const mode = form.watch('mode');
 
     const upsertCollectionMutation = trpc.collection.upsert.useMutation();
     const handleSubmit = (data: UpsertCollectionInput) => {
@@ -66,6 +70,7 @@ export default createRoutedContext({
           ...data.collection,
           type: data.collection.type ?? CollectionType.Model,
           mode: data.collection.mode,
+          metadata: data.collection.metadata ?? {},
         });
         if (result.success) form.reset({ ...result.data });
         else console.error(result.error);
@@ -122,6 +127,15 @@ export default createRoutedContext({
                     ]}
                     clearable
                   />
+                  {mode === CollectionMode.Contest && (
+                    <InputDatePicker
+                      name="metadata.endsAt"
+                      label="End Date"
+                      placeholder="Select an end date"
+                      icon={<IconCalendar size={16} />}
+                      withAsterisk
+                    />
+                  )}
                 </>
               )}
               <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
