@@ -7,8 +7,9 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
-import { ReviewReactions } from '@prisma/client';
+import { CollectionMode, ReviewReactions } from '@prisma/client';
 import { ImageGetById, ImageGetInfinite } from '~/types/router';
+import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -50,6 +51,7 @@ export function ImageDetailProvider({
     prioritizedUserIds?: number[];
     tags?: number[];
     reactions?: ReviewReactions[];
+    collectionId?: number;
   } & Record<string, unknown>;
 }) {
   const router = useRouter();
@@ -57,8 +59,7 @@ export function ImageDetailProvider({
   const closingRef = useRef(false);
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId, modelId, modelVersionId, username, reactions } = filters;
-
+  const { postId, modelId, modelVersionId, username, reactions, collectionId } = filters;
   // #region [data fetching]
   const shouldFetchMany = Object.keys(filters).length > 0;
   const { images = [], isInitialLoading: imagesLoading } = useQueryImages(
@@ -68,6 +69,13 @@ export function ImageDetailProvider({
       enabled: shouldFetchMany,
     }
   );
+
+  const { data: collectionData, isLoading: isLoadingCollection } = trpc.collection.getById.useQuery(
+    { id: collectionId },
+    { enabled: !!collectionId }
+  );
+
+  const collection = collectionData?.collection;
 
   const shouldFetchImage =
     !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
@@ -182,6 +190,7 @@ export function ImageDetailProvider({
     : modelId
     ? { entityType: 'model', entityId: modelId }
     : undefined;
+  const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   return (
     <ImageDetailContext.Provider
@@ -202,7 +211,9 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      {children}
+      <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+        {children}
+      </ReactionSettingsProvider>
     </ImageDetailContext.Provider>
   );
 }
