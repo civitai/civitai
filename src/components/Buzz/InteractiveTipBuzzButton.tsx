@@ -22,6 +22,8 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { devtools } from 'zustand/middleware';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 type Props = UnstyledButtonProps & {
   toUserId?: number;
@@ -36,7 +38,7 @@ type Props = UnstyledButtonProps & {
   }) => void;
 };
 
-const CONFIRMATION_TRHESHOLD = 100;
+const CONFIRMATION_THRESHOLD = 100;
 
 /**NOTES**
  Why use zustand?
@@ -184,19 +186,15 @@ export function InteractiveTipBuzzButton({
     if (interval.active) {
       interval.stop();
       const amount = buzzCounter > 0 ? buzzCounter : 10;
-      const requiresConfirmation = amount >= CONFIRMATION_TRHESHOLD;
+      const requiresConfirmation = amount >= CONFIRMATION_THRESHOLD;
 
       if (!dismissed && isClick) {
         showNotification({
           title: "Looks like you're onto your first tip!",
           message: (
             <Text>
-              To send more than 10 buzz{' '}
-              {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
-              <ThemeIcon color="yellow.4" variant="transparent">
-                <IconBolt size={18} fill="currentColor" />
-              </ThemeIcon>
-              , hold the button for as long as you like
+              To send more than <CurrencyBadge currency={Currency.BUZZ} unitAmount={10} />, hold the
+              button for as long as you like
             </Text>
           ),
         });
@@ -214,11 +212,10 @@ export function InteractiveTipBuzzButton({
           message: (
             <Stack spacing={'xs'}>
               <Group spacing={4}>
-                <Text>You are about to tip {amount} Buzz.</Text>
-                {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
-                <ThemeIcon color="yellow.4" variant="transparent">
-                  <IconBolt size={18} fill="currentColor" />
-                </ThemeIcon>
+                <Text>
+                  You are about to tip{' '}
+                  <CurrencyBadge currency={Currency.BUZZ} unitAmount={amount} />
+                </Text>
               </Group>
               <Text> Are you sure?</Text>
               {!requiresConfirmation && (
