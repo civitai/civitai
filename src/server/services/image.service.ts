@@ -540,7 +540,8 @@ export const getAllImages = async ({
             : ''
         )}
         ct AS MATERIALIZED (
-          SELECT ci."imageId", MIN(ci."randomId") "randomId" FROM "CollectionItem" ci
+          SELECT ci."imageId", MIN(ci."randomId") "randomId"
+          FROM "CollectionItem" ci
           WHERE ci."collectionId" = ${collectionId}
             AND ci."imageId" IS NOT NULL
             AND (ci."status" = 'ACCEPTED'${Prisma.raw(displayReviewItems)})
@@ -550,7 +551,6 @@ export const getAllImages = async ({
             )}
           GROUP BY ci."imageId"
           ${Prisma.raw(sort === ImageSort.Random ? 'ORDER BY "randomId" DESC' : '')}
-          LIMIT ${2 * limit}
         )`
     );
   }
