@@ -541,7 +541,6 @@ export const getAllImages = async ({
         )}
         ct AS MATERIALIZED (
           SELECT ci."imageId", MIN(ci."randomId") "randomId" FROM "CollectionItem" ci
-          JOIN "Collection" c ON c.id = ci."collectionId"
           WHERE ci."collectionId" = ${collectionId}
             AND ci."imageId" IS NOT NULL
             AND (ci."status" = 'ACCEPTED'${Prisma.raw(displayReviewItems)})
