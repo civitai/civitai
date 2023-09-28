@@ -10,11 +10,13 @@ import {
   UpsertCollectionInput,
   GetAllCollectionsInfiniteSchema,
   UpdateCollectionCoverImageInput,
+  CollectionMetadataSchema,
 } from '~/server/schema/collection.schema';
 import { SessionUser } from 'next-auth';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
+  CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
@@ -316,6 +318,8 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       user: { select: userWithCosmeticsSelect },
       nsfw: true,
       image: { select: imageSelect },
+      mode: true,
+      metadata: true,
     },
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
@@ -326,6 +330,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     image: collection.image
       ? { ...collection.image, meta: collection.image.meta as ImageMetaProps | null }
       : null,
+    metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
   };
 };
 
@@ -404,11 +409,14 @@ export const saveItemInCollections = async ({
   if (data.length > 0) {
     transactions.push(
       dbWrite.$executeRaw`
-      INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(itemKey)}")
+      INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "randomId" , "${Prisma.raw(
+        itemKey
+      )}")
       SELECT
         v."collectionId",
         v."addedById",
         v."status",
+        FLOOR(RANDOM() * 1000000000),
         v."${Prisma.raw(itemKey)}"
       FROM jsonb_to_recordset(${JSON.stringify(data)}::jsonb) AS v(
         "collectionId" INTEGER,
@@ -491,6 +499,8 @@ export const upsertCollection = async ({
     write,
     type,
     nsfw,
+    mode,
+    metadata,
     ...collectionItem
   } = input;
 
@@ -498,37 +508,54 @@ export const upsertCollection = async ({
     // Get current collection values for comparison
     const currentCollection = await dbWrite.collection.findUnique({
       where: { id },
-      select: { id: true, image: { select: { id: true } } },
+      select: { id: true, mode: true, image: { select: { id: true } } },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
 
-    const updated = await dbWrite.collection.update({
-      select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
-      where: { id },
-      data: {
-        name,
-        description,
-        nsfw,
-        read,
-        write,
-        image: imageId
-          ? { connect: { id: imageId } }
-          : image !== undefined
-          ? image === null
-            ? { disconnect: true }
-            : {
-                connectOrCreate: {
-                  where: { id: image.id ?? -1 },
-                  create: {
-                    ...image,
-                    meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-                    userId,
-                    resources: undefined,
+    const updated = await dbWrite.$transaction(async (tx) => {
+      const updated = await tx.collection.update({
+        select: {
+          id: true,
+          mode: true,
+          image: { select: { id: true, url: true, ingestion: true, type: true } },
+        },
+        where: { id },
+        data: {
+          name,
+          description,
+          nsfw,
+          read,
+          write,
+          mode,
+          metadata: (metadata ?? {}) as Prisma.JsonObject,
+          image: imageId
+            ? { connect: { id: imageId } }
+            : image !== undefined
+            ? image === null
+              ? { disconnect: true }
+              : {
+                  connectOrCreate: {
+                    where: { id: image.id ?? -1 },
+                    create: {
+                      ...image,
+                      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      userId,
+                      resources: undefined,
+                    },
                   },
-                },
-              }
-          : undefined,
-      },
+                }
+            : undefined,
+        },
+      });
+
+      if (updated.mode !== currentCollection.mode && updated.mode === CollectionMode.Contest) {
+        await tx.$executeRaw`
+            UPDATE "CollectionItem" ci SET "randomId" = FLOOR(RANDOM() * 1000000000)
+            WHERE ci."collectionId" = ${updated.id}
+        `;
+      }
+
+      return updated;
     });
 
     if (input.read === CollectionReadConfiguration.Public) {
@@ -568,6 +595,8 @@ export const upsertCollection = async ({
       write,
       userId,
       type,
+      mode,
+      metadata: (metadata ?? {}) as Prisma.JsonObject,
       contributors: {
         create: {
           userId,

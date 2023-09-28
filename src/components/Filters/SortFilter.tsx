@@ -7,6 +7,7 @@ import {
   BountySort,
   CollectionSort,
   ImageSort,
+  ImageSortHidden,
   ModelSort,
   PostSort,
   QuestionSort,
@@ -18,8 +19,8 @@ type SortFilterProps = StatefulProps | DumbProps;
 const sortOptions = {
   models: Object.values(ModelSort),
   posts: Object.values(PostSort),
-  images: Object.values(ImageSort),
-  modelImages: Object.values(ImageSort),
+  images: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
+  modelImages: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   questions: Object.values(QuestionSort),
   articles: Object.values(ArticleSort),
   collections: Object.values(CollectionSort),

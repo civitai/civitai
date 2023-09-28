@@ -3,6 +3,7 @@ import { isDefined } from '~/utils/type-guards';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
+  CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
@@ -84,6 +85,9 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
+export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
+export const collectionMetadataSchema = z.object({ endsAt: z.coerce.date().optional() });
+
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z
   .object({
@@ -96,6 +100,8 @@ export const upsertCollectionInput = z
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
+    mode: z.nativeEnum(CollectionMode).nullish(),
+    metadata: collectionMetadataSchema.optional(),
   })
   .merge(collectionItemSchema);
 
