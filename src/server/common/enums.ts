@@ -48,6 +48,10 @@ export enum ImageSort {
   Random = 'Random',
 }
 
+export enum ImageSortHidden {
+  Random = ImageSort.Random,
+}
+
 export enum PostSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
