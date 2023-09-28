@@ -18,6 +18,7 @@ import {
   toggleArticleEngagementHandler,
   toggleBountyEngagementHandler,
   reportProhibitedRequestHandler,
+  userByReferralCodeHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -41,6 +42,7 @@ import {
   toggleUserArticleEngagementSchema,
   toggleUserBountyEngagementSchema,
   reportProhibitedRequestSchema,
+  userByReferralCodeSchema,
 } from '~/server/schema/user.schema';
 import {
   getUserArticleEngagements,
@@ -109,4 +111,7 @@ export const userRouter = router({
   reportProhibitedRequest: protectedProcedure
     .input(reportProhibitedRequestSchema)
     .mutation(reportProhibitedRequestHandler),
+  userByReferralCode: publicProcedure
+    .input(userByReferralCodeSchema)
+    .query(userByReferralCodeHandler),
 });

@@ -128,7 +128,7 @@ export function SearchLayout({
         indexName={indexName}
         routing={routing}
       >
-        <Configure hitsPerPage={50} />
+        <Configure hitsPerPage={50} attributesToHighlight={[]} />
         <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>

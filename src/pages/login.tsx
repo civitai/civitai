@@ -1,4 +1,14 @@
-import { Container, Paper, Stack, Text, Alert, Group, ThemeIcon, Divider } from '@mantine/core';
+import {
+  Container,
+  Paper,
+  Stack,
+  Text,
+  Alert,
+  Group,
+  ThemeIcon,
+  Divider,
+  Code,
+} from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
@@ -11,6 +21,10 @@ import { SocialButton } from '~/components/Social/SocialButton';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
+import { trpc } from '~/utils/trpc';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { QS } from '~/utils/qs';
 
 export default function Login({ providers }: Props) {
   const router = useRouter();
@@ -18,7 +32,16 @@ export default function Login({ providers }: Props) {
     error,
     returnUrl = '/',
     reason,
-  } = router.query as { error: string; returnUrl: string; reason: LoginRedirectReason };
+  } = router.query as {
+    error: string;
+    returnUrl: string;
+    reason: LoginRedirectReason;
+  };
+  const { code } = useReferralsContext();
+  const { data: referrer, isLoading: referrerLoading } = trpc.user.userByReferralCode.useQuery(
+    { userReferralCode: code as string },
+    { enabled: !!code }
+  );
 
   const redirectReason = loginRedirectReasons[reason];
 
@@ -34,6 +57,21 @@ export default function Login({ providers }: Props) {
               <Text size="md">{redirectReason}</Text>
             </Group>
           </Alert>
+        )}
+        {referrer && (
+          <Paper withBorder>
+            <Stack spacing="xs" p="md">
+              <Text color="dimmed" size="sm">
+                You have been referred by
+              </Text>
+              <CreatorCard user={referrer} />
+              <Text size="sm">
+                By signing up with the referral code <Code>{code}</Code> both you and the user who
+                referred you will be awarded buzz. This code will be automatically applied during
+                your username selection process.
+              </Text>
+            </Stack>
+          </Paper>
         )}
         <Paper radius="md" p="xl" withBorder>
           <Text size="lg" weight={500}>
@@ -81,7 +119,7 @@ type Props = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, ctx }) => {
     if (session) {
       return {
         redirect: {

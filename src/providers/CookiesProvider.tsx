@@ -49,6 +49,11 @@ export const galleryFilterSchema = z.object({
   excludedTags: z.number().array().optional(),
 });
 
+export const referralsSchema = z.object({
+  code: z.string().optional(),
+  source: z.string().optional(),
+});
+
 const CookiesCtx = createContext<CookiesContext | null>(null);
 export const useCookies = () => {
   const context = useContext(CookiesCtx);
@@ -63,6 +68,7 @@ export const CookiesProvider = ({
   value: CookiesContext;
 }) => {
   const [value] = useSetState(initialValue);
+
   return <CookiesCtx.Provider value={value}>{children}</CookiesCtx.Provider>;
 };
 
@@ -70,6 +76,7 @@ const cookiesSchema = z.object({
   models: modelFilterSchema,
   questions: questionsFilterSchema,
   gallery: galleryFilterSchema,
+  referrals: referralsSchema,
 });
 export type CookiesContext = z.infer<typeof cookiesSchema>;
 
@@ -105,6 +112,10 @@ export function parseCookies(
       resources: cookies?.['g_resources'],
       tags: cookies?.['g_tags'],
       excludedTags: cookies?.['g_excludedTags'],
+    },
+    referrals: {
+      code: cookies?.['ref_code'],
+      source: cookies?.['ref_source'],
     },
   });
 }
@@ -146,10 +157,16 @@ const zodParse = z
           excludedTags: z.string(),
         })
         .partial(),
+      referrals: z
+        .object({
+          code: z.string(),
+          source: z.string(),
+        })
+        .partial(),
     })
   )
   .implement(
-    ({ models, questions, gallery }) =>
+    ({ models, questions, gallery, referrals }) =>
       ({
         models: {
           ...models,
@@ -171,6 +188,7 @@ const zodParse = z
             ? JSON.parse(decodeURIComponent(gallery.excludedTags))
             : [],
         },
+        referrals,
       } as CookiesContext)
   );
 

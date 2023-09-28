@@ -38,10 +38,11 @@ async function applyUpvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) >= ${UPVOTE_TAG_THRESHOLD}
     )
-    INSERT INTO "TagsOnImage"("tagId", "imageId")
+    INSERT INTO "TagsOnImage"("tagId", "imageId", "createdAt")
     SELECT
       "tagId",
-      "imageId"
+      "imageId",
+      ${now}
     FROM over_threshold
     ON CONFLICT ("tagId", "imageId") DO NOTHING;
   `;

@@ -23,6 +23,8 @@ import {
   updateLeaderboardRank,
   toggleBan,
   toggleUserBountyEngagement,
+  userByReferralCode,
+  createUserReferral,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -40,6 +42,7 @@ import {
   ToggleUserArticleEngagementsInput,
   ToggleUserBountyEngagementsInput,
   ReportProhibitedRequestInput,
+  UserByReferralCodeSchema,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -204,7 +207,7 @@ export const updateUserHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: Partial<UserUpdateInput>;
 }) => {
-  const { id, badgeId, nameplateId, showNsfw, username, ...data } = input;
+  const { id, badgeId, nameplateId, showNsfw, username, source, userReferralCode, ...data } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
   if (username && !isUsernamePermitted(username)) throw throwBadRequestError('Invalid username');
@@ -242,6 +245,13 @@ export const updateUserHandler = async ({
     });
 
     if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank(id);
+    if (userReferralCode || source) {
+      await createUserReferral({
+        id: updatedUser.id,
+        userReferralCode,
+        source,
+      });
+    }
     if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
     if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
@@ -866,4 +876,12 @@ export const reportProhibitedRequestHandler = async ({
   }
 
   return false;
+};
+
+export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {
+  try {
+    return await userByReferralCode(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

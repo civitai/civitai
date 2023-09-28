@@ -44,7 +44,7 @@ export function Username({
         {username}
       </Text>
       {badge?.data.url && (
-        <Tooltip color="dark" label={badge.name} withArrow>
+        <Tooltip color="dark" label={badge.name} withArrow withinPortal>
           <div style={{ display: 'flex' }}>
             <EdgeMedia src={badge.data.url} width={badgeSize} />
           </div>

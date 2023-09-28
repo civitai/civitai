@@ -16,7 +16,7 @@ const bountyEntryFileMeta = z
 
 export type UpsertBountyEntryInput = z.infer<typeof upsertBountyEntryInputSchema>;
 
-const bountyEntryFileSchema = baseFileSchema.extend({
+export const bountyEntryFileSchema = baseFileSchema.extend({
   metadata: bountyEntryFileMeta,
 });
 export const upsertBountyEntryInputSchema = z.object({

@@ -1,4 +1,4 @@
-import { MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -9,7 +9,7 @@ import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schem
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { numericString, numericStringArray } from '~/utils/zod-helpers';
+import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -30,6 +30,11 @@ export const imagesQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.nativeEnum(ReviewReactions))
     ),
+    types: z.preprocess(
+      (val) => (Array.isArray(val) ? val : [val]),
+      z.array(z.nativeEnum(MediaType))
+    ),
+    withMeta: booleanString(),
     section: z.enum(['images', 'reactions']),
   })
   .partial();

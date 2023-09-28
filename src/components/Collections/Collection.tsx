@@ -160,6 +160,8 @@ const ImageCollection = ({
               period,
               sort,
               collectionId: collection.id,
+              types: undefined,
+              withMeta: undefined,
             }}
           />
         </IsClient>

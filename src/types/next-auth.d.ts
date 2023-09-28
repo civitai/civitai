@@ -21,6 +21,9 @@ interface ExtendedUser {
   permissions?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string;
+  referral?: {
+    id: number;
+  };
 }
 
 declare module 'next-auth' {

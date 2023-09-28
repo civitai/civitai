@@ -10,6 +10,7 @@ import {
 import {
   ArticleSort,
   BountySort,
+  BountyStatus,
   BrowsingMode,
   CollectionSort,
   ImageSort,
@@ -100,6 +101,7 @@ const bountyFilterSchema = z
     period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
     periodMode: periodModeSchema.optional(),
     sort: z.nativeEnum(BountySort).default(BountySort.EndingSoon),
+    status: z.nativeEnum(BountyStatus).default(BountyStatus.Open),
   })
   .merge(
     getInfiniteBountySchema.omit({
@@ -108,6 +110,9 @@ const bountyFilterSchema = z
       sort: true,
       limit: true,
       cursor: true,
+      status: true,
+      // TODO.bounty: remove mode from omit once we allow split bounties
+      mode: true,
     })
   );
 

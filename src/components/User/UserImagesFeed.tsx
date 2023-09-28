@@ -17,10 +17,10 @@ export function UserImagesFeed({ username }: Props) {
         <Stack spacing="xs">
           <Group position="apart" spacing={0}>
             <SortFilter type="images" />
-            <PeriodFilter type="images" />
+            <PeriodFilter type="images" />!
           </Group>
           {/* <ImageCategories /> */}
-          <ImagesInfinite filters={{ username }} withTags />
+          <ImagesInfinite filters={{ username, types: undefined, withMeta: undefined }} withTags />
         </Stack>
       </MasonryContainer>
     </MasonryProvider>

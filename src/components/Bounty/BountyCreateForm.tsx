@@ -183,6 +183,7 @@ export function BountyCreateForm() {
   });
 
   const bountyEntryModeEnabled = false;
+  const bountyModeEnabled = false;
 
   const clearStorage = useFormStorage({
     schema: formSchema,
@@ -245,7 +246,7 @@ export function BountyCreateForm() {
                   placeholder="e.g.:LoRA for XYZ"
                   withAsterisk
                 />
-                <Group spacing="xl" grow>
+                <Group spacing="md" grow>
                   <InputSelect
                     className={classes.fluid}
                     name="type"
@@ -373,7 +374,7 @@ export function BountyCreateForm() {
                       ))}
                   </SimpleGrid>
                 )}
-                <Group spacing="xl" grow>
+                <Group spacing="md" grow>
                   <InputDatePicker
                     className={classes.fluid}
                     name="startsAt"
@@ -395,29 +396,30 @@ export function BountyCreateForm() {
                     maxDate={maxExpiresDate}
                   />
                 </Group>
-
                 <Divider label="Bounty rewards" />
-                <InputRadioGroup
-                  name="mode"
-                  label="Award Mode"
-                  withAsterisk
-                  className={classes.radioItemWrapper}
-                >
-                  {Object.values(BountyMode).map((value) => (
-                    <Radio
-                      key={value}
-                      className={classes.radioItem}
-                      value={value}
-                      label={
-                        <RadioItem
-                          label={getDisplayName(value)}
-                          description={bountyModeDescription[value]}
-                        />
-                      }
-                    />
-                  ))}
-                </InputRadioGroup>
-                <Group spacing="xl" grow>
+                {bountyModeEnabled && (
+                  <InputRadioGroup
+                    name="mode"
+                    label="Award Mode"
+                    withAsterisk
+                    className={classes.radioItemWrapper}
+                  >
+                    {Object.values(BountyMode).map((value) => (
+                      <Radio
+                        key={value}
+                        className={classes.radioItem}
+                        value={value}
+                        label={
+                          <RadioItem
+                            label={getDisplayName(value)}
+                            description={bountyModeDescription[value]}
+                          />
+                        }
+                      />
+                    ))}
+                  </InputRadioGroup>
+                )}
+                <Group spacing="md" grow>
                   <InputNumber
                     className={classes.fluid}
                     name="unitAmount"
@@ -470,7 +472,7 @@ export function BountyCreateForm() {
                     ))}
                   </InputRadioGroup>
                 )}
-
+                <Divider label="Additional information" />
                 <InputMultiFileUpload
                   name="files"
                   label="Attachments"

@@ -10,7 +10,7 @@ import { useImageFilters, useQueryImages } from '~/components/Image/image.utils'
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { useInView } from 'react-intersection-observer';
 import { IconCloudOff } from '@tabler/icons-react';
-import { MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
@@ -28,6 +28,8 @@ type ImagesInfiniteState = {
   period?: MetricTimeframe;
   sort?: ImageSort;
   reactions?: ReviewReactions[];
+  types?: MediaType[];
+  withMeta?: boolean;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {

@@ -165,8 +165,8 @@ export const constants = {
     drawerZIndex: 301,
     requestBlocking: {
       warned: 5,
-      notified: 10,
-      muted: 30,
+      notified: 8,
+      muted: 16,
     },
   },
   tagVoting: {
@@ -185,6 +185,10 @@ export const constants = {
     minCreateAmount: 5000,
   },
   defaultCurrency: 'USD',
+  referrals: {
+    referralCodeMinLength: 6,
+    referralCodeMaxCount: 3,
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

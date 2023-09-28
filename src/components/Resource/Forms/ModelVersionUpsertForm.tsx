@@ -390,7 +390,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           </ThemeIcon>
                           <Stack spacing={0}>
                             <Text weight={500} size="xs">
-                              What is "{modelVersionMonetizationTypeOptions[monetization.type]}"?
+                              {`What is "${
+                                modelVersionMonetizationTypeOptions[monetization.type]
+                              }"?`}
                             </Text>
                             <Text size="xs">{monetizationTypeExplanation[monetization.type]}</Text>
                           </Stack>

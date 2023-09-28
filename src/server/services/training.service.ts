@@ -134,13 +134,19 @@ export const createTrainingRequest = async ({
   const modelVersion = modelVersions[0];
 
   const trainingParams = modelVersion.trainingDetails.params;
+  const baseModel = modelVersion.trainingDetails.baseModel;
   if (!trainingParams) throw throwBadRequestError('Missing training params');
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
     if (!setting) continue;
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
     if (typeof value === 'number') {
-      if ((setting.min && value < setting.min) || (setting.max && value > setting.max)) {
+      const override = baseModel ? setting.overrides?.[baseModel] : undefined;
+      const overrideSetting = override ?? setting;
+      if (
+        (overrideSetting.min && value < overrideSetting.min) ||
+        (overrideSetting.max && value > overrideSetting.max)
+      ) {
         throw throwBadRequestError(
           `Invalid settings for training: "${key}" is outside allowed min/max.`
         );
