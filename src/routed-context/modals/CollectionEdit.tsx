@@ -128,13 +128,20 @@ export default createRoutedContext({
                     clearable
                   />
                   {mode === CollectionMode.Contest && (
-                    <InputDatePicker
-                      name="metadata.endsAt"
-                      label="End Date"
-                      placeholder="Select an end date"
-                      icon={<IconCalendar size={16} />}
-                      clearable
-                    />
+                    <>
+                      <InputDatePicker
+                        name="metadata.endsAt"
+                        label="End Date"
+                        placeholder="Select an end date"
+                        icon={<IconCalendar size={16} />}
+                        clearable
+                      />
+                      <Text size="xs" color="dimmed">
+                        This is only used to stop recurring job updating the random indexes. We
+                        suggest you add this in to save some resources, but this value will not be
+                        shown to end-users.
+                      </Text>
+                    </>
                   )}
                 </>
               )}
