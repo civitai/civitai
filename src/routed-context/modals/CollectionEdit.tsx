@@ -133,7 +133,7 @@ export default createRoutedContext({
                       label="End Date"
                       placeholder="Select an end date"
                       icon={<IconCalendar size={16} />}
-                      withAsterisk
+                      clearable
                     />
                   )}
                 </>

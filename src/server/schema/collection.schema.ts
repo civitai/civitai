@@ -100,7 +100,7 @@ export const upsertCollectionInput = z
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
-    mode: z.nativeEnum(CollectionMode).nullable().optional(),
+    mode: z.nativeEnum(CollectionMode).nullish(),
     metadata: collectionMetadataSchema.optional(),
   })
   .merge(collectionItemSchema);
