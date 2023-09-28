@@ -71,7 +71,7 @@ async function setModelCoverImageNsfwLevel() {
       SELECT
         m.id,
         i.nsfw,
-        row_number() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) row_num
+        row_number() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId" * 1000 + i.index) row_num
       FROM "Model" m
       JOIN "ModelVersion" mv ON mv."modelId" = m.id
       JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId"
