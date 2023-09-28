@@ -1989,9 +1989,9 @@ model CollectionItem {
   randomId     Int?
 
   @@unique([collectionId, articleId, postId, imageId, modelId])
-  @@index([addedById])
-  @@index([imageId])
-  @@index([modelId])
+  @@index([addedById], type: Hash)
+  @@index([imageId], type: Hash)
+  @@index([modelId], type: Hash)
 }
 
 enum CollectionContributorPermission {
