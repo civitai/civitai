@@ -46,7 +46,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
     <Card p="sm" withBorder>
       <Stack spacing="xs">
         <Group position="apart" noWrap align="center">
-          <Title>{question.title}</Title>
+          <Title order={1}>{question.title}</Title>
           {/* TODO - add additional actions and remove condition here */}
           {(isOwner || isModerator) && (
             <Menu position="bottom-end" transition="pop-top-right">

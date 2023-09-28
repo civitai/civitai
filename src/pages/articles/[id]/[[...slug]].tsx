@@ -46,6 +46,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { env } from '~/env/client.mjs';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -85,6 +86,16 @@ export default function ArticleDetailsPage({
         article?.nsfw || article?.cover == null
           ? undefined
           : getEdgeUrl(article.cover, { width: 1200 })
+      }
+      links={
+        article
+          ? [
+              {
+                href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
+                rel: 'canonical',
+              },
+            ]
+          : undefined
       }
     />
   );
@@ -150,7 +161,7 @@ export default function ArticleDetailsPage({
       <Container size="xl">
         <Stack spacing={0} mb="xl">
           <Group position="apart" noWrap>
-            <Title weight="bold" className={classes.title}>
+            <Title weight="bold" className={classes.title} order={1}>
               {article.title}
             </Title>
             <Group align="center" className={classes.titleWrapper} noWrap>

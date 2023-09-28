@@ -48,6 +48,7 @@ import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuar
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import { env } from '~/env/client.mjs';
 
 export function ImageDetailByProps({
   imageId,

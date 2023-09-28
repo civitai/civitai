@@ -71,6 +71,7 @@ import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { env } from '~/env/client.mjs';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -191,6 +192,14 @@ export default function BountyEntryDetailsPage({
   const isOwner = currentUser && user?.id === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
 
+  if (isLoadingBounty || isLoadingEntry || isLoadingDelete) {
+    return <PageLoader />;
+  }
+
+  if (!bounty || !bountyEntry) {
+    return <NotFound />;
+  }
+
   const meta = (
     <Meta
       title={`Civitai | ${bounty?.name} | ${user?.username}`}
@@ -200,16 +209,14 @@ export default function BountyEntryDetailsPage({
           : getEdgeUrl(mainImage.url, { width: 1200 })
       }
       description={bounty?.description}
+      links={[
+        {
+          href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/entries/${bountyEntry.id}`,
+          rel: 'canonical',
+        },
+      ]}
     />
   );
-
-  if (isLoadingBounty || isLoadingEntry || isLoadingDelete) {
-    return <PageLoader />;
-  }
-
-  if (!bounty || !bountyEntry) {
-    return <NotFound />;
-  }
 
   const filesCount = files?.length ?? 0;
   const reactions = bountyEntry?.reactions ?? [];

@@ -1,4 +1,5 @@
 import { Meta } from '~/components/Meta/Meta';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import PersonalizedHomepage from '~/pages/home';
 import ModelsPage from '~/pages/models';
@@ -28,6 +29,7 @@ function Home() {
           !currentUser ? ` | Stable Diffusion models, embeddings, LoRAs and more` : ''
         }`}
         description="Civitai is a platform for Stable Diffusion AI Art models. Browse a collection of thousands of models from a growing number of creators. Join an engaged community in reviewing models and sharing images with prompts to get you started."
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/`, rel: 'canonical' }]}
       />
       {features.alternateHome ? <PersonalizedHomepage /> : <ModelsPage />}
     </>

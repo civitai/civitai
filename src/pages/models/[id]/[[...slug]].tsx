@@ -82,7 +82,7 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { scrollToTop } from '~/utils/scroll-utils';
-import { getDisplayName, removeTags, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
@@ -459,6 +459,12 @@ export default function ModelDetailsV2({
           ? undefined
           : getEdgeUrl(versionImages[0].url, { width: 1200 })
       }
+      links={[
+        {
+          href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
+          rel: 'canonical',
+        },
+      ]}
     />
   );
 

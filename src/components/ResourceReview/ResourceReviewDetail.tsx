@@ -33,6 +33,7 @@ import { PostSort } from '~/server/common/enums';
 import { Meta } from '~/components/Meta/Meta';
 import { truncate } from 'lodash-es';
 import { StarRating } from '../StartRating/StarRating';
+import { env } from '~/env/client.mjs';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -67,6 +68,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         description={`${data.rating} star review${
           data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''
         }`}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/reviews/${reviewId}`, rel: 'canonical' }]}
       />
       <Container mb="md">
         <Stack>

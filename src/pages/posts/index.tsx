@@ -11,6 +11,7 @@ import { PostCategoriesInfinite } from '~/components/Post/Categories/PostCategor
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -31,6 +32,7 @@ export default function PostsPage() {
           !currentUser ? ` Posts | Explore Community-Created Content with Custom AI Resources` : ''
         }`}
         description="Discover engaging posts from our growing community on Civitai, featuring unique and creative content generated with custom Stable Diffusion AI resources crafted by talented community members."
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.image}

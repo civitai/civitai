@@ -10,6 +10,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
+import { env } from '~/env/client.mjs';
 
 const contentRoot = 'src/static-content';
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -57,6 +58,7 @@ export default function ContentPage({
       <Meta
         title={`${title} | Civitai`}
         description={description ?? truncate(removeTags(content), { length: 150 })}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/content/${title}`, rel: 'canonical' }]}
       />
       <Container size="md">
         <Title order={1}>{title}</Title>
