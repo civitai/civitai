@@ -332,8 +332,8 @@ const AutocompleteSearchContent = forwardRef<
     }));
 
     const handleSubmit = () => {
-      if (search) {
-        router.push(`/search/${indexName}?query=${encodeURIComponent(search)}`, undefined, {
+      if (query) {
+        router.push(`/search/${indexName}?query=${encodeURIComponent(query)}`, undefined, {
           shallow: false,
         });
 
