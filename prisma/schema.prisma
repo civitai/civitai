@@ -1992,6 +1992,7 @@ model CollectionItem {
   @@index([addedById], type: Hash)
   @@index([imageId], type: Hash)
   @@index([modelId], type: Hash)
+  @@index([collectionId], type: Hash)
 }
 
 enum CollectionContributorPermission {
