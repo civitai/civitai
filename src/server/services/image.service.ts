@@ -302,9 +302,6 @@ export function applyUserPreferencesSql(
     userId,
   }: UserPreferencesInput & { userId?: number }
 ) {
-  if (true) {
-    return AND;
-  }
   // Exclude specific users
   if (excludedUserIds?.length)
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
@@ -638,7 +635,7 @@ export const getAllImages = async ({
         ? `AND (p."publishedAt" < now() ${userId ? `OR p."userId" = ${userId}` : ''})`
         : ''
     )}
-    ${Prisma.raw(WITH.length && collectionId ? `RIGHT JOIN ct ON ct."imageId" = i.id` : '')}
+    ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     ${Prisma.raw(
       includeRank ? `${optionalRank ? 'LEFT ' : ''}JOIN "ImageRank" r ON r."imageId" = i.id` : ''
     )}
@@ -662,7 +659,6 @@ export const getAllImages = async ({
     .join(', ');
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
-  console.time('raw-images');
   const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>`
     -- ${Prisma.raw(queryHeader)}
     ${queryWith}
@@ -721,8 +717,6 @@ export const getAllImages = async ({
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
-
-  console.timeEnd('raw-images');
 
   let nextCursor: bigint | undefined;
   if (rawImages.length > limit) {
