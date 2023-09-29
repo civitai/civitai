@@ -447,6 +447,25 @@ export default function ModelDetailsV2({
 
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
+  const metaSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    applicationCategory: 'Multimedia',
+    applicationSubCategory: 'Stable Diffusion Model',
+    description: model.description,
+    name: model.name,
+    image:
+      nsfw || versionImages[0]?.url == null
+        ? undefined
+        : getEdgeUrl(versionImages[0].url, { width: 1200 }),
+    author: model.user.username,
+    datePublished: model.publishedAt,
+    aggregateRating: {
+      '@type': 'AggregateRating',
+      ratingValue: model.rank?.ratingAllTime,
+      reviewCount: model.rank?.ratingCountAllTime,
+    },
+  };
 
   const meta = (
     <Meta
@@ -465,6 +484,7 @@ export default function ModelDetailsV2({
           rel: 'canonical',
         },
       ]}
+      schema={metaSchema}
     />
   );
 

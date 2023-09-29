@@ -1,6 +1,6 @@
 import Head from 'next/head';
 
-export function Meta({ title, description, image, links = [] }: Props) {
+export function Meta({ title, description, image, links = [], schema }: Props) {
   return (
     <Head>
       <title>{title}</title>
@@ -21,6 +21,13 @@ export function Meta({ title, description, image, links = [] }: Props) {
       {links.map((link, index) => (
         <link key={link.href || index} {...link} />
       ))}
+      {schema && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+          key="product-schema"
+        ></script>
+      )}
     </Head>
   );
 }
@@ -30,4 +37,5 @@ type Props = {
   description?: string;
   image?: string;
   links?: React.LinkHTMLAttributes<HTMLLinkElement>[];
+  schema?: object;
 };
