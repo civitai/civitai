@@ -529,18 +529,17 @@ export const getAllImages = async ({
         ${Prisma.raw(
           useRandomCursor
             ? `
-        ctcursor as MATERIALIZED (
-          SELECT ci."imageId", MIN(ci."randomId") "randomId" FROM "CollectionItem" ci
+        ctcursor AS (
+          SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
             WHERE ci."collectionId" = ${collectionId}
               AND ci."imageId" = ${cursor}
-            GROUP BY ci."imageId"
             LIMIT 1
         ),
         `
             : ''
         )}
-        ct AS MATERIALIZED (
-          SELECT ci."imageId", MIN(ci."randomId") "randomId"
+        ct AS (
+          SELECT ci."imageId", ci."randomId"
           FROM "CollectionItem" ci
           WHERE ci."collectionId" = ${collectionId}
             AND ci."imageId" IS NOT NULL
@@ -549,7 +548,6 @@ export const getAllImages = async ({
             ${Prisma.raw(
               useRandomCursor ? `AND ci."randomId" <= (SELECT "randomId" FROM ctcursor)` : ''
             )}
-          GROUP BY ci."imageId"
           ${Prisma.raw(sort === ImageSort.Random ? 'ORDER BY "randomId" DESC' : '')}
         )`
     );
