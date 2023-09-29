@@ -54,6 +54,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { showSuccessNotification } from '~/utils/notifications';
+import { Meta } from '../Meta/Meta';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -263,6 +264,7 @@ export function Collection({
 
   return (
     <>
+      {collection && <Meta title={``} description={collection.description ?? undefined} />}
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}

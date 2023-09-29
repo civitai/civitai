@@ -1,6 +1,6 @@
 import Head from 'next/head';
 
-export function Meta({ title, description, image, links = [] }: Props) {
+export function Meta({ title, description, image, links = [], deIndex }: Props) {
   return (
     <Head>
       <title>{title}</title>
@@ -17,6 +17,7 @@ export function Meta({ title, description, image, links = [] }: Props) {
       <meta property="twitter:description" content={description} />
       <meta property="twitter:image" content={image} />
       {image && <meta name="robots" content="max-image-preview:large" />}
+      {deIndex && <meta name="robots" content={deIndex} />}
 
       {links.map((link, index) => (
         <link key={link.href || index} {...link} />
@@ -30,4 +31,5 @@ type Props = {
   description?: string;
   image?: string;
   links?: React.LinkHTMLAttributes<HTMLLinkElement>[];
+  deIndex?: string;
 };

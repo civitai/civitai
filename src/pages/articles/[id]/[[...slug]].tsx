@@ -11,7 +11,7 @@ import {
   Title,
   createStyles,
 } from '@mantine/core';
-import { ArticleEngagementType } from '@prisma/client';
+import { ArticleEngagementType, ModelStatus } from '@prisma/client';
 import { IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
@@ -97,6 +97,7 @@ export default function ArticleDetailsPage({
             ]
           : undefined
       }
+      deIndex={!article?.publishedAt ? 'noindex' : undefined}
     />
   );
 
