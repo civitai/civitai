@@ -240,6 +240,7 @@ const AutocompleteSearchContent = forwardRef<
 
     const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
     const [search, setSearch] = useState(query);
+    const [filters, setFilters] = useState('');
     const [debouncedSearch] = useDebouncedValue(search, 300);
 
     const currentUser = useCurrentUser();
@@ -354,10 +355,13 @@ const AutocompleteSearchContent = forwardRef<
     useEffect(() => {
       // Only set the query when the debounced search changes
       // and user didn't select from the list
-      if (debouncedSearch !== query && !selectedItem) {
-        setQuery(debouncedSearch);
-        return;
-      }
+      if (debouncedSearch === query || selectedItem) return;
+
+      const { query: cleanedSearch, filters } = parseQuery(indexName, debouncedSearch);
+
+      setQuery(cleanedSearch);
+      setFilters(filters);
+
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [debouncedSearch, query]);
 
@@ -382,7 +386,7 @@ const AutocompleteSearchContent = forwardRef<
 
     return (
       <>
-        <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} />
+        <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
         <Group ref={wrapperRef} className={classes.wrapper} spacing={0} noWrap>
           <Select
             classNames={{
@@ -503,3 +507,24 @@ const IndexRenderItem: Record<string, React.FC> = {
   collections: CollectionsSearchItem,
   bounties: BountiesSearchItem,
 };
+
+const queryFilters: Record<string, Record<string, RegExp>> = {
+  models: {
+    'tags.name': /(^|\s+)#(?<value>\w+)/g,
+    'user.username': /(^|\s+)@(?<value>\w+)/g,
+  },
+};
+function parseQuery(index: string, query: string) {
+  const filterAttributes = queryFilters[index];
+  const filters = [];
+  if (filterAttributes) {
+    for (const [attribute, regex] of Object.entries(filterAttributes)) {
+      for (const match of query.matchAll(regex)) {
+        filters.push(`${attribute} = ${match?.groups?.value?.trim()}`);
+      }
+      query = query.replace(regex, '');
+    }
+  }
+
+  return { query, filters: filters.join(' AND ') };
+}
