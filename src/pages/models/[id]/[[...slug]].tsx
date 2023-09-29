@@ -485,6 +485,7 @@ export default function ModelDetailsV2({
         },
       ]}
       schema={metaSchema}
+      deIndex={model.status !== ModelStatus.Published ? 'noindex' : undefined}
     />
   );
 
@@ -853,14 +854,11 @@ export default function ModelDetailsV2({
             {isOwner ? (
               <>
                 <ButtonTooltip label="Add Version">
-                  <ActionIcon
-                    component={NextLink}
-                    href={`/models/${model.id}/model-versions/create`}
-                    variant="light"
-                    color="blue"
-                  >
-                    <IconPlus size={14} />
-                  </ActionIcon>
+                  <Link href={`/models/${model.id}/model-versions/create`}>
+                    <ActionIcon variant="light" color="blue">
+                      <IconPlus size={14} />
+                    </ActionIcon>
+                  </Link>
                 </ButtonTooltip>
 
                 {versionCount > 1 && (

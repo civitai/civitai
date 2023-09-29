@@ -432,6 +432,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       currentUser,
       features.imageTraining,
       features.alternateHome,
+      features.bounties,
       features.buzz,
       router.asPath,
       theme,
