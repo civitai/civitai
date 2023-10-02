@@ -43,6 +43,7 @@ import {
 import {
   ArticleSort,
   BrowsingMode,
+  CollectionReviewSort,
   CollectionSort,
   ImageSort,
   ModelSort,
@@ -66,6 +67,7 @@ import { env } from '~/env/server.mjs';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { collectionsSearchIndex } from '~/server/search-index';
+import { isModerator } from '~/server/routers/base.router';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -677,7 +679,15 @@ export const getCollectionItemsByCollectionId = async ({
   // Requires user here because models service uses it
   user?: SessionUser;
 }) => {
-  const { statuses = [CollectionItemStatus.ACCEPTED], limit, collectionId, page, cursor } = input;
+  const {
+    statuses = [CollectionItemStatus.ACCEPTED],
+    limit,
+    collectionId,
+    page,
+    cursor,
+    forReview,
+    reviewSort,
+  } = input;
 
   const skip = page && limit ? (page - 1) * limit : undefined;
 
@@ -697,6 +707,7 @@ export const getCollectionItemsByCollectionId = async ({
   ) {
     throw throwAuthorizationError('You do not have permission to view review items');
   }
+
   const collection = await dbRead.collection.findUniqueOrThrow({ where: { id: collectionId } });
 
   const where: Prisma.CollectionItemWhereInput = {
@@ -710,6 +721,18 @@ export const getCollectionItemsByCollectionId = async ({
           }
         : undefined,
   };
+
+  const orderBy: Prisma.CollectionItemFindManyArgs['orderBy'] = [];
+
+  if (!forReview && collection.mode === CollectionMode.Contest) {
+    orderBy.push({ randomId: 'desc' });
+  } else if (forReview && reviewSort === CollectionReviewSort.Newest) {
+    orderBy.push({ createdAt: 'asc' });
+  } else if (forReview && reviewSort === CollectionReviewSort.Oldest) {
+    orderBy.push({ createdAt: 'desc' });
+  } else {
+    orderBy.push({ createdAt: 'asc' });
+  }
 
   const collectionItems = await dbRead.collectionItem.findMany({
     take: limit,
@@ -725,8 +748,7 @@ export const getCollectionItemsByCollectionId = async ({
       createdAt: true,
     },
     where,
-    orderBy:
-      collection.mode === CollectionMode.Contest ? { randomId: 'desc' } : { createdAt: 'desc' },
+    orderBy,
   });
 
   if (collectionItems.length === 0) {

@@ -5,6 +5,7 @@ import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/Fi
 import {
   ArticleSort,
   BountySort,
+  CollectionReviewSort,
   CollectionSort,
   ImageSort,
   ImageSortHidden,

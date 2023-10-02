@@ -10,7 +10,7 @@ import {
 } from '@prisma/client';
 import { imageSchema } from '~/server/schema/image.schema';
 import { infiniteQuerySchema, userPreferencesSchema } from '~/server/schema/base.schema';
-import { BrowsingMode, CollectionSort } from '~/server/common/enums';
+import { BrowsingMode, CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -137,6 +137,7 @@ export const getAllCollectionItemsSchema = z
     collectionId: z.number(),
     statuses: z.array(z.nativeEnum(CollectionItemStatus)),
     forReview: z.boolean().optional(),
+    reviewSort: z.nativeEnum(CollectionReviewSort).optional(),
   })
   .partial()
   .required({ collectionId: true });

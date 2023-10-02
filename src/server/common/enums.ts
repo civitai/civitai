@@ -155,3 +155,8 @@ export enum BountyStatus {
   Expired = 'Expired',
   Awarded = 'Awarded',
 }
+
+export enum CollectionReviewSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+}
