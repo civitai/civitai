@@ -13,9 +13,10 @@ const exclude = [
   '/user/downloads',
   '/user/notifications',
   '/user/transactions',
-  '/articles-sitemap.xml',
-  '/models-sitemap.xml',
-  '/questions-sitemap.xml',
+  // Add additional sitemaps here to be excluded from indexing
+  '/sitemap-articles.xml',
+  '/sitemap-models.xml',
+  '/sitemap-questions.xml',
 ]
 
 const disallow = exclude.filter((path) => !path.includes('sitemap.xml'))
@@ -33,14 +34,15 @@ module.exports = {
     policies: [
       {
         userAgent: '*',
-        allow: '/',
+        [process.env.NODE_ENV === 'prod' ? 'allow' : 'disallow']: '/',
         disallow,
       },
     ],
     additionalSitemaps: [
-      `${process.env.NEXTAUTH_URL}/articles-sitemap.xml`,
-      `${process.env.NEXTAUTH_URL}/models-sitemap.xml`,
-      `${process.env.NEXTAUTH_URL}/questions-sitemap.xml`,
+      // Add additional sitemaps here
+      `${process.env.NEXTAUTH_URL}/sitemap-articles.xml`,
+      `${process.env.NEXTAUTH_URL}/sitemap-models.xml`,
+      `${process.env.NEXTAUTH_URL}/sitemap-questions.xml`,
     ],
   },
 }

@@ -51,5 +51,6 @@ yarn-error.log*
 .idea
 sample.http
 
-# Sitemaps
+# SEO
 /public/sitemap*.xml
+/public/robots.txt
