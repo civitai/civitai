@@ -226,7 +226,6 @@ export const getModelsPagedSimpleHandler = async ({
       name: true,
       nsfw: true,
       meta: true,
-      publishedAt: true,
       modelVersions: input.needsReview
         ? {
             select: { id: true, name: true, meta: true },
