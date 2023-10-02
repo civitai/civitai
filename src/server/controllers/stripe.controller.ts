@@ -11,6 +11,7 @@ import {
   getUserSubscription,
   getBuzzPackages,
   createBuzzSession,
+  getPaymentIntent,
 } from './../services/stripe.service';
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
@@ -124,6 +125,25 @@ export const createBuzzSessionHandler = async ({
     //   type: 'Buy',
     //   targetUserId: id,
     // });
+
+    return result;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+};
+
+export const getPaymentIntentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: Schema.PaymentIntentCreationSchema;
+  ctx: Context;
+}) => {
+  try {
+    const result = await getPaymentIntent({
+      ...input,
+      userId: ctx.user?.id,
+    });
 
     return result;
   } catch (error) {

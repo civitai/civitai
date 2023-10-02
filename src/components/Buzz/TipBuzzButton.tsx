@@ -16,7 +16,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }
   const theme = useMantineTheme();
 
   const handleClick = () => {
-    if (!currentUser?.balance)
+    if (!currentUser?.balance || true)
       return openBuyBuzzModal({
         message:
           'You have insufficient funds to tip. You can buy more Buzz below to send a tip to your favorite creators.',
