@@ -62,6 +62,8 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { getRandom } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -360,7 +362,8 @@ export function Collection({
                   {collection?.description && (
                     <Text size="xs" color="dimmed">
                       <ReactMarkdown
-                        allowedElements={['a', 'p']}
+                        rehypePlugins={[rehypeRaw, remarkGfm]}
+                        allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
                         unwrapDisallowed
                         className="markdown-content"
                       >
