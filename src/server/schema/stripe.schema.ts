@@ -14,11 +14,16 @@ export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>
 export const createDonateSessionSchema = z.object({ returnUrl: z.string() });
 
 export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
-export const createBuzzSessionSchema = z.object({ priceId: z.string(), returnUrl: z.string() });
+export const createBuzzSessionSchema = z.object({
+  priceId: z.string(),
+  returnUrl: z.string(),
+  customAmount: z.number().min(499).optional(),
+});
 
 export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;
 export const buzzPriceMetadataSchema = z.object({
   buzzAmount: z.coerce.number().positive(),
+  bonusDescription: z.coerce.string().optional(),
 });
 
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
