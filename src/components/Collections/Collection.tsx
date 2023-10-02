@@ -264,7 +264,13 @@ export function Collection({
 
   return (
     <>
-      {collection && <Meta title={``} description={collection.description ?? undefined} />}
+      {collection && (
+        <Meta
+          title={`${collection.name} - collection posted by ${collection.user.username}`}
+          description={collection.description ?? undefined}
+          deIndex={collection.read !== 'Public' ? 'noindex, nofollow' : undefined}
+        />
+      )}
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}

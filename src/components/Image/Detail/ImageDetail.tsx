@@ -39,7 +39,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RoutedContextLink } from '~/providers/RoutedContextProvider';
-import { CollectionType } from '@prisma/client';
+import { CollectionType, NsfwLevel } from '@prisma/client';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
@@ -58,6 +58,9 @@ export function ImageDetail() {
         title={`Image posted by ${image.user.username}`}
         image={image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
+        deIndex={
+          image.nsfw !== NsfwLevel.None || !!image.needsReview ? 'noindex, nofollow' : undefined
+        }
       />
       <TrackView entityId={image.id} entityType="Image" type="ImageView" />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>

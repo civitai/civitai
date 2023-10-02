@@ -44,9 +44,10 @@ import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { slugit, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
+import { truncate } from 'lodash-es';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -78,10 +79,12 @@ export default function ArticleDetailsPage({
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
 
-  // TODO.articles: add meta description
   const meta = (
     <Meta
-      title={`Civitai | ${article?.title}`}
+      title={`${article?.title} | Civitai`}
+      description={
+        article?.content ? truncate(removeTags(article.content), { length: 150 }) : undefined
+      }
       image={
         article?.nsfw || article?.cover == null
           ? undefined
