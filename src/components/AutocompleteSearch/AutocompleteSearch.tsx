@@ -240,6 +240,8 @@ const AutocompleteSearchContent = forwardRef<
 
     const [selectedItem, setSelectedItem] = useState<AutocompleteItem | null>(null);
     const [search, setSearch] = useState(query);
+    const [filters, setFilters] = useState('');
+    const [searchPageQuery, setSearchPageQuery] = useState('');
     const [debouncedSearch] = useDebouncedValue(search, 300);
 
     const currentUser = useCurrentUser();
@@ -263,6 +265,7 @@ const AutocompleteSearchContent = forwardRef<
         | CollectionSearchIndexRecord
         | BountySearchIndexRecord
       )[] = [];
+
       const opts = {
         currentUserId: currentUser?.id,
         hiddenImages: hiddenImages,
@@ -331,13 +334,20 @@ const AutocompleteSearchContent = forwardRef<
     }));
 
     const handleSubmit = () => {
-      if (search) {
-        router.push(`/search/${indexName}?query=${encodeURIComponent(search)}`, undefined, {
-          shallow: false,
-        });
+      if (query) {
+        router.push(
+          `/search/${indexName}?query=${encodeURIComponent(query)}&${
+            searchPageQuery.length ? `${searchPageQuery}` : ''
+          }`,
+          undefined,
+          {
+            shallow: false,
+          }
+        );
 
         blurInput();
       }
+
       onSubmit?.();
     };
 
@@ -354,10 +364,18 @@ const AutocompleteSearchContent = forwardRef<
     useEffect(() => {
       // Only set the query when the debounced search changes
       // and user didn't select from the list
-      if (debouncedSearch !== query && !selectedItem) {
-        setQuery(debouncedSearch);
-        return;
-      }
+      if (debouncedSearch === query || selectedItem) return;
+
+      const {
+        query: cleanedSearch,
+        filters,
+        searchPageQuery,
+      } = parseQuery(indexName, debouncedSearch);
+
+      setQuery(cleanedSearch);
+      setFilters(filters);
+      setSearchPageQuery(searchPageQuery);
+
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [debouncedSearch, query]);
 
@@ -382,7 +400,7 @@ const AutocompleteSearchContent = forwardRef<
 
     return (
       <>
-        <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} />
+        <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
         <Group ref={wrapperRef} className={classes.wrapper} spacing={0} noWrap>
           <Select
             classNames={{
@@ -503,3 +521,42 @@ const IndexRenderItem: Record<string, React.FC> = {
   collections: CollectionsSearchItem,
   bounties: BountiesSearchItem,
 };
+
+const queryFilters: Record<
+  string,
+  { filters: Record<string, RegExp>; searchPageMap: Record<string, string> }
+> = {
+  models: {
+    filters: {
+      'tags.name': /(^|\s+)#(?<value>\w+)/g,
+      'user.username': /(^|\s+)@(?<value>\w+)/g,
+    },
+    searchPageMap: {
+      'user.username': 'users',
+      'tags.name': 'tags',
+    },
+  },
+};
+function parseQuery(index: string, query: string) {
+  const filterAttributes = queryFilters[index];
+  const filters = [];
+  const searchPageQuery = [];
+
+  if (filterAttributes) {
+    for (const [attribute, regex] of Object.entries(filterAttributes.filters)) {
+      for (const match of query.matchAll(regex)) {
+        const cleanedMatch = match?.groups?.value?.trim();
+        filters.push(`${attribute} = ${cleanedMatch}`);
+        searchPageQuery.push(
+          `${filterAttributes.searchPageMap[attribute] ?? attribute}=${encodeURIComponent(
+            cleanedMatch ?? ''
+          )}`
+        );
+      }
+
+      query = query.replace(regex, '');
+    }
+  }
+
+  return { query, filters: filters.join(' AND '), searchPageQuery: searchPageQuery.join('&') };
+}

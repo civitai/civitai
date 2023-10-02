@@ -50,7 +50,6 @@ const RenderFilters = () => {
       <SearchableMultiSelectRefinementList
         title="Users"
         attribute="user.username"
-        sortBy={['count:desc']}
         searchable={true}
       />
     </>

@@ -188,7 +188,9 @@ export function QueueItem({ request }: Props) {
       </Card.Section>
       <Stack py="xs" spacing={8}>
         <ContentClamp maxHeight={36} labelSize="xs">
-          <Text lh={1.3}>{prompt}</Text>
+          <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
+            {prompt}
+          </Text>
         </ContentClamp>
         <Collection
           items={request.resources}
