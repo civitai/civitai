@@ -727,9 +727,9 @@ export const getCollectionItemsByCollectionId = async ({
   if (!forReview && collection.mode === CollectionMode.Contest) {
     orderBy.push({ randomId: 'desc' });
   } else if (forReview && reviewSort === CollectionReviewSort.Newest) {
-    orderBy.push({ createdAt: 'asc' });
-  } else if (forReview && reviewSort === CollectionReviewSort.Oldest) {
     orderBy.push({ createdAt: 'desc' });
+  } else if (forReview && reviewSort === CollectionReviewSort.Oldest) {
+    orderBy.push({ createdAt: 'asc' });
   } else {
     orderBy.push({ createdAt: 'asc' });
   }
