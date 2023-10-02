@@ -7,22 +7,23 @@ import { PaymentIntent } from '@stripe/stripe-js';
 
 export const useStripeBuzzPurchase = ({
   onPaymentSuccess,
-  amount,
+  unitAmount,
   currency = Currency.USD,
   ...metadata
 }: {
-  amount: number;
+  unitAmount: number;
   currency?: Currency;
   onPaymentSuccess: () => void;
 }) => {
   const [processingPayment, setProcessingPayment] = useState<boolean>(false);
   const { data, isLoading: isLoadingClientSecret } = trpc.stripe.getPaymentIntent.useQuery(
-    { unitAmount: amount, currency, metadata },
-    { enabled: !!amount && !!currency }
+    { unitAmount, currency, metadata },
+    { enabled: !!unitAmount && !!currency }
   );
+
   const clientSecret = data?.clientSecret;
   const stripe = useStripe();
-  const elements = useElements();
+  const elements = useElements({ clientSecret });
 
   const fetchPaymentIntent = useCallback(
     async (secret: string) => {

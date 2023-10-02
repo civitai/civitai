@@ -28,7 +28,7 @@ export const buzzPriceMetadataSchema = z.object({
 
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
 export const paymentIntentCreationSchema = z.object({
-  unitAmount: z.number().min(500),
+  unitAmount: z.number().min(499),
   currency: z.nativeEnum(Currency),
   metadata: z.object({}).passthrough().nullish(),
 });

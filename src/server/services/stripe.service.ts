@@ -18,7 +18,7 @@ import { MetadataParam } from '@stripe/stripe-js';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
-const MINIMUM_PURCHASE_AMOUNT = 500;
+const MINIMUM_PURCHASE_AMOUNT = 499;
 
 export const getPlans = async () => {
   const products = await dbRead.product.findMany({
@@ -529,7 +529,7 @@ export const getPaymentIntent = async ({
   metadata = {},
   userId,
 }: PaymentIntentCreationSchema & { userId?: number }) => {
-  if (unitAmount <= MINIMUM_PURCHASE_AMOUNT) {
+  if (unitAmount < MINIMUM_PURCHASE_AMOUNT) {
     throw throwBadRequestError('Minimum purchase amount is $5.00');
   }
 

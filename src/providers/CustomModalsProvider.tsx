@@ -13,6 +13,8 @@ import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openPurchaseModelVersionModal } from '~/components/Modals/PurchaseModelVersionModal';
+import { flowRight } from 'lodash-es';
+import { StripeProvider } from '~/providers/StripeProvider';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')

@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { Price } from '@prisma/client';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -25,6 +25,10 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { isNumber } from '~/utils/type-guards';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { useStripeBuzzPurchase } from '~/components/Buzz/useStripeBuzzPurchase';
+import { Elements, PaymentElement } from '@stripe/react-stripe-js';
+import { StripePaymentElementOptions } from '@stripe/stripe-js';
+import { StripeProvider, useStripePromise } from '~/providers/StripeProvider';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -69,29 +73,58 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
   size: 'lg',
   radius: 'lg',
   Element: ({ context, props: { message } }) => {
-    const currentUser = useCurrentUser();
-    const { classes } = useStyles();
-
-    const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
-    const [error, setError] = useState('');
-    const [customAmount, setCustomAmount] = useState<number | undefined>();
-
-    const { packages, isLoading, createCheckoutSession, creatingSession } = useQueryBuzzPackages();
-
-    const handleClose = () => context.close();
-    const handleSubmit = async () => {
-      if (!selectedPrice) return setError('Please choose one option');
-      if (!selectedPrice.unitAmount && !customAmount)
-        return setError('Please enter the amount you wish to buy');
-
-      return createCheckoutSession({
-        priceId: selectedPrice.id,
-        returnUrl: location.href,
-        customAmount,
-      }).catch(() => ({}));
-    };
-
     return (
+      <StripeProvider>
+        <BuyBuzzModal message={message} onClose={() => context.close()} />
+      </StripeProvider>
+    );
+  },
+});
+
+const BuyBuzzModal = ({ message, onClose }: { message?: string; onClose: () => void }) => {
+  const currentUser = useCurrentUser();
+  const { classes } = useStyles();
+
+  const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
+  const [error, setError] = useState('');
+  const [customAmount, setCustomAmount] = useState<number | undefined>();
+  const stripePromise = useStripePromise();
+  const { elements, stripe, clientSecret } = useStripeBuzzPurchase({
+    unitAmount: selectedPrice?.unitAmount || customAmount,
+  });
+
+  const ctaDisabled =
+    !selectedPrice || (!selectedPrice.unitAmount && !customAmount) || !clientSecret;
+  const { packages, isLoading, createCheckoutSession, creatingSession } = useQueryBuzzPackages();
+
+  const handleSubmit = async () => {
+    if (!selectedPrice) return setError('Please choose one option');
+    if (!selectedPrice.unitAmount && !customAmount)
+      return setError('Please enter the amount you wish to buy');
+
+    return createCheckoutSession({
+      priceId: selectedPrice.id,
+      returnUrl: location.href,
+      customAmount,
+    }).catch(() => ({}));
+  };
+
+  useEffect(() => {
+    if (packages.length && !selectedPrice) {
+      setSelectedPrice(packages[0]);
+    }
+  }, [packages, selectedPrice]);
+
+  const paymentElementOptions: StripePaymentElementOptions = {
+    layout: 'tabs',
+  };
+
+  console.log(selectedPrice, clientSecret, stripe, elements);
+
+  return (
+    <form id="payment-form" onSubmit={handleSubmit}>
+      {/* Show any error or success messages */}
+      {message && <div id="payment-message">{message}</div>}
       <Stack spacing="md">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>
@@ -104,7 +137,7 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
                 Available Buzz
               </Text>
             </Badge>
-            <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
+            <CloseButton radius="xl" iconSize={22} onClick={onClose} />
           </Group>
         </Group>
         <Divider mx="-lg" />
@@ -143,7 +176,10 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
                     <Chip
                       key={buzzPackage.id}
                       value={buzzPackage.id}
-                      classNames={{ label: classes.chipLabel, iconWrapper: classes.chipCheckmark }}
+                      classNames={{
+                        label: classes.chipLabel,
+                        iconWrapper: classes.chipCheckmark,
+                      }}
                       variant="filled"
                     >
                       <Group align="center">
@@ -209,18 +245,27 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
             </Stack>
           </Input.Wrapper>
         )}
+        {clientSecret && stripePromise && (
+          <Elements
+            stripe={stripePromise}
+            key={clientSecret}
+            options={{ clientSecret, appearance: { theme: 'stripe' } }}
+          >
+            <PaymentElement id="payment-element" options={paymentElementOptions} />
+          </Elements>
+        )}
         <Group position="right">
-          <Button variant="filled" color="gray" onClick={handleClose}>
+          <Button variant="filled" color="gray" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={creatingSession}>
+          <Button disabled={!ctaDisabled} onClick={handleSubmit} loading={creatingSession}>
             Buy
           </Button>
         </Group>
       </Stack>
-    );
-  },
-});
+    </form>
+  );
+};
 
 export const openBuyBuzzModal = openModal;
 export default Modal;
