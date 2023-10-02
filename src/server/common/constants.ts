@@ -19,6 +19,7 @@ import {
   PostSort,
   QuestionSort,
 } from './enums';
+import { getBaseUrl } from '../utils/url-helpers';
 
 export const constants = {
   modelFilterDefaults: {

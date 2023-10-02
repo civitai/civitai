@@ -523,6 +523,7 @@ export default function UserTrainingModels() {
                               component="a"
                               href={`https://forms.clickup.com/8459928/f/825mr-7951/OKTROKPXB4DXQQ18U8?Model%20File%20ID=${thisFile.id}`}
                               target="_blank"
+                              rel="nofollow noreferrer"
                               onMouseUp={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();

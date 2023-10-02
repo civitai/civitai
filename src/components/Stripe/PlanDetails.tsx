@@ -61,6 +61,7 @@ const meta: PlanMeta[] = [
               variant="link"
               href="https://sharing.clickup.com/8459928/b/h/6-900500453357-2/56d60e52b842e83"
               target="_blank"
+              rel="nofollow"
             >
               new features
             </Text>

@@ -388,10 +388,11 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
             stats.favoriteCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
+          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
         />
       ) : (
         <Meta
-          title={`Creator Profile | Civitai`}
+          title="Creator Profile | Civitai"
           description="Learn more about this awesome creator on Civitai."
         />
       )}
@@ -562,7 +563,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                 component="a"
                                 href={link.url}
                                 target="_blank"
-                                rel="noopener noreferrer"
+                                rel="nofollow noreferrer"
                                 size={32}
                               >
                                 <DomainIcon domain={link.domain} size={22} />

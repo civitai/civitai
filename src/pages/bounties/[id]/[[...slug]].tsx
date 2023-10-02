@@ -69,7 +69,7 @@ import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -91,6 +91,7 @@ import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { scrollToTop } from '~/utils/scroll-utils';
+import { env } from '~/env/client.mjs';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -155,6 +156,16 @@ export default function BountyDetailsPage({
           : getEdgeUrl(mainImage.url, { width: 1200 })
       }
       description={bounty?.description}
+      links={
+        bounty
+          ? [
+              {
+                href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
+                rel: 'canonical',
+              },
+            ]
+          : undefined
+      }
     />
   );
 
@@ -193,7 +204,7 @@ export default function BountyDetailsPage({
         <Stack spacing="xs" mb="xl">
           <Group position="apart" className={classes.titleWrapper} noWrap>
             <Group spacing="xs">
-              <Title weight="bold" className={classes.title} lineClamp={2}>
+              <Title weight="bold" className={classes.title} lineClamp={2} order={1}>
                 {bounty.name}
               </Title>
               <Group spacing={8}>

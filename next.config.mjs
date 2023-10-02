@@ -38,6 +38,28 @@ export default defineNextConfig(withAxiom({
     largePageDataBytes: 512 * 100000,
 
   },
+  headers: async () => {
+    // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc
+    const headers = [{
+      source: '/sitemap(-\\w+)?.xml',
+      headers: [{
+        key: 'X-Robots-Tag',
+        value: 'noindex',
+      }],
+    }];
+
+    if (process.env.NODE_ENV !== 'production') {
+      headers.push({
+        source: '/:path*',
+        headers: [{
+          key: 'X-Robots-Tag',
+          value: 'noindex',
+        }],
+      });
+    }
+
+    return headers;
+  },
   poweredByHeader: false,
   redirects: async () => {
     return [

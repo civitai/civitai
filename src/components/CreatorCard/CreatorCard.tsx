@@ -82,7 +82,7 @@ export function CreatorCard({ user }: Props) {
                 component="a"
                 href={link.url}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="nofollow noreferrer"
                 size={32}
               >
                 <DomainIcon domain={link.domain} size={20} />

@@ -11,7 +11,6 @@ import {
   LoadingOverlay,
   Pagination,
   Paper,
-  Rating,
   Select,
   Skeleton,
   Stack,
@@ -43,6 +42,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
 import { StarRating } from '~/components/StartRating/StarRating';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -170,6 +170,9 @@ export default function ModelReviews() {
       <Meta
         title={`${model?.name} Reviews | Rated ${ratingAverage} Stars by ${ratingCount} Users on Civitai`}
         description={`Explore user reviews of the ${model?.name} AI model on Civitai, rated ${ratingAverage} stars by ${ratingCount} users, and see how it has helped others bring their creative visions to life`}
+        links={[
+          { href: `${env.NEXT_PUBLIC_BASE_URL}/models/${modelId}/reviews`, rel: 'canonical' },
+        ]}
       />
       <Container size="md">
         {Model}
