@@ -563,7 +563,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                                 component="a"
                                 href={link.url}
                                 target="_blank"
-                                rel="noopener noreferrer"
+                                rel="nofollow noreferrer"
                                 size={32}
                               >
                                 <DomainIcon domain={link.domain} size={22} />

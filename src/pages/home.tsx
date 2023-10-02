@@ -31,6 +31,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
+import { Meta } from '~/components/Meta/Meta';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {

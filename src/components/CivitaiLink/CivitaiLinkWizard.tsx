@@ -114,6 +114,7 @@ const { openModal, Modal } = createContextModal({
                         variant="link"
                         href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
                         target="_blank"
+                        rel="nofollow noreferrer"
                       >
                         Automatic 1111 SD Web UI
                       </Text>
@@ -173,6 +174,7 @@ const { openModal, Modal } = createContextModal({
                       variant="link"
                       href="https://youtu.be/fs-Zs-fvxb0"
                       target="_blank"
+                      rel="nofollow noreferrer"
                     >
                       our video guide
                     </Text>

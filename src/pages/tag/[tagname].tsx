@@ -8,6 +8,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -41,6 +42,7 @@ export default function TagPage({
       <Meta
         title={`${tag?.name} Stable Diffusion AI Models | Civitai`}
         description={`Browse ${tag?.name} Stable Diffusion models, checkpoints, hypernetworks, textual inversions, embeddings, Aesthetic Gradients, and LORAs`}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tag/${tagname}`, rel: 'canonical' }]}
       />
       {tag && (
         <Box className={classes.banner} mb="md">

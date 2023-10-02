@@ -50,3 +50,6 @@ yarn-error.log*
 # WebStorm
 .idea
 sample.http
+
+# Sitemaps
+/public/sitemap*.xml

@@ -152,6 +152,7 @@ function AboutCivitaiLink() {
             variant="link"
             href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
             target="_blank"
+            rel="nofollow noreferrer"
           >
             Automatic1111 Stable Diffusion
           </Text>{' '}
@@ -369,6 +370,7 @@ function GetStarted() {
             variant="link"
             href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
             target="_blank"
+            rel="nofollow noreferrer"
           >
             Automatic1111 Stable Diffusion
           </Text>{' '}

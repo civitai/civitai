@@ -15,6 +15,7 @@ import {
 import { closeAllModals } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';
@@ -114,15 +115,11 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                       <Text size="xs" color={theme.colors.gray[4]}>
                         You must be logged in to add a comment
                       </Text>
-                      <Button
-                        component={NextLink}
-                        href={`/login?returnUrl=${router.asPath}`}
-                        size="xs"
-                        onClick={() => closeAllModals()}
-                        compact
-                      >
-                        Log In
-                      </Button>
+                      <Link href={`/login?returnUrl=${router.asPath}`}>
+                        <Button size="xs" onClick={() => closeAllModals()} compact>
+                          Log In
+                        </Button>
+                      </Link>
                     </Stack>
                   </Overlay>
                 ) : null}

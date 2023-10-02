@@ -59,8 +59,8 @@ export default function QuestionsList() {
               </Badge>
             </Title>
             {!isMuted && (
-              <Link href="/questions/create" passHref>
-                <Button component="a">Ask question</Button>
+              <Link href="/questions/create">
+                <Button>Ask question</Button>
               </Link>
             )}
           </Group>

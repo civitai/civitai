@@ -26,6 +26,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NsfwLevel } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import Link from 'next/link';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -130,21 +131,13 @@ export function ImageCarousel({
           </Stack>
           <Group grow w="100%">
             {currentUser ? (
-              <Button
-                component={NextLink}
-                href="/user/account#content-moderation"
-                variant="outline"
-              >
-                Adjust Settings
-              </Button>
+              <Link href="/user/account#content-moderation">
+                <Button variant="outline">Adjust Settings</Button>
+              </Link>
             ) : (
-              <Button
-                component={NextLink}
-                href={`/login?returnUrl=${router.asPath}`}
-                variant="outline"
-              >
-                Log In
-              </Button>
+              <Link href={`/login?returnUrl=${router.asPath}`}>
+                <Button variant="outline">Log In</Button>
+              </Link>
             )}
           </Group>
         </Stack>

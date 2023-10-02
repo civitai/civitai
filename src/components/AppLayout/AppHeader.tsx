@@ -195,6 +195,7 @@ type MenuLink = {
   redirectReason?: LoginRedirectReason;
   visible?: boolean;
   as?: string;
+  rel?: string;
 };
 
 function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSearchComponentProps) {
@@ -240,6 +241,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             Upload a model
           </Group>
         ),
+        rel: 'nofollow',
       },
       {
         href: '/models/train',
@@ -251,6 +253,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             Train a model
           </Group>
         ),
+        rel: 'nofollow',
       },
       {
         href: '/posts/create',
@@ -262,6 +265,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             Post images
           </Group>
         ),
+        rel: 'nofollow',
       },
       {
         href: '/articles/create',
@@ -273,6 +277,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             Write an article
           </Group>
         ),
+        rel: 'nofollow',
       },
       {
         href: '/bounties/create',
@@ -284,6 +289,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             Create a bounty
           </Group>
         ),
+        rel: 'nofollow',
       },
     ],
     [features.bounties, features.imageTraining, isMuted, theme]
@@ -413,6 +419,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             Sign In/Sign up
           </Group>
         ),
+        rel: 'nofollow',
       },
       {
         href: '/questions',
@@ -451,6 +458,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
                 onClick={() => closeBurger()}
+                rel={link.rel}
               >
                 {link.label}
               </Anchor>
@@ -475,7 +483,13 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         .filter(({ visible }) => visible !== false)
         .map((link, index) =>
           link.href ? (
-            <Menu.Item key={link.href} component={NextLink} href={link.href} as={link.as}>
+            <Menu.Item
+              key={link.href}
+              component={NextLink}
+              href={link.href}
+              as={link.as}
+              rel={link.rel}
+            >
               {link.label}
             </Menu.Item>
           ) : (
@@ -599,6 +613,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                           component={NextLink}
                           href={link.href}
                           as={link.as}
+                          rel={link.rel}
                         >
                           {link.label}
                         </Menu.Item>
@@ -650,6 +665,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               <Button
                 component={NextLink}
                 href={`/login?returnUrl=${router.asPath}`}
+                rel="nofollow"
                 variant="default"
               >
                 Sign In
@@ -774,13 +790,8 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                             )}
                           </BlurToggle>
                         )}
-                        <Link href="/user/account" passHref>
-                          <ActionIcon
-                            variant="default"
-                            component="a"
-                            size="lg"
-                            onClick={closeBurger}
-                          >
+                        <Link href="/user/account">
+                          <ActionIcon variant="default" size="lg" onClick={closeBurger}>
                             <IconSettings stroke={1.5} />
                           </ActionIcon>
                         </Link>
