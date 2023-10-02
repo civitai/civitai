@@ -37,7 +37,11 @@ export const useStripeBuzzPurchase = ({
 
   const paymentIntentProcessor = useInterval(async () => {
     if (!clientSecret) return;
-    const { paymentIntent } = await fetchPaymentIntent(clientSecret);
+    const data = await fetchPaymentIntent(clientSecret);
+    if (!data) return;
+
+    const { paymentIntent } = data;
+
     processPaymentIntent(paymentIntent);
   }, 350);
 
