@@ -54,6 +54,7 @@ import { useRouter } from 'next/router';
 import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -248,7 +249,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         label: (
           <Group align="center" spacing="xs">
             <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            Train a model
+            <Text span inline>
+              Train a model
+            </Text>
+            <CurrencyIcon currency="BUZZ" size={16} />
           </Group>
         ),
       },

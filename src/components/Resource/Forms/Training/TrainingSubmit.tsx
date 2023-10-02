@@ -1,12 +1,20 @@
 import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { TrainingStatus } from '@prisma/client';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
+import {
+  calcBuzzFromEta,
+  calcEta,
+  goBack,
+} from '~/components/Resource/Forms/Training/TrainingCommon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -306,6 +314,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
     thisTrainingDetails?.baseModel ?? undefined
   );
+  const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const router = useRouter();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const queryUtils = trpc.useContext();
@@ -355,6 +364,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   });
 
   const watchFields = form.watch(['maxTrainEpochs', 'numRepeats', 'trainBatchSize']);
+  const watchFieldsBuzz = form.watch(['networkDim', 'networkAlpha', 'targetSteps']);
 
   // apply default overrides for base model upon selection
   useEffect(() => {
@@ -391,9 +401,23 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     //   });
     // }
 
-    form.setValue('targetSteps', newSteps);
+    if (form.getValues('targetSteps') !== newSteps) {
+      form.setValue('targetSteps', newSteps);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchFields]);
+
+  useEffect(() => {
+    const eta = calcEta(
+      form.getValues('networkDim'),
+      form.getValues('networkAlpha'),
+      form.getValues('targetSteps'),
+      formBaseModel
+    );
+    const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
+    setBuzzCost(price);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchFieldsBuzz, formBaseModel]);
 
   const { errors } = form.formState;
 
@@ -419,9 +443,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     },
   });
 
-  const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
-    const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
+  const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
 
+  const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
     // TODO [bw] we should probably disallow people to get to the training wizard at all when it's not pending
     if (thisModelVersion.trainingStatus !== TrainingStatus.Pending) {
       showNotification({
@@ -450,6 +474,49 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
 
+    if ((buzzCost ?? 0) > (currentUser?.balance ?? 0))
+      return openBuyBuzzModal({
+        message: 'You have insufficient funds to run this training. You can buy more Buzz below.',
+      });
+
+    return openConfirmModal({
+      title: 'Confirm Buzz Transaction',
+      children: (
+        <Stack>
+          <div>
+            <Text span inline>
+              The cost for this training run is:{' '}
+            </Text>
+            <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+              <CurrencyIcon currency="BUZZ" size={12} />
+            </Text>
+            <Text span inline>
+              {(buzzCost ?? 0).toLocaleString()}.
+            </Text>
+          </div>
+          <div>
+            <Text span inline>
+              Your remaining balance will be:{' '}
+            </Text>
+            <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+              <CurrencyIcon currency="BUZZ" size={12} />
+            </Text>
+            <Text span inline>
+              {((currentUser?.balance ?? 0) - (buzzCost ?? 0)).toLocaleString()}.
+            </Text>
+          </div>
+          <Text>Proceed?</Text>
+        </Stack>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Confirm' },
+      centered: true,
+      onConfirm: () => {
+        handleConfirm(rest);
+      },
+    });
+  };
+
+  const handleConfirm = ({ ...rest }: z.infer<typeof schema>) => {
     setAwaitInvalidate(true);
 
     const { baseModel, ...paramData } = rest;
@@ -481,7 +548,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     };
 
     upsertVersionMutation.mutate(versionMutateData, {
-      async onSuccess(response, request) {
+      async onSuccess(_, request) {
         queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
           if (!old) return old;
 
@@ -507,11 +574,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           { modelVersionId: thisModelVersion.id },
           {
             onSuccess: async () => {
-              setAwaitInvalidate(false);
               showSuccessNotification({
                 title: 'Successfully submitted for training!',
                 message: 'You will be emailed when training is complete.',
               });
+              setAwaitInvalidate(false);
               await router.replace(userTrainingDashboardURL);
             },
             onError: () => {
@@ -523,7 +590,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   trainingStatus: TrainingStatus.Pending,
                 },
                 {
-                  async onSuccess(response, request) {
+                  async onSuccess(_, request) {
                     queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
                       if (!old) return old;
 
@@ -565,8 +632,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       <Stack>
         <Accordion
           variant="separated"
-          multiple
-          defaultValue={['model-details']}
+          defaultValue={'model-details'}
           styles={(theme) => ({
             content: { padding: 0 },
             item: {
@@ -723,13 +789,38 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Accordion.Item>
           </Accordion>
         )}
+
+        <DescriptionTable
+          labelWidth="150px"
+          paperProps={{ mt: 'md' }}
+          items={[
+            {
+              label: 'Cost',
+              value: !!buzzCost ? (
+                <Group spacing={4}>
+                  <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+                    <CurrencyIcon currency="BUZZ" size={12} />
+                  </Text>
+                  <Text inline>{buzzCost.toLocaleString()}</Text>
+                </Group>
+              ) : (
+                <Text fs="italic">Select a base model to calculate</Text>
+              ),
+            },
+          ]}
+        />
       </Stack>
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>
         <Button type="submit" loading={awaitInvalidate}>
-          Submit
+          <Group spacing={6}>
+            <Text inline>Submit</Text>
+            {(buzzCost ?? 0) > (currentUser?.balance ?? 0) && (
+              <IconAlertTriangle size={14} color="gold" />
+            )}
+          </Group>
         </Button>
       </Group>
     </Form>
