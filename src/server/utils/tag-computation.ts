@@ -103,6 +103,8 @@ const tagCombos: ComputedTagCombo[] = [
       'cum on breasts',
       'cum in mouth',
       'cum on tongue',
+      'cum on clothes',
+      'cum',
       'female masturbation',
       'masturbation',
       'fingering',

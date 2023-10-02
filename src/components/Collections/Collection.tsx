@@ -13,7 +13,12 @@ import {
   createStyles,
   Menu,
 } from '@mantine/core';
-import { CollectionContributorPermission, CollectionType, MetricTimeframe } from '@prisma/client';
+import {
+  CollectionContributorPermission,
+  CollectionMode,
+  CollectionType,
+  MetricTimeframe,
+} from '@prisma/client';
 import {
   IconCirclePlus,
   IconCloudOff,
@@ -54,23 +59,40 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { showSuccessNotification } from '~/utils/notifications';
+import { Meta } from '../Meta/Meta';
+import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { getRandom } from '~/utils/array-helpers';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ModelSort.Newest;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
+  const sort = isContestCollection
+    ? getRandom(Object.values(ModelSort))
+    : query.sort ?? ModelSort.Newest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
-        <Group position="apart" spacing={0}>
-          <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as ModelSort })} />
-          <Group spacing="xs">
-            <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
-            <ModelFiltersDropdown />
-          </Group>
-        </Group>
-        <CategoryTags />
+        {!isContestCollection && (
+          <>
+            <Group position="apart" spacing={0}>
+              <SortFilter
+                type="models"
+                value={sort}
+                onChange={(x) => set({ sort: x as ModelSort })}
+              />
+              <Group spacing="xs">
+                <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
+                <ModelFiltersDropdown />
+              </Group>
+            </Group>
+            <CategoryTags />
+          </>
+        )}
         <ModelsInfinite
           filters={{
             ...query,
@@ -91,9 +113,10 @@ const ImageCollection = ({
   collection: NonNullable<CollectionByIdModel>;
   permissions?: CollectionContributorPermissionFlags;
 }) => {
+  const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
+  const sort = isContestCollection ? ImageSort.Random : query.sort ?? ImageSort.Newest;
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ImageSort.Newest;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const utils = trpc.useContext();
 
@@ -145,25 +168,35 @@ const ImageCollection = ({
     >
       <Stack spacing="xs">
         <IsClient>
-          <Group position="apart" spacing={0}>
-            <SortFilter
-              type="images"
-              value={sort}
-              onChange={(x) => replace({ sort: x as ImageSort })}
+          {!isContestCollection && (
+            <>
+              <Group position="apart" spacing={0}>
+                <SortFilter
+                  type="images"
+                  value={sort}
+                  onChange={(x) => replace({ sort: x as ImageSort })}
+                />
+                <PeriodFilter
+                  type="images"
+                  value={period}
+                  onChange={(x) => replace({ period: x })}
+                />
+              </Group>
+              <ImageCategories />
+            </>
+          )}
+          <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+            <ImagesInfinite
+              filters={{
+                ...query,
+                period,
+                sort,
+                collectionId: collection.id,
+                types: undefined,
+                withMeta: undefined,
+              }}
             />
-            <PeriodFilter type="images" value={period} onChange={(x) => replace({ period: x })} />
-          </Group>
-          <ImageCategories />
-          <ImagesInfinite
-            filters={{
-              ...query,
-              period,
-              sort,
-              collectionId: collection.id,
-              types: undefined,
-              withMeta: undefined,
-            }}
-          />
+          </ReactionSettingsProvider>
         </IsClient>
       </Stack>
     </ImageGuardReportContext.Provider>
@@ -172,24 +205,37 @@ const ImageCollection = ({
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? PostSort.Newest;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
+  const sort = isContestCollection
+    ? getRandom(Object.values(PostSort))
+    : query.sort ?? PostSort.Newest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
-        <Group position="apart" spacing={0}>
-          <SortFilter type="posts" value={sort} onChange={(sort) => set({ sort: sort as any })} />
-          <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
-        </Group>
-        <PostCategories />
-        <PostsInfinite
-          filters={{
-            ...query,
-            period,
-            sort,
-            collectionId: collection.id,
-          }}
-        />
+        {!isContestCollection && (
+          <>
+            <Group position="apart" spacing={0}>
+              <SortFilter
+                type="posts"
+                value={sort}
+                onChange={(sort) => set({ sort: sort as any })}
+              />
+              <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
+            </Group>
+            <PostCategories />
+          </>
+        )}
+        <ReactionSettingsProvider settings={{ displayReactionCount: !isContestCollection }}>
+          <PostsInfinite
+            filters={{
+              ...query,
+              period,
+              sort,
+              collectionId: collection.id,
+            }}
+          />
+        </ReactionSettingsProvider>
       </IsClient>
     </Stack>
   );
@@ -198,20 +244,27 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? ArticleSort.Newest;
+  const isContestCollection = collection.mode === CollectionMode.Contest;
+  const sort = isContestCollection
+    ? getRandom(Object.values(ArticleSort))
+    : query.sort ?? ArticleSort.Newest;
 
   return (
     <Stack spacing="xs">
       <IsClient>
-        <Group position="apart" spacing={0}>
-          <SortFilter
-            type="articles"
-            value={sort}
-            onChange={(x) => set({ sort: x as ArticleSort })}
-          />
-          <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
-        </Group>
-        <ArticleCategories />
+        {!isContestCollection && (
+          <>
+            <Group position="apart" spacing={0}>
+              <SortFilter
+                type="articles"
+                value={sort}
+                onChange={(x) => set({ sort: x as ArticleSort })}
+              />
+              <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
+            </Group>
+            <ArticleCategories />
+          </>
+        )}
         <ArticlesInfinite
           filters={{
             ...query,
@@ -263,6 +316,13 @@ export function Collection({
 
   return (
     <>
+      {collection && (
+        <Meta
+          title={`${collection.name} - collection posted by ${collection.user.username}`}
+          description={collection.description ?? undefined}
+          deIndex={collection.read !== 'Public' ? 'noindex, nofollow' : undefined}
+        />
+      )}
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
@@ -309,7 +369,14 @@ export function Collection({
                   </Title>
                   {collection?.description && (
                     <Text size="xs" color="dimmed">
-                      {collection.description}
+                      <ReactMarkdown
+                        rehypePlugins={[rehypeRaw, remarkGfm]}
+                        allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
+                        unwrapDisallowed
+                        className="markdown-content"
+                      >
+                        {collection.description}
+                      </ReactMarkdown>
                     </Text>
                   )}
                 </Stack>

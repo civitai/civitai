@@ -4,7 +4,8 @@ const reactionMilestones = [5, 10, 20, 50, 100] as const;
 
 export const bountyNotifications = createNotificationProcessor({
   'benefactor-joined': {
-    displayName: 'Benefactor joined bounty',
+    displayName: 'Supporter joined bounty',
+    toggleable: false, // Disabling since we've disabled split bounties
     prepareMessage: ({ details }) => ({
       message: `${details.benefactorUsername} added ${details.amount} to your bounty "${details.bountyName}"`,
       url: `/bounties/${details.bountyId}`,
@@ -39,7 +40,7 @@ export const bountyNotifications = createNotificationProcessor({
     `,
   },
   'bounty-ending': {
-    displayName: 'Bounty your are involved in is ending',
+    displayName: 'Bounty you are involved in is ending',
     prepareMessage: ({ details }) => ({
       message: `The bounty "${details.bountyName}" is ending in 24 hours`,
       url: `/bounties/${details.bountyId}`,

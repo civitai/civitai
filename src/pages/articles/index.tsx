@@ -12,6 +12,7 @@ import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentTog
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -52,6 +53,7 @@ export default function ArticlesPage() {
             : ''
         }`}
         description="Browse Civitai Articles, featuring AI-generated images along with prompts and resources used for their creation, showcasing the creativity of our talented community."
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/articles`, rel: 'canonical' }]}
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.image}

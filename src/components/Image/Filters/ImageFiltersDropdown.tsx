@@ -32,11 +32,12 @@ const useStyles = createStyles((theme) => ({
 
     '&[data-checked]': {
       '&, &:hover': {
-        color: theme.white,
+        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
         border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
       },
 
       '&[data-variant="filled"]': {
+        // color: theme.colorScheme === 'dark' ? theme.white : theme.black,
         backgroundColor: 'transparent',
       },
     },

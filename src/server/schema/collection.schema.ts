@@ -3,13 +3,14 @@ import { isDefined } from '~/utils/type-guards';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
+  CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
 import { imageSchema } from '~/server/schema/image.schema';
 import { infiniteQuerySchema, userPreferencesSchema } from '~/server/schema/base.schema';
-import { BrowsingMode, CollectionSort } from '~/server/common/enums';
+import { BrowsingMode, CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -84,6 +85,9 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
+export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
+export const collectionMetadataSchema = z.object({ endsAt: z.coerce.date().optional() });
+
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z
   .object({
@@ -96,6 +100,8 @@ export const upsertCollectionInput = z
     read: z.nativeEnum(CollectionReadConfiguration).optional(),
     write: z.nativeEnum(CollectionWriteConfiguration).optional(),
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
+    mode: z.nativeEnum(CollectionMode).nullish(),
+    metadata: collectionMetadataSchema.optional(),
   })
   .merge(collectionItemSchema);
 
@@ -131,6 +137,7 @@ export const getAllCollectionItemsSchema = z
     collectionId: z.number(),
     statuses: z.array(z.nativeEnum(CollectionItemStatus)),
     forReview: z.boolean().optional(),
+    reviewSort: z.nativeEnum(CollectionReviewSort).optional(),
   })
   .partial()
   .required({ collectionId: true });

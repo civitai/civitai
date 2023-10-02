@@ -16,6 +16,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
+import { env } from '~/env/client.mjs';
 
 const useStyles = createStyles((theme) => ({
   filtersWrapper: {
@@ -42,6 +43,7 @@ export default function ImagesPage() {
             : ''
         }`}
         description="Browse the Civitai Image Gallery, featuring AI-generated images along with prompts and resources used for their creation, showcasing the creativity of our talented community."
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images`, rel: 'canonical' }]}
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.image}

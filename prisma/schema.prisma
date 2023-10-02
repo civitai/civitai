@@ -1930,6 +1930,10 @@ enum CollectionType {
   Image
 }
 
+enum CollectionMode {
+  Contest
+}
+
 model Collection {
   id          Int                          @id @default(autoincrement())
   createdAt   DateTime?                    @default(now())
@@ -1944,6 +1948,8 @@ model Collection {
   write       CollectionWriteConfiguration @default(Private)
   read        CollectionReadConfiguration  @default(Private)
   type        CollectionType?
+  mode        CollectionMode?
+  metadata    Json                         @default("{}")
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -1981,8 +1987,13 @@ model CollectionItem {
   addedBy      User?                @relation(fields: [addedById], references: [id], onDelete: SetNull)
   note         String?
   status       CollectionItemStatus @default(ACCEPTED)
+  randomId     Int?
 
   @@unique([collectionId, articleId, postId, imageId, modelId])
+  @@index([addedById], type: Hash)
+  @@index([imageId], type: Hash)
+  @@index([modelId], type: Hash)
+  @@index([collectionId], type: Hash)
 }
 
 enum CollectionContributorPermission {

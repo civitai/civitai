@@ -39,6 +39,7 @@ import { Collection } from '~/components/Collection/Collection';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { env } from '~/env/client.mjs';
 
 export function PostDetail({ postId }: { postId: number }) {
   const currentUser = useCurrentUser();
@@ -57,6 +58,7 @@ export function PostDetail({ postId }: { postId: number }) {
           ? undefined
           : getEdgeUrl(images[0].url, { width: 1200 })
       }
+      links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]}
     />
   );
 
@@ -84,7 +86,7 @@ export function PostDetail({ postId }: { postId: number }) {
           <Stack spacing={8}>
             <Group spacing="md" position="apart" align="center" noWrap>
               {post.title && (
-                <Title order={2} lineClamp={2}>
+                <Title order={1} lineClamp={2} size={26}>
                   {post.title}
                 </Title>
               )}
