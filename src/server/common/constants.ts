@@ -165,8 +165,8 @@ export const constants = {
     drawerZIndex: 301,
     requestBlocking: {
       warned: 5,
-      notified: 10,
-      muted: 30,
+      notified: 8,
+      muted: 16,
     },
   },
   tagVoting: {
@@ -184,7 +184,7 @@ export const constants = {
     engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
     minCreateAmount: 5000,
   },
-  defaultCurrency: 'USD',
+  defaultCurrency: Currency.BUZZ,
   referrals: {
     referralCodeMinLength: 6,
     referralCodeMaxCount: 3,

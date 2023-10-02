@@ -1,6 +1,7 @@
 import {
   Group,
   Popover,
+  Stack,
   Text,
   ThemeIcon,
   UnstyledButton,
@@ -12,15 +13,17 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { IconBolt } from '@tabler/icons-react';
-import { useInterval } from '@mantine/hooks';
+import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showConfirmNotification, showErrorNotification } from '~/utils/notifications';
 import { v4 as uuidv4 } from 'uuid';
-import { hideNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { devtools } from 'zustand/middleware';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 type Props = UnstyledButtonProps & {
   toUserId?: number;
@@ -34,6 +37,8 @@ type Props = UnstyledButtonProps & {
     amount: number;
   }) => void;
 };
+
+const CONFIRMATION_THRESHOLD = 100;
 
 /**NOTES**
  Why use zustand?
@@ -113,6 +118,10 @@ export function InteractiveTipBuzzButton({
   }, 150);
   const queryUtils = trpc.useContext();
   const onTip = useStore((state) => state.onTip);
+  const [dismissed, setDismissed] = useLocalStorage({
+    key: `interactive-tip-buzz-tutorial`,
+    defaultValue: false,
+  });
 
   const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
     async onSuccess(_, { amount }) {
@@ -172,9 +181,27 @@ export function InteractiveTipBuzzButton({
   };
 
   const stopCounter = () => {
+    const isClick = buzzCounter === 0;
+
     if (interval.active) {
       interval.stop();
       const amount = buzzCounter > 0 ? buzzCounter : 10;
+      const requiresConfirmation = amount >= CONFIRMATION_THRESHOLD;
+
+      if (!dismissed && isClick) {
+        showNotification({
+          title: "Looks like you're onto your first tip!",
+          message: (
+            <Text>
+              To send more than <CurrencyBadge currency={Currency.BUZZ} unitAmount={10} />, hold the
+              button for as long as you like
+            </Text>
+          ),
+        });
+      }
+
+      setDismissed(true);
+
       if (amount && !timeoutRef.current) {
         const uuid = uuidv4();
 
@@ -183,34 +210,41 @@ export function InteractiveTipBuzzButton({
           color: 'yellow.7',
           title: 'Please confirm your tip:',
           message: (
-            <Group spacing={4}>
-              <Text>You are about to tip {amount} Buzz.</Text>
-              {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
-              <ThemeIcon color="yellow.4" variant="transparent">
-                <IconBolt size={18} fill="currentColor" />
-              </ThemeIcon>
-
+            <Stack spacing={'xs'}>
+              <Group spacing={4}>
+                <Text>
+                  You are about to tip{' '}
+                  <CurrencyBadge currency={Currency.BUZZ} unitAmount={amount} />
+                </Text>
+              </Group>
               <Text> Are you sure?</Text>
-              <Text color="red">
-                This action will be confirmed automatically if you do nothing.
-              </Text>
-            </Group>
+              {!requiresConfirmation && (
+                <Text color="red">
+                  This action will be confirmed automatically if you do nothing.
+                </Text>
+              )}
+            </Stack>
           ),
-          onConfirm: () => {
-            onSendTip(amount);
-            hideNotification(uuid);
-            reset();
-          },
+          onConfirm: requiresConfirmation
+            ? () => {
+                onSendTip(amount);
+                hideNotification(uuid);
+                reset();
+              }
+            : undefined,
           onCancel: () => {
             hideNotification(uuid);
             reset();
           },
         });
 
-        timeoutRef.current = setTimeout(() => {
-          onSendTip(amount);
-          reset();
-        }, 8000);
+        if (!requiresConfirmation) {
+          timeoutRef.current = setTimeout(() => {
+            hideNotification(uuid);
+            onSendTip(amount);
+            reset();
+          }, 8000);
+        }
       }
     }
   };
@@ -234,7 +268,7 @@ export function InteractiveTipBuzzButton({
         {...buttonProps}
         onClick={undefined}
       >
-        <Popover withArrow withinPortal radius="md" opened={interval.active}>
+        <Popover withArrow withinPortal radius="md" opened={interval.active} zIndex={999}>
           <Popover.Target>
             <div>{children}</div>
           </Popover.Target>

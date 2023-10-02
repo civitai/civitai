@@ -248,6 +248,7 @@ export default function ArticleDetailsPage({
                     laughCount: article.stats?.laughCountAllTime,
                     cryCount: article.stats?.cryCountAllTime,
                   }}
+                  targetUserId={article.user.id}
                 />
                 {actionButtons}
               </Group>

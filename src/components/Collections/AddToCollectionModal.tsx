@@ -12,11 +12,12 @@ import {
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
   CollectionContributorPermission,
+  CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
 } from '@prisma/client';
-import { IconArrowLeft, IconPlus } from '@tabler/icons-react';
+import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
@@ -28,6 +29,7 @@ import {
   InputText,
   InputTextArea,
   useForm,
+  InputDatePicker,
 } from '~/libs/form';
 import {
   AddCollectionItemInput,
@@ -36,7 +38,13 @@ import {
 } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { PrivacyData, collectionReadPrivacyData } from './collection.utils';
+import {
+  PrivacyData,
+  collectionReadPrivacyData,
+  collectionWritePrivacyData,
+} from './collection.utils';
+import { getDisplayName } from '~/utils/string-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -271,6 +279,7 @@ function NewCollectionForm({
   onBack,
   ...props
 }: Props & { onSubmit: VoidFunction; onBack: VoidFunction }) {
+  const currentUser = useCurrentUser();
   const form = useForm({
     schema: upsertCollectionInput,
     defaultValues: {
@@ -317,6 +326,8 @@ function NewCollectionForm({
     });
   };
 
+  const mode = form.watch('mode');
+
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing="xl">
@@ -354,6 +365,42 @@ function NewCollectionForm({
             data={Object.values(collectionReadPrivacyData)}
             itemComponent={SelectItem}
           />
+          {currentUser?.isModerator && (
+            <>
+              <InputSelect
+                name="write"
+                label="Add permissions"
+                data={Object.values(collectionWritePrivacyData)}
+              />
+              <InputSelect
+                name="mode"
+                label="Mode"
+                data={[
+                  ...Object.values(CollectionMode).map((value) => ({
+                    value,
+                    label: getDisplayName(value),
+                  })),
+                ]}
+                clearable
+              />
+              {mode === CollectionMode.Contest && (
+                <>
+                  <InputDatePicker
+                    name="metadata.endsAt"
+                    label="End Date"
+                    placeholder="Select an end date"
+                    icon={<IconCalendar size={16} />}
+                    clearable
+                  />
+                  <Text size="xs" color="dimmed">
+                    This is only used to stop recurring job updating the random indexes. We suggest
+                    you add this in to save some resources, but this value will not be shown to
+                    end-users.
+                  </Text>
+                </>
+              )}
+            </>
+          )}
           <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
         </Stack>
         <Group position="right">

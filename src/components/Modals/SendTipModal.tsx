@@ -21,6 +21,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { UserBuzz } from '../User/UserBuzz';
 import { openConfirmModal } from '@mantine/modals';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -275,19 +276,13 @@ const { openModal, Modal } = createContextModal<{
             {amount === '-1' && (
               <InputNumber
                 name="customAmount"
-                placeholder="Your tip"
+                placeholder="Your tip. Minimum 1000 BUZZ"
                 variant="filled"
-                icon={
-                  <IconBolt
-                    size={18}
-                    color={theme.colors.accent[5]}
-                    fill={theme.colors.accent[5]}
-                  />
-                }
                 rightSectionWidth="10%"
-                min={1}
+                min={1000}
                 max={currentUser?.balance}
                 disabled={sending}
+                icon={<CurrencyIcon currency="BUZZ" size={16} />}
                 parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
                 formatter={(value) =>
                   value && !Number.isNaN(parseFloat(value))

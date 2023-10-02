@@ -104,6 +104,7 @@ export function PostImages({
                           laughCount: image.stats?.laughCountAllTime,
                           cryCount: image.stats?.cryCountAllTime,
                         }}
+                        targetUserId={image.user.id}
                       />
                     </>
                   )}

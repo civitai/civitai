@@ -33,6 +33,8 @@ import { shuffle } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { CollectionMode } from '@prisma/client';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -244,25 +246,29 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         {MetaDataTop}
       </Box>
       <div className={classes.grid}>
-        {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-        {isLoading
-          ? Array.from({ length: 14 }).map((_, index) => (
-              <AspectRatio ratio={7 / 9} key={index}>
-                <Skeleton width="100%" />
-              </AspectRatio>
-            ))
-          : items.map((item) => (
-              <Fragment key={item.id}>
-                {item.type === 'model' && (
-                  <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
-                )}
-                {item.type === 'image' && (
-                  <ImageCard data={item.data} collectionId={collection?.id} />
-                )}
-                {item.type === 'post' && <PostCard data={item.data} />}
-                {item.type === 'article' && <ArticleCard data={item.data} />}
-              </Fragment>
-            ))}
+        <ReactionSettingsProvider
+          settings={{ displayReactionCount: collection?.mode !== CollectionMode.Contest }}
+        >
+          {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+          {isLoading
+            ? Array.from({ length: 14 }).map((_, index) => (
+                <AspectRatio ratio={7 / 9} key={index}>
+                  <Skeleton width="100%" />
+                </AspectRatio>
+              ))
+            : items.map((item) => (
+                <Fragment key={item.id}>
+                  {item.type === 'model' && (
+                    <ModelCard data={{ ...item.data, image: item.data.images[0] }} />
+                  )}
+                  {item.type === 'image' && (
+                    <ImageCard data={item.data} collectionId={collection?.id} />
+                  )}
+                  {item.type === 'post' && <PostCard data={item.data} />}
+                  {item.type === 'article' && <ArticleCard data={item.data} />}
+                </Fragment>
+              ))}
+        </ReactionSettingsProvider>
       </div>
     </>
   );

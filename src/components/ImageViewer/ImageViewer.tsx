@@ -163,7 +163,7 @@ export const ImageViewer = ({ children }: { children: React.ReactElement }) => {
         <div
           style={{
             position: 'fixed',
-            zIndex: 99999,
+            zIndex: 999,
           }}
         >
           <ImageDetailByProps

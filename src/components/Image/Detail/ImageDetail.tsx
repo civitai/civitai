@@ -244,6 +244,7 @@ export function ImageDetail() {
                           cryCount: image.stats?.cryCountAllTime,
                           tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                         }}
+                        targetUserId={image.user.id}
                       />
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Stack>

@@ -1,4 +1,10 @@
-import { ModelModifier, ModelStatus, ModelType, Prisma } from '@prisma/client';
+import {
+  ModelModifier,
+  ModelStatus,
+  ModelType,
+  ModelVersionMonetizationType,
+  Prisma,
+} from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
@@ -18,6 +24,8 @@ import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
+import { ModelVersionPurchaseTransactionDetailsSchema } from '~/server/schema/model-version-purchase.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -84,14 +92,55 @@ export default RateLimitedEndpoint(
         earlyAccessTimeFrame: true,
         createdAt: true,
         vaeId: true,
+        monetization: {
+          select: {
+            type: true,
+            currency: true,
+            unitAmount: true,
+          },
+        },
+        purchases: session?.user
+          ? {
+              select: {
+                transactionDetails: true,
+              },
+              where: {
+                userId: session?.user?.id,
+              },
+            }
+          : undefined,
       },
     });
+
     if (!modelVersion) return errorResponse(404, 'Model not found');
 
     // Handle non-published models
+    const features = getFeatureFlags({ user: session?.user });
     const isMod = session?.user?.isModerator;
     const userId = session?.user?.id;
     const archived = modelVersion.model.mode === ModelModifier.Archived;
+    const isOwner = userId === modelVersion.model.userId;
+    const { monetization, purchases } = modelVersion;
+
+    if (
+      features.modelMonetization &&
+      !(isOwner || isMod) &&
+      monetization?.type === ModelVersionMonetizationType.PaidAccess
+    ) {
+      if (!session?.user) {
+        return errorResponse(401, 'Unauthorized. This model requires a purchase.');
+      }
+
+      if (
+        !purchases.some((p) => {
+          const details = p.transactionDetails as ModelVersionPurchaseTransactionDetailsSchema;
+          return details?.monetizationType === monetization.type;
+        })
+      ) {
+        return errorResponse(401, 'Unauthorized. You have not purchased access to this model.');
+      }
+    }
+
     if (archived) return errorResponse(410, 'Model archived, not available for download');
 
     const canDownload =

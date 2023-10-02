@@ -2,6 +2,7 @@ import { getJobDate } from '~/server/jobs/job';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { swapIndex } from '~/server/meilisearch/util';
+import { chunk } from 'lodash-es';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 
@@ -36,12 +37,13 @@ export function createSearchIndexUpdateProcessor({
       }
 
       // Run update
+      const now = new Date();
       await onIndexUpdate(ctx);
       await setLastUpdate();
 
       // Clear update queue
       await dbWrite.searchIndexUpdateQueue.deleteMany({
-        where: { type: indexName, createdAt: { lt: new Date() } },
+        where: { type: indexName, createdAt: { lt: now } },
       });
     },
     /**
@@ -74,24 +76,18 @@ export function createSearchIndexUpdateProcessor({
         `createSearchIndexUpdateProcessor :: ${indexName} :: queueUpdate :: Called with ${items.length} items`
       );
 
-      const batchSize = 500;
-      const batchCount = Math.ceil(items.length / batchSize);
-
-      for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-        const batch = items.slice(batchNumber * batchSize, batchNumber * batchSize + batchSize);
-
-        await dbWrite.$executeRaw`
-        INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
-        VALUES ${Prisma.join(
-          batch.map(
-            ({ id, action }) =>
-              Prisma.sql`(${indexName}, ${id}, ${
-                action || SearchIndexUpdateQueueAction.Update
-              }::"SearchIndexUpdateQueueAction")`
-          )
-        )} 
-        ON CONFLICT ("type", "id", "action") DO UPDATE SET "createdAt" = NOW()
-      `;
+      const batches = chunk(items, 500);
+      for (const batch of batches) {
+        await dbWrite.$executeRawUnsafe(`
+          INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
+          VALUES ${batch
+            .map(
+              ({ id, action }) =>
+                `('${indexName}', ${id}, '${action ?? SearchIndexUpdateQueueAction.Update}')`
+            )
+            .join(', ')}
+          ON CONFLICT ("type", "id", "action") DO NOTHING;
+      `);
       }
     },
   };

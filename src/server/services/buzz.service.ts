@@ -8,7 +8,7 @@ import {
   CreateBuzzTransactionInput,
   getUserBuzzTransactionsResponse,
 } from '~/server/schema/buzz.schema';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -96,6 +96,7 @@ export async function createBuzzTransaction({
   entityId,
   entityType,
   toAccountId,
+  amount,
   ...payload
 }: CreateBuzzTransactionInput & { fromAccountId: number }) {
   if (entityType && entityId && toAccountId === undefined) {
@@ -122,8 +123,15 @@ export async function createBuzzTransaction({
     throw throwBadRequestError('You cannot send buzz to the same account');
   }
 
+  const account = await getUserBuzzAccount({ accountId: payload.fromAccountId });
+
+  if (account.balance < amount) {
+    throw throwInsufficientFundsError();
+  }
+
   const body = JSON.stringify({
     ...payload,
+    amount,
     toAccountId,
   });
 
@@ -174,13 +182,13 @@ export async function createBuzzTransaction({
           },
         },
         data: {
-          amount: existingRecord.amount + payload.amount,
+          amount: existingRecord.amount + amount,
         },
       });
     } else {
       await dbWrite.buzzTip.create({
         data: {
-          amount: payload.amount,
+          amount,
           entityId,
           entityType,
           toUserId: toAccountId,

@@ -54,6 +54,9 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { formatDate } from '~/utils/date-helpers';
+import { CollectionReviewSort, ModelSort } from '~/server/common/enums';
+import { SortFilter } from '~/components/Filters';
+import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -100,14 +103,15 @@ const ReviewCollection = () => {
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const [statuses, setStatuses] = useState<CollectionItemStatus[]>([CollectionItemStatus.REVIEW]);
-
+  const [sort, setSort] = useState<CollectionReviewSort>(CollectionReviewSort.Newest);
   const filters = useMemo(
     () => ({
       collectionId: collectionId,
       statuses,
       forReview: true,
+      reviewSort: sort,
     }),
-    [collectionId, statuses]
+    [collectionId, statuses, sort]
   );
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
@@ -154,12 +158,19 @@ const ReviewCollection = () => {
             You are reviewing items on the collection that are either pending review or have been
             rejected. You can change the status of these to be accepted or rejected.
           </Text>
-          <Group>
+          <Group position="apart">
             <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
               <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
               <Chip value={CollectionItemStatus.REJECTED}>Rejected</Chip>
               <Chip value={CollectionItemStatus.ACCEPTED}>Accepted</Chip>
             </Chip.Group>
+
+            <SelectMenuV2
+              label="Sort by"
+              options={Object.values(CollectionReviewSort).map((v) => ({ label: v, value: v }))}
+              value={sort}
+              onClick={(x) => setSort(x as CollectionReviewSort)}
+            />
           </Group>
         </Stack>
 
