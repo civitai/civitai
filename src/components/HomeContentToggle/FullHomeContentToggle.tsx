@@ -75,18 +75,19 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
   const data: SegmentedControlItem[] = [
     {
       label: (
-        <Group align="center" spacing={8} noWrap>
-          <ThemeIcon
-            size={30}
-            color={activePath === 'home' ? theme.colors.dark[7] : 'transparent'}
-            p={6}
-          >
-            <IconHome />
-          </ThemeIcon>
-          <Text size="sm" inline>
+        <Text size="sm" inline>
+          <Group align="center" spacing={8} noWrap>
+            <ThemeIcon
+              size={30}
+              color={activePath === 'home' ? theme.colors.dark[7] : 'inherit'}
+              // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
+              p={6}
+            >
+              <IconHome />
+            </ThemeIcon>
             Home
-          </Text>
-        </Group>
+          </Group>
+        </Text>
       ),
       value: 'home',
     },
@@ -95,7 +96,8 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={activePath === 'models' ? theme.colors.dark[7] : 'transparent'}
+            color={activePath === 'models' ? theme.colors.dark[7] : 'inherit'}
+            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
             p={6}
           >
             <IconCategory />
@@ -112,7 +114,8 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={activePath === 'images' ? theme.colors.dark[7] : 'transparent'}
+            color={activePath === 'images' ? theme.colors.dark[7] : 'inherit'}
+            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
             p={6}
           >
             <IconPhoto />
@@ -129,7 +132,8 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={activePath === 'posts' ? theme.colors.dark[7] : 'transparent'}
+            color={activePath === 'posts' ? theme.colors.dark[7] : 'inherit'}
+            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
             p={6}
           >
             <IconLayoutList />
@@ -146,7 +150,8 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={activePath === 'articles' ? theme.colors.dark[7] : 'transparent'}
+            color={activePath === 'articles' ? theme.colors.dark[7] : 'inherit'}
+            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
             p={6}
           >
             <IconFileText />
@@ -173,7 +178,8 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
         >
           <ThemeIcon
             size={30}
-            color={activePath === 'bounties' ? theme.colors.dark[7] : 'transparent'}
+            color={activePath === 'bounties' ? theme.colors.dark[7] : 'inherit'}
+            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
             p={6}
           >
             <IconMoneybag />

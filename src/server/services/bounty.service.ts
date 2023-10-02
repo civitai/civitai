@@ -30,6 +30,7 @@ import { BountySort, BountyStatus } from '../common/enums';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
+import { isProd } from '~/env/other';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -66,7 +67,15 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     });
   }
 
-  const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [{ complete: 'asc' }];
+  if (status) {
+    if (status === BountyStatus.Open) AND.push({ complete: false, expiresAt: { gt: new Date() } });
+    else if (status === BountyStatus.Awarded) AND.push({ complete: true, entries: { some: {} } });
+    else if (status === BountyStatus.Expired)
+      AND.push({ expiresAt: { lt: new Date() }, entries: { none: {} } });
+  }
+
+  const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
+  // TODO.bounty: consider showing only open bounties when sorting by ending soon
   if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
   else if (sort === BountySort.HighestBounty)
     orderBy.push({ rank: { [`unitAmountCount${period}Rank`]: 'asc' } });
@@ -88,14 +97,6 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
       mode,
       name: query ? { contains: query } : undefined,
       type: types && !!types.length ? { in: types } : undefined,
-      expiresAt:
-        status === BountyStatus.Open
-          ? { gt: new Date() }
-          : status === BountyStatus.Expired
-          ? { lt: new Date() }
-          : undefined,
-      complete:
-        status === BountyStatus.Awarded ? true : status === BountyStatus.Open ? false : undefined,
       createdAt:
         period !== MetricTimeframe.AllTime
           ? { gte: decreaseDate(new Date(), 1, period.toLowerCase() as ManipulateType) }
@@ -395,7 +396,11 @@ export const addBenefactorUnitAmount = async ({
 
 export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] }) => {
   const connections = await dbRead.imageConnection.findMany({
-    where: { entityType: 'Bounty', entityId: { in: bountyIds }, image: { ingestion: 'Scanned' } },
+    where: {
+      entityType: 'Bounty',
+      entityId: { in: bountyIds },
+      image: { ingestion: isProd ? 'Scanned' : { in: ['Pending', 'Scanned'] } },
+    },
     select: {
       entityId: true,
       image: { select: imageSelect },

@@ -1,4 +1,4 @@
-import { CollectionReadConfiguration } from '@prisma/client';
+import { CollectionReadConfiguration, CollectionWriteConfiguration } from '@prisma/client';
 import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
@@ -173,5 +173,27 @@ export const collectionReadPrivacyData: Record<CollectionReadConfiguration, Priv
     label: 'Unlisted',
     value: CollectionReadConfiguration.Unlisted,
     description: 'Only people with the link can see this collection',
+  },
+};
+
+export const collectionWritePrivacyData: Record<CollectionWriteConfiguration, PrivacyData> = {
+  [CollectionWriteConfiguration.Private]: {
+    icon: IconLock,
+    label: 'Private - only the owner can add content',
+    value: CollectionWriteConfiguration.Private,
+    description: 'No one will be able to add content to this collection',
+  },
+  [CollectionWriteConfiguration.Public]: {
+    icon: IconWorld,
+    label: 'Public - No review required',
+    value: CollectionWriteConfiguration.Public,
+    description: 'Anyone can add content to this collection. No review required.',
+  },
+  [CollectionWriteConfiguration.Review]: {
+    icon: IconEyeOff,
+    label: 'Public - Review required',
+    value: CollectionWriteConfiguration.Review,
+    description:
+      'Anyone can add content to this collection, but content needs to be reviewed before it is visible.',
   },
 };

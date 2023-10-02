@@ -35,14 +35,24 @@
     "pubescent",
     "pre pubescent",
     "not mature",
-    "not old"
+    "not old",
+    "disney",
+    "kindergartens*"
   ],
   "partialNouns": [
-    "girl",
-    "boy"
+    "girl*",
+    "boy*"
   ],
   "nouns": [
+    "kg[0-9]+",
     "infant",
+    "kindergartener",
+    "kindergarten",
+    "preschooler",
+    "elementary school",
+    "primary school",
+    "middle school",
+    "high school",
     "whippersnapper",
     "newborn",
     "tike",
@@ -51,8 +61,10 @@
     "minor",
     "toddle",
     "teen",
+    "tean",
     "teenies",
     "teenager",
+    "teanager",
     "teenaged",
     "teenybopper",
     "tween",
@@ -67,7 +79,7 @@
     "bab*y",
     "babies",
     "tod*le*r",
-    "child",
+    "child\\w*",
     "children",
     "juven*ile",
     "kiddy",

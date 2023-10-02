@@ -95,6 +95,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const parts = detailsLine?.split(':') ?? [];
     for (const part of parts) {
       const priorValueEnd = part.lastIndexOf(',');
+      if (metadata[currentKey]) continue;
       if (parts[parts.length - 1] === part) {
         metadata[currentKey] = part.trim().replace(',', '');
       } else if (priorValueEnd !== -1) {
