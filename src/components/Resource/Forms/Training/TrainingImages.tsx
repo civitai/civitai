@@ -37,6 +37,7 @@ import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 type ImageDataType = {
   url: string;
@@ -422,12 +423,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         }
       })
     );
-    // typescript, you real dumb sometimes
-    const filteredFiles = newFiles.filter((nf) => nf !== undefined) as (
-      | ImageDataType
-      | ImageDataType[]
-    )[];
-    setImageList(model.id, imageList.concat(filteredFiles.flat()));
+    const filteredFiles = newFiles.flat().filter(isDefined);
+    setImageList(model.id, imageList.concat(filteredFiles));
   };
 
   const updateFileMutation = trpc.modelFile.update.useMutation({
