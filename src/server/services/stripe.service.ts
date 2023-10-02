@@ -186,6 +186,7 @@ export const createDonateSession = async ({
     cancel_url: returnUrl,
     line_items: [{ price: env.STRIPE_DONATE_ID, quantity: 1 }],
     mode: 'payment',
+    submit_type: 'donate',
     success_url: `${baseUrl}/payment/success?type=donation&cid=${customerId.slice(-8)}`,
   });
 
@@ -208,6 +209,7 @@ export const createBuzzSession = async ({
   user,
   returnUrl,
   priceId,
+  customAmount,
 }: Schema.CreateBuzzSessionInput & { customerId?: string; user: Schema.CreateCustomerInput }) => {
   const stripe = await getServerStripe();
 
@@ -215,11 +217,29 @@ export const createBuzzSession = async ({
     customerId = await createCustomer(user);
   }
 
+  const price = await dbRead.price.findUnique({
+    where: { id: priceId },
+    select: { productId: true, currency: true, type: true },
+  });
+  if (!price)
+    throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
+
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     cancel_url: returnUrl,
-    line_items: [{ price: priceId, quantity: 1 }],
-    mode: 'payment',
+    line_items: [
+      customAmount
+        ? {
+            price_data: {
+              unit_amount: customAmount * 100,
+              currency: price.currency,
+              product: price.productId,
+            },
+            quantity: 1,
+          }
+        : { price: priceId, quantity: 1 },
+    ],
+    mode: price.type === 'recurring' ? 'subscription' : 'payment',
     success_url: returnUrl,
   });
 
@@ -382,7 +402,7 @@ const creditBuzzPurchases = async ({
   customerId: string;
   items: Stripe.LineItem[];
 }) => {
-  const user = await dbRead.user.findUnique({ where: { customerId } });
+  const user = await dbRead.user.findUnique({ where: { customerId }, select: { id: true } });
   // Early return if user is not found
   if (!user) {
     // TODO.buzz: Confirm what should happen if user is not found
@@ -401,7 +421,11 @@ const creditBuzzPurchases = async ({
         return {
           amount: meta.data.buzzAmount,
           type: TransactionType.Purchase,
-          details: { stripeCustomerId: customerId, stripePriceId: price?.id },
+          details: {
+            stripeCustomerId: customerId,
+            stripeProductId: price?.product,
+            stripePriceId: price?.id,
+          },
         };
       })
       .filter(isDefined) ?? [];
@@ -483,12 +507,14 @@ export const getBuzzPackages = async () => {
     },
   });
 
-  return buzzProduct.prices.map(({ metadata, ...price }) => {
+  return buzzProduct.prices.map(({ metadata, description, ...price }) => {
     const meta = Schema.buzzPriceMetadataSchema.safeParse(metadata);
 
     return {
       ...price,
+      name: description,
       buzzAmount: meta.success ? meta.data.buzzAmount : null,
+      description: meta.success ? meta.data.bonusDescription : null,
     };
   });
 };

@@ -1,149 +1,219 @@
 import {
+  Badge,
   Button,
-  Card,
   Center,
+  CloseButton,
   Group,
-  SimpleGrid,
-  Skeleton,
   Stack,
   Text,
-  ThemeIcon,
   createStyles,
+  Divider,
+  Chip,
+  NumberInput,
+  Loader,
+  Input,
 } from '@mantine/core';
 import { Price } from '@prisma/client';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getClientStripe } from '~/utils/get-client-stripe';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { UserBuzz } from '../User/UserBuzz';
+import { CurrencyIcon } from '../Currency/CurrencyIcon';
+import { isNumber } from '~/utils/type-guards';
+import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
+import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 
 const useStyles = createStyles((theme) => ({
-  buzzPreset: {
-    ...theme.fn.focusStyles(),
-    cursor: 'pointer',
+  chipGroup: {
+    gap: theme.spacing.md,
 
-    '&:hover': {
-      borderColor: theme.colors.blue[6],
+    '& > *': {
+      width: '100%',
+    },
+
+    [theme.fn.smallerThan('sm')]: {
+      gap: theme.spacing.md,
     },
   },
 
-  selected: {
-    borderColor: theme.colors.blue[6],
+  // Chip styling
+  chipLabel: {
+    padding: `4px ${theme.spacing.xs}px`,
+    height: 'auto',
+    width: '100%',
+    borderRadius: theme.radius.sm,
+
+    '&[data-checked]': {
+      border: `2px solid ${theme.colors.accent[5]}`,
+      color: theme.colors.accent[5],
+
+      '&[data-variant="filled"], &[data-variant="filled"]:hover': {
+        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
+      },
+    },
   },
 
-  priceBanner: {
-    backgroundColor: theme.colors.blue[6],
+  chipCheckmark: {
+    display: 'none',
   },
 }));
 
-type SelectablePackage = Pick<Price, 'id' | 'unitAmount' | 'description'>;
+type SelectablePackage = Pick<Price, 'id' | 'unitAmount'>;
 
 const { openModal, Modal } = createContextModal<{ message?: string }>({
   name: 'buyBuzz',
-  title: 'Buy Buzz',
+  withCloseButton: false,
   size: 'lg',
+  radius: 'lg',
   Element: ({ context, props: { message } }) => {
     const currentUser = useCurrentUser();
-    const { classes, cx } = useStyles();
-    const router = useRouter();
+    const { classes } = useStyles();
 
-    const [selectedPackage, setSelectedPackage] = useState<SelectablePackage | null>(null);
-    const [customMessage, setCustomMessage] = useState<string>(message ?? '');
+    const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
+    const [error, setError] = useState('');
+    const [customAmount, setCustomAmount] = useState<number | undefined>();
 
-    const { data = [], isLoading } = trpc.stripe.getBuzzPackages.useQuery();
-    const createBuzzSessionMutation = trpc.stripe.createBuzzSession.useMutation();
+    const { packages, isLoading, createCheckoutSession, creatingSession } = useQueryBuzzPackages();
 
     const handleClose = () => context.close();
-    const handleSubmit = () => {
-      if (selectedPackage) {
-        createBuzzSessionMutation.mutate(
-          { priceId: selectedPackage.id, returnUrl: location.href },
-          {
-            onSuccess: async ({ url, sessionId }) => {
-              if (url) await router.push(url);
-              else {
-                const stripe = await getClientStripe();
-                await stripe.redirectToCheckout({ sessionId });
-              }
-            },
-            onError: (error) => {
-              showErrorNotification({
-                title: 'Could not process purchase',
-                error: new Error(error.message),
-              });
-            },
-          }
-        );
-      }
+    const handleSubmit = async () => {
+      if (!selectedPrice) return setError('Please choose one option');
+      if (!selectedPrice.unitAmount && !customAmount)
+        return setError('Please enter the amount you wish to buy');
+
+      return createCheckoutSession({
+        priceId: selectedPrice.id,
+        returnUrl: location.href,
+        customAmount,
+      }).catch(() => ({}));
     };
 
     return (
-      <Stack spacing="xl">
-        {customMessage && (
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
-            {customMessage}
+      <Stack spacing="md">
+        <Group position="apart" noWrap>
+          <Text size="lg" weight={700}>
+            Buy Buzz
+          </Text>
+          <Group spacing="sm" noWrap>
+            <UserBuzz user={currentUser} withTooltip />
+            <Badge radius="xl" color="gray.9" variant="filled" px={12}>
+              <Text size="xs" transform="capitalize" weight={600}>
+                Available Buzz
+              </Text>
+            </Badge>
+            <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
+          </Group>
+        </Group>
+        <Divider mx="-lg" />
+        {message && (
+          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
+            {message}
           </AlertWithIcon>
         )}
-        <SimpleGrid
-          breakpoints={[
-            { minWidth: 'xs', cols: 1 },
-            { minWidth: 'md', cols: 3 },
-          ]}
-          spacing="sm"
-        >
-          {isLoading
-            ? Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} width="100%" height={250} />
-              ))
-            : data.map((buzzPackage) => {
-                if (!buzzPackage.unitAmount) return null;
+        <Stack spacing={0}>
+          <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
+          <Text size="sm" color="dimmed">
+            ($1 USD = 1,000 Buzz)
+          </Text>
+        </Stack>
+        {isLoading ? (
+          <Center py="xl">
+            <Loader variant="bars" />
+          </Center>
+        ) : (
+          <Input.Wrapper error={error}>
+            <Stack spacing="xl" mb={error ? 5 : undefined}>
+              <Chip.Group
+                className={classes.chipGroup}
+                value={selectedPrice?.id ?? ''}
+                onChange={(priceId: string) => {
+                  const selectedPackage = packages.find((p) => p.id === priceId);
+                  setCustomAmount(undefined);
+                  setError('');
+                  setSelectedPrice(selectedPackage ?? null);
+                }}
+              >
+                {packages.map((buzzPackage, index) => {
+                  const price = (buzzPackage.unitAmount ?? 0) / 100;
 
-                const price = (buzzPackage.unitAmount ?? 0) / 100;
+                  return (
+                    <Chip
+                      key={buzzPackage.id}
+                      value={buzzPackage.id}
+                      classNames={{ label: classes.chipLabel, iconWrapper: classes.chipCheckmark }}
+                      variant="filled"
+                    >
+                      <Group align="center">
+                        <Text color="accent.5">
+                          <IconBolt
+                            color="currentColor"
+                            fill="currentColor"
+                            style={{ verticalAlign: 'middle' }}
+                          />
+                        </Text>
+                        <Stack spacing={0}>
+                          {price ? (
+                            <>
+                              <Text size="lg" color="white" weight={590}>
+                                {buzzPackage.name ?? `Tier ${index + 1}`}
+                                <Text sx={{ fontVariantNumeric: 'tabular-nums' }} span>
+                                  {` ($${price.toFixed(2)})`}
+                                </Text>
+                              </Text>
+                              <Text size="md">
+                                {buzzPackage.buzzAmount
+                                  ? buzzPackage.buzzAmount.toLocaleString()
+                                  : 0}{' '}
+                                Buzz
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <Text size="lg" color="white" weight={590}>
+                                Custom amount
+                              </Text>
+                              <Text size="md" color="dimmed">
+                                You choose how much Buzz you want to buy
+                              </Text>
+                            </>
+                          )}
+                        </Stack>
+                      </Group>
+                    </Chip>
+                  );
+                })}
+              </Chip.Group>
 
-                return (
-                  <Card
-                    component="button"
-                    key={buzzPackage.id}
-                    className={cx(classes.buzzPreset, {
-                      [classes.selected]: selectedPackage?.id === buzzPackage.id,
-                    })}
-                    onClick={() => setSelectedPackage(buzzPackage)}
-                    withBorder
-                  >
-                    <Stack align="center" mb="xs">
-                      <ThemeIcon size="xl" radius="xl">
-                        <IconBolt />
-                      </ThemeIcon>
-                      <Stack spacing={0}>
-                        <Text size="lg" align="center">
-                          {buzzPackage.buzzAmount ? buzzPackage.buzzAmount.toLocaleString() : 0}
-                        </Text>
-                        <Text size="lg" align="center">
-                          {buzzPackage.description ?? 'Buzz'}
-                        </Text>
-                      </Stack>
-                    </Stack>
-                    <Card.Section className={classes.priceBanner} py="xs" withBorder inheritPadding>
-                      <Center>
-                        <Text color="white" weight="bold" align="center">
-                          {`$${price.toFixed(2)}`}
-                        </Text>
-                      </Center>
-                    </Card.Section>
-                  </Card>
-                );
-              })}
-        </SimpleGrid>
+              {selectedPrice && !selectedPrice.unitAmount && (
+                <NumberInputWrapper
+                  placeholder="Minimum $5 USD"
+                  variant="filled"
+                  icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
+                  value={customAmount}
+                  min={499}
+                  precision={2}
+                  disabled={creatingSession}
+                  format="currency"
+                  currency="USD"
+                  onChange={(value) => {
+                    setError('');
+                    setCustomAmount(value ?? 0);
+                  }}
+                  rightSectionWidth="10%"
+                  hideControls
+                />
+              )}
+            </Stack>
+          </Input.Wrapper>
+        )}
         <Group position="right">
-          <Button variant="default" onClick={handleClose}>
+          <Button variant="filled" color="gray" onClick={handleClose}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={createBuzzSessionMutation.isLoading}>
+          <Button onClick={handleSubmit} loading={creatingSession}>
             Buy
           </Button>
         </Group>

@@ -197,17 +197,6 @@ const { openModal, Modal } = createContextModal<{
             },
           });
         } else {
-          if (amount > (currentUser?.balance ?? 0)) {
-            return form.setError(
-              'amount',
-              {
-                message: 'You have insufficient funds to tip',
-                type: 'value',
-              },
-              { shouldFocus: true }
-            );
-          }
-
           return createBuzzTransactionMutation.mutate({
             toAccountId: toUserId,
             type: TransactionType.Tip,
@@ -219,14 +208,21 @@ const { openModal, Modal } = createContextModal<{
         }
       }
 
-      if (amount === -1) {
-        return;
+      if (amount > (currentUser?.balance ?? 0)) {
+        return form.setError(
+          'amount',
+          {
+            message: 'You have insufficient funds to tip',
+            type: 'value',
+          },
+          { shouldFocus: true }
+        );
       }
 
       return createBuzzTransactionMutation.mutate({
         toAccountId: toUserId,
         type: TransactionType.Tip,
-        amount: Number(amount),
+        amount,
         description,
         entityId,
         entityType,
@@ -249,7 +245,7 @@ const { openModal, Modal } = createContextModal<{
                 Available Buzz
               </Text>
             </Badge>
-            <CloseButton iconSize={22} onClick={handleClose} />
+            <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
         <Divider mx="-lg" />
@@ -287,6 +283,12 @@ const { openModal, Modal } = createContextModal<{
                 max={currentUser?.balance}
                 disabled={sending}
                 icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
+                formatter={(value) =>
+                  value && !Number.isNaN(parseFloat(value))
+                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
+                    : ''
+                }
                 hideControls
               />
             )}

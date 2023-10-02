@@ -103,7 +103,7 @@ export const getBuzzPackagesHandler = async () => {
 };
 
 export const createBuzzSessionHandler = async ({
-  input: { priceId, returnUrl },
+  input,
   ctx,
 }: {
   input: Schema.CreateBuzzSessionInput;
@@ -114,9 +114,8 @@ export const createBuzzSessionHandler = async ({
     if (!email) throw throwAuthorizationError('email required');
 
     const result = await createBuzzSession({
-      priceId,
+      ...input,
       customerId,
-      returnUrl,
       user: { id, email },
     });
 
