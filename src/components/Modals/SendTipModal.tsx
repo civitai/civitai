@@ -131,7 +131,7 @@ const { openModal, Modal } = createContextModal<{
   radius: 'lg',
   withCloseButton: false,
   Element: ({ context, props: { toUserId, entityId, entityType } }) => {
-    const { classes, theme } = useStyles();
+    const { classes } = useStyles();
     const currentUser = useCurrentUser();
     const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
     const queryUtils = trpc.useContext();

@@ -24,6 +24,7 @@ import { UserBuzz } from '../User/UserBuzz';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { isNumber } from '~/utils/type-guards';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
+import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -187,26 +188,21 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
               </Chip.Group>
 
               {selectedPrice && !selectedPrice.unitAmount && (
-                <NumberInput
+                <NumberInputWrapper
                   placeholder="Minimum $5 USD"
                   variant="filled"
                   icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
                   value={customAmount}
-                  min={5}
+                  min={499}
                   precision={2}
                   disabled={creatingSession}
-                  parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                  formatter={(value) =>
-                    value && isNumber(value)
-                      ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                      : ''
-                  }
+                  format="currency"
+                  currency="USD"
                   onChange={(value) => {
                     setError('');
                     setCustomAmount(value ?? 0);
                   }}
                   rightSectionWidth="10%"
-                  rightSection={<Text size="xs">USD</Text>}
                   hideControls
                 />
               )}

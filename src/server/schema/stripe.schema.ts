@@ -16,7 +16,7 @@ export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
 export const createBuzzSessionSchema = z.object({
   priceId: z.string(),
   returnUrl: z.string(),
-  customAmount: z.number().min(5).optional(),
+  customAmount: z.number().min(499).optional(),
 });
 
 export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;

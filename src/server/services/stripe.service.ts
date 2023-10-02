@@ -402,7 +402,7 @@ const creditBuzzPurchases = async ({
   customerId: string;
   items: Stripe.LineItem[];
 }) => {
-  const user = await dbRead.user.findUnique({ where: { customerId } });
+  const user = await dbRead.user.findUnique({ where: { customerId }, select: { id: true } });
   // Early return if user is not found
   if (!user) {
     // TODO.buzz: Confirm what should happen if user is not found
@@ -421,7 +421,11 @@ const creditBuzzPurchases = async ({
         return {
           amount: meta.data.buzzAmount,
           type: TransactionType.Purchase,
-          details: { stripeCustomerId: customerId, stripePriceId: price?.id },
+          details: {
+            stripeCustomerId: customerId,
+            stripeProductId: price?.product,
+            stripePriceId: price?.id,
+          },
         };
       })
       .filter(isDefined) ?? [];
