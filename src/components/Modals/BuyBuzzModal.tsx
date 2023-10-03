@@ -87,10 +87,19 @@ const { openModal, Modal } = createContextModal<{
     const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
     const [error, setError] = useState('');
     const [customAmount, setCustomAmount] = useState<number | undefined>();
-    const [processing, setProcessing] = useState<boolean>(false);
     const ctaEnabled =
       !!selectedPrice?.unitAmount || (selectedPrice && !selectedPrice.unitAmount && customAmount);
-    const { packages = [], isLoading, creatingSession } = useQueryBuzzPackages();
+    const {
+      packages = [],
+      isLoading,
+      processing,
+      completeStripeBuzzPurchaseMutation,
+    } = useQueryBuzzPackages({
+      onPurchaseSuccess: () => {
+        context.close();
+        onPurchaseSuccess?.();
+      },
+    });
     const availablePackages = useMemo(() => {
       if (!minBuzzAmount) {
         return packages;
@@ -98,29 +107,7 @@ const { openModal, Modal } = createContextModal<{
 
       return packages.filter((p) => !p.buzzAmount || p.buzzAmount >= minBuzzAmount) ?? [];
     }, [minBuzzAmount, packages]);
-    const queryUtils = trpc.useContext();
     const handleClose = () => context.close();
-
-    const { mutateAsync: completeStripeBuzzPurchaseMutation } =
-      trpc.buzz.completeStripeBuzzPurchase.useMutation({
-        async onSuccess() {
-          await queryUtils.buzz.getUserAccount.invalidate();
-          setProcessing(false);
-          showSuccessNotification({
-            title: 'Transaction completed successfully!',
-            message: 'Your Buzz has been added to your account.',
-          });
-          handleClose();
-        },
-        onError(error) {
-          showErrorNotification({
-            title: 'There was an error while attempting to purchase buzz. Please contact support.',
-            error: new Error(error.message),
-          });
-
-          setProcessing(false);
-        },
-      });
 
     const handleSubmit = async () => {
       if (!selectedPrice) return setError('Please choose one option');
@@ -160,9 +147,6 @@ const { openModal, Modal } = createContextModal<{
             details: metadata,
             stripePaymentIntentId,
           });
-
-          context.close();
-          onPurchaseSuccess?.();
         },
         metadata: metadata,
         paymentMethodTypes: ['card'],
@@ -292,7 +276,7 @@ const { openModal, Modal } = createContextModal<{
                   value={customAmount}
                   min={minBuzzAmountPrice}
                   precision={2}
-                  disabled={creatingSession}
+                  disabled={processing}
                   format="currency"
                   currency="USD"
                   onChange={(value) => {

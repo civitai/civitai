@@ -80,6 +80,8 @@ export const useStripeTransaction = ({
     if (!processingPayment && paymentIntentProcessor.active) {
       paymentIntentProcessor.stop();
     }
+
+    return paymentIntentProcessor.stop;
   }, [processingPayment, paymentIntentProcessor]);
 
   const onConfirmPayment = async () => {
@@ -97,7 +99,7 @@ export const useStripeTransaction = ({
       confirmParams: {
         // Make sure to change this to your payment completion page
         // TODO.stripePayments: change this to the actual return url. Used for paypal for example. In the meantime, won't be used I believe.
-        return_url: 'http://localhost:3000/wtf',
+        return_url: 'http://localhost:3000/todo',
       },
     });
 

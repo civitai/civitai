@@ -63,31 +63,29 @@ export function BuzzTransactionButton({
     <LoginPopover>
       <Button {...buttonProps} onClick={onClick}>
         <Group spacing="md" noWrap>
-          <Group>
-            <CurrencyBadge
-              currency={Currency.BUZZ}
-              unitAmount={buzzAmount}
-              displayCurrency={false}
-              radius={buttonProps?.radius ?? 'sm'}
-              px="xs"
-            >
-              {!hasRequiredAmount && (
-                <Tooltip
-                  label="Insufficient buzz. Click to buy more"
-                  style={{ textTransform: 'capitalize' }}
-                  withArrow
-                  maw={250}
-                >
-                  <IconAlertTriangleFilled
-                    color="red"
-                    size={12}
-                    fill="currentColor"
-                    style={{ marginRight: 4 }}
-                  />
-                </Tooltip>
-              )}
-            </CurrencyBadge>
-          </Group>
+          <CurrencyBadge
+            currency={Currency.BUZZ}
+            unitAmount={buzzAmount}
+            displayCurrency={false}
+            radius={buttonProps?.radius ?? 'sm'}
+            px="xs"
+          >
+            {!hasRequiredAmount && (
+              <Tooltip
+                label="Insufficient buzz. Click to buy more"
+                style={{ textTransform: 'capitalize' }}
+                withArrow
+                maw={250}
+              >
+                <IconAlertTriangleFilled
+                  color="red"
+                  size={12}
+                  fill="currentColor"
+                  style={{ marginRight: 4 }}
+                />
+              </Tooltip>
+            )}
+          </CurrencyBadge>
           <Text>{label}</Text>
         </Group>
       </Button>
