@@ -14,6 +14,8 @@ import { uniqBy } from 'lodash-es';
 import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
+import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
+import { calculateGenerationBill } from '~/components/ImageGeneration/utils/generation.utils';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -99,6 +101,14 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       return resource;
     });
     if (vae) _resources.push(vae);
+
+    const totalCost = calculateGenerationBill(data);
+
+    if (!currentUser?.balance || currentUser.balance > totalCost)
+      return openBuyBuzzModal(
+        { message: 'You do not have enough Buzz to generate images.' },
+        { sx: { zIndex: 400 } }
+      );
 
     await mutateAsync({
       resources: _resources.filter((x) => x.covered !== false),

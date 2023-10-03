@@ -165,8 +165,8 @@ export const constants = {
     drawerZIndex: 301,
     requestBlocking: {
       warned: 5,
-      notified: 10,
-      muted: 30,
+      notified: 8,
+      muted: 16,
     },
   },
   tagVoting: {
@@ -285,6 +285,12 @@ export const generation = {
     aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
+  },
+  settingsCost: {
+    base: 1,
+    quantity: 1,
+    steps: 10,
+    clipSkip: 2,
   },
 };
 

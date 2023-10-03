@@ -15,6 +15,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -233,6 +234,8 @@ function ReactionBadge({
   canClick: boolean;
 }) {
   const color = hasReacted ? 'blue' : 'gray';
+  const settings = useReactionSettingsContext();
+  const displayReactionCount = settings?.displayReactionCount ?? true;
   return (
     <Button
       size="xs"
@@ -255,14 +258,16 @@ function ReactionBadge({
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
           {constants.availableReactions[reaction]}
         </Text>
-        <Text
-          sx={(theme) => ({
-            color: !hasReacted && theme.colorScheme === 'dark' ? 'white' : undefined,
-          })}
-          inherit
-        >
-          {count}
-        </Text>
+        {displayReactionCount && (
+          <Text
+            sx={(theme) => ({
+              color: !hasReacted && theme.colorScheme === 'dark' ? 'white' : undefined,
+            })}
+            inherit
+          >
+            {count}
+          </Text>
+        )}
       </Group>
     </Button>
   );

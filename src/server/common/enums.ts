@@ -45,6 +45,11 @@ export enum ImageSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
+  Random = 'Random',
+}
+
+export enum ImageSortHidden {
+  Random = ImageSort.Random,
 }
 
 export enum PostSort {
@@ -149,4 +154,9 @@ export enum BountyStatus {
   Open = 'Open',
   Expired = 'Expired',
   Awarded = 'Awarded',
+}
+
+export enum CollectionReviewSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
 }

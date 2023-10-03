@@ -18,7 +18,7 @@ import {
 import { ModelType } from '@prisma/client';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
@@ -49,6 +49,7 @@ import { generationStore } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { calculateGenerationBill } from '../utils/generation.utils';
 
 export function GenerateFormView({
   form,
@@ -89,6 +90,9 @@ export function GenerateFormView({
     }
   };
   // #endregion
+
+  const [quantity, steps, clipSkip] = form.watch(['quantity', 'steps', 'clipSkip']);
+  const totalCost = calculateGenerationBill({ quantity, steps, clipSkip });
 
   return (
     <PersistentForm
@@ -299,7 +303,8 @@ export function GenerateFormView({
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
                 >
-                  Generate
+                  {/* TODO.buzz: use the new component to display the total cost */}
+                  Generate {`(${totalCost.toLocaleString()})`}
                 </Button>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button

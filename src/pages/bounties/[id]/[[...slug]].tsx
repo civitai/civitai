@@ -498,25 +498,29 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
       <Group spacing={4} position="apart">
-        <UserAvatar user={b.user} withUsername linkToProfile />
-        <Group>
-          {isMainBenefactor(bounty, b.user) && (
-            <IconStar
-              color={CurrencyConfig[currency].color(theme)}
-              fill={CurrencyConfig[currency].color(theme)}
-              size={18}
-            />
-          )}
-          {b.awardedToId && (
-            <Tooltip label={'This supporter has already awarded an entry'}>
-              <IconTrophy
+        <UserAvatar
+          user={b.user}
+          badge={
+            isMainBenefactor(bounty, b.user) ? (
+              <IconStar
                 color={CurrencyConfig[currency].color(theme)}
                 fill={CurrencyConfig[currency].color(theme)}
                 size={18}
               />
-            </Tooltip>
-          )}
-        </Group>
+            ) : null
+          }
+          withUsername
+          linkToProfile
+        />
+        {b.awardedToId && (
+          <Tooltip label="This supporter has already awarded an entry" color="dark" withinPortal>
+            <IconTrophy
+              color={CurrencyConfig[currency].color(theme)}
+              fill={CurrencyConfig[currency].color(theme)}
+              size={18}
+            />
+          </Tooltip>
+        )}
       </Group>
     ),
     value: (
@@ -666,7 +670,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
             </Group>
           ) : (
             <Text>
-              This bounty has been marked as completed with no entries. All benefactors have been
+              This bounty has been marked as completed with no entries. All supporters have been
               refunded.
             </Text>
           )}

@@ -10,7 +10,7 @@ export type SocialBlockProps = {
 
 const typeHeight: Partial<Record<SocialBlockSchema['type'], number>> = {
   'ig-reel': 505,
-  'ig-post': 425,
+  'ig-post': 505,
   'yt-short': 569,
   'yt-long': 369,
 };

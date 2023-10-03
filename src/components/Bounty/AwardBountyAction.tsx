@@ -180,19 +180,20 @@ export const AwardBountyAction = ({
             this entry?
           </Text>
           <Text>
-            You will gain access to the files whose unlock amount have been reached after awarding.
+            Awarding this entry will grant you access to all files uploaded by the entry creator.
           </Text>
           <Text color="red.4" size="sm">
             This action is non refundable.
           </Text>
-          {fileUnlockAmount > benefactorItem.unitAmount && (
+          {/* TODO.bounty: turn this back on once we have open entries in place */}
+          {/* {fileUnlockAmount > benefactorItem.unitAmount && (
             <Text color="red.4" size="sm">
               <strong>Note:</strong> Some files on this entry <strong>will not</strong> reach the
               unlock amount after awarding this entry. If the bounty expires before the unlock
               amount is reached, you will not gain access to these files and your funds not be
               returned but instead will be kept by the selected entry.
             </Text>
-          )}
+          )} */}
         </Stack>
       ),
       centered: true,
