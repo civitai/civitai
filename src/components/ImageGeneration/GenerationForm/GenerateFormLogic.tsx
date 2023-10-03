@@ -102,8 +102,12 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     };
   }, [runData]); //eslint-disable-line
 
-  const { mutateAsync } = useCreateGenerationRequest();
+  const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
+    if (isLoading) {
+      return;
+    }
+
     const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources].map((resource) => {
       if (resource.modelType === ModelType.TextualInversion)
