@@ -86,7 +86,6 @@ export type CompleteStripeBuzzPurchaseTransactionInput = z.infer<
 >;
 
 export const completeStripeBuzzPurchaseTransactionInput = z.object({
-  // To user id (0 is central bank)
   amount: z.number().min(1),
   stripePaymentIntentId: z.string(),
   details: z.object({}).passthrough().nullish(),
