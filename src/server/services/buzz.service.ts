@@ -266,7 +266,6 @@ export async function completeStripeBuzzTransaction({
     });
 
     if (!response.ok) {
-      console.log(response.text());
       const cause: { reason: string } = JSON.parse(await response.text());
 
       switch (response.status) {
