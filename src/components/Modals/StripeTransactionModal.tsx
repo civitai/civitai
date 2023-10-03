@@ -9,22 +9,24 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import React from 'react';
+import React, { useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
 import { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
-import { StripeProvider, useStripePromise } from '~/providers/StripeProvider';
+import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 type Props = {
+  successMessage?: React.ReactNode;
   message?: React.ReactNode;
   unitAmount: number;
   currency?: Currency;
-  onSuccess?: () => void;
+  onSuccess?: (stripePaymentIntentId: string) => void;
   metadata?: any;
+  paymentMethodTypes?: string[];
 };
 
 const { openModal, Modal } = createContextModal<Props>({
@@ -32,14 +34,16 @@ const { openModal, Modal } = createContextModal<Props>({
   withCloseButton: false,
   size: 'lg',
   radius: 'lg',
+  closeOnEscape: false,
+  closeOnClickOutside: false,
   Element: ({
     context,
-    props: { message, unitAmount, currency = Currency.USD, metadata = {}, onSuccess },
+    props: { unitAmount, currency = Currency.USD, metadata = {}, paymentMethodTypes, ...props },
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
     const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
-      { unitAmount, currency, metadata },
+      { unitAmount, currency, metadata, paymentMethodTypes },
       { enabled: !!unitAmount && !!currency, refetchOnMount: 'always', cacheTime: 0 }
     );
 
@@ -66,13 +70,12 @@ const { openModal, Modal } = createContextModal<Props>({
       <Elements stripe={stripePromise} key={clientSecret} options={options}>
         <StripeTransactionModal
           clientSecret={clientSecret}
-          message={message}
+          key={clientSecret}
+          onClose={() => context.close()}
           unitAmount={unitAmount}
           currency={currency}
-          onClose={() => context.close()}
           metadata={metadata}
-          onSuccess={onSuccess}
-          key={clientSecret}
+          {...props}
         />
       </Elements>
     );
@@ -87,12 +90,14 @@ const StripeTransactionModal = ({
   onClose,
   metadata,
   clientSecret,
+  successMessage,
 }: Props & { clientSecret: string; onClose: () => void }) => {
+  const [success, setSuccess] = useState<boolean>(false);
   const { processingPayment, onConfirmPayment, errorMessage } = useStripeTransaction({
     clientSecret,
-    onPaymentSuccess: () => {
-      onSuccess?.();
-      onClose();
+    onPaymentSuccess: async (stripePaymentIntentId) => {
+      await onSuccess?.(stripePaymentIntentId);
+      setSuccess(true);
     },
     metadata,
   });
@@ -101,13 +106,29 @@ const StripeTransactionModal = ({
     layout: 'tabs',
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onConfirmPayment();
-  };
+  if (success) {
+    return (
+      <Stack>
+        <Group position="apart" noWrap>
+          <Text size="lg" weight={700}>
+            Complete your transaction
+          </Text>
+        </Group>
+        <Divider mx="-lg" />
+        {successMessage ? <>{successMessage}</> : <Text>Thank you for your purchase!</Text>}
+        <Button onClick={onClose}>Close</Button>
+      </Stack>
+    );
+  }
 
   return (
-    <form id="stripe-payment-form" onSubmit={handleSubmit}>
+    <form
+      id="stripe-payment-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onConfirmPayment();
+      }}
+    >
       <Stack spacing="md">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>

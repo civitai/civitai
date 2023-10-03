@@ -1,9 +1,11 @@
 import {
+  completeStripeBuzzPurchaseHandler,
   createTransactionHandler,
   getUserAccountHandler,
   getUserTransactionsHandler,
 } from '~/server/controllers/buzz.controller';
 import {
+  completeStripeBuzzPurchaseTransactionInput,
   createBuzzTransactionInput,
   getUserBuzzTransactionsSchema,
 } from '~/server/schema/buzz.schema';
@@ -20,4 +22,8 @@ export const buzzRouter = router({
     .input(createBuzzTransactionInput)
     .use(isFlagProtected('buzz'))
     .mutation(createTransactionHandler),
+  completeStripeBuzzPurchase: protectedProcedure
+    .input(completeStripeBuzzPurchaseTransactionInput)
+    .use(isFlagProtected('buzz'))
+    .mutation(completeStripeBuzzPurchaseHandler),
 });

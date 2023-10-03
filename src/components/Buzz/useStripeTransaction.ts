@@ -1,5 +1,3 @@
-import { Currency } from '@prisma/client';
-import { trpc } from '~/utils/trpc';
 import { useElements, useStripe } from '@stripe/react-stripe-js';
 import { useEffect, useState, useCallback } from 'react';
 import { useInterval } from '@mantine/hooks';
@@ -9,7 +7,7 @@ export const useStripeTransaction = ({
   onPaymentSuccess,
   clientSecret,
 }: {
-  onPaymentSuccess: () => void;
+  onPaymentSuccess: (stripePaymentIntentId: string) => void;
   clientSecret: string;
   metadata?: any;
 }) => {
@@ -40,7 +38,7 @@ export const useStripeTransaction = ({
   }, 350);
 
   const processPaymentIntent = useCallback(
-    (paymentIntent?: PaymentIntent) => {
+    async (paymentIntent?: PaymentIntent) => {
       if (!paymentIntent) {
         setPaymentIntentStatus('error');
         setProcessingPayment(false);
@@ -50,7 +48,7 @@ export const useStripeTransaction = ({
       switch (paymentIntent.status) {
         case 'succeeded':
           setPaymentIntentStatus('succeeded');
-          onPaymentSuccess?.();
+          await onPaymentSuccess?.(paymentIntent.id);
           setProcessingPayment(false);
           break;
         case 'processing':
@@ -98,17 +96,12 @@ export const useStripeTransaction = ({
       redirect: 'if_required',
       confirmParams: {
         // Make sure to change this to your payment completion page
-        // TODO: change this to the actual return url. Used for paypal for example.
-        return_url: 'http://localhost:3000',
+        // TODO.stripePayments: change this to the actual return url. Used for paypal for example. In the meantime, won't be used I believe.
+        return_url: 'http://localhost:3000/wtf',
       },
     });
 
     if (error) {
-      // This point will only be reached if there is an immediate error when
-      // confirming the payment. Otherwise, your customer will be redirected to
-      // your `return_url`. For some payment methods like iDEAL, your customer will
-      // be redirected to an intermediate site first to authorize the payment, then
-      // redirected to the `return_url`.
       if (error.type === 'card_error' || error.type === 'validation_error') {
         setPaymentIntentStatus(error.type);
       } else {

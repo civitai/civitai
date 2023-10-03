@@ -527,20 +527,32 @@ export const getPaymentIntent = async ({
   unitAmount,
   currency = Currency.USD,
   metadata = {},
-  userId,
-}: PaymentIntentCreationSchema & { userId?: number }) => {
+  paymentMethodTypes,
+  customerId,
+  user,
+}: PaymentIntentCreationSchema & { user: { id: number; email: string }; customerId?: string }) => {
+  // TODO: If a user doesn't exist, create one. Initially, this will be protected, but ideally, we should create the user on our end
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
   if (unitAmount < MINIMUM_PURCHASE_AMOUNT) {
-    throw throwBadRequestError('Minimum purchase amount is $5.00');
+    throw throwBadRequestError('Minimum purchase amount is $4.99');
   }
 
   const stripe = await getServerStripe();
+  const parsedMetadata: MetadataParam = { userId: user.id, ...(metadata ?? {}) };
   const paymentIntent = await stripe.paymentIntents.create({
     amount: unitAmount,
     currency,
-    automatic_payment_methods: {
-      enabled: true,
-    },
-    metadata: { userId, ...(metadata ?? {}) } as MetadataParam,
+    automatic_payment_methods: !paymentMethodTypes
+      ? {
+          enabled: true,
+        }
+      : undefined,
+    customer: customerId,
+    metadata: parsedMetadata,
+    payment_method_types: paymentMethodTypes || undefined,
   });
 
   return {

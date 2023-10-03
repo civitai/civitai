@@ -136,12 +136,20 @@ export const getPaymentIntentHandler = async ({
   ctx,
 }: {
   input: Schema.PaymentIntentCreationSchema;
-  ctx: Context;
+  ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const { id, email, customerId } = ctx.user;
+
+    if (!email) throw throwAuthorizationError('email required');
+
     const result = await getPaymentIntent({
       ...input,
-      userId: ctx.user?.id,
+      user: {
+        id,
+        email,
+      },
+      customerId,
     });
 
     return result;

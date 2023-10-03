@@ -32,7 +32,7 @@ export const stripeRouter = router({
   createBuzzSession: protectedProcedure
     .input(Schema.createBuzzSessionSchema)
     .mutation(createBuzzSessionHandler),
-  getPaymentIntent: publicProcedure
+  getPaymentIntent: protectedProcedure
     .input(Schema.paymentIntentCreationSchema)
     .query(getPaymentIntentHandler),
 });

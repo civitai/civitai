@@ -31,4 +31,5 @@ export const paymentIntentCreationSchema = z.object({
   unitAmount: z.number().min(499),
   currency: z.nativeEnum(Currency),
   metadata: z.object({}).passthrough().nullish(),
+  paymentMethodTypes: z.array(z.string()).nullish(),
 });

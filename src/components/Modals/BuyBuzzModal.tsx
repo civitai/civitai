@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -26,6 +26,9 @@ import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { trpc } from '~/utils/trpc';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -62,26 +65,59 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-type SelectablePackage = Pick<Price, 'id' | 'unitAmount'>;
+type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
-const { openModal, Modal } = createContextModal<{ message?: string }>({
+const { openModal, Modal } = createContextModal<{
+  message?: string;
+  onBuzzPurchased?: () => void;
+  minBuzzAmount?: number;
+}>({
   name: 'buyBuzz',
   withCloseButton: false,
   size: 'lg',
   radius: 'lg',
-  Element: ({ context, props: { message } }) => {
+  Element: ({ context, props: { message, onBuzzPurchased, minBuzzAmount } }) => {
     const currentUser = useCurrentUser();
     const { classes } = useStyles();
 
     const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
     const [error, setError] = useState('');
     const [customAmount, setCustomAmount] = useState<number | undefined>();
+    const [processing, setProcessing] = useState<boolean>(false);
     const ctaEnabled =
       !!selectedPrice?.unitAmount || (selectedPrice && !selectedPrice.unitAmount && customAmount);
+    const { packages = [], isLoading, creatingSession } = useQueryBuzzPackages();
+    const availablePackages = useMemo(() => {
+      if (!minBuzzAmount) {
+        return packages;
+      }
 
-    const { packages, isLoading, creatingSession } = useQueryBuzzPackages();
-
+      return packages.filter((p) => !p.buzzAmount || p.buzzAmount >= minBuzzAmount) ?? [];
+    }, [minBuzzAmount, packages]);
+    const queryUtils = trpc.useContext();
     const handleClose = () => context.close();
+
+    const { mutateAsync: completeStripeBuzzPurchaseMutation } =
+      trpc.buzz.completeStripeBuzzPurchase.useMutation({
+        async onSuccess() {
+          await queryUtils.buzz.getUserAccount.invalidate();
+          setProcessing(false);
+          showSuccessNotification({
+            title: 'Transaction completed successfully!',
+            message: 'Your Buzz has been added to your account.',
+          });
+          handleClose();
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'There was an error while attempting to purchase buzz. Please contact support.',
+            error: new Error(error.message),
+          });
+
+          setProcessing(false);
+        },
+      });
+
     const handleSubmit = async () => {
       if (!selectedPrice) return setError('Please choose one option');
       if (!selectedPrice.unitAmount && !customAmount)
@@ -92,30 +128,50 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
 
       if (!unitAmount) return setError('Please enter the amount you wish to buy');
 
+      const metadata = { unitAmount, buzzAmount, selectedPriceId: selectedPrice?.id };
+
       openStripeTransactionModal({
         unitAmount,
         message: (
-          <Text>
-            You are about to purchase{' '}
-            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />. Please fill in your
-            data and complete your purchase.
-          </Text>
+          <Stack>
+            <Text>
+              You are about to purchase{' '}
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+            </Text>
+            <Text>Please fill in your data and complete your purchase.</Text>
+          </Stack>
         ),
-        onSuccess: () => {
-          console.log('Give the user the amount of buzz purchased');
+        successMessage: (
+          <Stack>
+            <Text>Thank you for your purchase!</Text>
+            <Text>
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited
+              to your account.
+            </Text>
+          </Stack>
+        ),
+        onSuccess: async (stripePaymentIntentId) => {
+          await completeStripeBuzzPurchaseMutation({
+            amount: buzzAmount,
+            details: metadata,
+            stripePaymentIntentId,
+          });
+
+          context.close();
+          onBuzzPurchased?.();
         },
-        metadata: {
-          unitAmount,
-          selectedPriceId: selectedPrice?.id,
-        },
+        metadata: metadata,
+        paymentMethodTypes: ['card'],
       });
     };
 
     useEffect(() => {
-      if (packages.length && !selectedPrice) {
-        setSelectedPrice(packages[0]);
+      if (availablePackages.length && !selectedPrice) {
+        setSelectedPrice(availablePackages[0]);
       }
-    }, [packages, selectedPrice]);
+    }, [availablePackages, selectedPrice]);
+
+    const minBuzzAmountPrice = minBuzzAmount ? Math.max(minBuzzAmount / 10, 499) : 499;
 
     return (
       <Stack spacing="md">
@@ -145,7 +201,7 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
             ($1 USD = 1,000 Buzz)
           </Text>
         </Stack>
-        {isLoading ? (
+        {isLoading || processing ? (
           <Center py="xl">
             <Loader variant="bars" />
           </Center>
@@ -162,7 +218,7 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
                   setSelectedPrice(selectedPackage ?? null);
                 }}
               >
-                {packages.map((buzzPackage, index) => {
+                {availablePackages.map((buzzPackage, index) => {
                   const price = (buzzPackage.unitAmount ?? 0) / 100;
 
                   return (
@@ -218,11 +274,11 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
 
               {selectedPrice && !selectedPrice.unitAmount && (
                 <NumberInputWrapper
-                  placeholder="Minimum $5 USD"
+                  placeholder={`Minimum $${formatPriceForDisplay(minBuzzAmountPrice)} USD`}
                   variant="filled"
                   icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
                   value={customAmount}
-                  min={499}
+                  min={minBuzzAmountPrice}
                   precision={2}
                   disabled={creatingSession}
                   format="currency"
@@ -242,8 +298,8 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
           <Button variant="filled" color="gray" onClick={handleClose}>
             Cancel
           </Button>
-          <Button disabled={!ctaEnabled} onClick={handleSubmit} loading={creatingSession}>
-            Buy
+          <Button disabled={!ctaEnabled} onClick={handleSubmit} loading={processing}>
+            {processing ? 'Completing your purchase...' : 'Continue'}
           </Button>
         </Group>
       </Stack>
