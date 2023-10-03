@@ -36,6 +36,7 @@ const { openModal, Modal } = createContextModal<Props>({
   radius: 'lg',
   closeOnEscape: false,
   closeOnClickOutside: false,
+  zIndex: 400,
   Element: ({
     context,
     props: { unitAmount, currency = Currency.USD, metadata = {}, paymentMethodTypes, ...props },

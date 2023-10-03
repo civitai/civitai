@@ -30,15 +30,18 @@ export const useBuzzTransaction = ({
     console.log('so here we are');
     if (!features.buzz) return onPerformTransaction();
     if (!currentUser?.balance || currentUser?.balance < buzzAmount) {
-      openBuyBuzzModal({
-        message:
-          typeof message === 'function'
-            ? message(buzzAmount - (currentUser?.balance ?? 0))
-            : message,
-        minBuzzAmount: buzzAmount - (currentUser?.balance ?? 0),
-        onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
-        purchaseSuccessMessage,
-      });
+      openBuyBuzzModal(
+        {
+          message:
+            typeof message === 'function'
+              ? message(buzzAmount - (currentUser?.balance ?? 0))
+              : message,
+          minBuzzAmount: buzzAmount - (currentUser?.balance ?? 0),
+          onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
+          purchaseSuccessMessage,
+        },
+        { zIndex: 400 }
+      );
 
       return;
     }
