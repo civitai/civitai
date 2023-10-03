@@ -69,14 +69,18 @@ type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: numbe
 
 const { openModal, Modal } = createContextModal<{
   message?: string;
-  onBuzzPurchased?: () => void;
+  purchaseSuccessMessage?: React.ReactNode;
+  onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
 }>({
   name: 'buyBuzz',
   withCloseButton: false,
   size: 'lg',
   radius: 'lg',
-  Element: ({ context, props: { message, onBuzzPurchased, minBuzzAmount } }) => {
+  Element: ({
+    context,
+    props: { message, onPurchaseSuccess, minBuzzAmount, purchaseSuccessMessage },
+  }) => {
     const currentUser = useCurrentUser();
     const { classes } = useStyles();
 
@@ -141,7 +145,7 @@ const { openModal, Modal } = createContextModal<{
             <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
         ),
-        successMessage: (
+        successMessage: purchaseSuccessMessage || (
           <Stack>
             <Text>Thank you for your purchase!</Text>
             <Text>
@@ -158,7 +162,7 @@ const { openModal, Modal } = createContextModal<{
           });
 
           context.close();
-          onBuzzPurchased?.();
+          onPurchaseSuccess?.();
         },
         metadata: metadata,
         paymentMethodTypes: ['card'],
@@ -178,8 +182,6 @@ const { openModal, Modal } = createContextModal<{
         setCustomAmount(Math.max(minBuzzAmount / 10, 499));
       }
     }, [availablePackages, selectedPrice, minBuzzAmount]);
-
-    console.log(minBuzzAmount);
 
     const minBuzzAmountPrice = minBuzzAmount ? Math.max(minBuzzAmount / 10, 499) : 499;
 

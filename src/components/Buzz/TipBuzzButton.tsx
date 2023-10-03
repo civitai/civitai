@@ -4,7 +4,6 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { openSendTipModal } from '../Modals/SendTipModal';
 
 type Props = ButtonProps & { toUserId: number; entityId?: number; entityType?: string };
