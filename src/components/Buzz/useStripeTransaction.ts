@@ -5,25 +5,18 @@ import { useEffect, useState, useCallback } from 'react';
 import { useInterval } from '@mantine/hooks';
 import { PaymentIntent } from '@stripe/stripe-js';
 
-export const useStripeBuzzPurchase = ({
+export const useStripeTransaction = ({
   onPaymentSuccess,
-  unitAmount,
-  currency = Currency.USD,
-  ...metadata
+  clientSecret,
 }: {
-  unitAmount: number;
-  currency?: Currency;
   onPaymentSuccess: () => void;
+  clientSecret: string;
+  metadata?: any;
 }) => {
   const [processingPayment, setProcessingPayment] = useState<boolean>(false);
-  const { data, isLoading: isLoadingClientSecret } = trpc.stripe.getPaymentIntent.useQuery(
-    { unitAmount, currency, metadata },
-    { enabled: !!unitAmount && !!currency }
-  );
 
-  const clientSecret = data?.clientSecret;
   const stripe = useStripe();
-  const elements = useElements({ clientSecret });
+  const elements = useElements();
 
   const fetchPaymentIntent = useCallback(
     async (secret: string) => {
@@ -33,7 +26,7 @@ export const useStripeBuzzPurchase = ({
 
       return await stripe.retrievePaymentIntent(secret);
     },
-    [stripe]
+    [stripe, clientSecret]
   );
 
   const paymentIntentProcessor = useInterval(async () => {
@@ -50,13 +43,14 @@ export const useStripeBuzzPurchase = ({
     (paymentIntent?: PaymentIntent) => {
       if (!paymentIntent) {
         setPaymentIntentStatus('error');
+        setProcessingPayment(false);
         return;
       }
 
       switch (paymentIntent.status) {
         case 'succeeded':
           setPaymentIntentStatus('succeeded');
-          onPaymentSuccess();
+          onPaymentSuccess?.();
           setProcessingPayment(false);
           break;
         case 'processing':
@@ -128,13 +122,9 @@ export const useStripeBuzzPurchase = ({
   };
 
   return {
-    stripe,
-    elements,
-    clientSecret,
     errorMessage,
     onConfirmPayment,
     processingPayment,
-    isLoadingClientSecret,
     paymentIntentStatus,
   };
 };

@@ -15,6 +15,7 @@ import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesM
 import { openPurchaseModelVersionModal } from '~/components/Modals/PurchaseModelVersionModal';
 import { flowRight } from 'lodash-es';
 import { StripeProvider } from '~/providers/StripeProvider';
+import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -52,6 +53,7 @@ const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEn
 const PurchaseModelVersionModal = dynamic(
   () => import('~/components/Modals/PurchaseModelVersionModal')
 );
+const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 
 const registry = {
   blockModelTags: {
@@ -105,6 +107,10 @@ const registry = {
   purchaseModelVersion: {
     Component: PurchaseModelVersionModal,
     fn: openPurchaseModelVersionModal,
+  },
+  stripeTransaction: {
+    Component: StripeTransactionModal,
+    fn: openStripeTransactionModal,
   },
 };
 

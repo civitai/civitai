@@ -13,7 +13,7 @@ import {
   Loader,
   Input,
 } from '@mantine/core';
-import { Price } from '@prisma/client';
+import { Currency, Price } from '@prisma/client';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 
@@ -22,13 +22,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { UserBuzz } from '../User/UserBuzz';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { isNumber } from '~/utils/type-guards';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { useStripeBuzzPurchase } from '~/components/Buzz/useStripeBuzzPurchase';
-import { Elements, PaymentElement } from '@stripe/react-stripe-js';
-import { StripePaymentElementOptions } from '@stripe/stripe-js';
-import { StripeProvider, useStripePromise } from '~/providers/StripeProvider';
+import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -73,58 +70,54 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
   size: 'lg',
   radius: 'lg',
   Element: ({ context, props: { message } }) => {
+    const currentUser = useCurrentUser();
+    const { classes } = useStyles();
+
+    const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
+    const [error, setError] = useState('');
+    const [customAmount, setCustomAmount] = useState<number | undefined>();
+    const ctaEnabled =
+      !!selectedPrice?.unitAmount || (selectedPrice && !selectedPrice.unitAmount && customAmount);
+
+    const { packages, isLoading, creatingSession } = useQueryBuzzPackages();
+
+    const handleClose = () => context.close();
+    const handleSubmit = async () => {
+      if (!selectedPrice) return setError('Please choose one option');
+      if (!selectedPrice.unitAmount && !customAmount)
+        return setError('Please enter the amount you wish to buy');
+
+      const unitAmount = (selectedPrice.unitAmount ?? customAmount) as number;
+      const buzzAmount = selectedPrice.buzzAmount ?? unitAmount * 10;
+
+      if (!unitAmount) return setError('Please enter the amount you wish to buy');
+
+      openStripeTransactionModal({
+        unitAmount,
+        message: (
+          <Text>
+            You are about to purchase{' '}
+            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />. Please fill in your
+            data and complete your purchase.
+          </Text>
+        ),
+        onSuccess: () => {
+          console.log('Give the user the amount of buzz purchased');
+        },
+        metadata: {
+          unitAmount,
+          selectedPriceId: selectedPrice?.id,
+        },
+      });
+    };
+
+    useEffect(() => {
+      if (packages.length && !selectedPrice) {
+        setSelectedPrice(packages[0]);
+      }
+    }, [packages, selectedPrice]);
+
     return (
-      <StripeProvider>
-        <BuyBuzzModal message={message} onClose={() => context.close()} />
-      </StripeProvider>
-    );
-  },
-});
-
-const BuyBuzzModal = ({ message, onClose }: { message?: string; onClose: () => void }) => {
-  const currentUser = useCurrentUser();
-  const { classes } = useStyles();
-
-  const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
-  const [error, setError] = useState('');
-  const [customAmount, setCustomAmount] = useState<number | undefined>();
-  const stripePromise = useStripePromise();
-  const { elements, stripe, clientSecret } = useStripeBuzzPurchase({
-    unitAmount: selectedPrice?.unitAmount || customAmount,
-  });
-
-  const ctaDisabled =
-    !selectedPrice || (!selectedPrice.unitAmount && !customAmount) || !clientSecret;
-  const { packages, isLoading, createCheckoutSession, creatingSession } = useQueryBuzzPackages();
-
-  const handleSubmit = async () => {
-    if (!selectedPrice) return setError('Please choose one option');
-    if (!selectedPrice.unitAmount && !customAmount)
-      return setError('Please enter the amount you wish to buy');
-
-    return createCheckoutSession({
-      priceId: selectedPrice.id,
-      returnUrl: location.href,
-      customAmount,
-    }).catch(() => ({}));
-  };
-
-  useEffect(() => {
-    if (packages.length && !selectedPrice) {
-      setSelectedPrice(packages[0]);
-    }
-  }, [packages, selectedPrice]);
-
-  const paymentElementOptions: StripePaymentElementOptions = {
-    layout: 'tabs',
-  };
-
-  console.log(selectedPrice, clientSecret, stripe, elements);
-
-  return (
-    <form id="payment-form" onSubmit={handleSubmit}>
-      {/* Show any error or success messages */}
-      {message && <div id="payment-message">{message}</div>}
       <Stack spacing="md">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>
@@ -137,7 +130,7 @@ const BuyBuzzModal = ({ message, onClose }: { message?: string; onClose: () => v
                 Available Buzz
               </Text>
             </Badge>
-            <CloseButton radius="xl" iconSize={22} onClick={onClose} />
+            <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
         <Divider mx="-lg" />
@@ -245,27 +238,18 @@ const BuyBuzzModal = ({ message, onClose }: { message?: string; onClose: () => v
             </Stack>
           </Input.Wrapper>
         )}
-        {clientSecret && stripePromise && (
-          <Elements
-            stripe={stripePromise}
-            key={clientSecret}
-            options={{ clientSecret, appearance: { theme: 'stripe' } }}
-          >
-            <PaymentElement id="payment-element" options={paymentElementOptions} />
-          </Elements>
-        )}
         <Group position="right">
-          <Button variant="filled" color="gray" onClick={onClose}>
+          <Button variant="filled" color="gray" onClick={handleClose}>
             Cancel
           </Button>
-          <Button disabled={!ctaDisabled} onClick={handleSubmit} loading={creatingSession}>
+          <Button disabled={!ctaEnabled} onClick={handleSubmit} loading={creatingSession}>
             Buy
           </Button>
         </Group>
       </Stack>
-    </form>
-  );
-};
+    );
+  },
+});
 
 export const openBuyBuzzModal = openModal;
 export default Modal;
