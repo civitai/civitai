@@ -250,7 +250,11 @@ export function BountyCreateForm() {
       }
     };
 
-    conditionalPerformTransaction(data.unitAmount, performTransaction);
+    if (currency === Currency.BUZZ) {
+      conditionalPerformTransaction(data.unitAmount, performTransaction);
+    } else {
+      performTransaction();
+    }
   };
 
   return (
