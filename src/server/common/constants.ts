@@ -286,6 +286,12 @@ export const generation = {
     prompt: '',
     negativePrompt: '',
   },
+  settingsCost: {
+    base: 1,
+    quantity: 1,
+    steps: 10,
+    clipSkip: 2,
+  },
 };
 
 export const generationConfig = {

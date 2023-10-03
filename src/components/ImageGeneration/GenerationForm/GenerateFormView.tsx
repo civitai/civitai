@@ -25,7 +25,6 @@ import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/B
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -50,6 +49,7 @@ import { generationStore } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { calculateGenerationBill } from '../utils/generation.utils';
 
 export function GenerateFormView({
   form,
@@ -91,18 +91,8 @@ export function GenerateFormView({
   };
   // #endregion
 
-  // #region [Handle check user funds]
-  const checkUserFunds: React.MouseEventHandler<HTMLButtonElement> = (e) => {
-    // TODO.buzz: properly calculate the amount to generate based on the form values
-    if (currentUser?.balance && currentUser.balance < 1000) {
-      e.preventDefault();
-
-      openBuyBuzzModal(
-        { message: 'You do not have enough Buzz to generate images.' },
-        { sx: { zIndex: 400 } }
-      );
-    }
-  };
+  const [quantity, steps, clipSkip] = form.watch(['quantity', 'steps', 'clipSkip']);
+  const totalCost = calculateGenerationBill({ quantity, steps, clipSkip });
 
   return (
     <PersistentForm
@@ -312,9 +302,9 @@ export function GenerateFormView({
                   loading={isSubmitting}
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
-                  onClick={checkUserFunds}
                 >
-                  Generate
+                  {/* TODO.buzz: use the new component to display the total cost */}
+                  Generate {`(${totalCost.toLocaleString()})`}
                 </Button>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
