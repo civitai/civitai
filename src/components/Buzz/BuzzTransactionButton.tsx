@@ -17,30 +17,17 @@ type Props = ButtonProps & {
   performTransactionOnPurchase?: boolean;
 };
 
-export function BuzzTransactionButton({
-  buzzAmount,
-  onPerformTransaction,
+export const useBuzzTransaction = ({
+  message,
   purchaseSuccessMessage,
-  message = "You don't have enough funds to perform this action.",
-  performTransactionOnPurchase = true,
-  label,
-  ...buttonProps
-}: Props) {
+  performTransactionOnPurchase,
+}: Pick<Props, 'message' | 'purchaseSuccessMessage' | 'performTransactionOnPurchase'>) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const hasRequiredAmount = (currentUser?.balance ?? 0) >= buzzAmount;
 
-  if (!features.buzz) return null;
-
-  const onClick = (e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-
-    if (!features.buzz) {
-      // Just perform whatever it is we need
-      onPerformTransaction();
-      return;
-    }
+  const hasRequiredAmount = (buzzAmount: number) => (currentUser?.balance ?? 0) >= buzzAmount;
+  const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
+    if (!features.buzz) return onPerformTransaction();
 
     if (!currentUser?.balance || currentUser?.balance < buzzAmount) {
       openBuyBuzzModal({
@@ -59,6 +46,43 @@ export function BuzzTransactionButton({
     onPerformTransaction();
   };
 
+  return {
+    hasRequiredAmount,
+    conditionalPerformTransaction,
+  };
+};
+
+export function BuzzTransactionButton({
+  buzzAmount,
+  onPerformTransaction,
+  purchaseSuccessMessage,
+  message = "You don't have enough funds to perform this action.",
+  performTransactionOnPurchase = true,
+  label,
+  ...buttonProps
+}: Props) {
+  const features = useFeatureFlags();
+  const { conditionalPerformTransaction, hasRequiredAmount } = useBuzzTransaction({
+    message,
+    purchaseSuccessMessage,
+    performTransactionOnPurchase,
+  });
+
+  if (!features.buzz) return null;
+
+  const onClick = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+
+    if (!features.buzz) {
+      // Just perform whatever it is we need
+      onPerformTransaction();
+      return;
+    }
+
+    conditionalPerformTransaction(buzzAmount, onPerformTransaction);
+  };
+
   return (
     <LoginPopover>
       <Button {...buttonProps} onClick={onClick}>
@@ -70,7 +94,7 @@ export function BuzzTransactionButton({
             radius={buttonProps?.radius ?? 'sm'}
             px="xs"
           >
-            {!hasRequiredAmount && (
+            {!hasRequiredAmount(buzzAmount) && (
               <Tooltip
                 label="Insufficient buzz. Click to buy more"
                 style={{ textTransform: 'capitalize' }}
