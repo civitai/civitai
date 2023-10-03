@@ -7,6 +7,8 @@ import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
+import { trpc } from '~/utils/trpc';
+import { showErrorNotification } from '~/utils/notifications';
 
 type Props = ButtonProps & {
   buzzAmount: number;
@@ -24,10 +26,30 @@ export const useBuzzTransaction = ({
 }: Pick<Props, 'message' | 'purchaseSuccessMessage' | 'performTransactionOnPurchase'>) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useContext();
+  const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
+    async onSuccess(_, { amount }) {
+      await queryUtils.buzz.getUserAccount.cancel();
+
+      queryUtils.buzz.getUserAccount.setData(undefined, (old) =>
+        old
+          ? {
+              ...old,
+              balance: amount <= old.balance ? old.balance - amount : old.balance,
+            }
+          : old
+      );
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Error performing transaction',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   const hasRequiredAmount = (buzzAmount: number) => (currentUser?.balance ?? 0) >= buzzAmount;
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
-    console.log('so here we are');
     if (!features.buzz) return onPerformTransaction();
     if (!currentUser?.balance || currentUser?.balance < buzzAmount) {
       openBuyBuzzModal(
@@ -52,6 +74,7 @@ export const useBuzzTransaction = ({
   return {
     hasRequiredAmount,
     conditionalPerformTransaction,
+    createBuzzTransactionMutation,
   };
 };
 
@@ -104,8 +127,9 @@ export function BuzzTransactionButton({
             <Tooltip
               label="Insufficient buzz. Click to buy more"
               style={{ textTransform: 'capitalize' }}
-              withArrow
               maw={250}
+              multiline
+              withArrow
             >
               <IconAlertTriangleFilled
                 color="red"

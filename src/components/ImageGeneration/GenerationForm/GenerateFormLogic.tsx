@@ -17,6 +17,7 @@ import { trpc } from '~/utils/trpc';
 import { calculateGenerationBill } from '~/components/ImageGeneration/utils/generation.utils';
 import { useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { TransactionType } from '~/server/schema/buzz.schema';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -31,7 +32,7 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     shouldUnregister: false,
   });
 
-  const { conditionalPerformTransaction } = useBuzzTransaction({
+  const { conditionalPerformTransaction, createBuzzTransactionMutation } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Buy ${numberWithCommas(
         requiredBalance
@@ -116,6 +117,14 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       await mutateAsync({
         resources: _resources.filter((x) => x.covered !== false),
         params,
+      });
+
+      await createBuzzTransactionMutation.mutateAsync({
+        type: TransactionType.Generation,
+        amount: totalCost,
+        details: data,
+        toAccountId: 0,
+        description: 'Image generation',
       });
 
       onSuccess?.();

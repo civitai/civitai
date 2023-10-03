@@ -287,7 +287,7 @@ export const generation = {
     negativePrompt: '',
   },
   settingsCost: {
-    base: 1,
+    base: 0,
     quantity: 1,
     steps: 10,
     clipSkip: 2,
