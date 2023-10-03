@@ -151,7 +151,7 @@ const { openModal, Modal } = createContextModal<{
           });
         },
         metadata: metadata,
-        paymentMethodTypes: ['card'],
+        // paymentMethodTypes: ['card'],
       });
     };
 
