@@ -119,13 +119,15 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
         params,
       });
 
-      await createBuzzTransactionMutation.mutateAsync({
-        type: TransactionType.Generation,
-        amount: totalCost,
-        details: data,
-        toAccountId: 0,
-        description: 'Image generation',
-      });
+      if (totalCost > 0) {
+        await createBuzzTransactionMutation.mutateAsync({
+          type: TransactionType.Generation,
+          amount: totalCost,
+          details: data,
+          toAccountId: 0,
+          description: 'Image generation',
+        });
+      }
 
       onSuccess?.();
       generationPanel.setView('queue'); // TODO.generation - determine what should actually happen after clicking 'generate'
