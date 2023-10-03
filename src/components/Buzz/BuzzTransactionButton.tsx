@@ -9,11 +9,11 @@ import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 
 type Props = ButtonProps & {
-  onPerformTransaction: () => void;
   buzzAmount: number;
   message?: string | ((requiredBalance: number) => string);
   label: string;
-  purchaseSuccessMessage?: React.ReactNode;
+  onPerformTransaction?: () => void;
+  purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   performTransactionOnPurchase?: boolean;
 };
 
@@ -27,8 +27,8 @@ export const useBuzzTransaction = ({
 
   const hasRequiredAmount = (buzzAmount: number) => (currentUser?.balance ?? 0) >= buzzAmount;
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
+    console.log('so here we are');
     if (!features.buzz) return onPerformTransaction();
-
     if (!currentUser?.balance || currentUser?.balance < buzzAmount) {
       openBuyBuzzModal({
         message:
@@ -74,6 +74,10 @@ export function BuzzTransactionButton({
     e?.preventDefault();
     e?.stopPropagation();
 
+    if (!onPerformTransaction) {
+      return;
+    }
+
     if (!features.buzz) {
       // Just perform whatever it is we need
       onPerformTransaction();
@@ -84,35 +88,33 @@ export function BuzzTransactionButton({
   };
 
   return (
-    <LoginPopover>
-      <Button {...buttonProps} onClick={onClick}>
-        <Group spacing="md" noWrap>
-          <CurrencyBadge
-            currency={Currency.BUZZ}
-            unitAmount={buzzAmount}
-            displayCurrency={false}
-            radius={buttonProps?.radius ?? 'sm'}
-            px="xs"
-          >
-            {!hasRequiredAmount(buzzAmount) && (
-              <Tooltip
-                label="Insufficient buzz. Click to buy more"
-                style={{ textTransform: 'capitalize' }}
-                withArrow
-                maw={250}
-              >
-                <IconAlertTriangleFilled
-                  color="red"
-                  size={12}
-                  fill="currentColor"
-                  style={{ marginRight: 4 }}
-                />
-              </Tooltip>
-            )}
-          </CurrencyBadge>
-          <Text>{label}</Text>
-        </Group>
-      </Button>
-    </LoginPopover>
+    <Button {...buttonProps} onClick={onPerformTransaction ? onClick : undefined}>
+      <Group spacing="md" noWrap>
+        <CurrencyBadge
+          currency={Currency.BUZZ}
+          unitAmount={buzzAmount}
+          displayCurrency={false}
+          radius={buttonProps?.radius ?? 'sm'}
+          px="xs"
+        >
+          {!hasRequiredAmount(buzzAmount) && (
+            <Tooltip
+              label="Insufficient buzz. Click to buy more"
+              style={{ textTransform: 'capitalize' }}
+              withArrow
+              maw={250}
+            >
+              <IconAlertTriangleFilled
+                color="red"
+                size={12}
+                fill="currentColor"
+                style={{ marginRight: 4 }}
+              />
+            </Tooltip>
+          )}
+        </CurrencyBadge>
+        <Text>{label}</Text>
+      </Group>
+    </Button>
   );
 }

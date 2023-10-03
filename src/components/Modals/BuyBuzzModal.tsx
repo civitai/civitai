@@ -69,7 +69,7 @@ type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: numbe
 
 const { openModal, Modal } = createContextModal<{
   message?: string;
-  purchaseSuccessMessage?: React.ReactNode;
+  purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
 }>({
@@ -132,7 +132,9 @@ const { openModal, Modal } = createContextModal<{
             <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
         ),
-        successMessage: purchaseSuccessMessage || (
+        successMessage: purchaseSuccessMessage ? (
+          purchaseSuccessMessage(buzzAmount)
+        ) : (
           <Stack>
             <Text>Thank you for your purchase!</Text>
             <Text>
