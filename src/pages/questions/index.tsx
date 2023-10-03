@@ -1,5 +1,4 @@
 import { Container, Stack, Title, Group, Button, Badge, Alert, Text } from '@mantine/core';
-import { GetServerSideProps } from 'next';
 import Link from 'next/link';
 
 import { Meta } from '~/components/Meta/Meta';
@@ -46,7 +45,8 @@ export default function QuestionsList() {
   return (
     <>
       <Meta
-        title="Questions | Civitai"
+        title="Civitai Questions | Ask the Generative AI Community"
+        description="Got questions about Stable Diffusion, fine-tuning, or prompting? Dive into our community forum and ask generative AI experts for guidance"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions`, rel: 'canonical' }]}
       />
       <Container pb="xl">
