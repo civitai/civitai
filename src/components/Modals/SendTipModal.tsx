@@ -185,7 +185,8 @@ const { openModal, Modal } = createContextModal<{
                   entityType,
                 }),
               buzzAmount: customAmount,
-              message: 'You have insufficient funds to tip',
+              message: (requiredBalance) =>
+                `You have insufficient funds to tip. Please purchase ${requiredBalance} BUZZ to continue`,
             }),
           });
         } else {
@@ -200,7 +201,8 @@ const { openModal, Modal } = createContextModal<{
                 entityType,
               }),
             buzzAmount: customAmount,
-            message: 'You have insufficient funds to tip',
+            message: (requiredBalance) =>
+              `You have insufficient funds to tip. Please purchase ${requiredBalance} BUZZ to continue`,
           })();
         }
       }
@@ -216,7 +218,8 @@ const { openModal, Modal } = createContextModal<{
             entityType,
           }),
         buzzAmount: amount,
-        message: 'You have insufficient funds to tip',
+        message: (requiredBalance) =>
+          `You have insufficient funds to tip. Please purchase ${requiredBalance} BUZZ to continue`,
       })();
     };
 

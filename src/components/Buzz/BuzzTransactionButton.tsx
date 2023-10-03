@@ -17,7 +17,7 @@ import { Currency } from '@prisma/client';
 type Props = UnstyledButtonProps & {
   onPerformTransaction: () => void;
   buzzAmount: number;
-  message?: string;
+  message?: string | ((requiredBalance: number) => string);
   label: string;
 };
 
@@ -28,13 +28,12 @@ export const useBuzzTransaction = () => {
     ({
       onPerformTransaction,
       buzzAmount,
-      message,
+      message = (requiredBalance: number) =>
+        `You require ${requiredBalance} more BUZZ to perform this action.`,
     }: Pick<Props, 'buzzAmount' | 'message' | 'onPerformTransaction'>) =>
     (e?: React.MouseEvent) => {
       e?.preventDefault();
       e?.stopPropagation();
-
-      console.log('so here we are');
 
       if (!features.buzz) {
         // Just perform whatever it is we need
@@ -44,7 +43,10 @@ export const useBuzzTransaction = () => {
 
       if (!currentUser?.balance || currentUser?.balance < buzzAmount) {
         openBuyBuzzModal({
-          message,
+          message:
+            typeof message === 'function'
+              ? message(buzzAmount - (currentUser?.balance ?? 0))
+              : message,
           minBuzzAmount: buzzAmount - (currentUser?.balance ?? 0),
           onBuzzPurchased: onPerformTransaction,
         });
