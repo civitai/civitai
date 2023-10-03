@@ -13,6 +13,7 @@ import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openPurchaseModelVersionModal } from '~/components/Modals/PurchaseModelVersionModal';
+import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')
@@ -50,6 +51,7 @@ const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEn
 const PurchaseModelVersionModal = dynamic(
   () => import('~/components/Modals/PurchaseModelVersionModal')
 );
+const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 
 const registry = {
   blockModelTags: {
@@ -103,6 +105,10 @@ const registry = {
   purchaseModelVersion: {
     Component: PurchaseModelVersionModal,
     fn: openPurchaseModelVersionModal,
+  },
+  stripeTransaction: {
+    Component: StripeTransactionModal,
+    fn: openStripeTransactionModal,
   },
 };
 

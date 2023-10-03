@@ -1,10 +1,12 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import {
+  CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   GetUserBuzzTransactionsSchema,
 } from '~/server/schema/buzz.schema';
 import {
+  completeStripeBuzzTransaction,
   createBuzzTransaction,
   getUserBuzzAccount,
   getUserBuzzTransactions,
@@ -50,6 +52,22 @@ export function createTransactionHandler({
       throw throwBadRequestError('You cannot send buzz to the same account');
 
     return createBuzzTransaction({ ...input, fromAccountId: ctx.user.id });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export function completeStripeBuzzPurchaseHandler({
+  input,
+  ctx,
+}: {
+  input: CompleteStripeBuzzPurchaseTransactionInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id } = ctx.user;
+
+    return completeStripeBuzzTransaction({ ...input, userId: id });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

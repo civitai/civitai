@@ -7,9 +7,11 @@ import {
   createDonateSessionHandler,
   getBuzzPackagesHandler,
   createBuzzSessionHandler,
+  getPaymentIntentHandler,
 } from './../controllers/stripe.controller';
 import { publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import * as Schema from '../schema/stripe.schema';
+import { getPaymentIntent } from '~/server/services/stripe.service';
 
 export const stripeRouter = router({
   getPlans: publicProcedure.query(getPlansHandler),
@@ -30,4 +32,7 @@ export const stripeRouter = router({
   createBuzzSession: protectedProcedure
     .input(Schema.createBuzzSessionSchema)
     .mutation(createBuzzSessionHandler),
+  getPaymentIntent: protectedProcedure
+    .input(Schema.paymentIntentCreationSchema)
+    .query(getPaymentIntentHandler),
 });
