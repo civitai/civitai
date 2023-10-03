@@ -167,9 +167,19 @@ const { openModal, Modal } = createContextModal<{
 
     useEffect(() => {
       if (availablePackages.length && !selectedPrice) {
-        setSelectedPrice(availablePackages[0]);
+        setSelectedPrice(
+          minBuzzAmount
+            ? availablePackages.find((p) => !p.buzzAmount) ?? availablePackages[0]
+            : availablePackages[0]
+        );
       }
-    }, [availablePackages, selectedPrice]);
+
+      if (minBuzzAmount) {
+        setCustomAmount(Math.max(minBuzzAmount / 10, 499));
+      }
+    }, [availablePackages, selectedPrice, minBuzzAmount]);
+
+    console.log(minBuzzAmount);
 
     const minBuzzAmountPrice = minBuzzAmount ? Math.max(minBuzzAmount / 10, 499) : 499;
 

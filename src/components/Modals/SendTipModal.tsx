@@ -22,6 +22,7 @@ import { trpc } from '~/utils/trpc';
 import { UserBuzz } from '../User/UserBuzz';
 import { openConfirmModal } from '@mantine/modals';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -135,9 +136,8 @@ const { openModal, Modal } = createContextModal<{
     const currentUser = useCurrentUser();
     const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
     const queryUtils = trpc.useContext();
-
     const [loading, setLoading] = useState(false);
-
+    const onClickWrapper = useBuzzTransaction();
     const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
       async onSuccess(_, { amount }) {
         setLoading(false);
@@ -168,24 +168,29 @@ const { openModal, Modal } = createContextModal<{
       const amount = Number(data.amount);
 
       if (amount === -1 && customAmount) {
-        if (customAmount > (currentUser?.balance ?? 0)) {
-          return form.setError(
-            'customAmount',
-            {
-              message: 'You have insufficient funds to tip',
-              type: 'value',
-            },
-            { shouldFocus: true }
-          );
-        }
-
         if (customAmount === currentUser?.balance) {
           return openConfirmModal({
             centered: true,
             title: 'Tip Buzz',
             children: 'You are about to send all your buzz. Are you sure?',
             labels: { confirm: 'Yes, send all buzz', cancel: 'No, go back' },
-            onConfirm: () => {
+            onConfirm: onClickWrapper({
+              onPerformTransaction: () =>
+                createBuzzTransactionMutation.mutate({
+                  toAccountId: toUserId,
+                  type: TransactionType.Tip,
+                  amount: customAmount,
+                  description,
+                  entityId,
+                  entityType,
+                }),
+              buzzAmount: customAmount,
+              message: 'You have insufficient funds to tip',
+            }),
+          });
+        } else {
+          return onClickWrapper({
+            onPerformTransaction: () =>
               createBuzzTransactionMutation.mutate({
                 toAccountId: toUserId,
                 type: TransactionType.Tip,
@@ -193,40 +198,26 @@ const { openModal, Modal } = createContextModal<{
                 description,
                 entityId,
                 entityType,
-              });
-            },
-          });
-        } else {
-          return createBuzzTransactionMutation.mutate({
-            toAccountId: toUserId,
-            type: TransactionType.Tip,
-            amount: customAmount,
-            description,
-            entityId,
-            entityType,
-          });
+              }),
+            buzzAmount: customAmount,
+            message: 'You have insufficient funds to tip',
+          })();
         }
       }
 
-      if (amount > (currentUser?.balance ?? 0)) {
-        return form.setError(
-          'amount',
-          {
-            message: 'You have insufficient funds to tip',
-            type: 'value',
-          },
-          { shouldFocus: true }
-        );
-      }
-
-      return createBuzzTransactionMutation.mutate({
-        toAccountId: toUserId,
-        type: TransactionType.Tip,
-        amount,
-        description,
-        entityId,
-        entityType,
-      });
+      onClickWrapper({
+        onPerformTransaction: () =>
+          createBuzzTransactionMutation.mutate({
+            toAccountId: toUserId,
+            type: TransactionType.Tip,
+            amount,
+            description,
+            entityId,
+            entityType,
+          }),
+        buzzAmount: amount,
+        message: 'You have insufficient funds to tip',
+      })();
     };
 
     const sending = loading || createBuzzTransactionMutation.isLoading;
@@ -280,7 +271,6 @@ const { openModal, Modal } = createContextModal<{
                 variant="filled"
                 rightSectionWidth="10%"
                 min={1000}
-                max={currentUser?.balance}
                 disabled={sending}
                 icon={<CurrencyIcon currency="BUZZ" size={16} />}
                 parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}

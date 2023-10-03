@@ -19,6 +19,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
   if (!response.ok) {
+    console.log(response);
     switch (response.status) {
       case 400:
         throw throwBadRequestError();
