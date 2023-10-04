@@ -21,7 +21,8 @@ import { z } from 'zod';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 import { enterFall, jelloVerical } from '~/libs/animations';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useState } from 'react';
+import React, { useState } from 'react';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 
 const schema = z.object({
   returnUrl: z.string().optional(),
@@ -49,7 +50,7 @@ export default function PurchaseBuzz() {
 
   const handlePurchaseSuccess = () => {
     if (returnUrl) {
-      return router.replace(returnUrl);
+      window.open(returnUrl, '_blank');
     }
 
     setSuccess(true);
@@ -104,7 +105,24 @@ export default function PurchaseBuzz() {
           </Stack>
         </Grid.Col>
         <Grid.Col xs={12} md={8}>
-          <BuzzPurchase onPurchaseSuccess={handlePurchaseSuccess} minBuzzAmount={minBuzzAmount} />
+          <BuzzPurchase
+            onPurchaseSuccess={handlePurchaseSuccess}
+            minBuzzAmount={minBuzzAmount}
+            purchaseSuccessMessage={
+              returnUrl
+                ? (purchasedBalance) => (
+                    <Stack>
+                      <Text>Thank you for your purchase!</Text>
+                      <Text>
+                        We have added{' '}
+                        <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} /> to
+                        your account. You can now close this window and return to the previous site.
+                      </Text>
+                    </Stack>
+                  )
+                : undefined
+            }
+          />
         </Grid.Col>
       </Grid>
     </Container>
