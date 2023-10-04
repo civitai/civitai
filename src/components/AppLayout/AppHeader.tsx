@@ -23,6 +23,7 @@ import {
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
@@ -69,8 +70,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
-import { UserBuzz } from '../User/UserBuzz';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
+import { UserBuzz } from '../User/UserBuzz';
 
 const HEADER_HEIGHT = 70;
 
@@ -253,7 +254,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             <Text span inline>
               Train a model
             </Text>
-            <CurrencyIcon currency="BUZZ" size={16} />
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
           </Group>
         ),
       },

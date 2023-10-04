@@ -1,5 +1,4 @@
 import { TrainingStatus } from '@prisma/client';
-import { calcBuzzFromEta, calcEta } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
@@ -14,6 +13,7 @@ import {
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
+import { calcBuzzFromEta, calcEta } from '~/utils/training';
 
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',

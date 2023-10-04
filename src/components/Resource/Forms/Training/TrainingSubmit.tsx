@@ -1,7 +1,7 @@
 import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { TrainingStatus } from '@prisma/client';
+import { Currency, TrainingStatus } from '@prisma/client';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
@@ -10,11 +10,7 @@ import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
-import {
-  calcBuzzFromEta,
-  calcEta,
-  goBack,
-} from '~/components/Resource/Forms/Training/TrainingCommon';
+import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -36,6 +32,7 @@ import {
 } from '~/server/schema/model-version.schema';
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 
 const baseModelDescriptions: {
@@ -384,9 +381,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   // nb: if there are more default calculations, need to put them here
   useEffect(() => {
-    const maxTrainEpochs = form.getValues('maxTrainEpochs');
-    const numRepeats = form.getValues('numRepeats');
-    const trainBatchSize = form.getValues('trainBatchSize');
+    const [maxTrainEpochs, numRepeats, trainBatchSize] = watchFields;
 
     const newSteps = Math.ceil(
       ((thisMetadata?.numImages || 1) * numRepeats * maxTrainEpochs) / trainBatchSize
@@ -408,15 +403,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   }, [watchFields]);
 
   useEffect(() => {
-    const eta = calcEta(
-      form.getValues('networkDim'),
-      form.getValues('networkAlpha'),
-      form.getValues('targetSteps'),
-      formBaseModel
-    );
+    const [networkDim, networkAlpha, targetSteps] = watchFieldsBuzz;
+    const eta = calcEta(networkDim, networkAlpha, targetSteps, formBaseModel);
     const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
     setBuzzCost(price);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchFieldsBuzz, formBaseModel]);
 
   const { errors } = form.formState;
@@ -488,7 +478,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               The cost for this training run is:{' '}
             </Text>
             <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
-              <CurrencyIcon currency="BUZZ" size={12} />
+              <CurrencyIcon currency={Currency.BUZZ} size={12} />
             </Text>
             <Text span inline>
               {(buzzCost ?? 0).toLocaleString()}.
@@ -499,7 +489,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               Your remaining balance will be:{' '}
             </Text>
             <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
-              <CurrencyIcon currency="BUZZ" size={12} />
+              <CurrencyIcon currency={Currency.BUZZ} size={12} />
             </Text>
             <Text span inline>
               {((currentUser?.balance ?? 0) - (buzzCost ?? 0)).toLocaleString()}.
@@ -516,10 +506,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     });
   };
 
-  const handleConfirm = ({ ...rest }: z.infer<typeof schema>) => {
+  const handleConfirm = (data: z.infer<typeof schema>) => {
     setAwaitInvalidate(true);
 
-    const { baseModel, ...paramData } = rest;
+    const { baseModel, ...paramData } = data;
 
     const baseModelConvert: BaseModel =
       baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
@@ -799,7 +789,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               value: !!buzzCost ? (
                 <Group spacing={4}>
                   <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
-                    <CurrencyIcon currency="BUZZ" size={12} />
+                    <CurrencyIcon currency={Currency.BUZZ} size={12} />
                   </Text>
                   <Text inline>{buzzCost.toLocaleString()}</Text>
                 </Group>
