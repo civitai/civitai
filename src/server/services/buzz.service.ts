@@ -244,7 +244,9 @@ export async function completeStripeBuzzTransaction({
   // This is a safeguard in case for some reason something fails when getting
   // payment intent or buzz from another endpoint.
   retry = 0,
-}: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }) {
+}: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
+  transactionId: string;
+}> {
   const MAX_RETRIES = 3;
 
   try {
@@ -312,7 +314,6 @@ export async function completeStripeBuzzTransaction({
       });
     }
 
-    console.error('Error completing stripe transaction: ', error);
     throw error;
   }
 }

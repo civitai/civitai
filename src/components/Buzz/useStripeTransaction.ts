@@ -6,6 +6,7 @@ import {
   STRIPE_PROCESSING_AWAIT_TIME,
   STRIPE_PROCESSING_CHECK_INTERVAL,
 } from '~/server/common/constants';
+import { env } from '~/env/client.mjs';
 
 const MAX_RETRIES = Math.floor(STRIPE_PROCESSING_AWAIT_TIME / STRIPE_PROCESSING_CHECK_INTERVAL);
 const CHECK_INTERVAL = STRIPE_PROCESSING_CHECK_INTERVAL;
@@ -129,8 +130,8 @@ export const useStripeTransaction = ({
       redirect: 'if_required',
       confirmParams: {
         // Make sure to change this to your payment completion page
-        // TODO.stripePayments: change this to the actual return url. Used for paypal for example. In the meantime, won't be used I believe.
-        return_url: 'http://localhost:3000/todo',
+        // TODO.stripePayments: change this to the actual return url. May not need to do anything but redirect.
+        return_url: `${env.NEXT_PUBLIC_BASE_URL}/purchase/buzz`,
       },
     });
 
