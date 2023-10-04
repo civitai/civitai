@@ -670,7 +670,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 >
                   <Group spacing={8} noWrap>
                     <UserAvatar user={currentUser} size="md" />
-                    {features.buzz && <UserBuzz user={currentUser} />}
+                    {features.buzz && <UserBuzz user={currentUser} pr="sm" />}
                   </Group>
                 </UnstyledButton>
               </Menu.Target>

@@ -146,7 +146,7 @@ const StripeTransactionModal = ({
         )}
         <Group position="right">
           <Button variant="filled" color="gray" onClick={onClose} disabled={processingPayment}>
-            Cancel
+            Back
           </Button>
           <Button
             component="button"
