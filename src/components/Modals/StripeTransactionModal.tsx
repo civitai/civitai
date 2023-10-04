@@ -18,6 +18,7 @@ import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 
 type Props = {
   successMessage?: React.ReactNode;
@@ -25,7 +26,7 @@ type Props = {
   unitAmount: number;
   currency?: Currency;
   onSuccess?: (stripePaymentIntentId: string) => void;
-  metadata?: any;
+  metadata: PaymentIntentMetadataSchema;
   paymentMethodTypes?: string[];
 };
 
@@ -39,7 +40,7 @@ const { openModal, Modal } = createContextModal<Props>({
   zIndex: 400,
   Element: ({
     context,
-    props: { unitAmount, currency = Currency.USD, metadata = {}, paymentMethodTypes, ...props },
+    props: { unitAmount, currency = Currency.USD, metadata, paymentMethodTypes, ...props },
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
@@ -94,18 +95,21 @@ const StripeTransactionModal = ({
   successMessage,
 }: Props & { clientSecret: string; onClose: () => void }) => {
   const [success, setSuccess] = useState<boolean>(false);
-  const { processingPayment, onConfirmPayment, errorMessage } = useStripeTransaction({
-    clientSecret,
-    onPaymentSuccess: async (stripePaymentIntentId) => {
-      await onSuccess?.(stripePaymentIntentId);
-      setSuccess(true);
-    },
-    metadata,
-  });
+  const { processingPayment, onConfirmPayment, errorMessage, paymentIntentStatus } =
+    useStripeTransaction({
+      clientSecret,
+      onPaymentSuccess: async (stripePaymentIntentId) => {
+        await onSuccess?.(stripePaymentIntentId);
+        setSuccess(true);
+      },
+      metadata,
+    });
 
   const paymentElementOptions: StripePaymentElementOptions = {
     layout: 'tabs',
   };
+
+  const processingTooLong = paymentIntentStatus === 'processing_too_long';
 
   if (success) {
     return (
@@ -146,11 +150,11 @@ const StripeTransactionModal = ({
         )}
         <Group position="right">
           <Button variant="filled" color="gray" onClick={onClose} disabled={processingPayment}>
-            Back
+            {processingTooLong ? 'Close' : 'Cancel'}
           </Button>
           <Button
             component="button"
-            disabled={processingPayment}
+            disabled={processingPayment || processingTooLong}
             loading={processingPayment}
             type="submit"
           >
