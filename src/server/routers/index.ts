@@ -21,7 +21,6 @@ import { imageRouter } from './image.router';
 import { leaderboardRouter } from './leaderboard.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
-import { modelVersionPurchaseRouter } from './model-version-purchase.router';
 import { modelRouter } from './model.router';
 import { newsletterRouter } from './newsletter.router';
 import { notificationRouter } from './notification.router';
@@ -61,7 +60,6 @@ export const appRouter = router({
   model: modelRouter,
   modelFile: modelFileRouter,
   modelVersion: modelVersionRouter,
-  modelVersionPurchase: modelVersionPurchaseRouter,
   notification: notificationRouter,
   partner: partnerRouter,
   post: postRouter,

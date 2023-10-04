@@ -74,7 +74,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { useModelVersionPurchase } from '~/components/Model/ModelVersions/useModelVersionPurchase';
 
 export function ModelVersionDetails({
   model,
@@ -88,10 +87,6 @@ export function ModelVersionDetails({
   const router = useRouter();
   const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
-  const { canDownload, price, onDownloadFile, downloadRequiresPurchase } = useModelVersionPurchase({
-    modelVersionId: version.id,
-  });
-
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [opened, { toggle }] = useDisclosure(false);
@@ -311,14 +306,15 @@ export function ModelVersionDetails({
     !archived ? (
       <Menu.Item
         key={file.id}
+        component="a"
         py={4}
         icon={<VerifiedText file={file} iconOnly />}
-        onClick={() =>
-          onDownloadFile({
-            type: file.type,
-            meta: file.metadata,
-          })
-        }
+        href={createModelFileDownloadUrl({
+          versionId: version.id,
+          type: file.type,
+          meta: file.metadata,
+        })}
+        download
       >
         {`${startCase(file.type)}${
           ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
@@ -347,14 +343,14 @@ export function ModelVersionDetails({
             {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
           </Text>
           <Button
+            component="a"
             variant="subtle"
             size="xs"
-            onClick={() =>
-              onDownloadFile({
-                type: file.type,
-                meta: file.metadata,
-              })
-            }
+            href={createModelFileDownloadUrl({
+              versionId: version.id,
+              type: file.type,
+              meta: file.metadata,
+            })}
             disabled={archived}
             compact
           >
@@ -488,30 +484,26 @@ export function ModelVersionDetails({
                   <Menu position="bottom-end">
                     <Menu.Target>
                       <DownloadButton
-                        canDownload={canDownload}
+                        canDownload={version.canDownload}
                         disabled={!primaryFile || archived}
                         iconOnly
-                        downloadRequiresPurchase={downloadRequiresPurchase}
-                        color={downloadRequiresPurchase ? 'yellow.7' : undefined}
                       />
                     </Menu.Target>
                     <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
                   </Menu>
                 ) : (
                   <DownloadButton
-                    onClick={() => onDownloadFile({ primary: true })}
-                    canDownload={canDownload}
-                    downloadRequiresPurchase={downloadRequiresPurchase}
+                    component="a"
+                    href={createModelFileDownloadUrl({
+                      versionId: version.id,
+                      primary: true,
+                    })}
+                    canDownload={version.canDownload}
                     disabled={!primaryFile || archived}
                     sx={{ flex: 1 }}
-                    color={downloadRequiresPurchase ? 'yellow.7' : undefined}
                   >
                     <Text align="center">
-                      {downloadRequiresPurchase && primaryFile
-                        ? `Get for ${numberWithCommas(price?.unitAmount ?? 0)} BUZZ`
-                        : primaryFile
-                        ? `Download (${formatKBytes(primaryFile.sizeKB)})`
-                        : 'No file'}
+                      {primaryFile ? `Download (${formatKBytes(primaryFile.sizeKB)})` : 'No file'}
                     </Text>
                   </DownloadButton>
                 )}
