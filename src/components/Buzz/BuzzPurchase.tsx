@@ -23,6 +23,7 @@ import { openStripeTransactionModal } from '~/components/Modals/StripeTransactio
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -142,8 +143,8 @@ export const BuzzPurchase = ({
       type: 'buzzPurchase',
       unitAmount,
       buzzAmount,
-      selectedPriceId: selectedPrice?.id,
       userId: currentUser.id as number,
+      selectedPriceId: selectedPrice?.id,
     };
 
     openStripeTransactionModal({

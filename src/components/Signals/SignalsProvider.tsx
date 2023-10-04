@@ -64,23 +64,39 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
   const queryUtils = trpc.useContext();
 
   useEffect(() => {
-    if (!workerRef.current && data?.accessToken && firstRunRef.current) {
-      firstRunRef.current = false;
+    const createWorker = () => {
       createSignalWorker({
         token: data.accessToken,
         onConnected: () => {
+          console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
           setConnected(true);
         },
         onReconnected: () => {
+          console.debug('signal service reconnected'); // eslint-disable-line no-console
           if (session.data?.user?.id) {
             queryUtils.buzz.getUserAccount.invalidate();
           }
         },
-        onClosed: (message) => setConnected(false),
-        onError: (message) => console.error({ type: 'signal service error', message }),
+        onClosed: (message) => {
+          // A closed connection will not recover on its own.
+          console.debug({ type: 'SignalsProvider :: signal service closed', message }); // eslint-disable-line no-console
+          setConnected(false);
+
+          setTimeout(() => {
+            console.debug('SignalsProvider :: attempting to re-crate the connection...'); // eslint-disable-line no-console
+            createWorker();
+          }, 5000);
+        },
+        onError: (message) =>
+          console.error({ type: 'SignalsProvider :: signal service error', message }),
       }).then((worker) => {
         workerRef.current = worker;
       });
+    };
+
+    if (!workerRef.current && data?.accessToken && firstRunRef.current) {
+      firstRunRef.current = false;
+      createWorker();
     }
     return () => workerRef.current?.unload();
   }, [data?.accessToken]);
