@@ -72,8 +72,6 @@ import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '@prisma/client';
 
 const HEADER_HEIGHT = 70;
 

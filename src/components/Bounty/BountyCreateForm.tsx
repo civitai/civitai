@@ -256,6 +256,8 @@ export function BountyCreateForm() {
     }
   };
 
+  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
+
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing={32}>
@@ -587,7 +589,7 @@ export function BountyCreateForm() {
                   </Stack>
                 }
               />
-              {nsfwPoi.every((item) => item === true) && (
+              {hasPoiInNsfw && (
                 <>
                   <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
                     <Text>
@@ -613,13 +615,13 @@ export function BountyCreateForm() {
             <BuzzTransactionButton
               loading={creatingBounty}
               type="submit"
-              disabled={nsfwPoi.every((i) => i)}
+              disabled={hasPoiInNsfw}
               label="Save"
               buzzAmount={unitAmount}
               color="yellow.7"
             />
           ) : (
-            <Button loading={creatingBounty} type="submit" disabled={nsfwPoi.every((i) => i)}>
+            <Button loading={creatingBounty} type="submit" disabled={hasPoiInNsfw}>
               Save
             </Button>
           )}

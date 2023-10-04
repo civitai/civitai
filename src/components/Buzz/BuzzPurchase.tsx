@@ -1,13 +1,10 @@
 import {
-  Badge,
   Button,
   Center,
-  CloseButton,
   Group,
   Stack,
   Text,
   createStyles,
-  Divider,
   Chip,
   Loader,
   Input,
@@ -16,11 +13,9 @@ import {
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { UserBuzz } from '../User/UserBuzz';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -334,7 +329,7 @@ const iconSizesRatio = [1, 1.3, 1.6];
 
 const BuzzTierIcon = ({ tier }: { tier: number }) => {
   return (
-    <Group spacing={0} noWrap>
+    <Group spacing={-4} noWrap>
       {Array.from({ length: 3 }).map((_, i) => (
         <IconBolt
           key={i}

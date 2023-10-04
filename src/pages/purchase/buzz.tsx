@@ -19,7 +19,7 @@ import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { z } from 'zod';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
-import { enterFall, jelloVerical } from '~/libs/animations';
+import { enterFall, jelloVertical } from '~/libs/animations';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import React, { useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -62,7 +62,7 @@ export default function PurchaseBuzz() {
         <Center
           sx={{
             // animation: `${jelloVerical} 2s 1s ease-in-out`,
-            animationName: `${enterFall}, ${jelloVerical}`,
+            animationName: `${enterFall}, ${jelloVertical}`,
             animationDuration: `1.5s, 2s`,
             animationDelay: `0s, 1.5s`,
             animationIterationCount: '1, 1',
