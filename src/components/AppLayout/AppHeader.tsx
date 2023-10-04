@@ -23,6 +23,7 @@ import {
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
@@ -54,6 +55,7 @@ import { useRouter } from 'next/router';
 import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -68,8 +70,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
-import { UserBuzz } from '../User/UserBuzz';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
+import { UserBuzz } from '../User/UserBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '@prisma/client';
 
@@ -251,7 +253,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         label: (
           <Group align="center" spacing="xs">
             <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            Train a model
+            <Text span inline>
+              Train a model
+            </Text>
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
           </Group>
         ),
       },
