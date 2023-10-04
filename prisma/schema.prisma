@@ -162,7 +162,6 @@ model User {
   engagedBounties         BountyEngagement[]
   bountyEntryReactions    BountyEntryReaction[]
   referralCodes           UserReferralCode[]
-  modelPurchases    ModelVersionPurchase[]
 }
 
 model CustomerSubscription {
@@ -541,7 +540,6 @@ model ModelVersion {
   modelVersionExploration ModelVersionExploration[]
   vaeFor                  ModelVersion[]            @relation("vae")
   generationCoverage      GenerationCoverage?
-  purchases               ModelVersionPurchase[]
 
   @@index([modelId], type: Hash)
 }
@@ -613,7 +611,6 @@ model ModelFile {
   hashes            ModelFileHash[]
   metadata          Json?
   visibility        ModelFileVisibility    @default(Public)
-  purchases         ModelVersionPurchase[]
 
   @@index([modelVersionId], type: Hash)
 }
@@ -2069,21 +2066,6 @@ model BuzzTip {
 
   @@id([entityType, entityId, fromUserId])
   @@index([toUserId])
-}
-
-model ModelVersionPurchase {
-  id                 Int          @id @default(autoincrement())
-  userId             Int
-  user               User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  modelVersionId     Int
-  modelVersion       ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
-  transactionDetails Json?
-  files              ModelFile[]
-
-  @@index([userId], type: Hash)
-  @@index([modelVersionId], type: Hash)
 }
 
 enum Currency {
