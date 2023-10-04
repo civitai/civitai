@@ -78,6 +78,15 @@ const useStyles = createStyles((theme) => ({
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
     },
   },
+
+  // Icon styling
+  buzzIcon: {
+    filter: `drop-shadow(0 0 2px ${theme.colors.accent[5]})`,
+
+    '&:not(:first-of-type)': {
+      marginLeft: -4,
+    },
+  },
 }));
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
@@ -232,8 +241,8 @@ export const BuzzPurchase = ({
                           </Text>
                           <Text
                             color="initial"
-                            size={24}
-                            weight={510}
+                            size={20}
+                            weight="bold"
                             sx={{ fontVariantNumeric: 'tabular-nums' }}
                           >
                             ${price}
@@ -283,8 +292,9 @@ export const BuzzPurchase = ({
                       hideControls
                       step={10}
                     />
-                    <ThemeIcon size={36} variant="filled" color="gray">
-                      <IconArrowsExchange size={18} />
+                    {/* @ts-ignore: transparent variant works with ThemeIcon */}
+                    <ThemeIcon size={36} maw={24} variant="transparent" color="gray">
+                      <IconArrowsExchange size={24} />
                     </ThemeIcon>
                     <NumberInputWrapper
                       label="USD ($)"
@@ -328,11 +338,14 @@ export const BuzzPurchase = ({
 const iconSizesRatio = [1, 1.3, 1.6];
 
 const BuzzTierIcon = ({ tier }: { tier: number }) => {
+  const { classes } = useStyles();
+
   return (
     <Group spacing={-4} noWrap>
       {Array.from({ length: 3 }).map((_, i) => (
         <IconBolt
           key={i}
+          className={classes.buzzIcon}
           size={20 * iconSizesRatio[i]}
           color="currentColor"
           fill="currentColor"
