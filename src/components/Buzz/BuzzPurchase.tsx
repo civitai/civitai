@@ -152,39 +152,40 @@ export const BuzzPurchase = ({
       selectedPriceId: selectedPrice?.id,
     };
 
-    openStripeTransactionModal({
-      unitAmount,
-      message: (
-        <Stack>
-          <Text>
-            You are about to purchase{' '}
-            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
-          </Text>
-          <Text>Please fill in your data and complete your purchase.</Text>
-        </Stack>
-      ),
-      successMessage: purchaseSuccessMessage ? (
-        purchaseSuccessMessage(buzzAmount)
-      ) : (
-        <Stack>
-          <Text>Thank you for your purchase!</Text>
-          <Text>
-            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited to
-            your account.
-          </Text>
-        </Stack>
-      ),
-      onSuccess: async (stripePaymentIntentId) => {
-        // We do it here just in case, but the webhook should also do it
-        await completeStripeBuzzPurchaseMutation({
-          amount: buzzAmount,
-          details: metadata,
-          stripePaymentIntentId,
-        });
+    openStripeTransactionModal(
+      {
+        unitAmount,
+        message: (
+          <Stack>
+            <Text>
+              You are about to purchase{' '}
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+            </Text>
+            <Text>Please fill in your data and complete your purchase.</Text>
+          </Stack>
+        ),
+        successMessage: purchaseSuccessMessage ? (
+          purchaseSuccessMessage(buzzAmount)
+        ) : (
+          <Stack>
+            <Text>Thank you for your purchase!</Text>
+            <Text>
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited
+              to your account.
+            </Text>
+          </Stack>
+        ),
+        onSuccess: async (stripePaymentIntentId) => {
+          // We do it here just in case, but the webhook should also do it
+          await completeStripeBuzzPurchaseMutation({
+            amount: buzzAmount,
+            details: metadata,
+            stripePaymentIntentId,
+          });
+        },
+        metadata: metadata,
+        // paymentMethodTypes: ['card'],
       },
-      metadata: metadata,
-      // paymentMethodTypes: ['card'],
-    },
       { fullScreen: isMobile }
     );
   };
