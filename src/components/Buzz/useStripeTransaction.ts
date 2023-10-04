@@ -1,7 +1,14 @@
 import { useElements, useStripe } from '@stripe/react-stripe-js';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useInterval } from '@mantine/hooks';
 import { PaymentIntent } from '@stripe/stripe-js';
+import {
+  STRIPE_PROCESSING_AWAIT_TIME,
+  STRIPE_PROCESSING_CHECK_INTERVAL,
+} from '~/server/common/constants';
+
+const MAX_RETRIES = Math.floor(STRIPE_PROCESSING_AWAIT_TIME / STRIPE_PROCESSING_CHECK_INTERVAL);
+const CHECK_INTERVAL = STRIPE_PROCESSING_CHECK_INTERVAL;
 
 export const useStripeTransaction = ({
   onPaymentSuccess,
@@ -12,7 +19,7 @@ export const useStripeTransaction = ({
   metadata?: any;
 }) => {
   const [processingPayment, setProcessingPayment] = useState<boolean>(false);
-
+  const retries = useRef<number>(0);
   const stripe = useStripe();
   const elements = useElements();
 
@@ -28,6 +35,16 @@ export const useStripeTransaction = ({
   );
 
   const paymentIntentProcessor = useInterval(async () => {
+    if (retries.current >= MAX_RETRIES) {
+      setPaymentIntentStatus('processing_too_long');
+      setErrorMessage(
+        'Your payment is taking too long to be processed. Once the payment goes through, you will receive a confirmation email and purchase will be completed.'
+      );
+      setProcessingPayment(false);
+      return;
+    }
+
+    retries.current += 1;
     if (!clientSecret) return;
     const data = await fetchPaymentIntent(clientSecret);
     if (!data) return;
@@ -35,7 +52,7 @@ export const useStripeTransaction = ({
     const { paymentIntent } = data;
 
     processPaymentIntent(paymentIntent);
-  }, 350);
+  }, CHECK_INTERVAL);
 
   const processPaymentIntent = useCallback(
     async (paymentIntent?: PaymentIntent) => {
@@ -81,8 +98,12 @@ export const useStripeTransaction = ({
       paymentIntentProcessor.stop();
     }
 
-    return paymentIntentProcessor.stop;
-  }, [processingPayment, paymentIntentProcessor]);
+    return () => {
+      if (!processingPayment) {
+        paymentIntentProcessor.stop();
+      }
+    };
+  }, [processingPayment, paymentIntentProcessor.active]);
 
   const onConfirmPayment = async () => {
     if (!stripe || !elements) {
@@ -92,6 +113,7 @@ export const useStripeTransaction = ({
     }
 
     setProcessingPayment(true);
+    retries.current = 0;
 
     const { error, paymentIntent } = await stripe.confirmPayment({
       elements,

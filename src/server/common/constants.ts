@@ -358,3 +358,6 @@ export const BUZZ_FEATURE_LIST = [
   'Pay for exclusive and early access to models',
   'Purchase user cosmetics form our upcoming user cosmetic store!',
 ];
+
+export const STRIPE_PROCESSING_AWAIT_TIME = 20000; // 20s
+export const STRIPE_PROCESSING_CHECK_INTERVAL = 1000; // 1s

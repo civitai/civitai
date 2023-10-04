@@ -15,6 +15,7 @@ import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
@@ -246,6 +247,14 @@ export async function completeStripeBuzzTransaction({
 
   if (!paymentIntent || paymentIntent.status !== 'succeeded') {
     throw throwBadRequestError('Payment intent not found');
+  }
+
+  const metadata: PaymentIntentMetadataSchema =
+    paymentIntent.metadata as PaymentIntentMetadataSchema;
+
+  if (metadata.transactionId) {
+    // Avoid double down on buzz
+    return { transactionId: metadata.transactionId };
   }
 
   try {
