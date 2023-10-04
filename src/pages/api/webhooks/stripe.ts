@@ -12,6 +12,9 @@ import { env } from '~/env/server.mjs';
 import Stripe from 'stripe';
 // import { buffer } from 'micro';
 import { Readable } from 'node:stream';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { completeStripeBuzzPurchaseTransactionInput } from '~/server/schema/buzz.schema';
+import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -95,6 +98,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               await manageCheckoutPayment(checkoutSession.id, checkoutSession.customer as string);
             }
             break;
+          case 'payment_intent.succeeded':
+            const paymentIntent = event.data.object as Stripe.PaymentIntent;
+            const metadata = paymentIntent.metadata as PaymentIntentMetadataSchema;
+            if (metadata.type === 'buzzPurchase') {
+              await completeStripeBuzzTransaction({
+                amount: paymentIntent.amount,
+                stripePaymentIntentId: paymentIntent.id,
+                details: metadata,
+                userId: metadata.userId,
+              });
+            }
           default:
             throw new Error('Unhandled relevant event!');
         }

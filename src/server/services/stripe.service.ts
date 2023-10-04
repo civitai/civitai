@@ -526,7 +526,7 @@ export const getBuzzPackages = async () => {
 export const getPaymentIntent = async ({
   unitAmount,
   currency = Currency.USD,
-  metadata = {},
+  metadata,
   paymentMethodTypes,
   customerId,
   user,
@@ -541,7 +541,7 @@ export const getPaymentIntent = async ({
   }
 
   const stripe = await getServerStripe();
-  const parsedMetadata: MetadataParam = { userId: user.id, ...(metadata ?? {}) };
+  const parsedMetadata = { userId: user.id, ...metadata };
   const paymentIntent = await stripe.paymentIntents.create({
     amount: unitAmount,
     currency,

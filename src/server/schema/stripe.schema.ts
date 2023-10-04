@@ -26,10 +26,26 @@ export const buzzPriceMetadataSchema = z.object({
   bonusDescription: z.coerce.string().optional(),
 });
 
+const buzzPurchaseMetadataSchema = z
+  .object({
+    type: z.literal('buzzPurchase'),
+    buzzAmount: z.coerce.number().positive(),
+    unitAmount: z.coerce.number().positive(),
+    userId: z.coerce.number().positive(),
+    transactionId: z.string().optional(),
+  })
+  .passthrough();
+
+export type PaymentIntentMetadataSchema = z.infer<typeof paymentIntentMetadataSchema>;
+
+export const paymentIntentMetadataSchema = z.discriminatedUnion('type', [
+  buzzPurchaseMetadataSchema,
+]);
+
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
 export const paymentIntentCreationSchema = z.object({
   unitAmount: z.number().min(499),
   currency: z.nativeEnum(Currency),
-  metadata: z.object({}).passthrough().nullish(),
+  metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),
 });

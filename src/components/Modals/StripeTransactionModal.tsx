@@ -18,6 +18,7 @@ import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 
 type Props = {
   successMessage?: React.ReactNode;
@@ -25,7 +26,7 @@ type Props = {
   unitAmount: number;
   currency?: Currency;
   onSuccess?: (stripePaymentIntentId: string) => void;
-  metadata?: any;
+  metadata: PaymentIntentMetadataSchema;
   paymentMethodTypes?: string[];
 };
 
@@ -39,7 +40,7 @@ const { openModal, Modal } = createContextModal<Props>({
   zIndex: 400,
   Element: ({
     context,
-    props: { unitAmount, currency = Currency.USD, metadata = {}, paymentMethodTypes, ...props },
+    props: { unitAmount, currency = Currency.USD, metadata, paymentMethodTypes, ...props },
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
