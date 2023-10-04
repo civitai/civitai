@@ -42,7 +42,10 @@ const useStyles = createStyles((theme) => ({
     height: 'auto',
     width: '100%',
     borderRadius: theme.radius.md,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.white,
+
+    '&[data-variant="filled"]': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
+    },
 
     '&[data-checked]': {
       border: `2px solid ${theme.colors.accent[5]}`,
@@ -61,7 +64,7 @@ const useStyles = createStyles((theme) => ({
 
   // Accordion styling
   accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
 
     '&:first-of-type, &:first-of-type>[data-accordion-control]': {
       borderTopLeftRadius: theme.radius.md,
