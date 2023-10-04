@@ -64,9 +64,18 @@ export const useStripeTransaction = ({
 
       switch (paymentIntent.status) {
         case 'succeeded':
-          setPaymentIntentStatus('succeeded');
-          await onPaymentSuccess?.(paymentIntent.id);
-          setProcessingPayment(false);
+          try {
+            setPaymentIntentStatus('succeeded');
+            await onPaymentSuccess?.(paymentIntent.id);
+            setProcessingPayment(false);
+          } catch (_: any) {
+            // Safeguard in case anything fails after payment is successful
+            setErrorMessage(
+              'Payment was successful but there was an error performing requested actions after completion. Please contact support.'
+            );
+            setProcessingPayment(false);
+            setPaymentIntentStatus('error');
+          }
           break;
         case 'processing':
           setPaymentIntentStatus('processing');

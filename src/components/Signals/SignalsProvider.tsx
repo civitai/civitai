@@ -65,6 +65,10 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const createWorker = () => {
+      if (!data) {
+        return;
+      }
+
       createSignalWorker({
         token: data.accessToken,
         onConnected: () => {

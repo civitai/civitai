@@ -241,23 +241,27 @@ export async function completeStripeBuzzTransaction({
   stripePaymentIntentId,
   details,
   userId,
-}: CompleteStripeBuzzPurchaseTransactionInput & { userId: number }) {
-  const stripe = await getServerStripe();
-  const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
-
-  if (!paymentIntent || paymentIntent.status !== 'succeeded') {
-    throw throwBadRequestError('Payment intent not found');
-  }
-
-  const metadata: PaymentIntentMetadataSchema =
-    paymentIntent.metadata as PaymentIntentMetadataSchema;
-
-  if (metadata.transactionId) {
-    // Avoid double down on buzz
-    return { transactionId: metadata.transactionId };
-  }
+  // This is a safeguard in case for some reason something fails when getting
+  // payment intent or buzz from another endpoint.
+  retry = 0,
+}: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }) {
+  const MAX_RETRIES = 3;
 
   try {
+    const stripe = await getServerStripe();
+    const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
+
+    if (!paymentIntent || paymentIntent.status !== 'succeeded') {
+      throw throwBadRequestError('Payment intent not found');
+    }
+
+    const metadata: PaymentIntentMetadataSchema =
+      paymentIntent.metadata as PaymentIntentMetadataSchema;
+
+    if (metadata.transactionId) {
+      // Avoid double down on buzz
+      return { transactionId: metadata.transactionId };
+    }
     const body = JSON.stringify({
       amount,
       fromAccountId: 0,
@@ -298,6 +302,17 @@ export async function completeStripeBuzzTransaction({
 
     return data;
   } catch (error) {
+    if (retry < MAX_RETRIES) {
+      return completeStripeBuzzTransaction({
+        amount,
+        stripePaymentIntentId,
+        details,
+        userId,
+        retry: retry + 1,
+      });
+    }
+
+    console.error('Error completing stripe transaction: ', error);
     throw error;
   }
 }
