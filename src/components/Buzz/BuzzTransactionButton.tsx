@@ -1,5 +1,4 @@
 import { Group, Text, ButtonProps, Button, Tooltip } from '@mantine/core';
-import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import React from 'react';
@@ -114,7 +113,7 @@ export function BuzzTransactionButton({
   };
 
   return (
-    <Button {...buttonProps} onClick={onPerformTransaction ? onClick : undefined}>
+    <Button color="yellow.7" {...buttonProps} onClick={onPerformTransaction ? onClick : undefined}>
       <Group spacing="md" noWrap>
         <CurrencyBadge
           currency={Currency.BUZZ}
