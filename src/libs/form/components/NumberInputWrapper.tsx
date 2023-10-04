@@ -16,7 +16,6 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     {
       format = 'delimited',
       clearable,
-      rightSection,
       onClear,
       onChange,
       value,
@@ -122,9 +121,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
             <Text size="xs">{currency}</Text>
           ) : showCloseButton ? (
             closeButton
-          ) : (
-            rightSection
-          )
+          ) : null
         }
         rightSectionWidth={format === 'currency' ? 45 : undefined}
         onChange={handleChange}
