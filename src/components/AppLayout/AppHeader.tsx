@@ -72,6 +72,7 @@ import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 const HEADER_HEIGHT = 70;
 
@@ -222,6 +223,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const router = useRouter();
   const features = useFeatureFlags();
+  const isMobile = useIsMobile();
 
   const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
@@ -501,7 +503,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
 
   const BuzzMenuItem = useCallback(
     ({
-      textSize = 'xs',
+      textSize = 'md',
       withAbbreviation = true,
       ...groupProps
     }: GroupProps & {
@@ -543,7 +545,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
             radius="xl"
             size="xs"
             px={12}
-            onClick={() => openBuyBuzzModal({})}
+            onClick={() => openBuyBuzzModal({}, { fullScreen: isMobile })}
             compact
           >
             Buy More Buzz
