@@ -11,7 +11,7 @@ import {
   Title,
   createStyles,
 } from '@mantine/core';
-import { ArticleEngagementType } from '@prisma/client';
+import { ArticleEngagementType, ModelStatus } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
@@ -44,8 +44,10 @@ import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { slugit, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { env } from '~/env/client.mjs';
+import { truncate } from 'lodash-es';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -82,15 +84,28 @@ export default function ArticleDetailsPage({
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
-  // TODO.articles: add meta description
   const meta = (
     <Meta
-      title={`Civitai | ${article?.title}`}
+      title={`${article?.title} | Civitai`}
+      description={
+        article?.content ? truncate(removeTags(article.content), { length: 150 }) : undefined
+      }
       image={
         article?.nsfw || article?.cover == null
           ? undefined
           : getEdgeUrl(article.cover, { width: 1200 })
       }
+      links={
+        article
+          ? [
+              {
+                href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
+                rel: 'canonical',
+              },
+            ]
+          : undefined
+      }
+      deIndex={!article?.publishedAt ? 'noindex' : undefined}
     />
   );
 
@@ -168,7 +183,7 @@ export default function ArticleDetailsPage({
       <Container size="xl">
         <Stack spacing={0} mb="xl">
           <Group position="apart" noWrap>
-            <Title weight="bold" className={classes.title}>
+            <Title weight="bold" className={classes.title} order={1}>
               {article.title}
             </Title>
             <Group align="center" className={classes.titleWrapper} noWrap>

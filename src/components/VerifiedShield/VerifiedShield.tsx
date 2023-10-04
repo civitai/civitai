@@ -80,6 +80,7 @@ export function VerifiedShield({ file, ...props }: Props) {
             component="a"
             href="https://github.com/civitai/civitai/wiki/Model-Safety-Checks"
             target="_blank"
+            rel="nofollow noreferrer"
             size="xs"
             color="dimmed"
             td="underline"

@@ -26,6 +26,7 @@ import {
   IconPlus,
   IconX,
 } from '@tabler/icons-react';
+import Link from 'next/link';
 import Router, { useRouter } from 'next/router';
 import React, { cloneElement, createContext, useCallback, useContext, useState } from 'react';
 import { create } from 'zustand';
@@ -664,9 +665,9 @@ function ImageGuardPopover({ children, nsfw }: { children: React.ReactElement; n
               </Text>
             </Group>
 
-            <Button size="xs" component={NextLink} href={`/login?returnUrl=${router.asPath}`}>
-              Login
-            </Button>
+            <Link href={`/login?returnUrl=${router.asPath}`}>
+              <Button size="xs">Login</Button>
+            </Link>
           </Stack>
         </Popover.Dropdown>
       </Popover>

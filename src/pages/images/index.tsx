@@ -11,11 +11,10 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-// import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
+import { env } from '~/env/client.mjs';
 
 const useStyles = createStyles((theme) => ({
   filtersWrapper: {
@@ -28,7 +27,6 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export default function ImagesPage() {
-  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { view } = useImageFilters('images');
   const { classes, theme } = useStyles();
@@ -36,12 +34,9 @@ export default function ImagesPage() {
   return (
     <>
       <Meta
-        title={`Civitai${
-          !currentUser
-            ? ` Image Gallery | Discover AI-Generated Images with Prompts and Resource Details`
-            : ''
-        }`}
-        description="Browse the Civitai Image Gallery, featuring AI-generated images along with prompts and resources used for their creation, showcasing the creativity of our talented community."
+        title="Civitai Gallery | AI-Generated Art Showcase"
+        description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images`, rel: 'canonical' }]}
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.image}

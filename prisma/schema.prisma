@@ -610,7 +610,8 @@ model ModelFile {
   rawScanResult     Json?
   hashes            ModelFileHash[]
   metadata          Json?
-  visibility        ModelFileVisibility    @default(Public)
+  visibility        ModelFileVisibility @default(Public)
+  dataPurged        Boolean             @default(false)
 
   @@index([modelVersionId], type: Hash)
 }

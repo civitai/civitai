@@ -59,6 +59,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ImageUploadProps } from '~/server/schema/image.schema';
 import { showSuccessNotification } from '~/utils/notifications';
+import { Meta } from '../Meta/Meta';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { getRandom } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
@@ -315,6 +316,13 @@ export function Collection({
 
   return (
     <>
+      {collection && (
+        <Meta
+          title={`${collection.name} - collection posted by ${collection.user.username}`}
+          description={collection.description ?? undefined}
+          deIndex={collection.read !== 'Public' ? 'noindex, nofollow' : undefined}
+        />
+      )}
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}

@@ -1,5 +1,4 @@
 import { Container, Stack, Title, Group, Button, Badge, Alert, Text } from '@mantine/core';
-import { GetServerSideProps } from 'next';
 import Link from 'next/link';
 
 import { Meta } from '~/components/Meta/Meta';
@@ -9,6 +8,7 @@ import { parseCookies } from '~/providers/CookiesProvider';
 import { openContextModal } from '@mantine/modals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -44,7 +44,11 @@ export default function QuestionsList() {
 
   return (
     <>
-      <Meta title="Questions | Civitai" />
+      <Meta
+        title="Civitai Questions | Ask the Generative AI Community"
+        description="Got questions about Stable Diffusion, fine-tuning, or prompting? Dive into our community forum and ask generative AI experts for guidance"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions`, rel: 'canonical' }]}
+      />
       <Container pb="xl">
         <Stack spacing="md">
           <Group position="apart">
@@ -55,8 +59,8 @@ export default function QuestionsList() {
               </Badge>
             </Title>
             {!isMuted && (
-              <Link href="/questions/create" passHref>
-                <Button component="a">Ask question</Button>
+              <Link href="/questions/create">
+                <Button>Ask question</Button>
               </Link>
             )}
           </Group>

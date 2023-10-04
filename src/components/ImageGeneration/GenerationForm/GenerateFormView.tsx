@@ -340,6 +340,7 @@ export function GenerateFormView({
                         href="https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4"
                         variant="link"
                         target="_blank"
+                        rel="nofollow noreferrer"
                       >
                         our survey
                       </Text>

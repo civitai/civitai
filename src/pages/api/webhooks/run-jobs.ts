@@ -1,33 +1,39 @@
 import { z } from 'zod';
+import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
 
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
-import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
-import { processImportsJob } from '~/server/jobs/process-imports';
-import { scanFilesJob } from '~/server/jobs/scan-files';
-import { sendNotificationsJob } from '~/server/jobs/send-notifications';
-import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { createLogger } from '~/utils/logging';
-import { redis } from '~/server/redis/client';
-import { removeDisconnectedImages } from '~/server/jobs/remove-disconnected-images';
-import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
-import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
-import { Job } from '~/server/jobs/job';
-import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
-import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
-import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
-import { isProd } from '~/env/other';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
+import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
-import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
-import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
+import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
+import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
+import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
+import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
+import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
+import { Job } from '~/server/jobs/job';
+import { bountyJobs } from '~/server/jobs/prepare-bounties';
+import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
+import { processImportsJob } from '~/server/jobs/process-imports';
+import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
+import { removeDisconnectedImages } from '~/server/jobs/remove-disconnected-images';
+import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
+import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
+import { resubmitTrainingJobs } from '~/server/jobs/resubmit-training-jobs';
+import { scanFilesJob } from '~/server/jobs/scan-files';
+import { searchIndexJobs } from '~/server/jobs/search-index-sync';
+import { sendNotificationsJob } from '~/server/jobs/send-notifications';
+import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
 import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
-import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { metricJobs } from '~/server/jobs/update-metrics';
+import { redis } from '~/server/redis/client';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { createLogger } from '~/utils/logging';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { env } from '~/env/server.mjs';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
@@ -60,12 +66,13 @@ export const jobs: Job[] = [
   // refreshImageGenerationCoverage,
   cleanImageResources,
   resubmitTrainingJobs,
+  deleteOldTrainingData,
+  updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
-  updateCollectionItemRandomId,
 ];
 
 const log = createLogger('jobs', 'green');

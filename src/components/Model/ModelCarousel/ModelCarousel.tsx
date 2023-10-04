@@ -16,6 +16,7 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
@@ -165,21 +166,13 @@ export function ModelCarousel({
           </Stack>
           <Group grow w="100%">
             {currentUser ? (
-              <Button
-                component={NextLink}
-                href="/user/account#content-moderation"
-                variant="outline"
-              >
-                Adjust Settings
-              </Button>
+              <Link href="/user/account#content-moderation">
+                <Button variant="outline">Adjust Settings</Button>
+              </Link>
             ) : (
-              <Button
-                component={NextLink}
-                href={`/login?returnUrl=${router.asPath}`}
-                variant="outline"
-              >
-                Log In
-              </Button>
+              <Link href={`/login?returnUrl=${router.asPath}`}>
+                <Button variant="outline">Log In</Button>
+              </Link>
             )}
             <Button onClick={onBrowseClick} variant="outline">
               Browse Gallery

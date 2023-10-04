@@ -106,7 +106,7 @@ function openLinkWhitelistRequestModal() {
           variant="link"
           href="https://forms.gle/MzMCVA4mq3r4osv6A"
           target="_blank"
-          rel="noopener noreferrer"
+          rel="nofollow noreferrer"
         >
           this link
         </Text>{' '}

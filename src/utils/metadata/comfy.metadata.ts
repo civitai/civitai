@@ -6,10 +6,14 @@ import { fromJson } from '../json-helpers';
 
 const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
 
+function cleanBadJson(str: string) {
+  return str.replace(/\[NaN\]/g, '[]').replace(/\[Infinity\]/g, '[]');
+}
+
 export const comfyMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => exif.prompt && exif.workflow,
   parse: (exif) => {
-    const prompt = JSON.parse(exif.prompt as string) as Record<string, ComfyNode>;
+    const prompt = JSON.parse(cleanBadJson(exif.prompt as string)) as Record<string, ComfyNode>;
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
     const upscalers: string[] = [];
@@ -132,8 +136,12 @@ function a1111Compatability(metadata: ImageMetaProps) {
   }
 }
 
-function getPromptText(node: ComfyNode) {
-  if (node.inputs?.text) return node.inputs.text as string;
+function getPromptText(node: ComfyNode): string {
+  if (node.inputs?.text) {
+    if (typeof node.inputs.text === 'string') return node.inputs.text;
+    if (typeof (node.inputs.text as ComfyNode).class_type !== 'undefined')
+      return getPromptText(node.inputs.text as ComfyNode);
+  }
   if (node.inputs?.text_g) {
     if (!node.inputs?.text_l || node.inputs?.text_l === node.inputs?.text_g)
       return node.inputs.text_g as string;

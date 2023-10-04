@@ -83,7 +83,7 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { scrollToTop } from '~/utils/scroll-utils';
-import { getDisplayName, removeTags, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
@@ -454,6 +454,25 @@ export default function ModelDetailsV2({
 
   const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
   const nsfw = userNotBlurringNsfw && model.nsfw === true;
+  const metaSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    applicationCategory: 'Multimedia',
+    applicationSubCategory: 'Stable Diffusion Model',
+    description: model.description,
+    name: model.name,
+    image:
+      nsfw || versionImages[0]?.url == null
+        ? undefined
+        : getEdgeUrl(versionImages[0].url, { width: 1200 }),
+    author: model.user.username,
+    datePublished: model.publishedAt,
+    aggregateRating: {
+      '@type': 'AggregateRating',
+      ratingValue: model.rank?.ratingAllTime,
+      reviewCount: model.rank?.ratingCountAllTime,
+    },
+  };
 
   const meta = (
     <Meta
@@ -466,6 +485,14 @@ export default function ModelDetailsV2({
           ? undefined
           : getEdgeUrl(versionImages[0].url, { width: 1200 })
       }
+      links={[
+        {
+          href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
+          rel: 'canonical',
+        },
+      ]}
+      schema={metaSchema}
+      deIndex={model.status !== ModelStatus.Published ? 'noindex' : undefined}
     />
   );
 
@@ -858,14 +885,11 @@ export default function ModelDetailsV2({
             {isOwner ? (
               <>
                 <ButtonTooltip label="Add Version">
-                  <ActionIcon
-                    component={NextLink}
-                    href={`/models/${model.id}/model-versions/create`}
-                    variant="light"
-                    color="blue"
-                  >
-                    <IconPlus size={14} />
-                  </ActionIcon>
+                  <Link href={`/models/${model.id}/model-versions/create`}>
+                    <ActionIcon variant="light" color="blue">
+                      <IconPlus size={14} />
+                    </ActionIcon>
+                  </Link>
                 </ButtonTooltip>
 
                 {versionCount > 1 && (

@@ -31,6 +31,8 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
+import { Meta } from '~/components/Meta/Meta';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async () => {
@@ -60,6 +62,11 @@ export default function Home() {
 
   return (
     <>
+      <Meta
+        title="Civitai: The Home of Open-Source Generative AI"
+        description="Explore thousands of high-quality Stable Diffusion models, share your AI-generated art, and engage with a vibrant community of creators"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/`, rel: 'canonical' }]}
+      />
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
