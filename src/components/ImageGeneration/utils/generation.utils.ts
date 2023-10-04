@@ -6,7 +6,6 @@ export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
     quantity = generation.defaultValues.quantity,
     steps = generation.defaultValues.steps,
     aspectRatio = generation.defaultValues.aspectRatio,
-    // sampler = generation.defaultValues.sampler,
     baseModel = 'SD1',
   } = data;
 

@@ -296,16 +296,6 @@ export const generation = {
       SD1: 1,
       SDXL: 8,
     },
-    sampler: {
-      'Euler a': 0.8,
-      Euler: 0.8,
-      Heun: 1,
-      LMS: 0.9,
-      DDIM: 1,
-      'DPM++ 2M Karras': 1.2,
-      DPM2: 1,
-      'DPM2 a': 1,
-    },
   },
 } as const;
 

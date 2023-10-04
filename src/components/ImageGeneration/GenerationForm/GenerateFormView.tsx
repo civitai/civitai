@@ -94,14 +94,13 @@ export function GenerateFormView({
   };
   // #endregion
 
-  const [baseModel, aspectRatio, steps, quantity, sampler] = form.watch([
+  const [baseModel, aspectRatio, steps, quantity] = form.watch([
     'baseModel',
     'aspectRatio',
     'steps',
     'quantity',
-    'sampler',
   ]);
-  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity, sampler });
+  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   return (
     <PersistentForm
