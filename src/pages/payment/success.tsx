@@ -51,7 +51,7 @@ export default function PaymentSuccess() {
           <Center
             sx={{
               // animation: `${jelloVerical} 2s 1s ease-in-out`,
-              animationName: `${enterFall}, ${jelloVerical}`,
+              animationName: `${enterFall}, ${jelloVertical}`,
               animationDuration: `1.5s, 2s`,
               animationDelay: `0s, 1.5s`,
               animationIterationCount: '1, 1',

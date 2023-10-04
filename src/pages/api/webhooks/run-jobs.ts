@@ -34,12 +34,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
-import { searchIndexJobs } from '~/server/jobs/search-index-sync';
-import { env } from '~/env/server.mjs';
-import { cleanImageResources } from '~/server/jobs/clean-image-resources';
-import { resubmitTrainingJobs } from '~/server/jobs/resubmit-training-jobs';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
-import { bountyJobs } from '~/server/jobs/prepare-bounties';
 
 export const jobs: Job[] = [
   scanFilesJob,
