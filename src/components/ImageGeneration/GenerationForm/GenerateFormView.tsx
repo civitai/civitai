@@ -56,10 +56,12 @@ export function GenerateFormView({
   form,
   onSubmit,
   onError,
+  loading,
 }: {
   form: UseFormReturn<GenerateFormModel>;
-  onSubmit: (data: GenerateFormModel) => void;
+  onSubmit: (data: GenerateFormModel) => Promise<void>;
   onError?: (error: unknown) => void;
+  loading?: boolean;
 }) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
@@ -92,8 +94,14 @@ export function GenerateFormView({
   };
   // #endregion
 
-  const [quantity, steps, clipSkip] = form.watch(['quantity', 'steps', 'clipSkip']);
-  const totalCost = calculateGenerationBill({ quantity, steps, clipSkip });
+  const [baseModel, aspectRatio, steps, quantity, sampler] = form.watch([
+    'baseModel',
+    'aspectRatio',
+    'steps',
+    'quantity',
+    'sampler',
+  ]);
+  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity, sampler });
 
   return (
     <PersistentForm
@@ -301,7 +309,7 @@ export function GenerateFormView({
                   label="Generate"
                   size="lg"
                   type="submit"
-                  loading={isSubmitting}
+                  loading={isSubmitting || loading}
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
                   buzzAmount={totalCost}

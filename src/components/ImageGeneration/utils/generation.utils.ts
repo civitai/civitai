@@ -1,13 +1,26 @@
 import { GenerateFormModel } from '~/server/schema/generation.schema';
-import { generation } from '~/server/common/constants';
+import { GenerationBaseModel, generation, getGenerationConfig } from '~/server/common/constants';
 
 export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
-  const { quantity = 0, steps = 0, clipSkip = 0 } = data;
+  const {
+    quantity = generation.defaultValues.quantity,
+    steps = generation.defaultValues.steps,
+    aspectRatio = generation.defaultValues.aspectRatio,
+    sampler = generation.defaultValues.sampler,
+    baseModel = 'SD1',
+  } = data;
 
-  return (
-    generation.settingsCost.base +
-    quantity * generation.settingsCost.quantity +
-    steps * generation.settingsCost.steps +
-    clipSkip * generation.settingsCost.clipSkip
+  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+  const { width, height } = aspectRatios[Number(aspectRatio)];
+
+  return Math.ceil(
+    generation.settingsCost.base *
+      generation.settingsCost.baseModel[baseModel as GenerationBaseModel] *
+      // @ts-ignore
+      generation.settingsCost.sampler[sampler] *
+      (width / generation.settingsCost.width) *
+      (height / generation.settingsCost.height) *
+      (steps / generation.settingsCost.steps) *
+      quantity
   );
 };

@@ -152,5 +152,12 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     }
   };
 
-  return <GenerateFormView form={form} onSubmit={handleSubmit} onError={handleError} />;
+  return (
+    <GenerateFormView
+      form={form}
+      onSubmit={handleSubmit}
+      onError={handleError}
+      loading={isLoading}
+    />
+  );
 }
