@@ -15,6 +15,7 @@ import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
@@ -240,15 +241,29 @@ export async function completeStripeBuzzTransaction({
   stripePaymentIntentId,
   details,
   userId,
-}: CompleteStripeBuzzPurchaseTransactionInput & { userId: number }) {
-  const stripe = await getServerStripe();
-  const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
-
-  if (!paymentIntent || paymentIntent.status !== 'succeeded') {
-    throw throwBadRequestError('Payment intent not found');
-  }
+  // This is a safeguard in case for some reason something fails when getting
+  // payment intent or buzz from another endpoint.
+  retry = 0,
+}: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
+  transactionId: string;
+}> {
+  const MAX_RETRIES = 3;
 
   try {
+    const stripe = await getServerStripe();
+    const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
+
+    if (!paymentIntent || paymentIntent.status !== 'succeeded') {
+      throw throwBadRequestError('Payment intent not found');
+    }
+
+    const metadata: PaymentIntentMetadataSchema =
+      paymentIntent.metadata as PaymentIntentMetadataSchema;
+
+    if (metadata.transactionId) {
+      // Avoid double down on buzz
+      return { transactionId: metadata.transactionId };
+    }
     const body = JSON.stringify({
       amount,
       fromAccountId: 0,
@@ -289,6 +304,16 @@ export async function completeStripeBuzzTransaction({
 
     return data;
   } catch (error) {
+    if (retry < MAX_RETRIES) {
+      return completeStripeBuzzTransaction({
+        amount,
+        stripePaymentIntentId,
+        details,
+        userId,
+        retry: retry + 1,
+      });
+    }
+
     throw error;
   }
 }

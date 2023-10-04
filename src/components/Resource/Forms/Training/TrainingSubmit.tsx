@@ -34,6 +34,9 @@ import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
+import { BuzzTransactionButton, useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 
 const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
@@ -316,6 +319,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
+  const { conditionalPerformTransaction } = useBuzzTransaction({
+    message: (requiredBalance) =>
+      `You don't have enough funds to train this model. Buy ${numberWithCommas(
+        requiredBalance
+      )} more BUZZ to train this model.`,
+    performTransactionOnPurchase: false,
+    purchaseSuccessMessage: (purchasedBalance) => (
+      <Stack>
+        <Text>Thank you for your purchase!</Text>
+        <Text>
+          We have added <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} /> to
+          your account. You can now continue the training process.
+        </Text>
+      </Stack>
+    ),
+  });
 
   const thisStep = 3;
 
@@ -464,46 +483,45 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
 
-    if ((buzzCost ?? 0) > (currentUser?.balance ?? 0))
-      return openBuyBuzzModal({
-        message: 'You have insufficient funds to run this training. You can buy more Buzz below.',
+    const performTransaction = () => {
+      return openConfirmModal({
+        title: 'Confirm Buzz Transaction',
+        children: (
+          <Stack>
+            <div>
+              <Text span inline>
+                The cost for this training run is:{' '}
+              </Text>
+              <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+                <CurrencyIcon currency={Currency.BUZZ} size={12} />
+              </Text>
+              <Text span inline>
+                {(buzzCost ?? 0).toLocaleString()}.
+              </Text>
+            </div>
+            <div>
+              <Text span inline>
+                Your remaining balance will be:{' '}
+              </Text>
+              <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+                <CurrencyIcon currency={Currency.BUZZ} size={12} />
+              </Text>
+              <Text span inline>
+                {((currentUser?.balance ?? 0) - (buzzCost ?? 0)).toLocaleString()}.
+              </Text>
+            </div>
+            <Text>Proceed?</Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Confirm' },
+        centered: true,
+        onConfirm: () => {
+          handleConfirm(rest);
+        },
       });
+    };
 
-    return openConfirmModal({
-      title: 'Confirm Buzz Transaction',
-      children: (
-        <Stack>
-          <div>
-            <Text span inline>
-              The cost for this training run is:{' '}
-            </Text>
-            <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
-              <CurrencyIcon currency={Currency.BUZZ} size={12} />
-            </Text>
-            <Text span inline>
-              {(buzzCost ?? 0).toLocaleString()}.
-            </Text>
-          </div>
-          <div>
-            <Text span inline>
-              Your remaining balance will be:{' '}
-            </Text>
-            <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
-              <CurrencyIcon currency={Currency.BUZZ} size={12} />
-            </Text>
-            <Text span inline>
-              {((currentUser?.balance ?? 0) - (buzzCost ?? 0)).toLocaleString()}.
-            </Text>
-          </div>
-          <Text>Proceed?</Text>
-        </Stack>
-      ),
-      labels: { cancel: 'Cancel', confirm: 'Confirm' },
-      centered: true,
-      onConfirm: () => {
-        handleConfirm(rest);
-      },
-    });
+    conditionalPerformTransaction(buzzCost ?? 0, performTransaction);
   };
 
   const handleConfirm = (data: z.infer<typeof schema>) => {
@@ -779,39 +797,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Accordion.Item>
           </Accordion>
         )}
-
-        <DescriptionTable
-          labelWidth="150px"
-          paperProps={{ mt: 'md' }}
-          items={[
-            {
-              label: 'Cost',
-              value: !!buzzCost ? (
-                <Group spacing={4}>
-                  <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
-                    <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                  </Text>
-                  <Text inline>{buzzCost.toLocaleString()}</Text>
-                </Group>
-              ) : (
-                <Text fs="italic">Select a base model to calculate</Text>
-              ),
-            },
-          ]}
-        />
       </Stack>
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>
-        <Button type="submit" loading={awaitInvalidate}>
-          <Group spacing={6}>
-            <Text inline>Submit</Text>
-            {(buzzCost ?? 0) > (currentUser?.balance ?? 0) && (
-              <IconAlertTriangle size={14} color="gold" />
-            )}
-          </Group>
-        </Button>
+        <BuzzTransactionButton
+          type="submit"
+          loading={awaitInvalidate}
+          label="Submit"
+          buzzAmount={buzzCost ?? 0}
+        />
       </Group>
     </Form>
   );

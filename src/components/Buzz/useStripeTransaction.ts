@@ -1,7 +1,15 @@
 import { useElements, useStripe } from '@stripe/react-stripe-js';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useInterval } from '@mantine/hooks';
 import { PaymentIntent } from '@stripe/stripe-js';
+import {
+  STRIPE_PROCESSING_AWAIT_TIME,
+  STRIPE_PROCESSING_CHECK_INTERVAL,
+} from '~/server/common/constants';
+import { env } from '~/env/client.mjs';
+
+const MAX_RETRIES = Math.floor(STRIPE_PROCESSING_AWAIT_TIME / STRIPE_PROCESSING_CHECK_INTERVAL);
+const CHECK_INTERVAL = STRIPE_PROCESSING_CHECK_INTERVAL;
 
 export const useStripeTransaction = ({
   onPaymentSuccess,
@@ -12,7 +20,7 @@ export const useStripeTransaction = ({
   metadata?: any;
 }) => {
   const [processingPayment, setProcessingPayment] = useState<boolean>(false);
-
+  const retries = useRef<number>(0);
   const stripe = useStripe();
   const elements = useElements();
 
@@ -28,6 +36,16 @@ export const useStripeTransaction = ({
   );
 
   const paymentIntentProcessor = useInterval(async () => {
+    if (retries.current >= MAX_RETRIES) {
+      setPaymentIntentStatus('processing_too_long');
+      setErrorMessage(
+        'Your payment is taking too long to be processed. Once the payment goes through, you will receive a confirmation email and purchase will be completed.'
+      );
+      setProcessingPayment(false);
+      return;
+    }
+
+    retries.current += 1;
     if (!clientSecret) return;
     const data = await fetchPaymentIntent(clientSecret);
     if (!data) return;
@@ -35,7 +53,7 @@ export const useStripeTransaction = ({
     const { paymentIntent } = data;
 
     processPaymentIntent(paymentIntent);
-  }, 350);
+  }, CHECK_INTERVAL);
 
   const processPaymentIntent = useCallback(
     async (paymentIntent?: PaymentIntent) => {
@@ -47,9 +65,18 @@ export const useStripeTransaction = ({
 
       switch (paymentIntent.status) {
         case 'succeeded':
-          setPaymentIntentStatus('succeeded');
-          await onPaymentSuccess?.(paymentIntent.id);
-          setProcessingPayment(false);
+          try {
+            setPaymentIntentStatus('succeeded');
+            await onPaymentSuccess?.(paymentIntent.id);
+            setProcessingPayment(false);
+          } catch (_: any) {
+            // Safeguard in case anything fails after payment is successful
+            setErrorMessage(
+              'Payment was successful but there was an error performing requested actions after completion. Please contact support.'
+            );
+            setProcessingPayment(false);
+            setPaymentIntentStatus('error');
+          }
           break;
         case 'processing':
           setPaymentIntentStatus('processing');
@@ -81,8 +108,12 @@ export const useStripeTransaction = ({
       paymentIntentProcessor.stop();
     }
 
-    return paymentIntentProcessor.stop;
-  }, [processingPayment, paymentIntentProcessor]);
+    return () => {
+      if (!processingPayment) {
+        paymentIntentProcessor.stop();
+      }
+    };
+  }, [processingPayment, paymentIntentProcessor.active]);
 
   const onConfirmPayment = async () => {
     if (!stripe || !elements) {
@@ -92,14 +123,15 @@ export const useStripeTransaction = ({
     }
 
     setProcessingPayment(true);
+    retries.current = 0;
 
     const { error, paymentIntent } = await stripe.confirmPayment({
       elements,
       redirect: 'if_required',
       confirmParams: {
         // Make sure to change this to your payment completion page
-        // TODO.stripePayments: change this to the actual return url. Used for paypal for example. In the meantime, won't be used I believe.
-        return_url: 'http://localhost:3000/todo',
+        // TODO.stripePayments: change this to the actual return url. May not need to do anything but redirect.
+        return_url: `${env.NEXT_PUBLIC_BASE_URL}/purchase/buzz`,
       },
     });
 

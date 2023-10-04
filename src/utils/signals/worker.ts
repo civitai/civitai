@@ -41,6 +41,9 @@ const getConnection = async ({ token }: { token: string }) => {
       emitter.emit('connectionReady', undefined);
       emitter.emit('connectionReconnected', undefined);
     });
+    connection.onreconnecting(() =>
+      emitter.emit('connectionClosed', { message: 'reconnecting...' })
+    );
     connection.onclose((error) =>
       emitter.emit('connectionError', { message: JSON.stringify(error) })
     );
