@@ -9,22 +9,26 @@ import {
   createStyles,
   Divider,
   Chip,
-  NumberInput,
   Loader,
   Input,
+  Accordion,
+  ThemeIcon,
 } from '@mantine/core';
-import { Price } from '@prisma/client';
-import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import { Currency, Price } from '@prisma/client';
+import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { UserBuzz } from '../User/UserBuzz';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { isNumber } from '~/utils/type-guards';
 import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -41,14 +45,16 @@ const useStyles = createStyles((theme) => ({
 
   // Chip styling
   chipLabel: {
-    padding: `4px ${theme.spacing.xs}px`,
+    padding: `${theme.spacing.sm}px ${theme.spacing.md}px`,
     height: 'auto',
     width: '100%',
-    borderRadius: theme.radius.sm,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.white,
 
     '&[data-checked]': {
       border: `2px solid ${theme.colors.accent[5]}`,
       color: theme.colors.accent[5],
+      padding: `${theme.spacing.sm}px ${theme.spacing.md}px`,
 
       '&[data-variant="filled"], &[data-variant="filled"]:hover': {
         backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
@@ -59,37 +65,46 @@ const useStyles = createStyles((theme) => ({
   chipCheckmark: {
     display: 'none',
   },
+
+  // Accordion styling
+  accordionItem: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+
+    '&:first-of-type, &:first-of-type>[data-accordion-control]': {
+      borderTopLeftRadius: theme.radius.md,
+      borderTopRightRadius: theme.radius.md,
+    },
+
+    '&:last-of-type, &:last-of-type>[data-accordion-control]': {
+      borderBottomLeftRadius: theme.radius.md,
+      borderBottomRightRadius: theme.radius.md,
+    },
+
+    '&[data-active="true"]': {
+      border: `1px solid ${theme.colors.accent[5]}`,
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
+    },
+  },
 }));
 
-type SelectablePackage = Pick<Price, 'id' | 'unitAmount'>;
+type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
-const { openModal, Modal } = createContextModal<{ message?: string }>({
+const { openModal, Modal } = createContextModal<{
+  message?: string;
+  purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
+  onPurchaseSuccess?: () => void;
+  minBuzzAmount?: number;
+}>({
   name: 'buyBuzz',
   withCloseButton: false,
   size: 'lg',
   radius: 'lg',
-  Element: ({ context, props: { message } }) => {
-    const currentUser = useCurrentUser();
-    const { classes } = useStyles();
-
-    const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
-    const [error, setError] = useState('');
-    const [customAmount, setCustomAmount] = useState<number | undefined>();
-
-    const { packages, isLoading, createCheckoutSession, creatingSession } = useQueryBuzzPackages();
-
+  Element: ({
+    context,
+    props: { message, onPurchaseSuccess, minBuzzAmount, purchaseSuccessMessage },
+  }) => {
     const handleClose = () => context.close();
-    const handleSubmit = async () => {
-      if (!selectedPrice) return setError('Please choose one option');
-      if (!selectedPrice.unitAmount && !customAmount)
-        return setError('Please enter the amount you wish to buy');
-
-      return createCheckoutSession({
-        priceId: selectedPrice.id,
-        returnUrl: location.href,
-        customAmount,
-      }).catch(() => ({}));
-    };
+    const currentUser = useCurrentUser();
 
     return (
       <Stack spacing="md">
@@ -98,129 +113,60 @@ const { openModal, Modal } = createContextModal<{ message?: string }>({
             Buy Buzz
           </Text>
           <Group spacing="sm" noWrap>
-            <UserBuzz user={currentUser} withTooltip />
-            <Badge radius="xl" color="gray.9" variant="filled" px={12}>
-              <Text size="xs" transform="capitalize" weight={600}>
-                Available Buzz
-              </Text>
+            <Badge
+              radius="xl"
+              variant="filled"
+              h="auto"
+              py={4}
+              px={12}
+              sx={(theme) => ({
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[3],
+              })}
+            >
+              <Group spacing={4} noWrap>
+                <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
+                  Available Buzz
+                </Text>
+                <UserBuzz user={currentUser} iconSize={16} textSize="sm" withTooltip />
+              </Group>
             </Badge>
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
         <Divider mx="-lg" />
-        {message && (
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
-            {message}
-          </AlertWithIcon>
-        )}
-        <Stack spacing={0}>
-          <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
-          <Text size="sm" color="dimmed">
-            ($1 USD = 1,000 Buzz)
-          </Text>
-        </Stack>
-        {isLoading ? (
-          <Center py="xl">
-            <Loader variant="bars" />
-          </Center>
-        ) : (
-          <Input.Wrapper error={error}>
-            <Stack spacing="xl" mb={error ? 5 : undefined}>
-              <Chip.Group
-                className={classes.chipGroup}
-                value={selectedPrice?.id ?? ''}
-                onChange={(priceId: string) => {
-                  const selectedPackage = packages.find((p) => p.id === priceId);
-                  setCustomAmount(undefined);
-                  setError('');
-                  setSelectedPrice(selectedPackage ?? null);
-                }}
-              >
-                {packages.map((buzzPackage, index) => {
-                  const price = (buzzPackage.unitAmount ?? 0) / 100;
-
-                  return (
-                    <Chip
-                      key={buzzPackage.id}
-                      value={buzzPackage.id}
-                      classNames={{ label: classes.chipLabel, iconWrapper: classes.chipCheckmark }}
-                      variant="filled"
-                    >
-                      <Group align="center">
-                        <Text color="accent.5">
-                          <IconBolt
-                            color="currentColor"
-                            fill="currentColor"
-                            style={{ verticalAlign: 'middle' }}
-                          />
-                        </Text>
-                        <Stack spacing={0}>
-                          {price ? (
-                            <>
-                              <Text size="lg" color="white" weight={590}>
-                                {buzzPackage.name ?? `Tier ${index + 1}`}
-                                <Text sx={{ fontVariantNumeric: 'tabular-nums' }} span>
-                                  {` ($${price.toFixed(2)})`}
-                                </Text>
-                              </Text>
-                              <Text size="md">
-                                {buzzPackage.buzzAmount
-                                  ? buzzPackage.buzzAmount.toLocaleString()
-                                  : 0}{' '}
-                                Buzz
-                              </Text>
-                            </>
-                          ) : (
-                            <>
-                              <Text size="lg" color="white" weight={590}>
-                                Custom amount
-                              </Text>
-                              <Text size="md" color="dimmed">
-                                You choose how much Buzz you want to buy
-                              </Text>
-                            </>
-                          )}
-                        </Stack>
-                      </Group>
-                    </Chip>
-                  );
-                })}
-              </Chip.Group>
-
-              {selectedPrice && !selectedPrice.unitAmount && (
-                <NumberInputWrapper
-                  placeholder="Minimum $5 USD"
-                  variant="filled"
-                  icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
-                  value={customAmount}
-                  min={499}
-                  precision={2}
-                  disabled={creatingSession}
-                  format="currency"
-                  currency="USD"
-                  onChange={(value) => {
-                    setError('');
-                    setCustomAmount(value ?? 0);
-                  }}
-                  rightSectionWidth="10%"
-                  hideControls
-                />
-              )}
-            </Stack>
-          </Input.Wrapper>
-        )}
-        <Group position="right">
-          <Button variant="filled" color="gray" onClick={handleClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} loading={creatingSession}>
-            Buy
-          </Button>
-        </Group>
+        <BuzzPurchase
+          message={message}
+          onPurchaseSuccess={() => {
+            onPurchaseSuccess?.();
+            handleClose();
+          }}
+          minBuzzAmount={minBuzzAmount}
+          purchaseSuccessMessage={purchaseSuccessMessage}
+          onCancel={handleClose}
+        />
       </Stack>
     );
   },
 });
+
+const iconSizesRatio = [1, 1.3, 1.6];
+
+const BuzzTierIcon = ({ tier }: { tier: number }) => {
+  return (
+    <Group spacing={0} noWrap>
+      {Array.from({ length: 3 }).map((_, i) => (
+        <IconBolt
+          key={i}
+          size={20 * iconSizesRatio[i]}
+          color="currentColor"
+          fill="currentColor"
+          opacity={i < tier ? 1 : 0.2}
+        />
+      ))}
+    </Group>
+  );
+};
 
 export const openBuyBuzzModal = openModal;
 export default Modal;

@@ -1,6 +1,6 @@
 import { isFutureDate } from '~/utils/date-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
@@ -12,9 +12,13 @@ import { playfab } from '~/server/playfab/client';
 import { TransactionType } from '../schema/buzz.schema';
 import { isDefined } from '~/utils/type-guards';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { Currency } from '@prisma/client';
+import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
+import { MetadataParam } from '@stripe/stripe-js';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
+const MINIMUM_PURCHASE_AMOUNT = 499;
 
 export const getPlans = async () => {
   const products = await dbRead.product.findMany({
@@ -517,4 +521,41 @@ export const getBuzzPackages = async () => {
       description: meta.success ? meta.data.bonusDescription : null,
     };
   });
+};
+
+export const getPaymentIntent = async ({
+  unitAmount,
+  currency = Currency.USD,
+  metadata = {},
+  paymentMethodTypes,
+  customerId,
+  user,
+}: PaymentIntentCreationSchema & { user: { id: number; email: string }; customerId?: string }) => {
+  // TODO: If a user doesn't exist, create one. Initially, this will be protected, but ideally, we should create the user on our end
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  if (unitAmount < MINIMUM_PURCHASE_AMOUNT) {
+    throw throwBadRequestError('Minimum purchase amount is $4.99');
+  }
+
+  const stripe = await getServerStripe();
+  const parsedMetadata: MetadataParam = { userId: user.id, ...(metadata ?? {}) };
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: unitAmount,
+    currency,
+    automatic_payment_methods: !paymentMethodTypes
+      ? {
+          enabled: true,
+        }
+      : undefined,
+    customer: customerId,
+    metadata: parsedMetadata,
+    payment_method_types: paymentMethodTypes || undefined,
+  });
+
+  return {
+    clientSecret: paymentIntent.client_secret,
+  };
 };

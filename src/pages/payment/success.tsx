@@ -34,7 +34,6 @@ export default function PaymentSuccess() {
     return null;
   }
 
-  // console.log({ currentUser });
   return (
     <Container size="xs" mb="lg">
       <Stack>

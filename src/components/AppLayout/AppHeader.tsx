@@ -72,6 +72,8 @@ import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { Currency } from '@prisma/client';
 
 const HEADER_HEIGHT = 70;
 
@@ -287,7 +289,8 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         label: (
           <Group align="center" spacing="xs">
             <IconMoneybag stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            Create a bounty
+            <Text>Create a bounty</Text>
+            <CurrencyIcon currency={Currency.BUZZ} size={14} />
           </Group>
         ),
       },
@@ -675,7 +678,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 >
                   <Group spacing={8} noWrap>
                     <UserAvatar user={currentUser} size="md" />
-                    {features.buzz && <UserBuzz user={currentUser} />}
+                    {features.buzz && <UserBuzz user={currentUser} pr="sm" />}
                   </Group>
                 </UnstyledButton>
               </Menu.Target>

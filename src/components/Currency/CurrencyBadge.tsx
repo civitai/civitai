@@ -25,6 +25,7 @@ export function CurrencyBadge({
   formatter,
   displayCurrency = true,
   sx,
+  children,
   ...badgeProps
 }: Props) {
   const value = formatCurrencyForDisplay(unitAmount, currency);
@@ -57,6 +58,7 @@ export function CurrencyBadge({
             {value || 0} {displayCurrency ? currency : ''}
           </>
         )}
+        {children}
       </Group>
     </Badge>
   );

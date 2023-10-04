@@ -22,6 +22,10 @@ import { trpc } from '~/utils/trpc';
 import { UserBuzz } from '../User/UserBuzz';
 import { openConfirmModal } from '@mantine/modals';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { BuzzTransactionButton, useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -135,8 +139,23 @@ const { openModal, Modal } = createContextModal<{
     const currentUser = useCurrentUser();
     const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
     const queryUtils = trpc.useContext();
-
     const [loading, setLoading] = useState(false);
+    const { conditionalPerformTransaction } = useBuzzTransaction({
+      message: (requiredBalance: number) =>
+        `You don't have enough funds to perform this action. Buy ${numberWithCommas(
+          requiredBalance
+        )} more BUZZ to perform this action.`,
+      purchaseSuccessMessage: (purchasedBalance) => (
+        <Stack>
+          <Text>Thank you for your purchase!</Text>
+          <Text>
+            We have added <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} />{' '}
+            to your account and your tip has been sent to the desired user.
+          </Text>
+        </Stack>
+      ),
+      performTransactionOnPurchase: true,
+    });
 
     const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
       async onSuccess(_, { amount }) {
@@ -166,71 +185,57 @@ const { openModal, Modal } = createContextModal<{
     const handleSubmit = (data: z.infer<typeof schema>) => {
       const { customAmount, description } = data;
       const amount = Number(data.amount);
-
-      if (amount === -1 && customAmount) {
-        if (customAmount > (currentUser?.balance ?? 0)) {
-          return form.setError(
-            'customAmount',
-            {
-              message: 'You have insufficient funds to tip',
-              type: 'value',
-            },
-            { shouldFocus: true }
-          );
+      const amountToSend = Number(amount) === -1 ? customAmount ?? 0 : Number(amount);
+      const performTransaction = () => {
+        if (amount === -1 && customAmount) {
+          if (customAmount === currentUser?.balance) {
+            return openConfirmModal({
+              centered: true,
+              title: 'Tip Buzz',
+              children: 'You are about to send all your buzz. Are you sure?',
+              labels: { confirm: 'Yes, send all buzz', cancel: 'No, go back' },
+              onConfirm: () =>
+                createBuzzTransactionMutation.mutate({
+                  toAccountId: toUserId,
+                  type: TransactionType.Tip,
+                  amount: customAmount,
+                  description,
+                  entityId,
+                  entityType,
+                }),
+            });
+          } else {
+            return createBuzzTransactionMutation.mutate({
+              toAccountId: toUserId,
+              type: TransactionType.Tip,
+              amount: customAmount,
+              description,
+              entityId,
+              entityType,
+            });
+          }
         }
 
-        if (customAmount === currentUser?.balance) {
-          return openConfirmModal({
-            centered: true,
-            title: 'Tip Buzz',
-            children: 'You are about to send all your buzz. Are you sure?',
-            labels: { confirm: 'Yes, send all buzz', cancel: 'No, go back' },
-            onConfirm: () => {
-              createBuzzTransactionMutation.mutate({
-                toAccountId: toUserId,
-                type: TransactionType.Tip,
-                amount: customAmount,
-                description,
-                entityId,
-                entityType,
-              });
-            },
-          });
-        } else {
-          return createBuzzTransactionMutation.mutate({
-            toAccountId: toUserId,
-            type: TransactionType.Tip,
-            amount: customAmount,
-            description,
-            entityId,
-            entityType,
-          });
-        }
-      }
+        createBuzzTransactionMutation.mutate({
+          toAccountId: toUserId,
+          type: TransactionType.Tip,
+          amount,
+          description,
+          entityId,
+          entityType,
+        });
+      };
 
-      if (amount > (currentUser?.balance ?? 0)) {
-        return form.setError(
-          'amount',
-          {
-            message: 'You have insufficient funds to tip',
-            type: 'value',
-          },
-          { shouldFocus: true }
-        );
-      }
-
-      return createBuzzTransactionMutation.mutate({
-        toAccountId: toUserId,
-        type: TransactionType.Tip,
-        amount,
-        description,
-        entityId,
-        entityType,
-      });
+      conditionalPerformTransaction(amountToSend, performTransaction);
     };
 
     const sending = loading || createBuzzTransactionMutation.isLoading;
-    const [amount, description] = form.watch(['amount', 'description']);
+    const [amount, description, customAmount] = form.watch([
+      'amount',
+      'description',
+      'customAmount',
+    ]);
+    const amountToSend = Number(amount) === -1 ? customAmount : Number(amount);
 
     return (
       <Stack spacing="md">
@@ -280,7 +285,6 @@ const { openModal, Modal } = createContextModal<{
                 variant="filled"
                 rightSectionWidth="10%"
                 min={1000}
-                max={currentUser?.balance}
                 disabled={sending}
                 icon={<CurrencyIcon currency="BUZZ" size={16} />}
                 parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
@@ -310,13 +314,13 @@ const { openModal, Modal } = createContextModal<{
               >
                 Cancel
               </Button>
-              <Button
-                className={classes.submitButton}
+              <BuzzTransactionButton
+                label="Tip"
+                buzzAmount={amountToSend ?? 0}
+                disabled={(amountToSend ?? 0) === 0}
+                color="yellow.7"
                 type="submit"
-                loading={createBuzzTransactionMutation.isLoading}
-              >
-                Tip this amount
-              </Button>
+              />
             </Group>
           </Stack>
         </Form>

@@ -50,6 +50,7 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { calculateGenerationBill } from '../utils/generation.utils';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 export function GenerateFormView({
   form,
@@ -296,16 +297,16 @@ export function GenerateFormView({
                     />
                   </Stack>
                 </Card>
-                <Button
-                  type="submit"
+                <BuzzTransactionButton
+                  label="Generate"
                   size="lg"
+                  type="submit"
                   loading={isSubmitting}
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
-                >
-                  {/* TODO.buzz: use the new component to display the total cost */}
-                  Generate {`(${totalCost.toLocaleString()})`}
-                </Button>
+                  buzzAmount={totalCost}
+                  color="yellow.7"
+                />
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
                   onClick={() => form.reset()}
@@ -370,7 +371,7 @@ export function GenerateFormView({
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   generationContainer: {},
   generateButtonContainer: {
     width: '100%',

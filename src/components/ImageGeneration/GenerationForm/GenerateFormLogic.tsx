@@ -14,8 +14,10 @@ import { uniqBy } from 'lodash-es';
 import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server/common/constants';
 import { ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { calculateGenerationBill } from '~/components/ImageGeneration/utils/generation.utils';
+import { useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { TransactionType } from '~/server/schema/buzz.schema';
 
 export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
   const currentUser = useCurrentUser();
@@ -28,6 +30,14 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
       nsfw: currentUser?.showNsfw,
     },
     shouldUnregister: false,
+  });
+
+  const { conditionalPerformTransaction, createBuzzTransactionMutation } = useBuzzTransaction({
+    message: (requiredBalance) =>
+      `You don't have enough funds to perform this action. Buy ${numberWithCommas(
+        requiredBalance
+      )} more BUZZ to perform this action.`,
+    performTransactionOnPurchase: true,
   });
 
   const runData = useGenerationStore((state) => state.data);
@@ -92,8 +102,12 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     };
   }, [runData]); //eslint-disable-line
 
-  const { mutateAsync } = useCreateGenerationRequest();
+  const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
+    if (isLoading) {
+      return;
+    }
+
     const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources].map((resource) => {
       if (resource.modelType === ModelType.TextualInversion)
@@ -103,20 +117,27 @@ export function GenerateFormLogic({ onSuccess }: { onSuccess?: () => void }) {
     if (vae) _resources.push(vae);
 
     const totalCost = calculateGenerationBill(data);
+    const performTransaction = async () => {
+      await mutateAsync({
+        resources: _resources.filter((x) => x.covered !== false),
+        params,
+      });
 
-    if (!currentUser?.balance || currentUser.balance > totalCost)
-      return openBuyBuzzModal(
-        { message: 'You do not have enough Buzz to generate images.' },
-        { sx: { zIndex: 400 } }
-      );
+      if (totalCost > 0) {
+        await createBuzzTransactionMutation.mutateAsync({
+          type: TransactionType.Generation,
+          amount: totalCost,
+          details: data,
+          toAccountId: 0,
+          description: 'Image generation',
+        });
+      }
 
-    await mutateAsync({
-      resources: _resources.filter((x) => x.covered !== false),
-      params,
-    });
+      onSuccess?.();
+      generationPanel.setView('queue'); // TODO.generation - determine what should actually happen after clicking 'generate'
+    };
 
-    onSuccess?.();
-    generationPanel.setView('queue'); // TODO.generation - determine what should actually happen after clicking 'generate'
+    conditionalPerformTransaction(totalCost, performTransaction);
   };
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();

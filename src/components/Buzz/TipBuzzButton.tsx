@@ -4,7 +4,6 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { openSendTipModal } from '../Modals/SendTipModal';
 
 type Props = ButtonProps & { toUserId: number; entityId?: number; entityType?: string };
@@ -16,12 +15,6 @@ export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }
   const theme = useMantineTheme();
 
   const handleClick = () => {
-    if (!currentUser?.balance)
-      return openBuyBuzzModal({
-        message:
-          'You have insufficient funds to tip. You can buy more Buzz below to send a tip to your favorite creators.',
-      });
-
     openSendTipModal({ toUserId, entityId, entityType }, { fullScreen: isMobile });
   };
 

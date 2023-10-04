@@ -81,3 +81,13 @@ export const createBuzzTransactionInput = z
       params: ['entityId', 'entityType'],
     }
   );
+
+export type CompleteStripeBuzzPurchaseTransactionInput = z.infer<
+  typeof completeStripeBuzzPurchaseTransactionInput
+>;
+
+export const completeStripeBuzzPurchaseTransactionInput = z.object({
+  amount: z.number().min(1),
+  stripePaymentIntentId: z.string(),
+  details: z.object({}).passthrough().nullish(),
+});

@@ -287,7 +287,7 @@ export const generation = {
     negativePrompt: '',
   },
   settingsCost: {
-    base: 1,
+    base: 0,
     quantity: 1,
     steps: 10,
     clipSkip: 2,
@@ -349,3 +349,12 @@ export const CurrencyConfig: Record<
   [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
   [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
 };
+
+export const BUZZ_FEATURE_LIST = [
+  'Pay for on-site model generation',
+  'Support your favorite creators via tips and subscriptions',
+  'Pay for on-site model training',
+  'Create bounties for models, images and more!',
+  'Pay for exclusive and early access to models',
+  'Purchase user cosmetics form our upcoming user cosmetic store!',
+];
