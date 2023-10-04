@@ -1,22 +1,92 @@
-import { Container, Stack, Title, Text, Alert, Group, Grid, Paper, List } from '@mantine/core';
+import {
+  Container,
+  Stack,
+  Title,
+  Text,
+  Alert,
+  Group,
+  Grid,
+  Paper,
+  List,
+  Center,
+  Divider,
+  ListProps,
+} from '@mantine/core';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '@prisma/client';
 import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { z } from 'zod';
-import { parseNumericString } from '~/utils/query-string-helpers';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
+import { enterFall, jelloVerical } from '~/libs/animations';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useState } from 'react';
 
 const schema = z.object({
   returnUrl: z.string().optional(),
   minBuzzAmount: z.coerce.number().optional(),
 });
+
+const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
+  return (
+    <List listStyleType="none" spacing="sm" {...props}>
+      {BUZZ_FEATURE_LIST.map((feature) => (
+        <List.Item key={feature}>
+          <Group noWrap>
+            <CurrencyIcon style={{ flexShrink: 0 }} currency={Currency.BUZZ} size={18} />
+            <Text>{feature}</Text>
+          </Group>
+        </List.Item>
+      ))}
+    </List>
+  );
+};
 export default function PurchaseBuzz() {
   const router = useRouter();
   const { returnUrl, minBuzzAmount } = schema.parse(router.query);
-  const currentUser = useCurrentUser() ?? {};
+  const [success, setSuccess] = useState<boolean>(false);
+
+  const handlePurchaseSuccess = () => {
+    if (returnUrl) {
+      return router.replace(returnUrl);
+    }
+
+    setSuccess(true);
+  };
+
+  if (success) {
+    return (
+      <Container size="md" mb="lg">
+        <Center
+          sx={{
+            // animation: `${jelloVerical} 2s 1s ease-in-out`,
+            animationName: `${enterFall}, ${jelloVerical}`,
+            animationDuration: `1.5s, 2s`,
+            animationDelay: `0s, 1.5s`,
+            animationIterationCount: '1, 1',
+          }}
+        >
+          <EdgeMedia src="41585279-0f0a-4717-174c-b5f02e157f00" width={256} />
+        </Center>
+        <Title order={1} align="center">
+          Thank you! 🎉
+        </Title>
+        <Text size="lg" align="center" mb="lg">
+          Your BUZZ has been added to your account and you&rsquo;re ready to start using it!
+        </Text>
+        <Divider my="md" />
+        <Center>
+          <Stack>
+            <Title order={3} align="center">
+              Where to go from here?
+            </Title>
+            <BuzzFeatures />
+          </Stack>
+        </Center>
+      </Container>
+    );
+  }
 
   return (
     <Container size="md" mb="lg">
@@ -30,19 +100,12 @@ export default function PurchaseBuzz() {
         <Grid.Col xs={12} md={4}>
           <Stack>
             <Title order={2}>What can I do with Buzz?</Title>
-            <List listStyleType="none" spacing="sm">
-              {BUZZ_FEATURE_LIST.map((feature) => (
-                <List.Item key={feature}>
-                  <Group noWrap>
-                    <CurrencyIcon style={{ flexShrink: 0 }} currency={Currency.BUZZ} size={18} />
-                    <Text>{feature}</Text>
-                  </Group>
-                </List.Item>
-              ))}
-            </List>
+            <BuzzFeatures />
           </Stack>
         </Grid.Col>
-        <Grid.Col xs={12} md={8}></Grid.Col>
+        <Grid.Col xs={12} md={8}>
+          <BuzzPurchase onPurchaseSuccess={handlePurchaseSuccess} minBuzzAmount={minBuzzAmount} />
+        </Grid.Col>
       </Grid>
     </Container>
   );

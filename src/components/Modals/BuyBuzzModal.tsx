@@ -28,6 +28,7 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -102,93 +103,8 @@ const { openModal, Modal } = createContextModal<{
     context,
     props: { message, onPurchaseSuccess, minBuzzAmount, purchaseSuccessMessage },
   }) => {
-    const currentUser = useCurrentUser();
-    const { classes } = useStyles();
-
-    const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
-    const [error, setError] = useState('');
-    const [customAmount, setCustomAmount] = useState<number | undefined>();
-    const [activeControl, setActiveControl] = useState<string | null>(null);
-    const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
-    const {
-      packages = [],
-      isLoading,
-      processing,
-      completeStripeBuzzPurchaseMutation,
-    } = useQueryBuzzPackages({
-      onPurchaseSuccess: () => {
-        context.close();
-        onPurchaseSuccess?.();
-      },
-    });
-    const availablePackages = useMemo(() => {
-      if (!minBuzzAmount) {
-        return packages;
-      }
-
-      return packages.filter((p) => !p.buzzAmount || p.buzzAmount >= minBuzzAmount) ?? [];
-    }, [minBuzzAmount, packages]);
     const handleClose = () => context.close();
-
-    const handleSubmit = async () => {
-      if (!selectedPrice && !customAmount) return setError('Please choose one option');
-
-      const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
-      const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
-
-      if (!unitAmount) return setError('Please enter the amount you wish to buy');
-
-      const metadata = { unitAmount, buzzAmount, selectedPriceId: selectedPrice?.id };
-
-      openStripeTransactionModal({
-        unitAmount,
-        message: (
-          <Stack>
-            <Text>
-              You are about to purchase{' '}
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
-            </Text>
-            <Text>Please fill in your data and complete your purchase.</Text>
-          </Stack>
-        ),
-        successMessage: purchaseSuccessMessage ? (
-          purchaseSuccessMessage(buzzAmount)
-        ) : (
-          <Stack>
-            <Text>Thank you for your purchase!</Text>
-            <Text>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited
-              to your account.
-            </Text>
-          </Stack>
-        ),
-        onSuccess: async (stripePaymentIntentId) => {
-          await completeStripeBuzzPurchaseMutation({
-            amount: buzzAmount,
-            details: metadata,
-            stripePaymentIntentId,
-          });
-        },
-        metadata: metadata,
-        // paymentMethodTypes: ['card'],
-      });
-    };
-
-    useEffect(() => {
-      if (availablePackages.length && !selectedPrice) {
-        setSelectedPrice(
-          minBuzzAmount
-            ? availablePackages.find((p) => !p.buzzAmount) ?? availablePackages[0]
-            : availablePackages[0]
-        );
-      }
-
-      if (minBuzzAmount) {
-        setCustomAmount(Math.max(minBuzzAmount / 10, 499));
-      }
-    }, [availablePackages, minBuzzAmount]);
-
-    const minBuzzAmountPrice = minBuzzAmount ? Math.max(minBuzzAmount / 10, 499) : 499;
+    const currentUser = useCurrentUser();
 
     return (
       <Stack spacing="md">
@@ -219,168 +135,16 @@ const { openModal, Modal } = createContextModal<{
           </Group>
         </Group>
         <Divider mx="-lg" />
-        {message && (
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
-            {message}
-          </AlertWithIcon>
-        )}
-        <Stack spacing={0}>
-          <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
-          <Text size="sm" color="dimmed">
-            ($1 USD = 1,000 Buzz)
-          </Text>
-        </Stack>
-        {isLoading || processing ? (
-          <Center py="xl">
-            <Loader variant="bars" />
-          </Center>
-        ) : (
-          <Input.Wrapper error={error}>
-            <Stack spacing="xl" mb={error ? 5 : undefined}>
-              <Chip.Group
-                className={classes.chipGroup}
-                value={selectedPrice?.id ?? ''}
-                onChange={(priceId: string) => {
-                  const selectedPackage = packages.find((p) => p.id === priceId);
-                  setCustomAmount(undefined);
-                  setError('');
-                  setSelectedPrice(selectedPackage ?? null);
-                  setActiveControl(null);
-                }}
-              >
-                {availablePackages.map((buzzPackage, index) => {
-                  if (!buzzPackage.unitAmount) return null;
-
-                  const price = buzzPackage.unitAmount / 100;
-                  const buzzAmount = buzzPackage.buzzAmount ?? buzzPackage.unitAmount * 10;
-
-                  return (
-                    <Chip
-                      key={buzzPackage.id}
-                      value={buzzPackage.id}
-                      variant="filled"
-                      classNames={{
-                        label: classes.chipLabel,
-                        iconWrapper: classes.chipCheckmark,
-                      }}
-                    >
-                      <Group spacing="sm" align="center">
-                        <Text color="accent.5">
-                          <BuzzTierIcon tier={index + 1} />
-                        </Text>
-                        {price ? (
-                          <Group spacing={8} position="apart" sx={{ flexGrow: 1 }}>
-                            <Text size={20} weight={510} color="accent.5">
-                              {buzzAmount.toLocaleString()} Buzz
-                            </Text>
-                            <Text
-                              color="initial"
-                              size={24}
-                              weight={510}
-                              sx={{ fontVariantNumeric: 'tabular-nums' }}
-                            >
-                              ${price}
-                            </Text>
-                          </Group>
-                        ) : (
-                          <Text size="md" color="dimmed">
-                            I&apos;ll enter my own amount
-                          </Text>
-                        )}
-                      </Group>
-                    </Chip>
-                  );
-                })}
-              </Chip.Group>
-
-              <Accordion
-                variant="contained"
-                value={activeControl}
-                classNames={{ item: classes.accordionItem }}
-                onChange={(value) => {
-                  setSelectedPrice(null);
-                  setActiveControl(value);
-                }}
-              >
-                <Accordion.Item value="customAmount">
-                  <Accordion.Control px="md" py={8}>
-                    <Group spacing={8}>
-                      <IconMoodDollar size={24} />
-                      <Text>I&apos;ll enter my own amount</Text>
-                    </Group>
-                  </Accordion.Control>
-                  <Accordion.Panel>
-                    <Group spacing={8} align="flex-end" sx={{ ['& > *']: { flexGrow: 1 } }} noWrap>
-                      <NumberInputWrapper
-                        label="Buzz"
-                        labelProps={{ sx: { fontSize: 12, fontWeight: 590 } }}
-                        placeholder={`Minimum ${Number(minBuzzAmountPrice * 10).toLocaleString()}`}
-                        icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
-                        value={customAmount ? customAmount * 10 : undefined}
-                        min={minBuzzAmountPrice * 10}
-                        disabled={processing}
-                        onChange={(value) => {
-                          setError('');
-                          setCustomAmount((value ?? 0) / 10);
-                        }}
-                        hideControls
-                      />
-                      <ThemeIcon size={36} variant="filled" color="gray">
-                        <IconArrowsExchange size={18} />
-                      </ThemeIcon>
-                      <NumberInputWrapper
-                        label="USD ($)"
-                        labelProps={{ sx: { fontSize: 12, fontWeight: 590 } }}
-                        placeholder={`Minimum $${formatPriceForDisplay(minBuzzAmountPrice)}`}
-                        icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
-                        value={customAmount}
-                        min={minBuzzAmountPrice}
-                        precision={2}
-                        disabled={processing}
-                        rightSection={null}
-                        format="currency"
-                        currency="USD"
-                        onChange={(value) => {
-                          setError('');
-                          setCustomAmount(value ?? 0);
-                        }}
-                        hideControls
-                      />
-                    </Group>
-                  </Accordion.Panel>
-                </Accordion.Item>
-              </Accordion>
-
-              {/* {selectedPrice && !selectedPrice.unitAmount && (
-                <NumberInputWrapper
-                  placeholder={`Minimum $${formatPriceForDisplay(minBuzzAmountPrice)} USD`}
-                  variant="filled"
-                  icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
-                  value={customAmount}
-                  min={minBuzzAmountPrice}
-                  precision={2}
-                  disabled={processing}
-                  format="currency"
-                  currency="USD"
-                  onChange={(value) => {
-                    setError('');
-                    setCustomAmount(value ?? 0);
-                  }}
-                  rightSectionWidth="10%"
-                  hideControls
-                />
-              )} */}
-            </Stack>
-          </Input.Wrapper>
-        )}
-        <Group position="right">
-          <Button variant="filled" color="gray" onClick={handleClose}>
-            Cancel
-          </Button>
-          <Button disabled={!ctaEnabled} onClick={handleSubmit} loading={processing}>
-            {processing ? 'Completing your purchase...' : 'Continue'}
-          </Button>
-        </Group>
+        <BuzzPurchase
+          message={message}
+          onPurchaseSuccess={() => {
+            onPurchaseSuccess?.();
+            handleClose();
+          }}
+          minBuzzAmount={minBuzzAmount}
+          purchaseSuccessMessage={purchaseSuccessMessage}
+          onCancel={handleClose}
+        />
       </Stack>
     );
   },

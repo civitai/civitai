@@ -27,7 +27,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React from 'react';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
@@ -209,7 +209,6 @@ export function BountyCreateForm() {
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
   const nsfwPoi = form.watch(['nsfw', 'poi']);
-  const [creating, setCreating] = useState(false);
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
     BountyType.LoraCreation,
@@ -612,8 +611,7 @@ export function BountyCreateForm() {
           </NavigateBack>
           {currency === Currency.BUZZ ? (
             <BuzzTransactionButton
-              loading={creatingBounty && !creating}
-              onClick={() => setCreating(false)}
+              loading={creatingBounty}
               type="submit"
               disabled={nsfwPoi.every((i) => i)}
               label="Save"
@@ -621,12 +619,7 @@ export function BountyCreateForm() {
               color="yellow.7"
             />
           ) : (
-            <Button
-              loading={creatingBounty && !creating}
-              onClick={() => setCreating(false)}
-              type="submit"
-              disabled={nsfwPoi.every((i) => i)}
-            >
+            <Button loading={creatingBounty} type="submit" disabled={nsfwPoi.every((i) => i)}>
               Save
             </Button>
           )}
