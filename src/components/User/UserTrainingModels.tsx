@@ -430,7 +430,7 @@ export default function UserTrainingModels() {
                                     <Accordion.Item value="params">
                                       <Accordion.Control>Expand</Accordion.Control>
                                       <Accordion.Panel>
-                                        <pre style={{ margin: 0 }}>
+                                        <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
                                           {JSON.stringify(modalData.params, null, 2)}
                                         </pre>
                                       </Accordion.Panel>
@@ -529,7 +529,7 @@ export default function UserTrainingModels() {
                                 e.stopPropagation();
                               }}
                             >
-                              <Group spacing={6}>
+                              <Group noWrap spacing={6}>
                                 Open Support Ticket <IconExternalLink size={12} />
                               </Group>
                             </Button>

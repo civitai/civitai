@@ -731,7 +731,7 @@ export const getCollectionItemsByCollectionId = async ({
   } else if (forReview && reviewSort === CollectionReviewSort.Oldest) {
     orderBy.push({ createdAt: 'asc' });
   } else {
-    orderBy.push({ createdAt: 'asc' });
+    orderBy.push({ createdAt: 'desc' });
   }
 
   const collectionItems = await dbRead.collectionItem.findMany({
