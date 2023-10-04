@@ -40,6 +40,11 @@ const getConnection = async ({ token }: { token: string }) => {
     connection.onclose((error) =>
       emitter.emit('connectionError', { message: JSON.stringify(error) })
     );
+
+    setInterval(() => {
+      if (!connection) return;
+      connection.send('ping');
+    }, 5 * 60 * 1000);
   } catch (e) {
     emitter.emit('connectionError', { message: JSON.stringify(e) });
   }
