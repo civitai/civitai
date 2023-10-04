@@ -541,7 +541,6 @@ export const getPaymentIntent = async ({
   }
 
   const stripe = await getServerStripe();
-  const parsedMetadata = { userId: user.id, ...metadata };
   const paymentIntent = await stripe.paymentIntents.create({
     amount: unitAmount,
     currency,
@@ -551,7 +550,7 @@ export const getPaymentIntent = async ({
         }
       : undefined,
     customer: customerId,
-    metadata: parsedMetadata,
+    metadata: metadata as MetadataParam,
     payment_method_types: paymentMethodTypes || undefined,
   });
 

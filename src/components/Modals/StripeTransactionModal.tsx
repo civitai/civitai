@@ -95,18 +95,21 @@ const StripeTransactionModal = ({
   successMessage,
 }: Props & { clientSecret: string; onClose: () => void }) => {
   const [success, setSuccess] = useState<boolean>(false);
-  const { processingPayment, onConfirmPayment, errorMessage } = useStripeTransaction({
-    clientSecret,
-    onPaymentSuccess: async (stripePaymentIntentId) => {
-      await onSuccess?.(stripePaymentIntentId);
-      setSuccess(true);
-    },
-    metadata,
-  });
+  const { processingPayment, onConfirmPayment, errorMessage, paymentIntentStatus } =
+    useStripeTransaction({
+      clientSecret,
+      onPaymentSuccess: async (stripePaymentIntentId) => {
+        await onSuccess?.(stripePaymentIntentId);
+        setSuccess(true);
+      },
+      metadata,
+    });
 
   const paymentElementOptions: StripePaymentElementOptions = {
     layout: 'tabs',
   };
+
+  const processingTooLong = paymentIntentStatus === 'processing_too_long';
 
   if (success) {
     return (
@@ -147,11 +150,11 @@ const StripeTransactionModal = ({
         )}
         <Group position="right">
           <Button variant="filled" color="gray" onClick={onClose} disabled={processingPayment}>
-            Back
+            {processingTooLong ? 'Close' : 'Cancel'}
           </Button>
           <Button
             component="button"
-            disabled={processingPayment}
+            disabled={processingPayment || processingTooLong}
             loading={processingPayment}
             type="submit"
           >
