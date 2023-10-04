@@ -6,7 +6,7 @@ export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
     quantity = generation.defaultValues.quantity,
     steps = generation.defaultValues.steps,
     aspectRatio = generation.defaultValues.aspectRatio,
-    sampler = generation.defaultValues.sampler,
+    // sampler = generation.defaultValues.sampler,
     baseModel = 'SD1',
   } = data;
 
@@ -16,8 +16,6 @@ export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
   return Math.ceil(
     generation.settingsCost.base *
       generation.settingsCost.baseModel[baseModel as GenerationBaseModel] *
-      // @ts-ignore
-      generation.settingsCost.sampler[sampler] *
       (width / generation.settingsCost.width) *
       (height / generation.settingsCost.height) *
       (steps / generation.settingsCost.steps) *

@@ -13,8 +13,10 @@ const { openModal, Modal } = createContextModal<{
 }>({
   name: 'buyBuzz',
   withCloseButton: false,
+  centered: true,
   size: 'lg',
   radius: 'lg',
+  zIndex: 400,
   Element: ({
     context,
     props: { message, onPurchaseSuccess, minBuzzAmount, purchaseSuccessMessage },

@@ -22,6 +22,7 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -110,6 +111,7 @@ export const BuzzPurchase = ({
   onCancel,
 }: Props) => {
   const { classes } = useStyles();
+  const isMobile = useIsMobile();
 
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
@@ -137,38 +139,41 @@ export const BuzzPurchase = ({
 
     const metadata = { unitAmount, buzzAmount, selectedPriceId: selectedPrice?.id };
 
-    openStripeTransactionModal({
-      unitAmount,
-      message: (
-        <Stack>
-          <Text>
-            You are about to purchase{' '}
-            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
-          </Text>
-          <Text>Please fill in your data and complete your purchase.</Text>
-        </Stack>
-      ),
-      successMessage: purchaseSuccessMessage ? (
-        purchaseSuccessMessage(buzzAmount)
-      ) : (
-        <Stack>
-          <Text>Thank you for your purchase!</Text>
-          <Text>
-            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited to
-            your account.
-          </Text>
-        </Stack>
-      ),
-      onSuccess: async (stripePaymentIntentId) => {
-        await completeStripeBuzzPurchaseMutation({
-          amount: buzzAmount,
-          details: metadata,
-          stripePaymentIntentId,
-        });
+    openStripeTransactionModal(
+      {
+        unitAmount,
+        message: (
+          <Stack>
+            <Text>
+              You are about to purchase{' '}
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+            </Text>
+            <Text>Please fill in your data and complete your purchase.</Text>
+          </Stack>
+        ),
+        successMessage: purchaseSuccessMessage ? (
+          purchaseSuccessMessage(buzzAmount)
+        ) : (
+          <Stack>
+            <Text>Thank you for your purchase!</Text>
+            <Text>
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited
+              to your account.
+            </Text>
+          </Stack>
+        ),
+        onSuccess: async (stripePaymentIntentId) => {
+          await completeStripeBuzzPurchaseMutation({
+            amount: buzzAmount,
+            details: metadata,
+            stripePaymentIntentId,
+          });
+        },
+        metadata: metadata,
+        // paymentMethodTypes: ['card'],
       },
-      metadata: metadata,
-      // paymentMethodTypes: ['card'],
-    });
+      { fullScreen: isMobile }
+    );
   };
 
   useEffect(() => {
@@ -194,9 +199,6 @@ export const BuzzPurchase = ({
       )}
       <Stack spacing={0}>
         <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
-        <Text size="sm" color="dimmed">
-          ($1 USD = 1,000 Buzz)
-        </Text>
       </Stack>
       {isLoading || processing ? (
         <Center py="xl">

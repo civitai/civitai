@@ -289,7 +289,7 @@ export const generation = {
   settingsCost: {
     base: 1,
     quantity: 1,
-    steps: 20,
+    steps: 40,
     width: 512,
     height: 512,
     baseModel: {
