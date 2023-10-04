@@ -28,7 +28,6 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ModelVersionPurchaseTransactionDetailsSchema } from '~/server/schema/model-version-purchase.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
@@ -357,84 +356,6 @@ export const declineReviewHandler = async ({
     });
 
     return updatedModel;
-  } catch (error) {
-    if (error instanceof TRPCError) error;
-    else throw throwDbError(error);
-  }
-};
-
-export const getPurchaseDetailsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: Context;
-}) => {
-  try {
-    const features = getFeatureFlags({ user: ctx.user });
-
-    const version = await getVersionById({
-      id: input.id,
-      select: {
-        id: true,
-        status: true,
-        model: {
-          select: {
-            userId: true,
-            status: true,
-          },
-        },
-        monetization: {
-          select: {
-            id: true,
-            unitAmount: true,
-            currency: true,
-            type: true,
-          },
-        },
-        purchases: ctx.user?.id
-          ? {
-              select: {
-                id: true,
-                transactionDetails: true,
-              },
-              where: {
-                userId: ctx.user?.id,
-              },
-            }
-          : undefined,
-      },
-    });
-
-    if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
-
-    const { purchases = [], monetization } = version;
-    const userId = ctx.user?.id;
-
-    const bypassPayment = ctx.user?.isModerator || (!!userId && version?.model?.userId === userId);
-    const baseDownloadRequirements =
-      bypassPayment || (version?.model?.status === 'Published' && version?.status === 'Published');
-
-    const userHasPurchasedModel =
-      bypassPayment ||
-      (purchases.length > 0 &&
-        purchases.some((p) => {
-          const details = p.transactionDetails as ModelVersionPurchaseTransactionDetailsSchema;
-          return details?.monetizationType === monetization?.type;
-        }));
-
-    // if !baseDownloadRequirementsMet, then the user is not allowed to download this model version at all.
-    const downloadRequiresPurchase =
-      features.modelMonetization &&
-      baseDownloadRequirements &&
-      monetization?.type === ModelVersionMonetizationType.PaidAccess &&
-      !userHasPurchasedModel;
-
-    const canDownload = downloadRequiresPurchase
-      ? userHasPurchasedModel && baseDownloadRequirements
-      : baseDownloadRequirements;
-
-    return { ...version, canDownload, downloadRequiresPurchase };
   } catch (error) {
     if (error instanceof TRPCError) error;
     else throw throwDbError(error);

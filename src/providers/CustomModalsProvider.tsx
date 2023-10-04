@@ -12,7 +12,6 @@ import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlo
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
-import { openPurchaseModelVersionModal } from '~/components/Modals/PurchaseModelVersionModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 
 const DynamicOnboardingModal = dynamic(
@@ -48,9 +47,6 @@ const ManageHomeBlocksModal = dynamic(
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
-const PurchaseModelVersionModal = dynamic(
-  () => import('~/components/Modals/PurchaseModelVersionModal')
-);
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 
 const registry = {
@@ -101,10 +97,6 @@ const registry = {
   bountyEntryFiles: {
     Component: BountyEntryFilesModal,
     fn: openBountyEntryFilesModal,
-  },
-  purchaseModelVersion: {
-    Component: PurchaseModelVersionModal,
-    fn: openPurchaseModelVersionModal,
   },
   stripeTransaction: {
     Component: StripeTransactionModal,
