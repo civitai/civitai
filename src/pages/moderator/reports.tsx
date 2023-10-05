@@ -216,7 +216,7 @@ export default function Reports() {
 
   return (
     <>
-      <Meta title="Reports" />
+      <Meta title="Reports" deIndex="noindex, nofollow" />
       <Container size="xl" pb="xl">
         <Stack>
           <Group align="flex-end">
@@ -409,7 +409,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
                     variant="link"
                     href={getEdgeUrl(cuid, { width: 450, name: cuid })}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="nofollow noreferrer"
                   >
                     Image {i + 1}
                   </Text>

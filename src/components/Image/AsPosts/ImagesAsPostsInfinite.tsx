@@ -11,8 +11,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconArrowsCross, IconCloudOff, IconPlus, IconStar } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
@@ -124,26 +124,18 @@ export default function ImagesAsPostsInfinite({
               {!isMuted && (
                 <Group>
                   <LoginRedirect reason="create-review">
-                    <Button
-                      component={NextLink}
-                      variant="outline"
-                      size="xs"
-                      leftIcon={<IconPlus size={16} />}
-                      href={addPostLink}
-                    >
-                      Add Post
-                    </Button>
+                    <Link href={addPostLink}>
+                      <Button variant="outline" size="xs" leftIcon={<IconPlus size={16} />}>
+                        Add Post
+                      </Button>
+                    </Link>
                   </LoginRedirect>
                   <LoginRedirect reason="create-review">
-                    <Button
-                      component={NextLink}
-                      leftIcon={<IconStar size={16} />}
-                      href={addPostLink + '&reviewing=true'}
-                      variant="outline"
-                      size="xs"
-                    >
-                      Add Review
-                    </Button>
+                    <Link href={addPostLink + '&reviewing=true'}>
+                      <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
+                        Add Review
+                      </Button>
+                    </Link>
                   </LoginRedirect>
                 </Group>
               )}

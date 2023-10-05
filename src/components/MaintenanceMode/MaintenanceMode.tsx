@@ -8,6 +8,7 @@ export const MaintenanceMode = () => {
       <Meta
         title="We'll be right back | Civitai"
         description="We're adjusting a few things, be back in a few minutes..."
+        deIndex="noindex, nofollow"
       />
       <Center p="xl" sx={{ height: '100vh' }}>
         <Stack align="center">

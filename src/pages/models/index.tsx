@@ -8,25 +8,26 @@ import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentTog
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { Meta } from '~/components/Meta/Meta';
 import { ModelCategoriesInfinite } from '~/components/Model/Categories/ModelCategoriesInfinite';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import { env } from '~/env/client.mjs';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { PeriodMode } from '~/server/schema/base.schema';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { QS } from '~/utils/qs';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.alternateHome) {
+  resolver: async ({ ctx, features }) => {
+    if (!features?.alternateHome) {
       const queryString = QS.stringify(ctx.query);
+
       return {
         redirect: {
           destination: `/${queryString ? '?' + queryString : ''}`,
@@ -48,69 +49,76 @@ export default function ModelsPage() {
   const view = canToggleView ? queryView ?? storedView : 'feed';
 
   return (
-    <MasonryProvider
-      columnWidth={constants.cardSizes.model}
-      maxColumnCount={7}
-      maxSingleColumnWidth={450}
-    >
-      <MasonryContainer fluid>
-        {username && typeof username === 'string' && <Title>Models by {username}</Title>}
-        {favorites && <Title>Your Liked Models</Title>}
-        {hidden && <Title>Your Hidden Models</Title>}
-        <Stack spacing="xs">
-          <Announcements
-            sx={(theme) => ({
-              marginBottom: -35,
-              [theme.fn.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
-          <Group position="left">
-            {features.alternateHome ? (
-              <FullHomeContentToggle />
-            ) : (
-              <HomeContentToggle sx={showMobile} />
-            )}
-          </Group>
-          <Group position="apart" spacing={0}>
-            <Group>
-              {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
-              <SortFilter type="models" />
-            </Group>
-            <Group spacing={4}>
-              {periodMode && (
-                <Popover>
-                  <Popover.Target>
-                    <ActionIcon variant="filled" color="blue" radius="xl" size="sm" mr={4}>
-                      <IconExclamationMark size={20} strokeWidth={3} />
-                    </ActionIcon>
-                  </Popover.Target>
-                  <Popover.Dropdown maw={300}>
-                    {`To ensure that you see all possible results, we've disable the period filter.`}
-                    <Button mt="xs" size="xs" fullWidth onClick={() => set({ query: undefined })}>
-                      Clear Search
-                    </Button>
-                  </Popover.Dropdown>
-                </Popover>
+    <>
+      <Meta
+        title="Civitai Models | Discover Free Stable Diffusion Models"
+        description="Browse from thousands of free Stable Diffusion models, spanning unique anime art styles, immersive 3D renders, stunning photorealism, and more"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/models`, rel: 'canonical' }]}
+      />
+      <MasonryProvider
+        columnWidth={constants.cardSizes.model}
+        maxColumnCount={7}
+        maxSingleColumnWidth={450}
+      >
+        <MasonryContainer fluid>
+          {username && typeof username === 'string' && <Title>Models by {username}</Title>}
+          {favorites && <Title>Your Liked Models</Title>}
+          {hidden && <Title>Your Hidden Models</Title>}
+          <Stack spacing="xs">
+            <Announcements
+              sx={(theme) => ({
+                marginBottom: -35,
+                [theme.fn.smallerThan('md')]: {
+                  marginBottom: -5,
+                },
+              })}
+            />
+            <Group position="left">
+              {features.alternateHome ? (
+                <FullHomeContentToggle />
+              ) : (
+                <HomeContentToggle sx={showMobile} />
               )}
-              <PeriodFilter type="models" />
-              <ModelFiltersDropdown />
-              {canToggleView && <ViewToggle type="models" />}
             </Group>
-          </Group>
-          <IsClient>
-            {view === 'categories' ? (
-              <ModelCategoriesInfinite />
-            ) : (
-              <>
-                <CategoryTags />
-                <ModelsInfinite filters={queryFilters} showEof />
-              </>
-            )}
-          </IsClient>
-        </Stack>
-      </MasonryContainer>
-    </MasonryProvider>
+            <Group position="apart" spacing={0}>
+              <Group>
+                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
+                <SortFilter type="models" />
+              </Group>
+              <Group spacing={4}>
+                {periodMode && (
+                  <Popover>
+                    <Popover.Target>
+                      <ActionIcon variant="filled" color="blue" radius="xl" size="sm" mr={4}>
+                        <IconExclamationMark size={20} strokeWidth={3} />
+                      </ActionIcon>
+                    </Popover.Target>
+                    <Popover.Dropdown maw={300}>
+                      {`To ensure that you see all possible results, we've disable the period filter.`}
+                      <Button mt="xs" size="xs" fullWidth onClick={() => set({ query: undefined })}>
+                        Clear Search
+                      </Button>
+                    </Popover.Dropdown>
+                  </Popover>
+                )}
+                <PeriodFilter type="models" />
+                <ModelFiltersDropdown />
+                {canToggleView && <ViewToggle type="models" />}
+              </Group>
+            </Group>
+            <IsClient>
+              {view === 'categories' ? (
+                <ModelCategoriesInfinite />
+              ) : (
+                <>
+                  <CategoryTags />
+                  <ModelsInfinite filters={queryFilters} showEof />
+                </>
+              )}
+            </IsClient>
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
+    </>
   );
 }

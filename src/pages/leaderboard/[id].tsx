@@ -33,6 +33,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, stringDate } from '~/utils/zod-helpers';
+import { env } from '~/env/client.mjs';
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
@@ -136,6 +137,12 @@ export default function Leaderboard() {
           .slice(0, 10)
           .map((x, i) => `${i + 1}. ${x.user.username}`)
           .join(', ')}... Check out the full leaderboard.`}
+        links={[
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/leaderboard/${selectedLeaderboard?.id ?? 'overall'}`,
+            rel: 'canonical',
+          },
+        ]}
       />
       <Container size="lg">
         <Grid gutter="xl">

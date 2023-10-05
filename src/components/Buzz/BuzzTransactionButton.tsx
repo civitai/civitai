@@ -8,6 +8,7 @@ import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props = ButtonProps & {
   buzzAmount: number;
@@ -26,6 +27,7 @@ export const useBuzzTransaction = ({
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
+  const isMobile = useIsMobile();
   const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
     async onSuccess(_, { amount }) {
       await queryUtils.buzz.getUserAccount.cancel();
@@ -61,7 +63,7 @@ export const useBuzzTransaction = ({
           onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
           purchaseSuccessMessage,
         },
-        { zIndex: 400 }
+        { fullScreen: isMobile }
       );
 
       return;

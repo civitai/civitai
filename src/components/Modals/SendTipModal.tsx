@@ -244,11 +244,23 @@ const { openModal, Modal } = createContextModal<{
             Tip Buzz
           </Text>
           <Group spacing="sm" noWrap>
-            <UserBuzz user={currentUser} withTooltip />
-            <Badge radius="xl" color="gray.9" variant="filled" px={12}>
-              <Text size="xs" transform="capitalize" weight={600}>
-                Available Buzz
-              </Text>
+            <Badge
+              radius="xl"
+              variant="filled"
+              h="auto"
+              py={4}
+              px={12}
+              sx={(theme) => ({
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
+              })}
+            >
+              <Group spacing={4} noWrap>
+                <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
+                  Available Buzz
+                </Text>
+                <UserBuzz user={currentUser} iconSize={16} textSize="sm" withTooltip />
+              </Group>
             </Badge>
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
@@ -316,6 +328,7 @@ const { openModal, Modal } = createContextModal<{
               </Button>
               <BuzzTransactionButton
                 label="Tip"
+                className={classes.submitButton}
                 buzzAmount={amountToSend ?? 0}
                 disabled={(amountToSend ?? 0) === 0}
                 color="yellow.7"
