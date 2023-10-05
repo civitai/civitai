@@ -493,7 +493,7 @@ model ModelVersionMonetization {
   modelVersionId      Int                              @unique
   modelVersion        ModelVersion                     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   type                ModelVersionMonetizationType     @default(PaidAccess)
-  currency            String                           @default(BUZZ)
+  currency            String                           @default("USD")
   unitAmount          Int?
   sponsorshipSettings ModelVersionSponsorshipSettings?
 }

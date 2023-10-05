@@ -10,6 +10,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { updateEntityFiles } from './file.service';
 import {
+  throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
   throwNotFoundError,
@@ -417,4 +418,59 @@ export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] 
   );
 
   return groupedImages;
+};
+
+export const refundBounty = async ({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator: boolean }) => {
+  if (!isModerator) {
+    throw throwAuthorizationError();
+  }
+
+  const bounty = await dbRead.bounty.findUniqueOrThrow({ where: { id } });
+
+  if (bounty.complete || bounty.refunded) {
+    throw throwBadRequestError('This bounty has already been awarded or refunded');
+  }
+
+  const benefactors = await dbRead.bountyBenefactor.findMany({
+    where: { bountyId: id },
+  });
+
+  if (benefactors.find((b) => b.awardedToId !== null)) {
+    throw throwBadRequestError(
+      'At least one benefactor has awarded an entry. This bounty is not refundable.'
+    );
+  }
+
+  const currency = benefactors.find((b) => b.userId === bounty.userId)?.currency;
+
+  if (!currency) {
+    throw throwBadRequestError('No currency found for bounty');
+  }
+
+  for (const { userId, unitAmount } of benefactors) {
+    if (unitAmount > 0) {
+      switch (currency) {
+        case Currency.BUZZ:
+          await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: userId,
+            amount: unitAmount,
+            type: TransactionType.Bounty,
+            description: 'Reason: Bounty refund, no entries found on bounty',
+          });
+
+          break;
+        default: // Do nothing just yet.
+          break;
+      }
+    }
+  }
+
+  return await dbWrite.bounty.update({
+    where: { id },
+    data: { complete: true, refunded: true },
+  });
 };
