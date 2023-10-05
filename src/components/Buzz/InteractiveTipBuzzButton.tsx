@@ -16,7 +16,6 @@ import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showConfirmNotification } from '~/utils/notifications';
 import { v4 as uuidv4 } from 'uuid';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { trpc } from '~/utils/trpc';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { devtools } from 'zustand/middleware';
 import { create } from 'zustand';
@@ -30,13 +29,6 @@ type Props = UnstyledButtonProps & {
   toUserId?: number;
   entityId?: number;
   entityType?: string;
-  onTipSent?: ({
-    queryUtils,
-    amount,
-  }: {
-    queryUtils: ReturnType<typeof trpc.useContext>;
-    amount: number;
-  }) => void;
 };
 
 const CONFIRMATION_THRESHOLD = 100;
@@ -103,7 +95,6 @@ export function InteractiveTipBuzzButton({
   entityId,
   entityType,
   children,
-  onTipSent,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();

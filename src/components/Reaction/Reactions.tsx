@@ -14,7 +14,6 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 
 export type ReactionMetrics = {
@@ -74,18 +73,10 @@ export function Reactions({
   entityId,
   readonly,
   targetUserId,
-  onTipSent,
   ...groupProps
 }: ReactionsProps &
   Omit<GroupProps, 'children' | 'onClick'> & {
     targetUserId?: number;
-    onTipSent?: ({
-      queryUtils,
-      amount,
-    }: {
-      queryUtils: ReturnType<typeof trpc.useContext>;
-      amount: number;
-    }) => void;
   }) {
   const currentUser = useCurrentUser();
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
@@ -160,7 +151,6 @@ export function Reactions({
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}
             entityType={entityType}
             entityId={entityId}
-            onTipSent={onTipSent}
           />
         )}
       </Group>
@@ -284,25 +274,17 @@ function BuzzTippingBadge({
   toUserId?: number;
   entityType: string;
   entityId: number;
-  onTipSent?: ({
-    queryUtils,
-    amount,
-  }: {
-    queryUtils: ReturnType<typeof trpc.useContext>;
-    amount: number;
-  }) => void;
 }) {
   const theme = useMantineTheme();
   const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {
     image: 'Image',
   };
   const buzzTipEntryType = typeToBuzzTipType[entityType];
+  const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType ?? 'Image', entityId });
 
   if (!buzzTipEntryType) {
     return null;
   }
-
-  const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType, entityId });
 
   return (
     <InteractiveTipBuzzButton
