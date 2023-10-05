@@ -364,7 +364,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
   const expired = bounty.expiresAt < new Date();
 
-  const { trackEvent } = useTrackEvent();
+  const { trackAction: trackEvent } = useTrackEvent();
 
   const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useQuery({
     id: bounty.id,

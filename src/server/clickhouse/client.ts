@@ -182,13 +182,13 @@ export type BountyBenefactorActivity = 'Create';
 
 export type FileActivity = 'Download';
 
-export const EventType = [
+export const ActionType = [
   'AddToBounty_Click',
   'AddToBounty_Confirm',
   'AwardBounty_Click',
   'AwardBounty_Confirm',
 ] as const;
-export type EventType = (typeof EventType)[number];
+export type ActionType = (typeof ActionType)[number];
 
 export type TrackRequest = {
   userId: number;
@@ -244,8 +244,8 @@ export class Tracker {
     return this.track('views', values);
   }
 
-  public event(values: { type: EventType }) {
-    return this.track('events', values);
+  public action(values: { type: ActionType }) {
+    return this.track('actions', values);
   }
 
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {

@@ -148,7 +148,7 @@ export const AwardBountyAction = ({
       },
     });
 
-  const { trackEvent } = useTrackEvent();
+  const { trackAction: trackEvent } = useTrackEvent();
 
   const onClick = (e: React.MouseEvent) => {
     e.preventDefault();

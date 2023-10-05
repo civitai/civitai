@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EventType } from '../clickhouse/client';
+import { ActionType } from '../clickhouse/client';
 
 export const addViewSchema = z.object({
   type: z.enum([
@@ -34,7 +34,7 @@ export const trackShareSchema = z.object({
   url: z.string().url().trim().nonempty(),
 });
 
-export type TrackEventInput = z.infer<typeof trackEventSchema>;
-export const trackEventSchema = z.object({
-  type: z.enum(EventType),
+export type TrackActionInput = z.infer<typeof trackActionSchema>;
+export const trackActionSchema = z.object({
+  type: z.enum(ActionType),
 });
