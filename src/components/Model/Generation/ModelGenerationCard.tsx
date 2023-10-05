@@ -203,7 +203,7 @@ export function ModelGenerationCard({
                       <Anchor
                         href="https://picfinder.ai"
                         target="_blank"
-                        rel="noopened noreferrer"
+                        rel="nofollow noreferrer"
                         inherit
                         span
                       >

@@ -25,6 +25,8 @@ import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { trpc } from '~/utils/trpc';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { QS } from '~/utils/qs';
+import { Meta } from '~/components/Meta/Meta';
+import { env } from '~/env/client.mjs';
 
 export default function Login({ providers }: Props) {
   const router = useRouter();
@@ -46,67 +48,73 @@ export default function Login({ providers }: Props) {
   const redirectReason = loginRedirectReasons[reason];
 
   return (
-    <Container size="xs">
-      <Stack>
-        {!!redirectReason && (
-          <Alert color="yellow">
-            <Group position="center" spacing="xs" noWrap align="flex-start">
-              <ThemeIcon color="yellow">
-                <IconExclamationMark />
-              </ThemeIcon>
-              <Text size="md">{redirectReason}</Text>
-            </Group>
-          </Alert>
-        )}
-        {referrer && (
-          <Paper withBorder>
-            <Stack spacing="xs" p="md">
-              <Text color="dimmed" size="sm">
-                You have been referred by
-              </Text>
-              <CreatorCard user={referrer} />
-              <Text size="sm">
-                By signing up with the referral code <Code>{code}</Code> both you and the user who
-                referred you will be awarded buzz. This code will be automatically applied during
-                your username selection process.
-              </Text>
-            </Stack>
-          </Paper>
-        )}
-        <Paper radius="md" p="xl" withBorder>
-          <Text size="lg" weight={500}>
-            Welcome to Civitai, sign in with
-          </Text>
-
-          <Stack mb={error ? 'md' : undefined} mt="md">
-            {providers
-              ? Object.values(providers)
-                  .filter((x) => x.id !== 'email')
-                  .map((provider) => {
-                    return (
-                      <SocialButton
-                        key={provider.name}
-                        provider={provider.id as BuiltInProviderType}
-                        onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
-                      />
-                    );
-                  })
-              : null}
-            <Divider label="Or" labelPosition="center" />
-            <EmailLogin />
-          </Stack>
-          {error && (
-            <SignInError
-              color="yellow"
-              title="Login Error"
-              mt="lg"
-              variant="outline"
-              error={error}
-            />
+    <>
+      <Meta
+        title="Sign in to Civitai"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/login`, rel: 'canonical' }]}
+      />
+      <Container size="xs">
+        <Stack>
+          {!!redirectReason && (
+            <Alert color="yellow">
+              <Group position="center" spacing="xs" noWrap align="flex-start">
+                <ThemeIcon color="yellow">
+                  <IconExclamationMark />
+                </ThemeIcon>
+                <Text size="md">{redirectReason}</Text>
+              </Group>
+            </Alert>
           )}
-        </Paper>
-      </Stack>
-    </Container>
+          {referrer && (
+            <Paper withBorder>
+              <Stack spacing="xs" p="md">
+                <Text color="dimmed" size="sm">
+                  You have been referred by
+                </Text>
+                <CreatorCard user={referrer} />
+                <Text size="sm">
+                  By signing up with the referral code <Code>{code}</Code> both you and the user who
+                  referred you will be awarded buzz. This code will be automatically applied during
+                  your username selection process.
+                </Text>
+              </Stack>
+            </Paper>
+          )}
+          <Paper radius="md" p="xl" withBorder>
+            <Text size="lg" weight={500}>
+              Welcome to Civitai, sign in with
+            </Text>
+
+            <Stack mb={error ? 'md' : undefined} mt="md">
+              {providers
+                ? Object.values(providers)
+                    .filter((x) => x.id !== 'email')
+                    .map((provider) => {
+                      return (
+                        <SocialButton
+                          key={provider.name}
+                          provider={provider.id as BuiltInProviderType}
+                          onClick={() => signIn(provider.id, { callbackUrl: returnUrl })}
+                        />
+                      );
+                    })
+                : null}
+              <Divider label="Or" labelPosition="center" />
+              <EmailLogin />
+            </Stack>
+            {error && (
+              <SignInError
+                color="yellow"
+                title="Login Error"
+                mt="lg"
+                variant="outline"
+                error={error}
+              />
+            )}
+          </Paper>
+        </Stack>
+      </Container>
+    </>
   );
 }
 

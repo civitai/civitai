@@ -40,6 +40,9 @@ const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
 
 export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
+  if (!env.GENERATION_ENDPOINT) throw throwBadRequestError('Missing GENERATION_ENDPOINT env');
+  if (!env.ORCHESTRATOR_TOKEN) throw throwBadRequestError('Missing ORCHESTRATOR_TOKEN env');
+
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
   const { jobId, assetName } = urlMatch.groups;
@@ -82,6 +85,36 @@ export const moveAsset = async ({ url, modelId }: MoveAssetInput) => {
     newUrl,
     fileSize: result.fileSize,
   };
+};
+
+export const deleteAssets = async (jobId: string) => {
+  if (!env.GENERATION_ENDPOINT) throw throwBadRequestError('Missing GENERATION_ENDPOINT env');
+  if (!env.ORCHESTRATOR_TOKEN) throw throwBadRequestError('Missing ORCHESTRATOR_TOKEN env');
+
+  const reqBody = {
+    $type: 'clearAssets',
+    jobId,
+  };
+
+  const response = await fetch(`${env.GENERATION_ENDPOINT}/v1/consumer/jobs?wait=true`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.ORCHESTRATOR_TOKEN}`,
+    },
+    body: JSON.stringify(reqBody),
+  });
+
+  if (response.status === 429) {
+    throw throwRateLimitError();
+  }
+
+  if (!response.ok) {
+    throw throwBadRequestError('Failed to delete assets');
+  }
+
+  const data = await response.json();
+  return data.result;
 };
 
 export const createTrainingRequest = async ({

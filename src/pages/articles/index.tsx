@@ -1,5 +1,4 @@
 import { Group, Stack, Title } from '@mantine/core';
-import { useRouter } from 'next/router';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -12,19 +11,17 @@ import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentTog
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { env } from '~/env/client.mjs';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.articles)
+  resolver: async ({ features }) => {
+    if (!features?.articles)
       return {
         redirect: {
           destination: '/',
@@ -35,7 +32,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ArticlesPage() {
-  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.articles.view);
   const { view: queryView, ...filters } = useArticleQueryParams();
@@ -44,14 +40,10 @@ export default function ArticlesPage() {
 
   return (
     <>
-      {/* TODO.articles: update meta title and description accordingly */}
       <Meta
-        title={`Civitai${
-          !currentUser
-            ? ` Articles | Discover AI-Generated Images with Prompts and Resource Details`
-            : ''
-        }`}
-        description="Browse Civitai Articles, featuring AI-generated images along with prompts and resources used for their creation, showcasing the creativity of our talented community."
+        title="Civitai Articles | Community Guides and Insights"
+        description="Learn, innovate, and draw inspiration from generative AI articles written by the Civitai community"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/articles`, rel: 'canonical' }]}
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.image}

@@ -6,7 +6,6 @@ import {
   Alert,
   Group,
   Grid,
-  Paper,
   List,
   Center,
   Divider,
@@ -16,7 +15,6 @@ import { useRouter } from 'next/router';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '@prisma/client';
 import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { z } from 'zod';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 import { enterFall, jelloVertical } from '~/libs/animations';
@@ -91,13 +89,13 @@ export default function PurchaseBuzz() {
 
   return (
     <Container size="md" mb="lg">
-      <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="md">
+      <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="xl">
         <Group spacing="xs" noWrap position="center">
           <CurrencyIcon currency={Currency.BUZZ} size={24} />
           <Title order={2}>Let&rsquo;s get me some BUZZ</Title>
         </Group>
       </Alert>
-      <Grid gutter="sm">
+      <Grid gutter={48}>
         <Grid.Col xs={12} md={4}>
           <Stack>
             <Title order={2}>What can I do with Buzz?</Title>

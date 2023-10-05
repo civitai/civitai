@@ -228,6 +228,7 @@ export function RoutedContextLink<TName extends keyof typeof registry>({
       }}
       style={style}
       className={className}
+      rel="nofollow noindex"
     >
       {children}
     </NextLink>

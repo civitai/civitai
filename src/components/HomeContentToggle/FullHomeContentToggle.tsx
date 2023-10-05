@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Group,
   SegmentedControl,
   SegmentedControlItem,
@@ -16,16 +17,35 @@ import {
   IconMoneybag,
   IconPhoto,
 } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const homeOptions = {
-  home: '/',
-  models: '/models',
-  images: '/images',
-  posts: '/posts',
-  articles: '/articles',
-  bounties: '/bounties',
+  home: {
+    url: '/',
+    icon: <IconHome />,
+  },
+  models: {
+    url: '/models',
+    icon: <IconCategory />,
+  },
+  images: {
+    url: '/images',
+    icon: <IconPhoto />,
+  },
+  posts: {
+    url: '/posts',
+    icon: <IconLayoutList />,
+  },
+  articles: {
+    url: '/articles',
+    icon: <IconFileText />,
+  },
+  bounties: {
+    url: '/bounties',
+    icon: <IconMoneybag />,
+  },
 } as const;
 type HomeOptions = keyof typeof homeOptions;
 
@@ -55,10 +75,10 @@ export function useHomeSelection() {
     defaultValue: features.alternateHome ? 'home' : 'models',
   });
 
-  const url = homeOptions[home];
+  const url = homeOptions[home].url;
   const set = (value: HomeOptions) => {
     setHome(value);
-    return homeOptions[value];
+    return homeOptions[value].url;
   };
 
   return { home, url, set };
@@ -70,129 +90,29 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
   const { set } = useHomeSelection();
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/').pop() || 'home';
-  const { engagement } = router.query;
 
-  const data: SegmentedControlItem[] = [
-    {
-      label: (
-        <Text size="sm" inline>
-          <Group align="center" spacing={8} noWrap>
+  const options: SegmentedControlItem[] = Object.entries(homeOptions).map(([key, value]) => ({
+    label: (
+      <Link href={value.url} passHref>
+        <Anchor variant="text">
+          <Group align="center" spacing={8} onClick={() => set(key as HomeOptions)} noWrap>
             <ThemeIcon
               size={30}
-              color={activePath === 'home' ? theme.colors.dark[7] : 'inherit'}
-              // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
+              color={activePath === key ? theme.colors.dark[7] : 'transparent'}
               p={6}
             >
-              <IconHome />
+              {value.icon}
             </ThemeIcon>
-            Home
+            <Text size="sm" transform="capitalize" inline>
+              {key}
+            </Text>
           </Group>
-        </Text>
-      ),
-      value: 'home',
-    },
-    {
-      label: (
-        <Group align="center" spacing={8} noWrap>
-          <ThemeIcon
-            size={30}
-            color={activePath === 'models' ? theme.colors.dark[7] : 'inherit'}
-            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
-            p={6}
-          >
-            <IconCategory />
-          </ThemeIcon>
-          <Text size="sm" inline>
-            Models
-          </Text>
-        </Group>
-      ),
-      value: 'models',
-    },
-    {
-      label: (
-        <Group align="center" spacing={8} noWrap>
-          <ThemeIcon
-            size={30}
-            color={activePath === 'images' ? theme.colors.dark[7] : 'inherit'}
-            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
-            p={6}
-          >
-            <IconPhoto />
-          </ThemeIcon>
-          <Text size="sm" inline>
-            Images
-          </Text>
-        </Group>
-      ),
-      value: 'images',
-    },
-    {
-      label: (
-        <Group align="center" spacing={8} noWrap>
-          <ThemeIcon
-            size={30}
-            color={activePath === 'posts' ? theme.colors.dark[7] : 'inherit'}
-            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
-            p={6}
-          >
-            <IconLayoutList />
-          </ThemeIcon>
-          <Text size="sm" inline>
-            Posts
-          </Text>
-        </Group>
-      ),
-      value: 'posts',
-    },
-    {
-      label: (
-        <Group align="center" spacing={8} noWrap>
-          <ThemeIcon
-            size={30}
-            color={activePath === 'articles' ? theme.colors.dark[7] : 'inherit'}
-            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
-            p={6}
-          >
-            <IconFileText />
-          </ThemeIcon>
-          <Text size="sm" inline>
-            Articles
-          </Text>
-        </Group>
-      ),
-      value: 'articles',
-    },
-    {
-      label: (
-        <Group
-          align="center"
-          spacing={8}
-          onClick={
-            // Workaround to clear out any query filters
-            activePath === 'bounties' && engagement
-              ? () => router.push('/bounties', undefined, { shallow: true })
-              : undefined
-          }
-          noWrap
-        >
-          <ThemeIcon
-            size={30}
-            color={activePath === 'bounties' ? theme.colors.dark[7] : 'inherit'}
-            // sx={{ color: theme.colorScheme === 'dark' ? theme.white : theme.black }}
-            p={6}
-          >
-            <IconMoneybag />
-          </ThemeIcon>
-          <Text size="sm" inline>
-            Bounties
-          </Text>
-        </Group>
-      ),
-      value: 'bounties',
-      disabled: !features.bounties,
-    },
-  ];
+        </Anchor>
+      </Link>
+    ),
+    value: key,
+    disabled: key === 'bounties' && !features.bounties,
+  }));
 
   return (
     <SegmentedControl
@@ -203,11 +123,7 @@ export function FullHomeContentToggle({ size, sx, ...props }: Props) {
       size="md"
       classNames={classes}
       value={activePath}
-      data={data.filter((item) => item.disabled === undefined || item.disabled === false)}
-      onChange={(value) => {
-        const url = set(value as HomeOptions);
-        router.push(url);
-      }}
+      data={options.filter((item) => item.disabled === undefined || item.disabled === false)}
     />
   );
 }

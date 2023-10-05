@@ -28,6 +28,7 @@ export function CreateComment({ onCancel, autoFocus, replyTo }: CreateCommentPro
               variant="link"
               component={NextLink}
               href={`/login?returnUrl=${router.asPath}`}
+              rel="nofollow"
               inline
             >
               sign in

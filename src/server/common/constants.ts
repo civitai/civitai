@@ -19,6 +19,7 @@ import {
   PostSort,
   QuestionSort,
 } from './enums';
+import { getBaseUrl } from '../utils/url-helpers';
 
 export const constants = {
   modelFilterDefaults: {
@@ -287,12 +288,17 @@ export const generation = {
     negativePrompt: '',
   },
   settingsCost: {
-    base: 0,
+    base: 1,
     quantity: 1,
-    steps: 10,
-    clipSkip: 2,
+    steps: 40,
+    width: 512,
+    height: 512,
+    baseModel: {
+      SD1: 1,
+      SDXL: 8,
+    },
   },
-};
+} as const;
 
 export const generationConfig = {
   SD1: {
@@ -312,6 +318,8 @@ export const generationConfig = {
     ],
   },
 };
+
+export type GenerationBaseModel = keyof typeof generationConfig;
 
 export const getGenerationConfig = (baseModel?: string) => {
   const key = baseModel as keyof typeof generationConfig | undefined;

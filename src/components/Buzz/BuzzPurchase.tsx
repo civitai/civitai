@@ -24,6 +24,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -44,7 +45,10 @@ const useStyles = createStyles((theme) => ({
     height: 'auto',
     width: '100%',
     borderRadius: theme.radius.md,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.white,
+
+    '&[data-variant="filled"]': {
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
+    },
 
     '&[data-checked]': {
       border: `2px solid ${theme.colors.accent[5]}`,
@@ -63,7 +67,7 @@ const useStyles = createStyles((theme) => ({
 
   // Accordion styling
   accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
 
     '&:first-of-type, &:first-of-type>[data-accordion-control]': {
       borderTopLeftRadius: theme.radius.md,
@@ -109,6 +113,7 @@ export const BuzzPurchase = ({
   onCancel,
 }: Props) => {
   const { classes } = useStyles();
+  const isMobile = useIsMobile();
 
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
@@ -147,39 +152,42 @@ export const BuzzPurchase = ({
       selectedPriceId: selectedPrice?.id,
     };
 
-    openStripeTransactionModal({
-      unitAmount,
-      message: (
-        <Stack>
-          <Text>
-            You are about to purchase{' '}
-            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
-          </Text>
-          <Text>Please fill in your data and complete your purchase.</Text>
-        </Stack>
-      ),
-      successMessage: purchaseSuccessMessage ? (
-        purchaseSuccessMessage(buzzAmount)
-      ) : (
-        <Stack>
-          <Text>Thank you for your purchase!</Text>
-          <Text>
-            <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited to
-            your account.
-          </Text>
-        </Stack>
-      ),
-      onSuccess: async (stripePaymentIntentId) => {
-        // We do it here just in case, but the webhook should also do it
-        await completeStripeBuzzPurchaseMutation({
-          amount: buzzAmount,
-          details: metadata,
-          stripePaymentIntentId,
-        });
+    openStripeTransactionModal(
+      {
+        unitAmount,
+        message: (
+          <Stack>
+            <Text>
+              You are about to purchase{' '}
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+            </Text>
+            <Text>Please fill in your data and complete your purchase.</Text>
+          </Stack>
+        ),
+        successMessage: purchaseSuccessMessage ? (
+          purchaseSuccessMessage(buzzAmount)
+        ) : (
+          <Stack>
+            <Text>Thank you for your purchase!</Text>
+            <Text>
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> have been credited
+              to your account.
+            </Text>
+          </Stack>
+        ),
+        onSuccess: async (stripePaymentIntentId) => {
+          // We do it here just in case, but the webhook should also do it
+          await completeStripeBuzzPurchaseMutation({
+            amount: buzzAmount,
+            details: metadata,
+            stripePaymentIntentId,
+          });
+        },
+        metadata: metadata,
+        // paymentMethodTypes: ['card'],
       },
-      metadata: metadata,
-      // paymentMethodTypes: ['card'],
-    });
+      { fullScreen: isMobile }
+    );
   };
 
   useEffect(() => {
@@ -205,9 +213,6 @@ export const BuzzPurchase = ({
       )}
       <Stack spacing={0}>
         <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
-        <Text size="sm" color="dimmed">
-          ($1 USD = 1,000 Buzz)
-        </Text>
       </Stack>
       {isLoading || processing ? (
         <Center py="xl">

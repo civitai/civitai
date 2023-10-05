@@ -31,6 +31,7 @@ import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 
@@ -691,24 +692,24 @@ export function ModelVersionDetails({
                         count={version.rank?.ratingCountAllTime}
                       />
                       <Stack spacing={4}>
-                        <Button
-                          component={NextLink}
-                          variant="outline"
-                          size="xs"
+                        <Link
                           href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
-                          onClick={(e) => e.stopPropagation()}
-                          compact
                         >
-                          Add Review
-                        </Button>
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={(e) => e.stopPropagation()}
+                            compact
+                          >
+                            Add Review
+                          </Button>
+                        </Link>
                         <Text
                           component={NextLink}
                           href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
                           variant="link"
                           size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                          }}
+                          onClick={(e) => e.stopPropagation()}
                         >
                           See Reviews
                         </Text>

@@ -29,6 +29,7 @@ import { trpc } from '~/utils/trpc';
 import { NextLink } from '@mantine/next';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { StarRating } from '~/components/StartRating/StarRating';
+import Link from 'next/link';
 
 export function ImagesAsPostsCard({
   data,
@@ -107,14 +108,11 @@ export function ImagesAsPostsCard({
                   <Group ml="auto" noWrap>
                     {!data.publishedAt && (
                       <Tooltip label="Post not Published" withArrow>
-                        <ActionIcon
-                          color="red"
-                          variant="outline"
-                          component={NextLink}
-                          href={`/posts/${data.postId}/edit`}
-                        >
-                          <IconExclamationMark />
-                        </ActionIcon>
+                        <Link href={`/posts/${data.postId}/edit`}>
+                          <ActionIcon color="red" variant="outline">
+                            <IconExclamationMark />
+                          </ActionIcon>
+                        </Link>
                       </Tooltip>
                     )}
                     {data.review ? (

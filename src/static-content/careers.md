@@ -32,4 +32,3 @@ Civitai is in a phase of rapid expansion and we're looking for exceptional indiv
 - [Back-end Developer](/content/careers/back-end-dev)
 - [AI Systems Developer](/content/careers/ai-systems-dev)
 - [Senior Dev Ops Engineer](/content/careers/dev-ops)
-- [Marketing Manager](/content/careers/marketing-manager)

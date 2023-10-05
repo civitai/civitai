@@ -23,7 +23,7 @@ export const useGetGenerationRequests = (
   const images = useMemo(
     () =>
       requests
-        .filter((x) => x.status !== GenerationRequestStatus.Error)
+        .filter((x) => x.status === GenerationRequestStatus.Succeeded)
         .flatMap((x) => x.images ?? []),
     [requests]
   );

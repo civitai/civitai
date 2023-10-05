@@ -8,13 +8,13 @@ export function TableOfContent({ headings }: Props) {
   useIntersectionObserver(setActiveId);
 
   return (
-    <nav aria-label="Table of contents">
+    <ul aria-label="Table of contents" style={{ paddingLeft: 0 }}>
       <ScrollArea style={{ height: 300 }}>
         {headings.map((heading, index) => (
           <Heading key={index} activeId={activeId} {...heading} />
         ))}
       </ScrollArea>
-    </nav>
+    </ul>
   );
 }
 
@@ -48,7 +48,7 @@ function Heading({
           });
         }}
       >
-        <Text size={labelSize} lineClamp={2} inherit>
+        <Text component="li" size={labelSize} lineClamp={2} inherit>
           {heading.title}
         </Text>
       </Anchor>

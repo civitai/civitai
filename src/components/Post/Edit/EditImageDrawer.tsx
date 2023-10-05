@@ -187,6 +187,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                           href="https://github.com/civitai/sd_civitai_extension"
                           target="_blank"
                           variant="link"
+                          rel="nofollow"
                         >
                           Civitai Extension for Automatic 1111 Stable Diffusion Web UI
                         </Text>{' '}
@@ -255,6 +256,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
                     href="https://github.com/civitai/sd_civitai_extension"
                     target="_blank"
                     variant="link"
+                    rel="nofollow"
                   >
                     Civitai Extension for Automatic 1111 Stable Diffusion Web UI
                   </Text>

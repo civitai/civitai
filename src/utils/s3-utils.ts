@@ -1,18 +1,18 @@
-import { env } from '~/env/server.mjs';
 import {
-  S3Client,
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
-  PutObjectCommand,
-  PutBucketCorsCommand,
   GetObjectCommandInput,
   HeadObjectCommand,
-  CreateMultipartUploadCommand,
+  PutBucketCorsCommand,
+  PutObjectCommand,
+  S3Client,
   UploadPartCommand,
-  CompleteMultipartUploadCommand,
-  AbortMultipartUploadCommand,
-  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { env } from '~/env/server.mjs';
 import { getDeliveryWorkerStatus } from './delivery-worker';
 
 const missingEnvs = (): string[] => {
@@ -65,9 +65,13 @@ export function getS3Client() {
   });
 }
 
-export async function getPutUrl(key: string, s3: S3Client | null = null) {
+export async function getBucket() {
   const deliveryWorkerStatus = await getDeliveryWorkerStatus();
-  const bucket = deliveryWorkerStatus.current?.name ?? env.S3_UPLOAD_BUCKET;
+  return deliveryWorkerStatus.current?.name ?? env.S3_UPLOAD_BUCKET;
+}
+
+export async function getPutUrl(key: string, s3: S3Client | null = null) {
+  const bucket = await getBucket();
   return getCustomPutUrl(bucket, key, s3);
 }
 
@@ -95,8 +99,7 @@ const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 export async function getMultipartPutUrl(key: string, size: number, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 
-  const deliveryWorkerStatus = await getDeliveryWorkerStatus();
-  const bucket = deliveryWorkerStatus.current?.name ?? env.S3_UPLOAD_BUCKET;
+  const bucket = await getBucket();
   const { UploadId } = await s3.send(
     new CreateMultipartUploadCommand({ Bucket: bucket, Key: key })
   );

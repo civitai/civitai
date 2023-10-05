@@ -16,6 +16,7 @@ import React from 'react';
 import { QuestionDetails } from '~/components/Questions/QuestionDetails';
 import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps<{
   id: number;
@@ -101,6 +102,7 @@ export default function QuestionPage(
       <Meta
         title={`${question.title} | Civitai`}
         description={truncate(removeTags(question.content ?? ''), { length: 150 })}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/questions/${id}`, rel: 'canonical' }]}
         // TODO - determine if we need to do anything to handle content that has images/videos in it
       />
       <Container pb={60} px="xs">

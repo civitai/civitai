@@ -8,10 +8,10 @@ import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeCo
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -59,7 +59,6 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export default function BountiesPage() {
-  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const router = useRouter();
   const query = router.query;
@@ -73,14 +72,10 @@ export default function BountiesPage() {
 
   return (
     <>
-      {/* TODO.bounty: update meta title and description accordingly */}
       <Meta
-        title={`Civitai${
-          !currentUser
-            ? ` Bounties | Discover AI-Generated Images with Prompts and Resource Details`
-            : ''
-        }`}
-        description="Browse Civitai Bounties, featuring AI-generated images along with prompts and resources used for their creation, showcasing the creativity of our talented community."
+        title="Collaborate on Generative AI Art With Civitai Bounties"
+        description="Post bounties and collaborate with generative AI creators, or make your mark in Civitai and earn Buzz by successfully completing them"
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/bounties`, rel: 'canonical' }]}
       />
       <MasonryProvider
         columnWidth={constants.cardSizes.bounty}
