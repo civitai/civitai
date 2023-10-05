@@ -28,6 +28,8 @@ const transactionTypes = [
   TransactionType[TransactionType.Tip],
   TransactionType[TransactionType.Reward],
   TransactionType[TransactionType.Purchase],
+  TransactionType[TransactionType.Refund],
+  TransactionType[TransactionType.Bounty],
 ];
 
 const defaultFilters = {

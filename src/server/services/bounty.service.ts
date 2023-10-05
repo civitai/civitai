@@ -32,6 +32,7 @@ import { isNotTag, isTag } from '../schema/tag.schema';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 import { isProd } from '~/env/other';
+import { bountyRefundedEmail } from '~/server/email/templates';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -428,7 +429,19 @@ export const refundBounty = async ({
     throw throwAuthorizationError();
   }
 
-  const bounty = await dbRead.bounty.findUniqueOrThrow({ where: { id } });
+  const bounty = await dbRead.bounty.findUniqueOrThrow({
+    where: { id },
+    select: {
+      name: true,
+      id: true,
+      complete: true,
+      refunded: true,
+      userId: true,
+      user: { select: { id: true, email: true } },
+    },
+  });
+
+  const { user } = bounty;
 
   if (bounty.complete || bounty.refunded) {
     throw throwBadRequestError('This bounty has already been awarded or refunded');
@@ -458,8 +471,8 @@ export const refundBounty = async ({
             fromAccountId: 0,
             toAccountId: userId,
             amount: unitAmount,
-            type: TransactionType.Bounty,
-            description: 'Reason: Bounty refund, no entries found on bounty',
+            type: TransactionType.Refund,
+            description: 'Reason: Bounty refund',
           });
 
           break;
@@ -467,6 +480,13 @@ export const refundBounty = async ({
           break;
       }
     }
+  }
+
+  if (user) {
+    bountyRefundedEmail.send({
+      bounty,
+      user,
+    });
   }
 
   return await dbWrite.bounty.update({

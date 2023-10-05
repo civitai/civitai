@@ -212,7 +212,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
                 fromAccountId: 0,
                 toAccountId: userId,
                 amount: unitAmount,
-                type: TransactionType.Bounty,
+                type: TransactionType.Refund,
                 description: 'Reason: Bounty refund, no entries found on bounty',
               });
 

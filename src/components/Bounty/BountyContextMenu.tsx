@@ -65,6 +65,7 @@ export function BountyContextMenu({
     ) : null,
     isModerator && !bounty.complete ? (
       <Menu.Item
+        key="refund"
         disabled={refunding}
         component="button"
         icon={<IconReceiptRefund size={14} stroke={1.5} />}
