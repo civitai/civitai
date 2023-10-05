@@ -1,4 +1,16 @@
-import { Button, Center, Container, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Center,
+  Container,
+  Group,
+  Loader,
+  Paper,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { IconAlertCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -143,9 +155,9 @@ export default function IntentAvatar() {
       ) : errorMsg ? (
         <Stack>
           <Title order={1}>Invalid Request</Title>
-          <Text color="dimmed" size="sm">
+          <Alert icon={<IconAlertCircle size="1rem" />} title="Error" color="red" variant="light">
             {errorMsg}
-          </Text>
+          </Alert>
         </Stack>
       ) : (
         <Stack spacing="xs">
