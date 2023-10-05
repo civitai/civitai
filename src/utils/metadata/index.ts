@@ -8,6 +8,7 @@ import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { MediaType } from '@prisma/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
+import { constants } from '~/server/common/constants';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
@@ -42,8 +43,8 @@ export function encodeMetadata(meta: ImageMetaProps, type: keyof typeof parsers 
   return parsers[type]?.encode(meta);
 }
 
-export const parsePromptMetadata = async (generationDetails: string) => {
-  return await automaticMetadataProcessor.parse({ generationDetails });
+export const parsePromptMetadata = (generationDetails: string) => {
+  return automaticMetadataProcessor.parse({ generationDetails });
 };
 
 export const getDataFromFile = async (file: File) => {
@@ -55,10 +56,17 @@ export const getDataFromFile = async (file: File) => {
   if (processed.type === 'video') {
     const { metadata } = processed;
     try {
-      if (metadata.duration && metadata.duration > 60)
-        throw new Error('video duration can not be longer than 60s');
-      if (metadata.width > 1920 || metadata.height > 1920)
-        throw new Error('please reduce image dimensions');
+      if (metadata.duration && metadata.duration > constants.mediaUpload.maxVideoDurationSeconds)
+        throw new Error(
+          `Video duration cannot be longer than ${constants.mediaUpload.maxVideoDurationSeconds} seconds. Please trim your video and try again.`
+        );
+      if (
+        metadata.width > constants.mediaUpload.maxVideoDimension ||
+        metadata.height > constants.mediaUpload.maxVideoDimension
+      )
+        throw new Error(
+          `Images cannot be larger than ${constants.mediaUpload.maxVideoDimension}px from either side. Please resize your image and try again.`
+        );
     } catch (error: any) {
       showErrorNotification({ error });
       return null;

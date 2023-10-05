@@ -19,7 +19,6 @@ import {
   PostSort,
   QuestionSort,
 } from './enums';
-import { getBaseUrl } from '../utils/url-helpers';
 
 export const constants = {
   modelFilterDefaults: {
@@ -178,8 +177,10 @@ export const constants = {
     styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
   },
   maxTrainingRetries: 2,
-  imageUpload: {
-    maxFileSize: 32 * 1024 ** 2, // 32MB
+  mediaUpload: {
+    maxImageFileSize: 50 * 1024 ** 2, // 50MB
+    maxVideoDimension: 3840,
+    maxVideoDurationSeconds: 120,
   },
   bounties: {
     engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],

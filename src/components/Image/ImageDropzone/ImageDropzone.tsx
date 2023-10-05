@@ -15,8 +15,8 @@ export function ImageDropzone({
   label,
   description,
   accept = IMAGE_MIME_TYPE,
-  maxSize = constants.imageUpload.maxFileSize,
-  orientation,
+  maxSize = constants.mediaUpload.maxImageFileSize,
+  orientation = 'vertical',
   ...props
 }: Props) {
   const { classes, cx, theme } = useStyles();
@@ -88,10 +88,19 @@ export function ImageDropzone({
               {label ?? 'Drag images here or click to select files'}
             </Text>
             {description}
-            <Text size="sm" color="dimmed" inline mt={7}>
+            <Text size="sm" color="dimmed" mt={7} inline>
               {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
-              {`, image files should not exceed ${formatBytes(maxSize)}`}
-              {fileExtensions.length > 0 && `. Accepted file types: ${fileExtensions.join(', ')}`}
+            </Text>
+            {fileExtensions.length > 0 && (
+              <Text size="sm" color="dimmed" inline>
+                {`Accepted file types: ${fileExtensions.join(', ')}`}
+              </Text>
+            )}
+            <Text size="sm" color="dimmed" inline>
+              {`Image files should not exceed ${formatBytes(maxSize)} `}
+            </Text>
+            <Text size="sm" color="dimmed" inline>
+              {`Video files should not exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
             </Text>
           </Stack>
         </Group>
