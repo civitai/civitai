@@ -69,7 +69,7 @@ export function ImageUpload({
   label,
   extra,
   max = 10,
-  maxSize = constants.imageUpload.maxFileSize,
+  maxSize = constants.mediaUpload.maxImageFileSize,
   hasPrimaryImage,
   withMeta = true,
   sortable = true,
