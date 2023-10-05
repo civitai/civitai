@@ -11,6 +11,7 @@ import {
   bountyAutomaticallyAwardedEmail,
   bountyExpiredEmail,
   bountyExpiredReminderEmail,
+  bountyRefundedEmail,
 } from '~/server/email/templates';
 
 const log = createLogger('prepare-bounties', 'blue');
@@ -225,8 +226,20 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       await dbWrite.$executeRawUnsafe(` 
         UPDATE "Bounty" b SET "complete" = true, "refunded" = true WHERE b.id = ${id};
       `);
-      tracker.bounty({ type: 'Expire', data: { id } }).catch(handleTrackError);
 
+      if (user) {
+        bountyRefundedEmail.send({
+          bounty: {
+            id,
+            name,
+          },
+          user: {
+            email: user.email,
+          },
+        });
+      }
+
+      tracker.bounty({ type: 'Expire', data: { id } }).catch(handleTrackError);
       log(` No entry winner detected, bounty has been refunded`);
       continue;
     }
