@@ -267,12 +267,7 @@ export const createBountyHandler = async ({
     const bounty = await createBounty({ ...input, userId });
 
     // Let it run in the background
-    ctx.track
-      .bounty({
-        type: 'Create',
-        data: { ...bounty, attachments: !!input.files?.length, tags: !!input.tags?.length },
-      })
-      .catch(handleTrackError);
+    ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleTrackError);
 
     return bounty;
   } catch (error) {
@@ -293,12 +288,7 @@ export const updateBountyHandler = async ({
     if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background
-    ctx.track
-      .bounty({
-        type: 'Update',
-        data: { ...updated, attachments: !!input.files?.length, tags: !!input.tags?.length },
-      })
-      .catch(handleTrackError);
+    ctx.track.bounty({ type: 'Update', bountyId: updated.id }).catch(handleTrackError);
 
     return updated;
   } catch (error) {
@@ -319,7 +309,7 @@ export const deleteBountyHandler = async ({
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background
-    ctx.track.bounty({ type: 'Delete', data: deleted }).catch(handleTrackError);
+    ctx.track.bounty({ type: 'Delete', bountyId: deleted.id }).catch(handleTrackError);
 
     return deleted;
   } catch (error) {
@@ -343,7 +333,7 @@ export const addBenefactorUnitAmountHandler = async ({
       .bountyBenefactor({
         type: 'Create',
         bountyId: bountyBenefactor.bountyId,
-        unitAmount: bountyBenefactor.unitAmount,
+        userId: bountyBenefactor.userId,
       })
       .catch(handleTrackError);
 

@@ -112,7 +112,7 @@ export default RateLimitedEndpoint(
 
       const tracker = new Tracker(req, res);
       tracker
-        .file({ type: 'Download', url, entityId: file.entityId, entityType: file.entityType })
+        .file({ type: 'Download', entityId: file.entityId, entityType: file.entityType })
         .catch(handleTrackError);
 
       res.redirect(url);
