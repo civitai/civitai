@@ -8,9 +8,19 @@ type BountyExpiredData = {
     name: string;
   };
   user: {
-    email: string | null;
+    username: string;
+    email: string;
   };
 };
+
+function getRefundFormUrl({ user, bounty }: BountyExpiredData) {
+  const qsParts = new URLSearchParams({
+    'Your Civitai Username': user.username,
+    'Name of the bounty': bounty.name,
+    'Link to the bounty': bountyUrl(bounty),
+  });
+  return `${getBaseUrl()}/forms/bounty-refund?${qsParts.toString()}`;
+}
 
 const bountyUrl = (bounty: BountyExpiredData['bounty']) => getBaseUrl() + `/bounties/${bounty.id}`;
 export const bountyExpiredReminderEmail = createEmail({
@@ -19,16 +29,17 @@ export const bountyExpiredReminderEmail = createEmail({
     to: user.email,
   }),
   html({ user, bounty }: BountyExpiredData) {
+    const refundUrl = getRefundFormUrl({ user, bounty });
     return simpleEmailWithTemplate({
-      header: `Reminder: Your bounty <strong>${bounty.name}</strong> has experired!`,
+      header: `Reminder: Your bounty <strong>${bounty.name}</strong> has expired!`,
       body: `
        <p>
           It looks like you still have not awarded a winner. Be sure to check out the entries and award the one that you like the most!
        </p>
        <p>
-          If you don't like any of the entries, you can contact us at <a href="mailto:hello@civitai.com">hello@civitai.com</a> so we can get in touch with you to refund you.
+          If you don't like any of the entries, you can submit a bounty refund request using this <a href="${refundUrl}" target="blank">request form</a>.
        </p>
-       <p>You have 24 hours to contact us or award an entry. Otherwise, your bounty will be awarded to the entry with the most reactions.</p>
+       <p style="color: red;">You have 24 hours to request a refund or award an entry. Otherwise, your bounty will be awarded to the entry with the most reactions.</p>
       `,
       btnLabel: 'Check out all entries!',
       btnUrl: bountyUrl(bounty),
@@ -45,6 +56,7 @@ export const bountyExpiredReminderEmail = createEmail({
       name: 'Test Bounty',
     },
     user: {
+      username: 'test',
       email: 'test@tester.com',
     },
   }),

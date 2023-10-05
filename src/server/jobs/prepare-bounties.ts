@@ -86,6 +86,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       user: {
         select: {
           id: true,
+          username: true,
           email: true,
         },
       },
@@ -99,13 +100,14 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
 
   for (const { id, userId, user, name } of needReminderBounties) {
     log('Sending bounty expired reminder to ', userId);
-    if (user?.email) {
+    if (user?.email && user?.username) {
       await bountyExpiredReminderEmail.send({
         bounty: {
           id,
           name,
         },
         user: {
+          username: user.username,
           email: user.email,
         },
       });
@@ -183,7 +185,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       LEFT JOIN "BountyEntryStat" bes on bes."bountyEntryId" = be.id
       LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
       WHERE be."bountyId" = ${id}
-      GROUP BY be.id, be."userId", bes."reactionCountAllTime" 
+      GROUP BY be.id, be."userId", bes."reactionCountAllTime"
       ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
     `;
 
@@ -198,7 +200,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
             bf."userId",
             bf."unitAmount"
         FROM "BountyBenefactor" bf
-        WHERE bf."bountyId" = ${id} 
+        WHERE bf."bountyId" = ${id}
           AND bf.currency = ${currency}::"Currency"
           AND bf."awardedToId" IS NULL;
       `;
@@ -223,7 +225,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
         }
       }
 
-      await dbWrite.$executeRawUnsafe(` 
+      await dbWrite.$executeRawUnsafe(`
         UPDATE "Bounty" b SET "complete" = true, "refunded" = true WHERE b.id = ${id};
       `);
 
@@ -255,7 +257,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
           bf."userId",
           bf."unitAmount"
       FROM "BountyBenefactor" bf
-      WHERE bf."bountyId" = ${id} 
+      WHERE bf."bountyId" = ${id}
         AND bf.currency = ${currency}::"Currency"
         AND bf."awardedToId" IS NULL;
     `;
@@ -270,7 +272,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       dbWrite.$executeRawUnsafe(`
         UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntryId} WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
       `),
-      dbWrite.$executeRawUnsafe(` 
+      dbWrite.$executeRawUnsafe(`
         UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};
       `),
     ]);
