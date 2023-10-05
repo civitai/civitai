@@ -1,14 +1,10 @@
 import { Group, Text, ButtonProps, Button, Tooltip } from '@mantine/core';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import React from 'react';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
-import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useBuzzTransaction } from './buzz.utils';
 
 type Props = ButtonProps & {
   buzzAmount: number;
@@ -17,66 +13,6 @@ type Props = ButtonProps & {
   onPerformTransaction?: () => void;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   performTransactionOnPurchase?: boolean;
-};
-
-export const useBuzzTransaction = ({
-  message,
-  purchaseSuccessMessage,
-  performTransactionOnPurchase,
-}: Pick<Props, 'message' | 'purchaseSuccessMessage' | 'performTransactionOnPurchase'>) => {
-  const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
-  const isMobile = useIsMobile();
-  const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
-    async onSuccess(_, { amount }) {
-      await queryUtils.buzz.getUserAccount.cancel();
-
-      queryUtils.buzz.getUserAccount.setData(undefined, (old) =>
-        old
-          ? {
-              ...old,
-              balance: amount <= old.balance ? old.balance - amount : old.balance,
-            }
-          : old
-      );
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Error performing transaction',
-        error: new Error(error.message),
-      });
-    },
-  });
-
-  const hasRequiredAmount = (buzzAmount: number) => (currentUser?.balance ?? 0) >= buzzAmount;
-  const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
-    if (!features.buzz) return onPerformTransaction();
-    if (!currentUser?.balance || currentUser?.balance < buzzAmount) {
-      openBuyBuzzModal(
-        {
-          message:
-            typeof message === 'function'
-              ? message(buzzAmount - (currentUser?.balance ?? 0))
-              : message,
-          minBuzzAmount: buzzAmount - (currentUser?.balance ?? 0),
-          onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
-          purchaseSuccessMessage,
-        },
-        { fullScreen: isMobile }
-      );
-
-      return;
-    }
-
-    onPerformTransaction();
-  };
-
-  return {
-    hasRequiredAmount,
-    conditionalPerformTransaction,
-    createBuzzTransactionMutation,
-  };
 };
 
 export function BuzzTransactionButton({

@@ -122,6 +122,12 @@ export const ActionType = [
   'AddToBounty_Confirm',
   'AwardBounty_Click',
   'AwardBounty_Confirm',
+  'Tip_Click',
+  'Tip_Confirm',
+  'TipInteractive_Click',
+  'TipInteractive_Cancel',
+  'NotEnoughFunds',
+  'PurchaseFunds_Cancel',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -179,7 +185,7 @@ export class Tracker {
     return this.track('views', values);
   }
 
-  public action(values: { type: ActionType }) {
+  public action(values: { type: ActionType; details?: any }) {
     return this.track('actions', values);
   }
 

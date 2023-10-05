@@ -60,9 +60,10 @@ import { z } from 'zod';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { BuzzTransactionButton, useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useBuzzTransaction } from '../Buzz/buzz.utils';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,

@@ -20,12 +20,13 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { UserBuzz } from '../User/UserBuzz';
-import { openConfirmModal } from '@mantine/modals';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { BuzzTransactionButton, useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -137,9 +138,13 @@ const { openModal, Modal } = createContextModal<{
   Element: ({ context, props: { toUserId, entityId, entityType } }) => {
     const { classes } = useStyles();
     const currentUser = useCurrentUser();
-    const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
     const queryUtils = trpc.useContext();
+
     const [loading, setLoading] = useState(false);
+
+    const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
+    const { trackAction } = useTrackEvent();
+
     const { conditionalPerformTransaction } = useBuzzTransaction({
       message: (requiredBalance: number) =>
         `You don't have enough funds to perform this action. Buy ${numberWithCommas(
@@ -187,39 +192,15 @@ const { openModal, Modal } = createContextModal<{
       const amount = Number(data.amount);
       const amountToSend = Number(amount) === -1 ? customAmount ?? 0 : Number(amount);
       const performTransaction = () => {
-        if (amount === -1 && customAmount) {
-          if (customAmount === currentUser?.balance) {
-            return openConfirmModal({
-              centered: true,
-              title: 'Tip Buzz',
-              children: 'You are about to send all your buzz. Are you sure?',
-              labels: { confirm: 'Yes, send all buzz', cancel: 'No, go back' },
-              onConfirm: () =>
-                createBuzzTransactionMutation.mutate({
-                  toAccountId: toUserId,
-                  type: TransactionType.Tip,
-                  amount: customAmount,
-                  description,
-                  entityId,
-                  entityType,
-                }),
-            });
-          } else {
-            return createBuzzTransactionMutation.mutate({
-              toAccountId: toUserId,
-              type: TransactionType.Tip,
-              amount: customAmount,
-              description,
-              entityId,
-              entityType,
-            });
-          }
-        }
+        trackAction({
+          type: 'Tip_Confirm',
+          details: { toUserId, entityType, entityId, amount: amountToSend },
+        }).catch(() => undefined);
 
-        createBuzzTransactionMutation.mutate({
+        return createBuzzTransactionMutation.mutate({
           toAccountId: toUserId,
           type: TransactionType.Tip,
-          amount,
+          amount: amountToSend,
           description,
           entityId,
           entityType,

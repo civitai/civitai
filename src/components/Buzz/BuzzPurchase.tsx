@@ -65,6 +65,10 @@ const useStyles = createStyles((theme) => ({
     display: 'none',
   },
 
+  chipDisabled: {
+    opacity: 0.3,
+  },
+
   // Accordion styling
   accordionItem: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
@@ -112,7 +116,7 @@ export const BuzzPurchase = ({
   purchaseSuccessMessage,
   onCancel,
 }: Props) => {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const isMobile = useIsMobile();
 
   const currentUser = useCurrentUser();
@@ -198,7 +202,8 @@ export const BuzzPurchase = ({
     if (minBuzzAmount) {
       setSelectedPrice(null);
       setActiveControl('customAmount');
-      setCustomAmount(Math.max(minBuzzAmount / 10, 499));
+      // Need to round to avoid sending decimal values to stripe
+      setCustomAmount(Math.max(Math.round(minBuzzAmount / 10), 499));
     }
   }, [packages, minBuzzAmount]);
 
@@ -237,6 +242,7 @@ export const BuzzPurchase = ({
 
                 const price = buzzPackage.unitAmount / 100;
                 const buzzAmount = buzzPackage.buzzAmount ?? buzzPackage.unitAmount * 10;
+                const disabled = !!minBuzzAmount ? buzzAmount < minBuzzAmount : false;
 
                 return (
                   <Chip
@@ -244,10 +250,11 @@ export const BuzzPurchase = ({
                     value={buzzPackage.id}
                     variant="filled"
                     classNames={{
+                      root: cx(disabled && classes.chipDisabled),
                       label: classes.chipLabel,
                       iconWrapper: classes.chipCheckmark,
                     }}
-                    disabled={!!minBuzzAmount ? buzzAmount < minBuzzAmount : undefined}
+                    disabled={disabled}
                   >
                     <Group spacing="sm" align="center">
                       <Text color="accent.5">
@@ -342,7 +349,7 @@ export const BuzzPurchase = ({
       )}
       <Group position="right">
         {onCancel && (
-          <Button variant="filled" color="gray" onClick={onCancel}>
+          <Button variant="light" color="gray" onClick={onCancel}>
             Cancel
           </Button>
         )}

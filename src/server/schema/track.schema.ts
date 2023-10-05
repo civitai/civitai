@@ -37,4 +37,6 @@ export const trackShareSchema = z.object({
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.object({
   type: z.enum(ActionType),
+  // TODO.tracking: better typing
+  details: z.object({}).passthrough().optional(),
 });

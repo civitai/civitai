@@ -3,7 +3,6 @@ import {
   Popover,
   Stack,
   Text,
-  ThemeIcon,
   UnstyledButton,
   UnstyledButtonProps,
   useMantineTheme,
@@ -14,7 +13,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { IconBolt } from '@tabler/icons-react';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
-import { showConfirmNotification, showErrorNotification } from '~/utils/notifications';
+import { showConfirmNotification } from '~/utils/notifications';
 import { v4 as uuidv4 } from 'uuid';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
@@ -24,6 +23,8 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
+import { useBuzzTransaction } from './buzz.utils';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 type Props = UnstyledButtonProps & {
   toUserId?: number;
@@ -108,61 +109,47 @@ export function InteractiveTipBuzzButton({
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+
   const [buzzCounter, setBuzzCounter] = useState(0);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const interval = useInterval(() => {
     setBuzzCounter((prevCounter) => {
-      const [_, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
+      const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
       return Math.min(currentUser?.balance ?? 0, prevCounter + step);
     });
   }, 150);
-  const queryUtils = trpc.useContext();
+
   const onTip = useStore((state) => state.onTip);
   const [dismissed, setDismissed] = useLocalStorage({
     key: `interactive-tip-buzz-tutorial`,
     defaultValue: false,
   });
 
-  const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
-    async onSuccess(_, { amount }) {
-      await queryUtils.buzz.getUserAccount.cancel();
-      if (entityType && entityId) {
-        onTip({ entityType, entityId, amount });
-      }
-
-      queryUtils.buzz.getUserAccount.setData(undefined, (old) =>
-        old
-          ? {
-              ...old,
-              balance: amount <= old.balance ? old.balance - amount : old.balance,
-            }
-          : old
-      );
-
-      if (onTipSent) {
-        onTipSent({ amount, queryUtils });
-      }
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Unable to send tip',
-        error: new Error(error.message),
-      });
-    },
-  });
+  const { createBuzzTransactionMutation } = useBuzzTransaction();
+  const { trackAction } = useTrackEvent();
 
   const onSendTip = async (tipAmount: number) => {
-    createBuzzTransactionMutation.mutate({
-      toAccountId: toUserId,
-      type: TransactionType.Tip,
-      amount: Number(tipAmount),
-      entityId,
-      entityType,
-      details: {
+    createBuzzTransactionMutation.mutate(
+      {
+        toAccountId: toUserId,
+        type: TransactionType.Tip,
+        amount: Number(tipAmount),
         entityId,
         entityType,
+        details: {
+          entityId,
+          entityType,
+        },
       },
-    });
+      {
+        onSuccess: (_, { amount }) => {
+          if (entityType && entityId) {
+            onTip({ entityType, entityId, amount });
+          }
+        },
+      }
+    );
   };
 
   const reset = () => {
@@ -204,6 +191,10 @@ export function InteractiveTipBuzzButton({
 
       if (amount && !timeoutRef.current) {
         const uuid = uuidv4();
+        trackAction({
+          type: 'TipInteractive_Click',
+          details: { toUserId, entityId, entityType, amount },
+        }).catch(() => undefined);
 
         showConfirmNotification({
           id: uuid,
@@ -233,6 +224,10 @@ export function InteractiveTipBuzzButton({
               }
             : undefined,
           onCancel: () => {
+            trackAction({
+              type: 'TipInteractive_Cancel',
+              details: { toUserId, entityId, entityType, amount },
+            }).catch(() => undefined);
             hideNotification(uuid);
             reset();
           },
