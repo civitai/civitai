@@ -417,7 +417,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           min={0}
                           max={100000}
                           sx={{ flexGrow: 1 }}
-                          icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+                          format="currency"
+                          precision={2}
+                          step={0.01}
+                          icon={<CurrencyIcon currency={Currency.USD} size={18} />}
                         />
                       )}
                   </>
