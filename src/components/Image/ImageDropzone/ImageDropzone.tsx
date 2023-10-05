@@ -97,10 +97,10 @@ export function ImageDropzone({
               </Text>
             )}
             <Text size="sm" color="dimmed" inline>
-              {`Image files should not exceed ${formatBytes(maxSize)} `}
+              {`Images cannot exceed ${formatBytes(maxSize)} `}
             </Text>
             <Text size="sm" color="dimmed" inline>
-              {`Video files should not exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
+              {`Videos cannot exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
             </Text>
           </Stack>
         </Group>
