@@ -41,6 +41,7 @@ import {
   usersSearchIndex,
 } from '~/server/search-index';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userMetrics } from '~/server/metrics';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -518,6 +519,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  await userMetrics.queueUpdate(id);
 
   return res;
 };
