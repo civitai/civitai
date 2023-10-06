@@ -17,6 +17,8 @@ import {
   Text,
   Title,
   createStyles,
+  SegmentedControl,
+  HoverCard,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
@@ -154,8 +156,9 @@ export default function Leaderboard() {
 
           <Grid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
             <Stack spacing={0} maw={600} w="100%">
-              <Group spacing={8} position="apart" noWrap>
+              <Group spacing={8} noWrap>
                 <Title className={classes.title}>{selectedLeaderboard?.title}</Title>
+                <LegendsToggle className={classes.legendsToggleSm} />
                 <ActionIcon
                   className={classes.drawerButton}
                   size="md"
@@ -165,6 +168,7 @@ export default function Leaderboard() {
                   <IconLayoutSidebarLeftExpand />
                 </ActionIcon>
               </Group>
+              <LegendsToggle className={classes.legendsToggle} />
               <Group spacing={5}>
                 <Text className={classes.slogan} color="dimmed" size="lg">
                   {selectedLeaderboard?.description}
@@ -226,6 +230,44 @@ export default function Leaderboard() {
     </>
   );
 }
+
+const LegendsToggle = ({ className }: { className?: string }) => {
+  return (
+    <HoverCard withArrow>
+      <HoverCard.Target>
+        <SegmentedControl
+          className={className}
+          data={[
+            { value: 'season', label: 'Season' },
+            { value: 'legend', label: 'Legend' },
+          ]}
+          size="xs"
+          value="season"
+          color="blue"
+          ml="auto"
+          orientation="horizontal"
+          styles={(theme) => ({
+            root: {
+              border: `1px solid ${
+                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+              }`,
+              background: 'none',
+            },
+          })}
+        />
+      </HoverCard.Target>
+      <HoverCard.Dropdown maw={300}>
+        <Text weight={500} color="orange">
+          Coming soon!
+        </Text>
+        <Text size="xs">
+          See the creators that have become the Legends of Civitai. Earn points in the season to
+          claim your spot along side them.
+        </Text>
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+};
 
 const UserPosition = ({
   position,
@@ -303,6 +345,7 @@ const useStyles = createStyles((theme) => ({
   drawerButton: {
     display: 'none',
     [theme.fn.smallerThan('sm')]: {
+      marginLeft: 'auto',
       display: 'block',
     },
   },
@@ -311,5 +354,20 @@ const useStyles = createStyles((theme) => ({
     padding: theme.spacing.xs,
     marginBottom: 0,
     boxShadow: theme.shadows.sm,
+  },
+
+  legendsToggleSm: {
+    [theme.fn.smallerThan('sm')]: {
+      display: 'none',
+    },
+  },
+
+  legendsToggle: {
+    width: '100%',
+    marginTop: theme.spacing.xs,
+    marginBottom: theme.spacing.xs,
+    [theme.fn.largerThan('sm')]: {
+      display: 'none',
+    },
   },
 }));
