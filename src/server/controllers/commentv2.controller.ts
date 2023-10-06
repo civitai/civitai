@@ -180,14 +180,15 @@ export const toggleHideCommentHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   const { id: userId, isModerator } = ctx.user;
+  const { id, entityType } = input;
 
   try {
     const comment = await dbRead.commentV2.findFirst({
-      where: { id: input.id },
+      where: { id },
       select: {
         hidden: true,
         userId: true,
-        thread: { select: { [input.entityType]: { select: { userId: true } } } },
+        thread: { select: { [entityType]: { select: { userId: true } } } },
       },
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
@@ -195,7 +196,7 @@ export const toggleHideCommentHandler = async ({
       !isModerator &&
       comment.userId !== userId &&
       // Nasty hack to get around the fact that the thread is not typed
-      (comment.thread[input.entityType] as any)?.userId !== userId
+      (comment.thread[entityType] as any)?.userId !== userId
     )
       throw throwAuthorizationError();
 

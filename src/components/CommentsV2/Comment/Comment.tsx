@@ -149,7 +149,7 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
                       <IconEyeOff size={14} stroke={1.5} />
                     )
                   }
-                  onClick={() => toggleHide({ id: comment.id, entityType })}
+                  onClick={() => toggleHide({ id: comment.id, entityType, entityId })}
                 >
                   {comment.hidden ? 'Unhide comment' : 'Hide comment'}
                 </Menu.Item>

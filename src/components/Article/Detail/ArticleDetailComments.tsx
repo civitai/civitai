@@ -96,7 +96,8 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
       closeButtonLabel="Close hidden comments"
       withCloseButton
     >
-      <Stack spacing="xl">
+      <Divider mx="-md" />
+      <Stack mt="md" spacing="xl">
         <AlertWithIcon icon={<IconAlertCircle />}>
           Some comments may be hidden by the author or moderators to ensure a positive and inclusive
           environment. Moderated for respectful and relevant discussions.
@@ -114,8 +115,8 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
                 <Center mt="xl">
                   <Loader variant="bars" />
                 </Center>
-              ) : (
-                <Stack mt="xl" spacing="xl">
+              ) : !!data?.length ? (
+                <Stack spacing="xl">
                   {data?.map((comment) => (
                     <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
                   ))}
@@ -133,6 +134,8 @@ const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommen
                     />
                   )}
                 </Stack>
+              ) : (
+                <Text>No hidden comments</Text>
               )
             }
           </CommentsProvider>

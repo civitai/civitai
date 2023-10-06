@@ -37,6 +37,7 @@ export const upsertCommentv2Schema = commentConnectorSchema.extend({
 export type ToggleHideCommentInput = z.infer<typeof toggleHideCommentSchema>;
 export const toggleHideCommentSchema = z.object({
   id: z.number(),
+  entityId: z.number(),
   entityType: z.enum([
     'question',
     'answer',
