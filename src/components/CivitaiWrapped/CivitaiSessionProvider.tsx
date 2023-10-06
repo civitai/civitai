@@ -20,7 +20,9 @@ export let isAuthed = false;
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
   const features = useFeatureFlags();
-  const { balance = 0 } = useQueryBuzzAccount({ enabled: !!data?.user && features.buzz });
+  const { balance = 0 } = useQueryBuzzAccount({
+    enabled: !!data?.user && features.buzz,
+  });
 
   const value = useMemo(() => {
     if (!data?.user) return null;
@@ -59,5 +61,5 @@ export const useQueryBuzzAccount = (options?: QueryOptions) => {
 
   useSignalConnection(SignalMessages.BuzzUpdate, onBalanceUpdate);
 
-  return data ?? { balance: 0 };
+  return data ?? { balance: 0, lifetimeBalance: 0 };
 };

@@ -25,6 +25,7 @@ export const getUserBuzzAccountResponse = z.object({
   // This is the user id
   id: z.number(),
   balance: z.number(),
+  lifetimeBalance: z.number().default(0),
 });
 
 export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactionsSchema>;
@@ -44,7 +45,13 @@ export const getUserBuzzTransactionsResponse = z.object({
   transactions: z
     .object({
       date: z.coerce.date(),
-      type: z.string().transform((value) => TransactionType[value as keyof typeof TransactionType]),
+      type: z
+        .any()
+        .transform((value) =>
+          parseInt(value)
+            ? TransactionType.Tip
+            : TransactionType[value as keyof typeof TransactionType]
+        ),
       fromAccountId: z.coerce.number(),
       toAccountId: z.coerce.number(),
       amount: z.coerce.number(),

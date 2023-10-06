@@ -20,6 +20,34 @@ export function createBuzzEvent<T>({
   const types = [type];
   if (isProcessable) types.push(...(buzzEvent.includeTypes ?? []));
 
+  const getUserRewardDetails = async (userId: number) => {
+    const data = {
+      // We'll return the event details
+      // so that they can be presented on the UI.
+      type,
+      awardAmount,
+      description,
+      cap: 'cap' in buzzEvent ? buzzEvent.cap : undefined,
+      triggerDescription: buzzEvent.triggerDescription,
+      tooltip: buzzEvent.tooltip,
+      // -1 determines that this award is not on demand, as such, would require a full
+      // clickhouse query to determine the awarded amount. For the time being, this won't be
+      // done.
+      awarded: -1,
+    };
+
+    if (!isOnDemand) {
+      return data;
+    }
+
+    const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
+    const typeCache = JSON.parse(typeCacheJson);
+
+    data.awarded = Object.keys(typeCache).length * awardAmount;
+
+    return data;
+  };
+
   const sendAward = async (events: BuzzEventLog | BuzzEventLog[]) => {
     if (!Array.isArray(events)) events = [events];
 
@@ -211,6 +239,7 @@ export function createBuzzEvent<T>({
     types,
     apply,
     process,
+    getUserRewardDetails,
   };
 }
 
@@ -279,7 +308,8 @@ type BuzzEventDefinitionBase<T> = {
   type: string;
   description: string;
   awardAmount: number;
-
+  triggerDescription?: string;
+  tooltip?: string;
   getKey: (input: T, ctx: GetKeyContext) => Promise<GetKeyOutput | false>;
 };
 
@@ -296,5 +326,7 @@ type ProcessableBuzzEventDefinition<T> = BuzzEventDefinitionBase<T> & {
 
 type OnEventBuzzEventDefinition<T> = BuzzEventDefinitionBase<T> & {
   cap?: number;
+  // On demand items are kept in redis cache and awarded instantly.
+  // Cache is cleared daily and is set on a per-user basis.
   onDemand: true;
 };

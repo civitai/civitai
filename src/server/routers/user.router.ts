@@ -19,6 +19,7 @@ import {
   toggleBountyEngagementHandler,
   reportProhibitedRequestHandler,
   userByReferralCodeHandler,
+  userRewardDetailsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -114,4 +115,5 @@ export const userRouter = router({
   userByReferralCode: publicProcedure
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),
+  userRewardDetails: protectedProcedure.query(userRewardDetailsHandler),
 });
