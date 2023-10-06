@@ -490,7 +490,7 @@ const SpendingBuzz = () => {
       title: 'Get showcased',
       description: 'Boost your model to our homepage',
       btnProps: {
-        href: '/contact', // TODO.BuzzPage: Clickup form.
+        href: '/contact', // TODO.Justin: BuzzPage: Clickup form.
         children: 'Contact us',
         rightIcon: <IconArrowRight size={14} />,
       },
