@@ -92,10 +92,10 @@ export default function IntentAvatar() {
       const blob = await response.blob();
       const bytes = blob.size;
 
-      if (bytes > constants.imageUpload.maxFileSize) {
+      if (bytes > constants.mediaUpload.maxImageFileSize) {
         setErrorMsg(
           `File (${formatBytes(bytes)}) should not exceed ${formatBytes(
-            constants.imageUpload.maxFileSize
+            constants.mediaUpload.maxImageFileSize
           )}.`
         );
         setLoading(false);
