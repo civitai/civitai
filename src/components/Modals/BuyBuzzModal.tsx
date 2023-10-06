@@ -62,7 +62,7 @@ const { openModal, Modal } = createContextModal<{
           message={message}
           onPurchaseSuccess={() => {
             onPurchaseSuccess?.();
-            handleClose();
+            context.close();
           }}
           minBuzzAmount={minBuzzAmount}
           purchaseSuccessMessage={purchaseSuccessMessage}

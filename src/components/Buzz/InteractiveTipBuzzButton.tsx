@@ -26,9 +26,9 @@ import { useBuzzTransaction } from './buzz.utils';
 import { useTrackEvent } from '../TrackView/track.utils';
 
 type Props = UnstyledButtonProps & {
-  toUserId?: number;
-  entityId?: number;
-  entityType?: string;
+  toUserId: number;
+  entityId: number;
+  entityType: string;
 };
 
 const CONFIRMATION_THRESHOLD = 100;

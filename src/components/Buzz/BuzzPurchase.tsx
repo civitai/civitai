@@ -153,7 +153,7 @@ export const BuzzPurchase = ({
       unitAmount,
       buzzAmount,
       userId: currentUser.id as number,
-      selectedPriceId: selectedPrice?.id,
+      priceId: selectedPrice?.id,
     };
 
     openStripeTransactionModal(

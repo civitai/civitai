@@ -104,11 +104,14 @@ const StripeTransactionModal = ({
   successMessage,
 }: Props & { clientSecret: string; onClose: () => void }) => {
   const [success, setSuccess] = useState<boolean>(false);
+
+  const { trackAction } = useTrackEvent();
+
   const { processingPayment, onConfirmPayment, errorMessage, paymentIntentStatus } =
     useStripeTransaction({
       clientSecret,
-      onPaymentSuccess: async (stripePaymentIntentId) => {
-        await onSuccess?.(stripePaymentIntentId);
+      onPaymentSuccess: async (stripePaymentIntent) => {
+        await onSuccess?.(stripePaymentIntent.id);
         setSuccess(true);
       },
       metadata,
@@ -138,9 +141,14 @@ const StripeTransactionModal = ({
   return (
     <form
       id="stripe-payment-form"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        onConfirmPayment();
+        const paymentIntent = await onConfirmPayment();
+        if (paymentIntent)
+          trackAction({
+            type: 'PurchaseFunds_Confirm',
+            details: { ...metadata, method: paymentIntent.payment_method?.type },
+          }).catch(() => undefined);
       }}
     >
       <Stack spacing="md">

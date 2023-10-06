@@ -111,7 +111,7 @@ export type ImageActivityType = 'Create' | 'Delete' | 'DeleteTOS' | 'Tags' | 'Re
 export type QuestionType = 'Create' | 'Delete';
 export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';
-export type BountyActivity = 'Create' | 'Update' | 'Delete' | 'Expire';
+export type BountyActivity = 'Create' | 'Update' | 'Delete' | 'Expire' | 'Refund';
 export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
 export type BountyBenefactorActivity = 'Create';
 
@@ -128,6 +128,7 @@ export const ActionType = [
   'TipInteractive_Cancel',
   'NotEnoughFunds',
   'PurchaseFunds_Cancel',
+  'PurchaseFunds_Confirm',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -265,7 +266,7 @@ export class Tracker {
     return this.track('images', values);
   }
 
-  public bounty(values: { type: BountyActivity; bountyId: number }) {
+  public bounty(values: { type: BountyActivity; bountyId: number; userId?: number }) {
     return this.track('bounties', values);
   }
 
@@ -273,6 +274,7 @@ export class Tracker {
     type: BountyEntryActivity;
     bountyEntryId: number;
     benefactorId?: number;
+    userId?: number;
   }) {
     return this.track('bountyEntries', values);
   }

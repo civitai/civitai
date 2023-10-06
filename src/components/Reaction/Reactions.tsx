@@ -145,7 +145,7 @@ export function Reactions({
         >
           {ReactionBadge}
         </ReactionsList>
-        {supportsBuzzTipping && (
+        {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
             toUserId={targetUserId}
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}
@@ -271,7 +271,7 @@ function BuzzTippingBadge({
   ...props
 }: {
   tippedAmountCount: number;
-  toUserId?: number;
+  toUserId: number;
   entityType: string;
   entityId: number;
 }) {
