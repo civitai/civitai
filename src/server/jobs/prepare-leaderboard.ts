@@ -57,8 +57,15 @@ const updateUserLeaderboardRank = createJob(
   '1 0 * * *',
   async () => {
     if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
-
     await updateLeaderboardRank();
+  }
+);
+
+const updateUserDiscordLeaderboardRoles = createJob(
+  'update-user-leaderboard-rank',
+  '10 0 * * *',
+  async () => {
+    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
     await applyDiscordLeaderboardRoles();
   }
 );
@@ -92,5 +99,6 @@ const clearLeaderboardCache = createJob('clear-leaderboard-cache', '0 0 * * *', 
 export const leaderboardJobs = [
   prepareLeaderboard,
   updateUserLeaderboardRank,
+  updateUserDiscordLeaderboardRoles,
   clearLeaderboardCache,
 ];
