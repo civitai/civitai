@@ -1578,6 +1578,7 @@ model CommentV2 {
   thread       Thread   @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
   childThread  Thread?  @relation("childThread")
   metadata     Json?
+  hidden       Boolean? @default(false)
 
   reactions CommentV2Reaction[]
   reports   CommentV2Report[]

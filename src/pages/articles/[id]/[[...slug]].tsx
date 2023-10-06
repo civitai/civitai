@@ -254,10 +254,6 @@ export default function ArticleDetailsPage({
             <Sidebar creator={article.user} attachments={article.attachments} />
           </Grid.Col>
         </Grid>
-
-        <Title order={2} id="comments" my="xl">
-          Comments
-        </Title>
         {article.user && <ArticleDetailComments articleId={article.id} userId={article.user.id} />}
       </Container>
     </>

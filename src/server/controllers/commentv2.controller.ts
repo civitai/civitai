@@ -7,6 +7,7 @@ import {
   getCommentsThreadDetails,
   toggleLockCommentsThread,
   getComment,
+  toggleHideComment,
 } from './../services/commentsv2.service';
 import {
   UpsertCommentV2Input,
@@ -14,9 +15,17 @@ import {
   CommentConnectorInput,
 } from './../schema/commentv2.schema';
 import { Context } from '~/server/createContext';
-import { throwDbError } from '~/server/utils/errorHandling';
+import {
+  handleTrackError,
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
+import { TRPCError } from '@trpc/server';
+import { dbRead } from '../db/client';
+import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -109,8 +118,14 @@ export const deleteCommentV2Handler = async ({
   input: GetByIdInput;
 }) => {
   try {
-    await deleteComment(input);
+    const deleted = await deleteComment(input);
+    if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id }).catch(handleTrackError);
+
+    return deleted;
   } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
@@ -153,6 +168,45 @@ export const toggleLockThreadDetailsHandler = async ({
   try {
     await toggleLockCommentsThread(input);
   } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleHideCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleHideCommentInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { id: userId, isModerator } = ctx.user;
+
+  try {
+    const comment = await dbRead.commentV2.findFirst({
+      where: { id: input.id },
+      select: {
+        hidden: true,
+        userId: true,
+        thread: { select: { [input.entityType]: { select: { userId: true } } } },
+      },
+    });
+    if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+    if (
+      !isModerator &&
+      comment.userId !== userId &&
+      // Nasty hack to get around the fact that the thread is not typed
+      (comment.thread[input.entityType] as any)?.userId !== userId
+    )
+      throw throwAuthorizationError();
+
+    const updatedComment = await toggleHideComment({
+      id: input.id,
+      currentToggle: comment.hidden ?? false,
+    });
+
+    return updatedComment;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
 };
