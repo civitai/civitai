@@ -4,6 +4,7 @@ import { createContextModal } from '~/components/Modals/utils/createContextModal
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserBuzz } from '../User/UserBuzz';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 const { openModal, Modal } = createContextModal<{
   message?: string;
@@ -21,7 +22,11 @@ const { openModal, Modal } = createContextModal<{
     context,
     props: { message, onPurchaseSuccess, minBuzzAmount, purchaseSuccessMessage },
   }) => {
-    const handleClose = () => context.close();
+    const { trackAction } = useTrackEvent();
+    const handleClose = () => {
+      trackAction({ type: 'PurchaseFunds_Cancel', details: { step: 1 } }).catch(() => undefined);
+      context.close();
+    };
     const currentUser = useCurrentUser();
 
     return (
@@ -57,7 +62,7 @@ const { openModal, Modal } = createContextModal<{
           message={message}
           onPurchaseSuccess={() => {
             onPurchaseSuccess?.();
-            handleClose();
+            context.close();
           }}
           minBuzzAmount={minBuzzAmount}
           purchaseSuccessMessage={purchaseSuccessMessage}

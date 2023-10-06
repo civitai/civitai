@@ -19,13 +19,14 @@ import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 type Props = {
   successMessage?: React.ReactNode;
   message?: React.ReactNode;
   unitAmount: number;
   currency?: Currency;
-  onSuccess?: (stripePaymentIntentId: string) => void;
+  onSuccess?: (stripePaymentIntentId: string) => Promise<void>;
   metadata: PaymentIntentMetadataSchema;
   paymentMethodTypes?: string[];
 };
@@ -44,6 +45,9 @@ const { openModal, Modal } = createContextModal<Props>({
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
+
+    const { trackAction } = useTrackEvent();
+
     const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
       { unitAmount, currency, metadata, paymentMethodTypes },
       { enabled: !!unitAmount && !!currency, refetchOnMount: 'always', cacheTime: 0 }
@@ -68,12 +72,17 @@ const { openModal, Modal } = createContextModal<Props>({
       appearance: { theme: theme.colorScheme === 'dark' ? 'night' : 'stripe' },
     };
 
+    const handleClose = () => {
+      trackAction({ type: 'PurchaseFunds_Cancel', details: { step: 2 } }).catch(() => undefined);
+      context.close();
+    };
+
     return (
       <Elements stripe={stripePromise} key={clientSecret} options={options}>
         <StripeTransactionModal
           clientSecret={clientSecret}
           key={clientSecret}
-          onClose={() => context.close()}
+          onClose={handleClose}
           unitAmount={unitAmount}
           currency={currency}
           metadata={metadata}
@@ -95,11 +104,14 @@ const StripeTransactionModal = ({
   successMessage,
 }: Props & { clientSecret: string; onClose: () => void }) => {
   const [success, setSuccess] = useState<boolean>(false);
+
+  const { trackAction } = useTrackEvent();
+
   const { processingPayment, onConfirmPayment, errorMessage, paymentIntentStatus } =
     useStripeTransaction({
       clientSecret,
-      onPaymentSuccess: async (stripePaymentIntentId) => {
-        await onSuccess?.(stripePaymentIntentId);
+      onPaymentSuccess: async (stripePaymentIntent) => {
+        await onSuccess?.(stripePaymentIntent.id);
         setSuccess(true);
       },
       metadata,
@@ -129,9 +141,14 @@ const StripeTransactionModal = ({
   return (
     <form
       id="stripe-payment-form"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        onConfirmPayment();
+        const paymentIntent = await onConfirmPayment();
+        if (paymentIntent)
+          trackAction({
+            type: 'PurchaseFunds_Confirm',
+            details: { ...metadata, method: paymentIntent.payment_method?.type },
+          }).catch(() => undefined);
       }}
     >
       <Stack spacing="md">

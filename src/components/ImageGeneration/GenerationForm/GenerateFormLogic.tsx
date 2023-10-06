@@ -15,7 +15,7 @@ import { BaseModel, BaseModelSetType, baseModelSets, generation } from '~/server
 import { ModelType } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import { calculateGenerationBill } from '~/components/ImageGeneration/utils/generation.utils';
-import { useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { TransactionType } from '~/server/schema/buzz.schema';
 

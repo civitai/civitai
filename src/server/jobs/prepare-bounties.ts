@@ -96,7 +96,7 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
       await dbWrite.$executeRawUnsafe(` 
         UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};
       `);
-      tracker.bounty({ type: 'Expire', data: { id } }).catch(handleTrackError);
+      tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleTrackError);
       continue;
     }
 
@@ -131,10 +131,7 @@ const prepareBounties = createJob('prepare-bounties', '0 1 * * *', async () => {
       `),
     ]);
     tracker
-      .bountyEntry({
-        type: 'Award',
-        data: { awardedToId: winnerEntryId, bountyId: id, currency, unitAmount: awardedAmount },
-      })
+      .bountyEntry({ type: 'Award', bountyEntryId: winnerEntryId, userId: -1 })
       .catch(handleTrackError);
 
     if (awardedAmount > 0) {

@@ -2,14 +2,12 @@ import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/co
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, TrainingStatus } from '@prisma/client';
-import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -34,7 +32,8 @@ import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
-import { BuzzTransactionButton, useBuzzTransaction } from '~/components/Buzz/BuzzTransactionButton';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 
