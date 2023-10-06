@@ -550,7 +550,7 @@ const FeatureCard = ({ title, description, icon, btnProps }: FeatureCardProps) =
         <Text color="dimmed" align="center">
           {description}
         </Text>
-        <Button component="a" mt="auto" w="100%" {...btnProps}></Button>
+        <Button component="a" mt="auto" w="100%" {...btnProps} />
       </Stack>
     </Paper>
   );
