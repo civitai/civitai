@@ -36,7 +36,8 @@ export function CommentProvider({
 
   const canDelete = isOwner || currentUser?.isModerator;
   const canEdit = (!isLocked && !isMuted) || isMod;
-  const canReply = (currentUser && !isOwner && !isLocked && !isMuted) ?? undefined;
+  const canReply =
+    (currentUser && !isOwner && !isLocked && !isMuted && !comment.hidden) ?? undefined;
   const canHide = currentUser?.id === resourcerOwnerId || isMod;
   const badge = badges?.find((x) => x.userId === comment.user.id);
   return (
