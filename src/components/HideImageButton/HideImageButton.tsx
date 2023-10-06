@@ -4,11 +4,9 @@ import { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showSuccessNotification } from '~/utils/notifications';
 
 export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props }: Props) {
-  const currentUser = useCurrentUser();
   const images = useHiddenPreferencesData().image;
   const hiddenImages = images.filter((x) => x.type === 'always');
   const alreadyHiding = hiddenImages.some((x) => x.id === imageId);
