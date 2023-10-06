@@ -106,7 +106,7 @@ const templates = [
   '{age} {years} {old}',
   '{age} {years}',
   '{age}th birthday',
-  's?he i?s \\w* {age}',
+  "s?he [i|']s \\w* {age}",
 ];
 
 // --------------------------------------
