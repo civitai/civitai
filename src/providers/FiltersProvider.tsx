@@ -67,6 +67,7 @@ const imageFilterSchema = z.object({
   excludeCrossPosts: z.boolean().optional(),
   types: z.array(z.nativeEnum(MediaType)).optional(),
   withMeta: z.boolean().optional(),
+  hidden: z.boolean().optional(),
 });
 
 const modelImageFilterSchema = imageFilterSchema.extend({

@@ -70,12 +70,14 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
   const filterLength =
     (mergedFilters.types?.length ?? 0) +
     (mergedFilters.withMeta ? 1 : 0) +
+    (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
       types: undefined,
       withMeta: false,
+      hidden: false,
       period: MetricTimeframe.AllTime,
     };
 
@@ -148,15 +150,27 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
             </Chip>
           ))}
         </Chip.Group>
-        <Switch
-          label="Metadata only"
-          checked={mergedFilters.withMeta}
-          onChange={({ target }) =>
-            onChange
-              ? onChange({ withMeta: target.checked })
-              : setFilters({ withMeta: target.checked })
-          }
-        />
+        <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Group>
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.withMeta}
+            onChange={(checked) =>
+              onChange ? onChange({ withMeta: checked }) : setFilters({ withMeta: checked })
+            }
+          >
+            Metadata only
+          </Chip>
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.hidden}
+            onChange={(checked) =>
+              onChange ? onChange({ hidden: checked }) : setFilters({ hidden: checked })
+            }
+          >
+            My hidden Images
+          </Chip>
+        </Group>
       </Stack>
       {filterLength > 0 && (
         <Button
