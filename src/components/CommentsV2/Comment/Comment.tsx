@@ -21,6 +21,8 @@ import {
   IconEdit,
   IconFlag,
   IconArrowBackUp,
+  IconEye,
+  IconEyeOff,
 } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -33,6 +35,7 @@ import { CommentReactions } from './CommentReactions';
 import { DeleteComment } from './DeleteComment';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
+import { useMutateComment } from '../commentv2.utils';
 
 type Store = {
   id?: number;
@@ -45,11 +48,12 @@ const useStore = create<Store>((set) => ({
 
 type CommentProps = Omit<GroupProps, 'children'> & {
   comment: InfiniteCommentResults['comments'][0];
+  resourceOwnerId?: number;
 };
 
-export function Comment({ comment, ...groupProps }: CommentProps) {
+export function Comment({ comment, resourceOwnerId, ...groupProps }: CommentProps) {
   return (
-    <CommentProvider comment={comment}>
+    <CommentProvider comment={comment} resourceOwnerId={resourceOwnerId}>
       <CommentContent comment={comment} {...groupProps} />
     </CommentProvider>
   );
@@ -57,12 +61,14 @@ export function Comment({ comment, ...groupProps }: CommentProps) {
 
 export function CommentContent({ comment, ...groupProps }: CommentProps) {
   const { entityId, entityType, highlighted } = useCommentsContext();
-  const { canDelete, canEdit, canReply, badge, canReport } = useCommentV2Context();
+  const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
 
   const { classes, cx } = useStyles();
 
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
+
+  const { toggleHide } = useMutateComment();
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
@@ -133,6 +139,20 @@ export function CommentContent({ comment, ...groupProps }: CommentProps) {
                     </Menu.Item>
                   )}
                 </>
+              )}
+              {canHide && (
+                <Menu.Item
+                  icon={
+                    comment.hidden ? (
+                      <IconEye size={14} stroke={1.5} />
+                    ) : (
+                      <IconEyeOff size={14} stroke={1.5} />
+                    )
+                  }
+                  onClick={() => toggleHide({ id: comment.id, entityType, entityId })}
+                >
+                  {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+                </Menu.Item>
               )}
               {canReport && (
                 <LoginRedirect reason="report-model">

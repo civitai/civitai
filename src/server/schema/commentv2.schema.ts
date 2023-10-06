@@ -16,6 +16,7 @@ export const commentConnectorSchema = z.object({
     'bounty',
     'bountyEntry',
   ]),
+  hidden: z.boolean().optional(),
 });
 
 export type GetCommentsV2Input = z.infer<typeof getCommentsV2Schema>;
@@ -31,4 +32,22 @@ export const upsertCommentv2Schema = commentConnectorSchema.extend({
   content: z.string(),
   nsfw: z.boolean().optional(),
   tosViolation: z.boolean().optional(),
+});
+
+export type ToggleHideCommentInput = z.infer<typeof toggleHideCommentSchema>;
+export const toggleHideCommentSchema = z.object({
+  id: z.number(),
+  entityId: z.number(),
+  entityType: z.enum([
+    'question',
+    'answer',
+    'image',
+    'post',
+    'model',
+    'comment',
+    'review',
+    'article',
+    'bounty',
+    'bountyEntry',
+  ]),
 });

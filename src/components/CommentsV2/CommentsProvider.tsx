@@ -9,6 +9,7 @@ import { immer } from 'zustand/middleware/immer';
 import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { CommentV2Model } from '~/server/selectors/commentv2.selector';
+import { useQueryThreadComments } from './commentv2.utils';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -20,6 +21,7 @@ type Props = CommentConnectorInput & {
   initialCount?: number;
   limit?: number;
   badges?: CommentV2BadgeProps[];
+  hidden?: boolean;
   children: (args: ChildProps) => React.ReactNode;
 };
 
@@ -35,6 +37,7 @@ type ChildProps = {
   showMore: boolean;
   toggleShowMore: () => void;
   highlighted?: number;
+  hiddenCount: number;
 };
 
 type CommentsContext = CommentConnectorInput & ChildProps;
@@ -53,6 +56,7 @@ export function CommentsProvider({
   initialCount,
   limit: initialLimit = 5,
   badges,
+  hidden,
 }: Props) {
   const router = useRouter();
 
@@ -66,7 +70,7 @@ export function CommentsProvider({
   const toggleShowMore = () => setShowMore((b) => !b);
 
   const { data: thread, isInitialLoading: isLoading } = trpc.commentv2.getThreadDetails.useQuery(
-    { entityId, entityType },
+    { entityId, entityType, hidden },
     {
       enabled: initialCount === undefined || initialCount > 0,
       onSuccess: (data) => {
@@ -75,6 +79,7 @@ export function CommentsProvider({
     }
   );
   const initialComments = useMemo(() => thread?.comments ?? [], [thread?.comments]);
+  const { count: hiddenCount } = useQueryThreadComments({ entityId, entityType, hidden: true });
 
   const highlighted = parseNumericString(router.query.highlight);
   const getLimit = (data: { id: number }[] = []) => {
@@ -118,6 +123,7 @@ export function CommentsProvider({
         showMore,
         toggleShowMore,
         highlighted,
+        hiddenCount,
       }}
     >
       {children({
@@ -132,6 +138,7 @@ export function CommentsProvider({
         showMore,
         toggleShowMore,
         highlighted,
+        hiddenCount,
       })}
     </CommentsCtx.Provider>
   );
