@@ -240,8 +240,8 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
           },
         });
       }
-
-      tracker.bounty({ type: 'Expire', data: { id } }).catch(handleTrackError);
+      
+      tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleTrackError);
       log(` No entry winner detected, bounty has been refunded`);
       continue;
     }
@@ -277,10 +277,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       `),
     ]);
     tracker
-      .bountyEntry({
-        type: 'Award',
-        data: { awardedToId: winnerEntryId, bountyId: id, currency, unitAmount: awardedAmount },
-      })
+      .bountyEntry({ type: 'Award', bountyEntryId: winnerEntryId, userId: -1 })
       .catch(handleTrackError);
 
     if (awardedAmount > 0) {

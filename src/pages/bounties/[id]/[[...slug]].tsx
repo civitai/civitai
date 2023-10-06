@@ -364,7 +364,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
   const expired = bounty.expiresAt < new Date();
 
-  const { trackEvent } = useTrackEvent();
+  const { trackAction } = useTrackEvent();
 
   const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useQuery({
     id: bounty.id,
@@ -578,7 +578,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 e.stopPropagation();
 
                 // Ignore track error
-                trackEvent({ type: 'AddToBounty_Click' }).catch(() => undefined);
+                trackAction({ type: 'AddToBounty_Click' }).catch(() => undefined);
 
                 openConfirmModal({
                   title: isBenefactor ? 'Add to bounty' : 'Become a supporter',
@@ -609,7 +609,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                   labels: { confirm: 'Confirm', cancel: 'No, go back' },
                   onConfirm: () => {
                     onAddToBounty(minUnitAmount);
-                    trackEvent({ type: 'AddToBounty_Confirm' }).catch(() => undefined);
+                    trackAction({ type: 'AddToBounty_Confirm' }).catch(() => undefined);
                   },
                 });
               }}

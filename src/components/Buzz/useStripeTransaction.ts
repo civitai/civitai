@@ -1,7 +1,7 @@
 import { useElements, useStripe } from '@stripe/react-stripe-js';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useInterval } from '@mantine/hooks';
-import { PaymentIntent } from '@stripe/stripe-js';
+import { PaymentIntent, PaymentMethod } from '@stripe/stripe-js';
 import {
   STRIPE_PROCESSING_AWAIT_TIME,
   STRIPE_PROCESSING_CHECK_INTERVAL,
@@ -15,7 +15,7 @@ export const useStripeTransaction = ({
   onPaymentSuccess,
   clientSecret,
 }: {
-  onPaymentSuccess: (stripePaymentIntentId: string) => void;
+  onPaymentSuccess: (paymentIntent: PaymentIntent) => Promise<void>;
   clientSecret: string;
   metadata?: any;
 }) => {
@@ -26,9 +26,7 @@ export const useStripeTransaction = ({
 
   const fetchPaymentIntent = useCallback(
     async (secret: string) => {
-      if (!stripe) {
-        return;
-      }
+      if (!stripe) return;
 
       return await stripe.retrievePaymentIntent(secret);
     },
@@ -52,7 +50,7 @@ export const useStripeTransaction = ({
 
     const { paymentIntent } = data;
 
-    processPaymentIntent(paymentIntent);
+    await processPaymentIntent(paymentIntent);
   }, CHECK_INTERVAL);
 
   const processPaymentIntent = useCallback(
@@ -67,9 +65,9 @@ export const useStripeTransaction = ({
         case 'succeeded':
           try {
             setPaymentIntentStatus('succeeded');
-            await onPaymentSuccess?.(paymentIntent.id);
+            await onPaymentSuccess?.(paymentIntent);
             setProcessingPayment(false);
-          } catch (_: any) {
+          } catch {
             // Safeguard in case anything fails after payment is successful
             setErrorMessage(
               'Payment was successful but there was an error performing requested actions after completion. Please contact support.'
@@ -132,6 +130,7 @@ export const useStripeTransaction = ({
         // Make sure to change this to your payment completion page
         // TODO.stripePayments: change this to the actual return url. May not need to do anything but redirect.
         return_url: `${env.NEXT_PUBLIC_BASE_URL}/purchase/buzz`,
+        expand: ['payment_method'],
       },
     });
 
@@ -146,6 +145,8 @@ export const useStripeTransaction = ({
     }
 
     processPaymentIntent(paymentIntent);
+
+    return paymentIntent as PaymentIntent & { payment_method: PaymentMethod | undefined };
   };
 
   return {

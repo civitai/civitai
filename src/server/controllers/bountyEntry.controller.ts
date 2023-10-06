@@ -118,16 +118,7 @@ export const upsertBountyEntryHandler = async ({
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
     ctx.track
-      .bountyEntry({
-        type: input.id ? 'Create' : 'Update',
-        data: {
-          ...entry,
-          files: input.files.map((file) => ({
-            ...file.metadata,
-            fileType: file.name.split('.').pop(),
-          })),
-        },
-      })
+      .bountyEntry({ type: input.id ? 'Create' : 'Update', bountyEntryId: entry.id })
       .catch(handleTrackError);
 
     return entry;
@@ -150,7 +141,14 @@ export const awardBountyEntryHandler = async ({
       userId: ctx.user.id,
     });
 
-    ctx.track.bountyEntry({ type: 'Award', data: benefactor }).catch(handleTrackError);
+    if (benefactor.awardedToId)
+      ctx.track
+        .bountyEntry({
+          type: 'Award',
+          bountyEntryId: benefactor.awardedToId,
+          benefactorId: benefactor.userId,
+        })
+        .catch(handleTrackError);
 
     return benefactor;
   } catch (error) {
@@ -193,7 +191,7 @@ export const deleteBountyEntryHandler = async ({
     });
     if (!deleted) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
-    ctx.track.bountyEntry({ type: 'Delete', data: deleted }).catch(handleTrackError);
+    ctx.track.bountyEntry({ type: 'Delete', bountyEntryId: deleted.id }).catch(handleTrackError);
 
     return deleted;
   } catch (error) {

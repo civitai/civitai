@@ -5,6 +5,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openSendTipModal } from '../Modals/SendTipModal';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 type Props = ButtonProps & { toUserId: number; entityId?: number; entityType?: string };
 
@@ -14,8 +15,13 @@ export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }
   const features = useFeatureFlags();
   const theme = useMantineTheme();
 
+  const { trackAction } = useTrackEvent();
+
   const handleClick = () => {
     openSendTipModal({ toUserId, entityId, entityType }, { fullScreen: isMobile });
+    trackAction({ type: 'Tip_Click', details: { toUserId, entityId, entityType } }).catch(
+      () => undefined
+    );
   };
 
   if (!features.buzz) return null;
