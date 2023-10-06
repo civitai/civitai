@@ -137,9 +137,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       // TODO: A lot of improvement can be done here like checking images within the model, etc.
       switch (item.type) {
         case 'model':
-          return !hiddenModels.get(item.data.id);
+          return !hiddenModels.get(item.data.id) && !hiddenUsers.get(item.data.user.id);
         case 'image':
-          return !hiddenImages.get(item.data.id);
+          return !hiddenImages.get(item.data.id) && !hiddenUsers.get(item.data.user.id);
         case 'post':
         case 'article':
         default:
