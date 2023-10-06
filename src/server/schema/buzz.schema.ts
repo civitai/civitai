@@ -44,7 +44,13 @@ export const getUserBuzzTransactionsResponse = z.object({
   transactions: z
     .object({
       date: z.coerce.date(),
-      type: z.string().transform((value) => TransactionType[value as keyof typeof TransactionType]),
+      type: z
+        .any()
+        .transform((value) =>
+          parseInt(value)
+            ? TransactionType.Tip
+            : TransactionType[value as keyof typeof TransactionType]
+        ),
       fromAccountId: z.coerce.number(),
       toAccountId: z.coerce.number(),
       amount: z.coerce.number(),
