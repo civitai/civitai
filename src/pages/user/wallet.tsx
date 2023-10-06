@@ -55,6 +55,7 @@ import { Currency } from '@prisma/client';
 import { useQueryBuzzAccount } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -70,15 +71,15 @@ const options = {
   },
 };
 
-// export const getServerSideProps = createServerSideProps({
-//   useSession: true,
-//   resolver: async ({ session }) => {
-//     const features = getFeatureFlags({ user: session?.user });
-//     if (!features.buzz) {
-//       return { notFound: true };
-//     }
-//   },
-// });
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    const features = getFeatureFlags({ user: session?.user });
+    if (!features.buzz) {
+      return { notFound: true };
+    }
+  },
+});
 
 const moveBackground = keyframes({
   '0%': {
