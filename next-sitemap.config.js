@@ -13,6 +13,7 @@ const exclude = [
   '/user/downloads',
   '/user/notifications',
   '/user/transactions',
+  '/user/wallet',
   // Add additional sitemaps here to be excluded from indexing
   '/sitemap-articles.xml',
   '/sitemap-models.xml',

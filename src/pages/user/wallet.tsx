@@ -11,14 +11,12 @@ import {
   Title,
   Group,
   createStyles,
-  Badge,
   Divider,
   Button,
+  ButtonProps,
 } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import {
   Chart as ChartJS,
@@ -32,18 +30,21 @@ import { Line } from 'react-chartjs-2';
 import dayjs from 'dayjs';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import {
-  IconArrowLeft,
   IconArrowRight,
+  IconBarbell,
   IconBolt,
+  IconBrush,
   IconCoin,
   IconCoins,
+  IconHighlight,
   IconMoneybag,
+  IconShoppingBag,
+  IconShoppingCart,
   IconUsers,
 } from '@tabler/icons-react';
-import Link from 'next/link';
-import { formatDate } from '~/utils/date-helpers';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useGenerationStore } from '~/store/generation.store';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip);
 
@@ -59,19 +60,22 @@ export const options = {
   },
 };
 
-export const getServerSideProps = createServerSideProps({
-  useSession: true,
-  resolver: async ({ session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.buzz) {
-      return { notFound: true };
-    }
-  },
-});
+// export const getServerSideProps = createServerSideProps({
+//   useSession: true,
+//   resolver: async ({ session }) => {
+//     const features = getFeatureFlags({ user: session?.user });
+//     if (!features.buzz) {
+//       return { notFound: true };
+//     }
+//   },
+// });
 
 const useStyles = createStyles((theme) => ({
-  card: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
+  tileCard: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+  },
+  featureCard: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
   },
 }));
 
@@ -125,7 +129,7 @@ export default function UserWallet() {
           <Grid>
             <Grid.Col xs={12} md={7}>
               <Stack>
-                <Paper withBorder p="lg" radius="md" className={classes.card}>
+                <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
                   <Stack spacing={0}>
                     <Title order={3}>Current Buzz</Title>
                     <UserBuzz textSize="xl" user={currentUser} withAbbreviation={false} />
@@ -147,7 +151,7 @@ export default function UserWallet() {
                     />
                   </Stack>
                 </Paper>
-                <Paper withBorder radius="md" p="xl" className={classes.card}>
+                <Paper withBorder radius="md" p="xl" className={classes.tileCard}>
                   <Group position="apart">
                     <Title order={3} size={24}>
                       Lifetime Buzz
@@ -166,7 +170,7 @@ export default function UserWallet() {
               </Stack>
             </Grid.Col>
             <Grid.Col xs={12} md={5}>
-              <Paper withBorder p="lg" radius="md" h="100%" className={classes.card}>
+              <Paper withBorder p="lg" radius="md" h="100%" className={classes.tileCard}>
                 <Stack spacing={0}>
                   <Title order={3}>Recent Transactions</Title>
                   <Text component="a" variant="link" href={`/user/transactions`} size="xs">
@@ -223,52 +227,64 @@ export default function UserWallet() {
         )}
 
         <EarningBuzz />
+        <SpendingBuzz />
       </Stack>
     </Container>
   );
 }
 
-const useEarningBuzzCardStyles = createStyles((theme) => ({
-  card: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-  },
-}));
+type FeatureCardProps = {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  btnProps: ButtonProps & { href: string };
+};
+
 const EarningBuzz = () => {
-  const { classes } = useEarningBuzzCardStyles();
-  const data = [
+  const { classes } = useStyles();
+  const data: (FeatureCardProps & { key: string })[] = [
     {
       key: 'referrals',
       icon: <IconUsers size={32} />,
       title: 'Referrals',
       description: 'You & your friends can earn more buzz!',
-      href: '/user/referrals',
-      btnLabel: 'Invite a friend',
+      btnProps: {
+        href: '/user/referrals',
+        children: 'Invite a friend',
+      },
     },
     {
       key: 'bounties',
       icon: <IconMoneybag size={32} />,
       title: 'Bounties',
       description: 'Submit work to a bounty to win buzz',
-      href: '/bounties',
-      btnLabel: 'Learn more',
+      btnProps: {
+        href: '/bounties',
+        children: 'Learn more',
+      },
     },
     {
       key: 'purchase',
       icon: <IconCoin size={32} />,
       title: 'Purchase',
       description: 'Purchase buzz directly',
-      href: '/purchase/buzz',
-      btnLabel: 'Buy now',
+      btnProps: {
+        href: '/purchase/buzz',
+        children: 'Buy now',
+      },
     },
     {
       key: 'tips',
       icon: <IconCoins size={32} />,
       title: 'Get tipped',
       description: 'Create awesome content!',
-      href: '/images',
-      btnLabel: 'Learn more',
+      btnProps: {
+        href: '/images',
+        children: 'Learn more',
+      },
     },
   ];
+
   return (
     <Stack spacing={20}>
       <Stack spacing={4}>
@@ -278,29 +294,132 @@ const EarningBuzz = () => {
       <Grid gutter={20}>
         {data.map((item) => (
           <Grid.Col key={item.key} xs={12} md={3}>
-            <Paper withBorder className={classes.card} h="100%">
-              <Stack spacing={4} p="md" align="center" h="100%">
-                <Center>{item.icon}</Center>
-                <Text weight={500} size="xl">
-                  {item.title}
-                </Text>
-                <Text color="dimmed" align="center">
-                  {item.description}
-                </Text>
-                <Divider />
-                <Button mt="auto" component="a" href={item.href} w="100%">
-                  {item.btnLabel}
-                </Button>
-              </Stack>
-            </Paper>
+            <FeatureCard {...item} />
           </Grid.Col>
         ))}
       </Grid>
-      <Paper withBorder className={classes.card} h="100%">
+      <Paper withBorder className={classes.tileCard} h="100%">
         <Stack p="md">
           <Title order={3}>Other ways you&rsquo;ll earn some buzz</Title>
         </Stack>
       </Paper>
     </Stack>
+  );
+};
+
+const SpendingBuzz = () => {
+  const open = useGenerationStore((state) => state.open);
+
+  const data: (FeatureCardProps & { key: string })[] = [
+    {
+      key: 'train',
+      icon: <IconBarbell size={32} />,
+      title: 'Train',
+      description: 'Simple per-minute pricing, in buzz',
+      btnProps: {
+        href: '/models/train',
+        children: 'Train now',
+        rightIcon: <IconArrowRight size={14} />,
+      },
+    },
+    {
+      key: 'generate',
+      icon: <IconBrush size={32} />,
+      title: 'Generate Images',
+      description: 'Use any of our models to create',
+      btnProps: {
+        onClick: () => open(),
+        children: 'Generate now',
+        rightIcon: <IconArrowRight size={14} />,
+      },
+    },
+    {
+      key: 'tip',
+      icon: <IconCoins size={32} />,
+      title: 'Tip an artist',
+      description: 'Support an artist you love!',
+      btnProps: {
+        href: '/images',
+        children: 'View artists',
+        rightIcon: <IconArrowRight size={14} />,
+      },
+    },
+    {
+      key: 'bounties',
+      icon: <IconMoneybag size={32} />,
+      title: 'Bounties',
+      description: 'Submit work to a bounty to win buzz',
+      btnProps: {
+        href: '/bounties/create',
+        children: 'Create a bounty',
+        rightIcon: <IconArrowRight size={14} />,
+      },
+    },
+    {
+      key: 'showcase',
+      icon: <IconHighlight size={32} />,
+      title: 'Get showcased',
+      description: 'Boost your model to our homepage',
+      btnProps: {
+        href: '/contact', // TODO.BuzzPage: Clickup form.
+        children: 'Contact us',
+        rightIcon: <IconArrowRight size={14} />,
+      },
+    },
+    {
+      key: 'merch',
+      icon: <IconShoppingCart size={32} />,
+      title: 'Shop merch',
+      description: 'Tens of fun stickers to choose from...',
+      btnProps: {
+        disabled: true,
+        children: 'COMING SOON',
+      },
+    },
+    {
+      key: 'badges',
+      icon: <IconShoppingBag size={32} />,
+      title: 'Shop badges',
+      description: 'Make your profile stand out!',
+      btnProps: {
+        disabled: true,
+        children: 'COMING SOON',
+      },
+    },
+  ];
+
+  return (
+    <Stack spacing={20}>
+      <Stack spacing={4}>
+        <Title order={2}>Spending Buzz</Title>
+        <Text>Got some buzz? Here&rsquo;s what you can do with it</Text>
+      </Stack>
+      <Grid gutter={20}>
+        {data.map((item) => (
+          <Grid.Col key={item.key} xs={12} md={3}>
+            <FeatureCard {...item} />
+          </Grid.Col>
+        ))}
+      </Grid>
+    </Stack>
+  );
+};
+
+const FeatureCard = ({ title, description, icon, btnProps }: FeatureCardProps) => {
+  const { classes } = useStyles();
+
+  return (
+    <Paper withBorder className={classes.featureCard} h="100%">
+      <Stack spacing={4} p="md" align="center" h="100%">
+        <Center>{icon}</Center>
+        <Text weight={500} size="xl">
+          {title}
+        </Text>
+        <Text color="dimmed" align="center">
+          {description}
+        </Text>
+        <Button component="a" mt="auto" w="100%" {...btnProps}></Button>
+      </Stack>
+    </Paper>
   );
 };
