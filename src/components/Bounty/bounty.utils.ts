@@ -246,6 +246,7 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
       }
     },
   });
+
   const updateBountyMutation = trpc.bounty.update.useMutation({
     async onSuccess(_, { id }) {
       await queryUtils.bounty.getById.invalidate({ id });
@@ -257,6 +258,20 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
       });
     },
   });
+
+  const refundBountyMutation = trpc.bounty.refund.useMutation({
+    async onSuccess() {
+      await queryUtils.bounty.getById.invalidate({ id: bountyId });
+      showSuccessNotification({ message: 'Bounty refunded' });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to refund bounty',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const deleteBountyMutation = trpc.bounty.delete.useMutation({
     onMutate() {
       // Showing toast notification on mutate here because
@@ -297,6 +312,11 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
     return deleteBountyMutation.mutateAsync({ id: bountyId });
   };
 
+  const handleRefundBounty = () => {
+    if (!bountyId) return;
+    return refundBountyMutation.mutateAsync({ id: bountyId });
+  };
+
   return {
     createBounty: handleCreateBounty,
     creating: createBountyMutation.isLoading,
@@ -304,5 +324,7 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
     updating: updateBountyMutation.isLoading,
     deleteBounty: handleDeleteBounty,
     deleting: deleteBountyMutation.isLoading,
+    refundBounty: handleRefundBounty,
+    refunding: refundBountyMutation.isLoading,
   };
 };

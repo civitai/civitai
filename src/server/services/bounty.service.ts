@@ -10,6 +10,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { updateEntityFiles } from './file.service';
 import {
+  throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
   throwNotFoundError,
@@ -31,6 +32,7 @@ import { isNotTag, isTag } from '../schema/tag.schema';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ManipulateType } from 'dayjs';
 import { isProd } from '~/env/other';
+import { bountyRefundedEmail } from '~/server/email/templates';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -417,4 +419,78 @@ export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] 
   );
 
   return groupedImages;
+};
+
+export const refundBounty = async ({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator: boolean }) => {
+  if (!isModerator) {
+    throw throwAuthorizationError();
+  }
+
+  const bounty = await dbRead.bounty.findUniqueOrThrow({
+    where: { id },
+    select: {
+      name: true,
+      id: true,
+      complete: true,
+      refunded: true,
+      userId: true,
+      user: { select: { id: true, email: true } },
+    },
+  });
+
+  const { user } = bounty;
+
+  if (bounty.complete || bounty.refunded) {
+    throw throwBadRequestError('This bounty has already been awarded or refunded');
+  }
+
+  const benefactors = await dbRead.bountyBenefactor.findMany({
+    where: { bountyId: id },
+  });
+
+  if (benefactors.find((b) => b.awardedToId !== null)) {
+    throw throwBadRequestError(
+      'At least one benefactor has awarded an entry. This bounty is not refundable.'
+    );
+  }
+
+  const currency = benefactors.find((b) => b.userId === bounty.userId)?.currency;
+
+  if (!currency) {
+    throw throwBadRequestError('No currency found for bounty');
+  }
+
+  for (const { userId, unitAmount } of benefactors) {
+    if (unitAmount > 0) {
+      switch (currency) {
+        case Currency.BUZZ:
+          await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: userId,
+            amount: unitAmount,
+            type: TransactionType.Refund,
+            description: 'Reason: Bounty refund',
+          });
+
+          break;
+        default: // Do nothing just yet.
+          break;
+      }
+    }
+  }
+
+  if (user) {
+    bountyRefundedEmail.send({
+      bounty,
+      user,
+    });
+  }
+
+  return await dbWrite.bounty.update({
+    where: { id },
+    data: { complete: true, refunded: true },
+  });
 };

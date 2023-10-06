@@ -10,9 +10,15 @@ import {
   getBountyFiles,
   getBountyImages,
   getImagesForBounties,
+  refundBounty,
   updateBountyById,
 } from '../services/bounty.service';
-import { throwBadRequestError, throwDbError, throwNotFoundError } from '../utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import {
   AddBenefactorUnitAmountInputSchema,
@@ -338,6 +344,29 @@ export const addBenefactorUnitAmountHandler = async ({
       .catch(handleTrackError);
 
     return bountyBenefactor;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const refundBountyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+
+    if (!isModerator) {
+      throw throwAuthorizationError();
+    }
+
+    const refundedBounty = await refundBounty({ ...input, isModerator });
+
+    return refundedBounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

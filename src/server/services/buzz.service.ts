@@ -129,7 +129,8 @@ export async function createBuzzTransaction({
 
   const account = await getUserBuzzAccount({ accountId: payload.fromAccountId });
 
-  if (account.balance < amount) {
+  // 0 is the bank so technically, it always has funding.
+  if (payload.fromAccountId !== 0 && account.balance < amount) {
     throw throwInsufficientFundsError();
   }
 

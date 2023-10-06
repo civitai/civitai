@@ -67,7 +67,6 @@ const featureFlags = createFeatureFlags({
     availability: ['mod', 'founder'],
   },
   bounties: ['mod'],
-  modelMonetization: ['dev'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

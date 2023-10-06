@@ -493,7 +493,7 @@ model ModelVersionMonetization {
   modelVersionId      Int                              @unique
   modelVersion        ModelVersion                     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   type                ModelVersionMonetizationType     @default(PaidAccess)
-  currency            Currency                         @default(BUZZ)
+  currency            String                           @default("USD")
   unitAmount          Int?
   sponsorshipSettings ModelVersionSponsorshipSettings?
 }
@@ -592,18 +592,18 @@ enum ModelFileVisibility {
 }
 
 model ModelFile {
-  id                Int                    @id @default(autoincrement())
+  id                Int                 @id @default(autoincrement())
   name              String
   url               String
   sizeKB            Float
-  createdAt         DateTime               @default(now())
-  type              String                 @default("Model")
+  createdAt         DateTime            @default(now())
+  type              String              @default("Model")
   modelVersionId    Int
-  modelVersion      ModelVersion           @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  pickleScanResult  ScanResultCode         @default(Pending)
+  modelVersion      ModelVersion        @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode      @default(Pending)
   exists            Boolean?
   pickleScanMessage String?
-  virusScanResult   ScanResultCode         @default(Pending)
+  virusScanResult   ScanResultCode      @default(Pending)
   virusScanMessage  String?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
@@ -2101,8 +2101,8 @@ model Bounty {
   user                    User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
   name                    String // Locked after created
   description             String
-  startsAt                DateTime
-  expiresAt               DateTime // Locked after created
+  startsAt                DateTime        @db.Date
+  expiresAt               DateTime        @db.Date // Locked after created
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
   details                 Json?
@@ -2115,6 +2115,7 @@ model Bounty {
   nsfw                    Boolean         @default(false)
   poi                     Boolean         @default(false)
   complete                Boolean         @default(false)
+  refunded                Boolean         @default(false)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]

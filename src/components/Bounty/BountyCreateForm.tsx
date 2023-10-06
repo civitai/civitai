@@ -179,7 +179,7 @@ export function BountyCreateForm() {
       minBenefactorUnitAmount: constants.bounties.minCreateAmount,
       entryLimit: 1,
       files: [],
-      expiresAt: dayjs().add(7, 'day').toDate(),
+      expiresAt: dayjs().add(7, 'day').endOf('day').toDate(),
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
     },
