@@ -6,7 +6,10 @@ const supported: CollectionType[] = ['Model', 'Image', 'Article'];
 export const collectedContentReward = createBuzzEvent({
   type,
   includeTypes: supported.map((x) => `${type}:${x.toLowerCase()}`),
-  description: 'Content that you posted was liked by someone else',
+  description: 'Content that you posted was collected by someone else',
+  triggerDescription: 'For each user that collects your stuff',
+  tooltip:
+    'When a user loves your content, they can add it to collections of their own.  You will be getting awards for each time this happens.',
   awardAmount: 2,
   caps: [
     {

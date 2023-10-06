@@ -7,6 +7,7 @@ export const goodContentReward = createBuzzEvent({
   type,
   includeTypes: reactableEntities.map((x) => `${type}:${x}`),
   description: 'Content that you posted was liked by someone else',
+  triggerDescription: 'For each user that reacts to anything you created in the last 30 days',
   awardAmount: 2,
   caps: [
     {

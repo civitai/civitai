@@ -537,6 +537,8 @@
     "you",
     "yourname",
     "yourusername",
-    "zlib"
+    "zlib",
+    "wallet",
+    "transactions"
   ]
 }

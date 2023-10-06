@@ -63,6 +63,13 @@ import { cancelSubscription } from '~/server/services/stripe.service';
 import { redis } from '~/server/redis/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
+import {
+  collectedContentReward,
+  encouragementReward,
+  goodContentReward,
+  imagePostedToModelReward,
+  userReferredReward,
+} from '~/server/rewards';
 
 export const getAllUsersHandler = async ({
   input,
@@ -881,6 +888,22 @@ export const reportProhibitedRequestHandler = async ({
 export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {
   try {
     return await userByReferralCode(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const rewardDetails = await Promise.all([
+      encouragementReward.getUserRewardDetails(ctx.user.id),
+      collectedContentReward.getUserRewardDetails(ctx.user.id),
+      imagePostedToModelReward.getUserRewardDetails(ctx.user.id),
+      userReferredReward.getUserRewardDetails(ctx.user.id),
+      goodContentReward.getUserRewardDetails(ctx.user.id),
+    ]);
+
+    return rewardDetails;
   } catch (error) {
     throw throwDbError(error);
   }

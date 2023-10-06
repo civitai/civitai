@@ -14,8 +14,12 @@ import {
   Divider,
   Button,
   ButtonProps,
+  RingProgress,
+  Tooltip,
+  keyframes,
+  Box,
 } from '@mantine/core';
-import React, { useMemo } from 'react';
+import React, { MouseEvent, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import {
@@ -24,7 +28,7 @@ import {
   LinearScale,
   PointElement,
   LineElement,
-  Tooltip,
+  Tooltip as ChartTooltip,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import dayjs from 'dayjs';
@@ -37,6 +41,7 @@ import {
   IconCoin,
   IconCoins,
   IconHighlight,
+  IconInfoCircle,
   IconMoneybag,
   IconShoppingBag,
   IconShoppingCart,
@@ -45,10 +50,15 @@ import {
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useGenerationStore } from '~/store/generation.store';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
+import { useQueryBuzzAccount } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
-export const options = {
+const options = {
   aspectRatio: 2.5,
   plugins: {
     legend: {
@@ -70,22 +80,66 @@ export const options = {
 //   },
 // });
 
+const moveBackground = keyframes({
+  '0%': {
+    backgroundPosition: '0% 50%',
+  },
+  '50%': {
+    backgroundPosition: '100% 50%',
+  },
+  '100%': {
+    backgroundPosition: '0% 50%',
+  },
+});
+
+const pulse = keyframes({
+  '0%': {
+    stroke: '#FFD43B',
+    opacity: 1,
+  },
+  '50%': {
+    stroke: '#F59F00',
+    opacity: 0.7,
+  },
+  '100%': {
+    stroke: '#F08C00',
+    opacity: 1,
+  },
+});
+
 const useStyles = createStyles((theme) => ({
+  lifetimeBuzzContainer: {
+    border: `2px solid ${theme.colors.yellow[7]}`,
+    background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
+    animation: `${moveBackground} 5s ease infinite`,
+    backgroundSize: '200% 200%',
+  },
+  lifetimeBuzzBadge: {
+    background: theme.colors.dark[6],
+    borderRadius: '22px',
+    padding: '10px 20px',
+  },
   tileCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
   },
   featureCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
+  },
+  lifetimeBuzz: {
+    animation: `${pulse} 1s ease-in-out infinite`,
   },
 }));
 
 export default function UserWallet() {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
 
   const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getUserTransactions.useQuery({
     limit: 200,
+  });
+  const { lifetimeBalance = 0 } = useQueryBuzzAccount({
+    enabled: !!currentUser,
   });
 
   const transactionsReversed = useMemo(() => [...(transactions ?? [])].reverse(), [transactions]);
@@ -128,7 +182,7 @@ export default function UserWallet() {
         ) : (
           <Grid>
             <Grid.Col xs={12} md={7}>
-              <Stack>
+              <Stack h="100%">
                 <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
                   <Stack spacing={0}>
                     <Title order={3}>Current Buzz</Title>
@@ -151,26 +205,41 @@ export default function UserWallet() {
                     />
                   </Stack>
                 </Paper>
-                <Paper withBorder radius="md" p="xl" className={classes.tileCard}>
-                  <Group position="apart">
-                    <Title order={3} size={24}>
+                <Paper
+                  withBorder
+                  radius="md"
+                  p="xl"
+                  className={classes.lifetimeBuzzContainer}
+                  style={{ flex: 1, display: 'flex' }}
+                >
+                  <Group position="apart" style={{ flex: 1 }} noWrap>
+                    <Title order={3} size={22} color="yellow.8">
                       Lifetime Buzz
                     </Title>
-                    <Stack>
+                    <Group className={classes.lifetimeBuzzBadge} spacing={2}>
+                      <CurrencyIcon currency={Currency.BUZZ} size={24} />
                       <Text
                         size="xl"
-                        style={{ fontSize: 32, fontWeight: 700, lineHeight: '22px' }}
+                        style={{ fontSize: 32, fontWeight: 700, lineHeight: '24px' }}
                         color="yellow.7"
+                        className={classes.lifetimeBuzz}
                       >
-                        TODO
+                        {numberWithCommas(lifetimeBalance ?? 0)}
                       </Text>
-                    </Stack>
+                    </Group>
                   </Group>
                 </Paper>
               </Stack>
             </Grid.Col>
             <Grid.Col xs={12} md={5}>
-              <Paper withBorder p="lg" radius="md" h="100%" className={classes.tileCard}>
+              <Paper
+                withBorder
+                p="lg"
+                radius="md"
+                h="100%"
+                className={classes.tileCard}
+                style={{ flex: 1 }}
+              >
                 <Stack spacing={0}>
                   <Title order={3}>Recent Transactions</Title>
                   <Text component="a" variant="link" href={`/user/transactions`} size="xs">
@@ -183,7 +252,7 @@ export default function UserWallet() {
                     <ScrollArea.Autosize maxHeight={400} mt="md">
                       <Stack spacing={8}>
                         {transactions.map((transaction) => {
-                          const { amount, date, fromUser, toUser, description } = transaction;
+                          const { amount, date } = transaction;
                           const isDebit = amount < 0;
 
                           return (
@@ -237,11 +306,20 @@ type FeatureCardProps = {
   title: string;
   description: string;
   icon: React.ReactNode;
-  btnProps: ButtonProps & { href: string };
+  btnProps: ButtonProps & {
+    href?: string;
+    component?: 'a' | 'button';
+    onClick?: (e: MouseEvent<HTMLElement>) => void;
+  };
 };
 
 const EarningBuzz = () => {
   const { classes } = useStyles();
+  const currentUser = useCurrentUser();
+  const { data: rewards = [], isLoading } = trpc.user.userRewardDetails.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
   const data: (FeatureCardProps & { key: string })[] = [
     {
       key: 'referrals',
@@ -301,6 +379,56 @@ const EarningBuzz = () => {
       <Paper withBorder className={classes.tileCard} h="100%">
         <Stack p="md">
           <Title order={3}>Other ways you&rsquo;ll earn some buzz</Title>
+          {isLoading && (
+            <Center py="xl">
+              <Loader />
+            </Center>
+          )}
+          {!isLoading &&
+            rewards.map((reward) => {
+              const awardedAmountPercent =
+                reward.cap && reward.awarded !== -1 ? reward.awarded / reward.cap : 0;
+
+              return (
+                <Stack key={reward.type} spacing={4}>
+                  <Group position="apart">
+                    <Group noWrap>
+                      <Text>
+                        <CurrencyBadge
+                          w={100}
+                          currency={Currency.BUZZ}
+                          unitAmount={reward.awardAmount}
+                        />{' '}
+                        {reward.triggerDescription ?? reward.description}
+                      </Text>
+                      {reward.tooltip && (
+                        <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
+                          <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
+                        </Tooltip>
+                      )}
+                    </Group>
+                    {reward.cap && reward.awarded != -1 && (
+                      <Group spacing={4}>
+                        <Text color="dimmed" size="xs">
+                          {reward.awarded}/{reward.cap.toLocaleString()} day
+                        </Text>
+                        <RingProgress
+                          size={30}
+                          thickness={9}
+                          sections={[
+                            {
+                              value: awardedAmountPercent * 100,
+                              color: awardedAmountPercent === 1 ? 'green' : 'yellow.7',
+                            },
+                          ]}
+                        />
+                      </Group>
+                    )}
+                  </Group>
+                  <Divider mt="xs" />
+                </Stack>
+              );
+            })}
         </Stack>
       </Paper>
     </Stack>
@@ -309,7 +437,6 @@ const EarningBuzz = () => {
 
 const SpendingBuzz = () => {
   const open = useGenerationStore((state) => state.open);
-
   const data: (FeatureCardProps & { key: string })[] = [
     {
       key: 'train',
@@ -328,7 +455,11 @@ const SpendingBuzz = () => {
       title: 'Generate Images',
       description: 'Use any of our models to create',
       btnProps: {
-        onClick: () => open(),
+        component: 'button',
+        onClick: (e: MouseEvent<HTMLElement>) => {
+          e.preventDefault();
+          open();
+        },
         children: 'Generate now',
         rightIcon: <IconArrowRight size={14} />,
       },

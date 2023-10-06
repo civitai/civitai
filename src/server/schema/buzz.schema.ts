@@ -25,6 +25,7 @@ export const getUserBuzzAccountResponse = z.object({
   // This is the user id
   id: z.number(),
   balance: z.number(),
+  lifetimeBalance: z.number().default(0),
 });
 
 export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactionsSchema>;
