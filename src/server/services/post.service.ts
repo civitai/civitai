@@ -533,7 +533,7 @@ export const updatePostNsfwLevel = async (ids: number | number[]) => {
 
   await dbWrite.$executeRawUnsafe(`
     -- Update post NSFW level
-    SELECT update_post_nsfw_level(ARRAY[${ids.join(',')}]);
+    SELECT update_post_nsfw_levels(ARRAY[${ids.join(',')}]);
   `);
 };
 
