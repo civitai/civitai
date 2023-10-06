@@ -1,6 +1,6 @@
 import { Menu, Loader } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IconTrash, IconBan, IconLock, IconPencil, IconRadar2 } from '@tabler/icons-react';
@@ -12,6 +12,7 @@ import { NextLink } from '@mantine/next';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 
 /*
 TODO.gallery
@@ -125,16 +126,19 @@ export function ImageDetailContextMenu({ children }: { children: React.ReactElem
           </ToggleLockComments>
         )}
         {!isOwner && (
-          <ReportMenuItem
-            label="Report Image"
-            loginReason="report-content"
-            onReport={() =>
-              openContext('report', {
-                entityType: ReportEntity.Image,
-                entityId: image.id,
-              })
-            }
-          />
+          <>
+            <HideImageButton key="hide-image-button" as="menu-item" imageId={image.id} />
+            <ReportMenuItem
+              label="Report Image"
+              loginReason="report-content"
+              onReport={() =>
+                openContext('report', {
+                  entityType: ReportEntity.Image,
+                  entityId: image.id,
+                })
+              }
+            />
+          </>
         )}
       </Menu.Dropdown>
     </Menu>

@@ -35,6 +35,8 @@ import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { CollectionMode } from '@prisma/client';
+import { applyUserPreferencesCollections } from '~/components/Search/search.utils';
+import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 
 const useStyles = createStyles<string, { count: number }>((theme, { count }) => {
   return {
@@ -120,9 +122,33 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   });
   const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
+  const {
+    models: hiddenModels,
+    images: hiddenImages,
+    users: hiddenUsers,
+    isLoading: loadingPreferences,
+  } = useHiddenPreferencesContext();
 
   const { collection } = homeBlock ?? {};
-  const items = useMemo(() => shuffle(collection?.items ?? []).slice(0, 14), [collection?.items]);
+  const items = useMemo(() => {
+    const filteredItems = (collection?.items ?? []).filter((item) => {
+      if (loadingPreferences || !currentUser) return true;
+
+      // TODO: A lot of improvement can be done here like checking images within the model, etc.
+      switch (item.type) {
+        case 'model':
+          return !hiddenModels.get(item.data.id) && !hiddenUsers.get(item.data.user.id);
+        case 'image':
+          return !hiddenImages.get(item.data.id) && !hiddenUsers.get(item.data.user.id);
+        case 'post':
+        case 'article':
+        default:
+          return !hiddenUsers.get(item.data.user.id);
+      }
+    });
+
+    return shuffle(filteredItems).slice(0, 14);
+  }, [collection?.items, loadingPreferences]);
 
   if (!metadata.link) metadata.link = `/collections/${collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';

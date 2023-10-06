@@ -312,15 +312,21 @@ export function applyUserPreferencesSql(
     excludedImageIds,
     excludedTagIds,
     userId,
-  }: UserPreferencesInput & { userId?: number }
+    hidden,
+  }: UserPreferencesInput & { userId?: number; hidden?: boolean }
 ) {
   // Exclude specific users
   if (excludedUserIds?.length)
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
 
   // Exclude specific images
-  if (excludedImageIds?.length)
-    AND.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`);
+  if (excludedImageIds?.length) {
+    AND.push(
+      hidden
+        ? Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds)})`
+        : Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`
+    );
+  }
 
   // Exclude specific tags
   if (excludedTagIds?.length) {
@@ -416,6 +422,7 @@ export const getAllImages = async ({
   headers,
   includeBaseModel,
   types,
+  hidden,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
@@ -425,6 +432,11 @@ export const getAllImages = async ({
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
+
+  if (hidden && !userId) throw throwAuthorizationError();
+  if (hidden && (excludedImageIds ?? []).length === 0) {
+    return { items: [], nextCursor: undefined };
+  }
 
   // ensure that only scanned images make it to the main feed if no user is logged in
   if (!userId)
@@ -583,6 +595,7 @@ export const getAllImages = async ({
     excludedTagIds,
     excludedUserIds,
     userId,
+    hidden,
   });
 
   if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
