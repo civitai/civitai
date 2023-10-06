@@ -8,6 +8,7 @@ import { tagsNeedingReview } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
 import { constants } from '~/server/common/constants';
 import { getComputedTags } from '~/server/utils/tag-computation';
+import { updatePostNsfwLevel } from '~/server/services/post.service';
 
 const tagCache: Record<string, number> = {};
 
@@ -153,6 +154,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     select: {
       id: true,
       meta: true,
+      postId: true,
     },
   });
 
@@ -240,6 +242,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     // Set nsfw level
     // do this before updating the image with the new ingestion status
     await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
+    if (image.postId) await updatePostNsfwLevel(image.postId);
 
     await dbWrite.image.updateMany({
       where: { id },

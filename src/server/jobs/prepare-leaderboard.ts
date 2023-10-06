@@ -28,6 +28,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
   for (const { id, query } of leaderboards) {
     log(`Started leaderboard ${id}`);
+    const start = Date.now();
     await dbWrite.$transaction([
       dbWrite.$executeRawUnsafe(`
         DELETE FROM "LeaderboardResult"
@@ -47,7 +48,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
         ORDER BY position
       `),
     ]);
-    log(`Finished leaderboard ${id}`);
+    log(`Finished leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
   }
 
   await setLastRun();
@@ -66,22 +67,14 @@ const updateUserLeaderboardRank = createJob(
 
 async function setModelCoverImageNsfwLevel() {
   await dbWrite.$executeRaw`
-    -- set model nsfw image level
-    WITH model_images AS (
-      SELECT
-        m.id,
-        i.nsfw,
-        row_number() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId" * 1000 + i.index) row_num
+    -- set model nsfw image level based on post nsfw level
+    WITH model_nsfw_level AS (
+      SELECT DISTINCT ON (m.id) m.id, p.metadata->>'imageNsfw' nsfw
       FROM "Model" m
-      JOIN "ModelVersion" mv ON mv."modelId" = m.id
+      JOIN "ModelVersion" mv ON mv."modelId" = m.id AND mv.status = 'Published'
       JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId"
-      JOIN "Image" i ON i."postId" = p.id
-    ), model_nsfw_level AS (
-      SELECT
-        id,
-        nsfw
-      FROM model_images
-      WHERE row_num = 1
+      WHERE m.status = 'Published'
+      ORDER BY m.id, mv.index, p.id
     )
     UPDATE "Model" m
     SET
