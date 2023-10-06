@@ -29,25 +29,23 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   for (const { id, query } of leaderboards) {
     log(`Started leaderboard ${id}`);
     const start = Date.now();
-    await dbWrite.$transaction([
-      dbWrite.$executeRawUnsafe(`
-        DELETE FROM "LeaderboardResult"
-        WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
-      `),
-      dbWrite.$executeRawUnsafe(`
-        WITH scores AS (
-          ${query}
-        )
-        INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
-        SELECT
-          '${id}' as "leaderboardId",
-          current_date + interval '${addDays} days' as date,
-          *,
-          row_number() OVER (ORDER BY score DESC) as position
-        FROM scores
-        ORDER BY position
-      `),
-    ]);
+    await dbWrite.$executeRawUnsafe(`
+      DELETE FROM "LeaderboardResult"
+      WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
+    `);
+    log(`Cleared leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
+    await dbWrite.$executeRawUnsafe(`
+      WITH scores AS (
+        ${query}
+      )
+      INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
+      SELECT
+        '${id}' as "leaderboardId",
+        current_date + interval '${addDays} days' as date,
+        *,
+        row_number() OVER (ORDER BY score DESC) as position
+      FROM scores
+    `);
     log(`Finished leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
   }
 
