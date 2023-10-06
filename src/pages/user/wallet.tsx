@@ -6,7 +6,6 @@ import {
   Loader,
   Paper,
   Stack,
-  useMantineTheme,
   ScrollArea,
   Title,
   Group,
@@ -17,7 +16,6 @@ import {
   RingProgress,
   Tooltip,
   keyframes,
-  Box,
 } from '@mantine/core';
 import React, { MouseEvent, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -31,7 +29,6 @@ import {
   Tooltip as ChartTooltip,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
-import dayjs from 'dayjs';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import {
   IconArrowRight,
@@ -56,6 +53,7 @@ import { useQueryBuzzAccount } from '~/components/CivitaiWrapped/CivitaiSessionP
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { formatDate } from '~/utils/date-helpers';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -133,8 +131,7 @@ const useStyles = createStyles((theme) => ({
 
 export default function UserWallet() {
   const currentUser = useCurrentUser();
-  const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
+  const { classes, theme } = useStyles();
 
   const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getUserTransactions.useQuery({
     limit: 200,
@@ -157,7 +154,7 @@ export default function UserWallet() {
     return transactionsReversed.reduce((acc, transaction) => {
       const updated = {
         ...acc,
-        [dayjs(transaction.date).format('DD/MM/YYYY')]: start + transaction.amount,
+        [formatDate(transaction.date, 'DD/MM/YYYY')]: start + transaction.amount,
       };
 
       start += transaction.amount;
