@@ -220,6 +220,7 @@ export const getInfiniteImagesSchema = z
     includeBaseModel: z.boolean().optional(),
     types: z.array(z.nativeEnum(MediaType)).optional(),
     withMeta: z.boolean().optional(),
+    hidden: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

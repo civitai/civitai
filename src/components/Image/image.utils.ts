@@ -36,6 +36,7 @@ export const imagesQueryParamSchema = z
     ),
     withMeta: booleanString(),
     section: z.enum(['images', 'reactions']),
+    hidden: z.coerce.boolean(),
   })
   .partial();
 

@@ -1,4 +1,4 @@
-import { createStyles, Group, Stack } from '@mantine/core';
+import { createStyles, Group, Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
@@ -28,8 +28,10 @@ const useStyles = createStyles((theme) => ({
 
 export default function ImagesPage() {
   const features = useFeatureFlags();
-  const { view } = useImageFilters('images');
+  const { view: queryView, hidden } = useImageFilters('images');
   const { classes, theme } = useStyles();
+  const canToggleView = !hidden;
+  const view = canToggleView ? queryView : 'feed';
 
   return (
     <>
@@ -44,6 +46,7 @@ export default function ImagesPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer fluid>
+          {hidden && <Title>Your Hidden Images</Title>}
           <Stack spacing="xs">
             <Announcements
               sx={(theme) => ({
@@ -58,13 +61,15 @@ export default function ImagesPage() {
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 <SortFilter type="images" variant="button" />
                 <ImageFiltersDropdown />
-                <ViewToggle
-                  type="images"
-                  color="gray"
-                  radius="xl"
-                  size={36}
-                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                />
+                {canToggleView && (
+                  <ViewToggle
+                    type="images"
+                    color="gray"
+                    radius="xl"
+                    size={36}
+                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                  />
+                )}
               </Group>
             </Group>
             <IsClient>

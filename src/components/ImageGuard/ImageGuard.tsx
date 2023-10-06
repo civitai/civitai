@@ -46,6 +46,7 @@ import { SimpleUser } from '~/server/selectors/user.selector';
 import { useImageStore } from '~/store/images.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 
 export type ImageGuardConnect = {
   entityType:
@@ -408,6 +409,13 @@ ImageGuard.Report = function ReportImage({
         </RoutedContextLink>
       ),
     });
+
+  if (!isOwner && context === 'image') {
+    defaultMenuItems.push({
+      key: 'hide-image-button',
+      component: <HideImageButton key="hide-image-button" as="menu-item" imageId={image.id} />,
+    });
+  }
 
   const userId = image.userId ?? image.user?.id;
   if (userId)

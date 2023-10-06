@@ -381,6 +381,16 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
       {
+        href: `/images?hidden=true`,
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
+            Hidden images
+          </Group>
+        ),
+      },
+      {
         href: `/user/${currentUser?.username}/following`,
         visible: !!currentUser,
         label: (
