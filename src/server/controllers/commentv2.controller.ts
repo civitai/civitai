@@ -194,7 +194,6 @@ export const toggleHideCommentHandler = async ({
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
     if (
       !isModerator &&
-      comment.userId !== userId &&
       // Nasty hack to get around the fact that the thread is not typed
       (comment.thread[entityType] as any)?.userId !== userId
     )
