@@ -203,7 +203,7 @@ export const BuzzPurchase = ({
       setSelectedPrice(null);
       setActiveControl('customAmount');
       // Need to round to avoid sending decimal values to stripe
-      setCustomAmount(Math.max(Math.round(minBuzzAmount / 10), 499));
+      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), 499));
     }
   }, [packages, minBuzzAmount]);
 
