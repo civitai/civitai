@@ -42,7 +42,7 @@ export function TipBuzzButton({ toUserId, ...buttonProps }: Props) {
       >
         <Group spacing={4} noWrap>
           <IconBolt size={14} fill="currentColor" />
-          Tip Buzz
+          Tip
         </Group>
       </Button>
     </LoginPopover>

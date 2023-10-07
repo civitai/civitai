@@ -177,7 +177,7 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
         if (customAmount === currentUser?.balance) {
           return openConfirmModal({
             centered: true,
-            title: 'Tip Buzz',
+            title: 'Tip',
             children: 'You are about to send all your buzz. Are you sure?',
             labels: { confirm: 'Yes, send all buzz', cancel: 'No, go back' },
             onConfirm: () => {
@@ -225,7 +225,7 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
       <Stack spacing="md">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>
-            Tip Buzz
+            Tip
           </Text>
           <Group spacing="sm" noWrap>
             <UserBuzz user={currentUser} withTooltip />
