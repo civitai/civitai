@@ -85,7 +85,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps) {
-  if (!incomingTags?.length) return;
+  if (!incomingTags) return;
 
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
@@ -164,19 +164,21 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
   }
 
   try {
-    await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source")
-      VALUES ${tags
-        .filter((x) => x.id)
-        .map(
-          (x) =>
-            `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)}, '${
-              x.source ?? source
-            }')`
-        )
-        .join(', ')}
-      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
-    `);
+    if (tags.length > 0) {
+      await dbWrite.$executeRawUnsafe(`
+        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source")
+        VALUES ${tags
+          .filter((x) => x.id)
+          .map(
+            (x) =>
+              `(${id}, ${x.id}, ${x.confidence}, true, ${isModerationCategory(x.tag)}, '${
+                x.source ?? source
+              }')`
+          )
+          .join(', ')}
+        ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
+      `);
+    }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
