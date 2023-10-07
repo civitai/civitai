@@ -217,7 +217,7 @@ export function GenerateFormView({
                                   name="steps"
                                   label="Steps"
                                   min={1}
-                                  max={150}
+                                  max={generation.maxValues.steps}
                                   sliderProps={sharedSliderProps}
                                   numberProps={sharedNumberProps}
                                 />
@@ -236,14 +236,14 @@ export function GenerateFormView({
                                 name="seed"
                                 label="Seed"
                                 min={1}
-                                max={generation.maxSeed}
+                                max={generation.maxValues.seed}
                               />
                               {!isSDXL && (
                                 <InputNumberSlider
                                   name="clipSkip"
                                   label="Clip Skip"
                                   min={1}
-                                  max={10}
+                                  max={generation.maxValues.clipSkip}
                                   sliderProps={{
                                     ...sharedSliderProps,
                                     marks: clipSkipMarks,
@@ -287,7 +287,7 @@ export function GenerateFormView({
                     <InputNumber
                       name="quantity"
                       min={1}
-                      max={10}
+                      max={generation.maxValues.quantity}
                       className={classes.generateButtonQuantityInput}
                     />
                   </Stack>

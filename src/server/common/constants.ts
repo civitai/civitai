@@ -276,7 +276,6 @@ export const generation = {
       sampler
     )
   ),
-  maxSeed: 4294967295,
   defaultValues: {
     cfgScale: 7,
     steps: 25,
@@ -287,6 +286,12 @@ export const generation = {
     aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
+  },
+  maxValues: {
+    seed: 4294967295,
+    steps: 80,
+    quantity: 10,
+    clipSkip: 10,
   },
 };
 
