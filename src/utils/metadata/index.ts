@@ -16,27 +16,31 @@ const parsers = {
 };
 
 export async function getMetadata(file: File) {
-  const tags = await ExifReader.load(file, { includeUnknown: true });
-  delete tags['MakerNote'];
-  const exif = Object.entries(tags).reduce((acc, [key, value]) => {
-    acc[key] = value.value;
-    return acc;
-  }, {} as Record<string, any>); //eslint-disable-line
-
-  if (exif.UserComment) {
-    // @ts-ignore - this is a hack to not have to rework our downstream code
-    exif.userComment = Int32Array.from(exif.UserComment);
-  }
-
-  let metadata = {};
   try {
-    const { parse } = Object.values(parsers).find((x) => x.canParse(exif)) ?? {};
-    if (parse) metadata = parse(exif);
-  } catch (e: any) { //eslint-disable-line
-    console.error('Error parsing metadata', e);
+    const tags = await ExifReader.load(file, { includeUnknown: true });
+    delete tags['MakerNote'];
+    const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+      acc[key] = value.value;
+      return acc;
+    }, {} as Record<string, any>); //eslint-disable-line
+
+    if (exif.UserComment) {
+      // @ts-ignore - this is a hack to not have to rework our downstream code
+      exif.userComment = Int32Array.from(exif.UserComment);
+    }
+
+    let metadata = {};
+    try {
+      const { parse } = Object.values(parsers).find((x) => x.canParse(exif)) ?? {};
+      if (parse) metadata = parse(exif);
+    } catch (e: any) { //eslint-disable-line
+      console.error('Error parsing metadata', e);
+    }
+    const result = imageMetaSchema.safeParse(metadata);
+    return result.success ? result.data : {};
+  } catch (e) {
+    return {};
   }
-  const result = imageMetaSchema.safeParse(metadata);
-  return result.success ? result.data : {};
 }
 
 export function encodeMetadata(meta: ImageMetaProps, type: keyof typeof parsers = 'automatic') {
