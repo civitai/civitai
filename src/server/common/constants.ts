@@ -191,6 +191,10 @@ export const constants = {
     referralCodeMinLength: 6,
     referralCodeMaxCount: 3,
   },
+  buzz: {
+    minChargeAmount: 499, // $4.99
+    maxChargeAmount: 99999999, // $999,999.99
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

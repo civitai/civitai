@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Currency } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export const createCustomerSchema = z.object({ id: z.number(), email: z.string().email() });
@@ -17,7 +18,7 @@ export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
 export const createBuzzSessionSchema = z.object({
   priceId: z.string(),
   returnUrl: z.string(),
-  customAmount: z.number().min(499).optional(),
+  customAmount: z.number().min(constants.buzz.minChargeAmount).optional(),
 });
 
 export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;
@@ -44,7 +45,7 @@ export const paymentIntentMetadataSchema = z.discriminatedUnion('type', [
 
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
 export const paymentIntentCreationSchema = z.object({
-  unitAmount: z.number().min(499),
+  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
   currency: z.nativeEnum(Currency),
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),

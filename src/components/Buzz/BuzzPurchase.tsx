@@ -25,6 +25,7 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { constants } from '~/server/common/constants';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -203,11 +204,13 @@ export const BuzzPurchase = ({
       setSelectedPrice(null);
       setActiveControl('customAmount');
       // Need to round to avoid sending decimal values to stripe
-      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), 499));
+      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), constants.buzz.minChargeAmount));
     }
   }, [packages, minBuzzAmount]);
 
-  const minBuzzAmountPrice = minBuzzAmount ? Math.max(minBuzzAmount / 10, 499) : 499;
+  const minBuzzAmountPrice = minBuzzAmount
+    ? Math.max(minBuzzAmount / 10, constants.buzz.minChargeAmount)
+    : constants.buzz.minChargeAmount;
 
   return (
     <Stack spacing="md">
@@ -310,6 +313,7 @@ export const BuzzPurchase = ({
                       icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                       value={customAmount ? customAmount * 10 : undefined}
                       min={minBuzzAmountPrice * 10}
+                      max={constants.buzz.maxChargeAmount * 10}
                       disabled={processing}
                       onChange={(value) => {
                         setError('');
@@ -329,6 +333,7 @@ export const BuzzPurchase = ({
                       icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
                       value={customAmount}
                       min={minBuzzAmountPrice}
+                      max={constants.buzz.maxChargeAmount}
                       precision={2}
                       disabled={processing}
                       rightSection={null}

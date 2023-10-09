@@ -20,6 +20,7 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useTrackEvent } from '../TrackView/track.utils';
+import { closeAllModals } from '@mantine/modals';
 
 type Props = {
   successMessage?: React.ReactNode;
@@ -46,8 +47,6 @@ const { openModal, Modal } = createContextModal<Props>({
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
 
-    const { trackAction } = useTrackEvent();
-
     const { data, isLoading, isFetching } = trpc.stripe.getPaymentIntent.useQuery(
       { unitAmount, currency, metadata, paymentMethodTypes },
       { enabled: !!unitAmount && !!currency, refetchOnMount: 'always', cacheTime: 0 }
@@ -73,7 +72,6 @@ const { openModal, Modal } = createContextModal<Props>({
     };
 
     const handleClose = () => {
-      trackAction({ type: 'PurchaseFunds_Cancel', details: { step: 2 } }).catch(() => undefined);
       context.close();
     };
 
@@ -133,7 +131,14 @@ const StripeTransactionModal = ({
         </Group>
         <Divider mx="-lg" />
         {successMessage ? <>{successMessage}</> : <Text>Thank you for your purchase!</Text>}
-        <Button onClick={onClose}>Close</Button>
+        <Button
+          onClick={() => {
+            closeAllModals();
+            onClose();
+          }}
+        >
+          Close
+        </Button>
       </Stack>
     );
   }
@@ -166,7 +171,17 @@ const StripeTransactionModal = ({
           </Text>
         )}
         <Group position="right">
-          <Button variant="filled" color="gray" onClick={onClose} disabled={processingPayment}>
+          <Button
+            variant="filled"
+            color="gray"
+            onClick={() => {
+              trackAction({ type: 'PurchaseFunds_Cancel', details: { step: 2 } }).catch(
+                () => undefined
+              );
+              onClose();
+            }}
+            disabled={processingPayment}
+          >
             {processingTooLong ? 'Close' : 'Cancel'}
           </Button>
           <Button

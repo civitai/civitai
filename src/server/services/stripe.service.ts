@@ -11,10 +11,11 @@ import { playfab } from '~/server/playfab/client';
 import { Currency } from '@prisma/client';
 import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
 import { MetadataParam } from '@stripe/stripe-js';
+import { constants } from '~/server/common/constants';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
-const MINIMUM_PURCHASE_AMOUNT = 499;
 
 export const getPlans = async () => {
   const products = await dbRead.product.findMany({
@@ -483,8 +484,15 @@ export const getPaymentIntent = async ({
     customerId = await createCustomer(user);
   }
 
-  if (unitAmount < MINIMUM_PURCHASE_AMOUNT) {
-    throw throwBadRequestError('Minimum purchase amount is $4.99');
+  if (unitAmount < constants.buzz.minChargeAmount) {
+    throw throwBadRequestError(
+      `Minimum purchase amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount / 100)}`
+    );
+  }
+  if (unitAmount > constants.buzz.maxChargeAmount) {
+    throw throwBadRequestError(
+      `Maximum purchase amount is $${formatPriceForDisplay(constants.buzz.maxChargeAmount / 100)}`
+    );
   }
 
   const stripe = await getServerStripe();
