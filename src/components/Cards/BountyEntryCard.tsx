@@ -16,7 +16,7 @@ import { IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { Reactions } from '~/components/Reaction/Reactions';
 
-const IMAGE_CARD_WIDTH = 332;
+const IMAGE_CARD_WIDTH = 450;
 
 export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
