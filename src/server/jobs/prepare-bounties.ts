@@ -240,7 +240,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
           },
         });
       }
-      
+
       tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleTrackError);
       log(` No entry winner detected, bounty has been refunded`);
       continue;

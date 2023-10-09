@@ -12,6 +12,7 @@ export enum TransactionType {
   Bounty = 8,
   BountyEntry = 9,
   Training = 10,
+  ChargeBack = 11,
 }
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;

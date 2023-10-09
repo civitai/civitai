@@ -8,9 +8,6 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
 import { playfab } from '~/server/playfab/client';
-import { TransactionType } from '../schema/buzz.schema';
-import { isDefined } from '~/utils/type-guards';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { Currency } from '@prisma/client';
 import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
 import { MetadataParam } from '@stripe/stripe-js';
@@ -394,55 +391,6 @@ export const manageCheckoutPayment = async (sessionId: string, customerId: strin
   if (purchases.length > 0) {
     await dbWrite.purchase.createMany({ data: purchases });
   }
-
-  await creditBuzzPurchases({ customerId, items: line_items?.data ?? [] });
-};
-
-const creditBuzzPurchases = async ({
-  customerId,
-  items,
-}: {
-  customerId: string;
-  items: Stripe.LineItem[];
-}) => {
-  const user = await dbRead.user.findUnique({ where: { customerId }, select: { id: true } });
-  // Early return if user is not found
-  if (!user) {
-    // TODO.buzz: Confirm what should happen if user is not found
-    log(`Could not find user with customerId: ${customerId}`);
-    return;
-  }
-
-  // Check if there were buzz purchases to credit to the user
-  const buzzPurchases =
-    items
-      .filter(({ price }) => !!price?.metadata.buzzAmount)
-      .map(({ price }) => {
-        const meta = Schema.buzzPriceMetadataSchema.safeParse(price?.metadata);
-        if (!meta.success) return null;
-
-        return {
-          amount: meta.data.buzzAmount,
-          type: TransactionType.Purchase,
-          details: {
-            stripeCustomerId: customerId,
-            stripeProductId: price?.product,
-            stripePriceId: price?.id,
-          },
-        };
-      })
-      .filter(isDefined) ?? [];
-  if (!buzzPurchases.length) return;
-
-  return await Promise.all(
-    buzzPurchases.map((purchase) =>
-      createBuzzTransaction({
-        ...purchase,
-        fromAccountId: 0,
-        toAccountId: user.id,
-      })
-    )
-  );
 };
 
 export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {

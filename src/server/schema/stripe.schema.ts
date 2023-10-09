@@ -22,7 +22,7 @@ export const createBuzzSessionSchema = z.object({
 
 export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;
 export const buzzPriceMetadataSchema = z.object({
-  buzzAmount: z.coerce.number().positive(),
+  buzzAmount: z.coerce.number().positive().optional(),
   bonusDescription: z.coerce.string().optional(),
 });
 

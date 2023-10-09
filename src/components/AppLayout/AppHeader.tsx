@@ -368,7 +368,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       },
       {
         href: '',
-        label: <Divider />,
+        label: <Divider my={4} />,
       },
       {
         href: '/leaderboard/overall',
@@ -529,46 +529,50 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       if (!currentUser) return null;
 
       return (
-        <Group
-          p="sm"
-          position="apart"
-          mx={-4}
-          mt={-4}
-          sx={(theme) => ({
-            backgroundColor:
-              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
-
-            [theme.fn.largerThan('md')]: {
-              borderTopLeftRadius: theme.radius.lg,
-              borderTopRightRadius: theme.radius.lg,
-            },
-          })}
-          noWrap
-          {...groupProps}
-        >
-          <Group spacing={4} noWrap>
-            <UserBuzz
-              iconSize={16}
-              user={currentUser}
-              textSize={textSize}
-              withAbbreviation={withAbbreviation}
-              withTooltip
-            />
-          </Group>
-          <Button
-            variant="white"
-            radius="xl"
-            size="xs"
-            px={12}
-            onClick={() => openBuyBuzzModal({}, { fullScreen: isMobile })}
-            compact
+        <Link href="/user/wallet">
+          <Group
+            p="sm"
+            position="apart"
+            mx={-4}
+            mt={-4}
+            mb={4}
+            sx={(theme) => ({
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
+              cursor: 'pointer',
+            })}
+            onClick={() => setUserMenuOpened(false)}
+            noWrap
+            {...groupProps}
           >
-            Buy More Buzz
-          </Button>
-        </Group>
+            <Group spacing={4} noWrap>
+              <UserBuzz
+                iconSize={16}
+                user={currentUser}
+                textSize={textSize}
+                withAbbreviation={withAbbreviation}
+                withTooltip
+              />
+            </Group>
+            <Button
+              variant="white"
+              radius="xl"
+              size="xs"
+              px={12}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openBuyBuzzModal({}, { fullScreen: isMobile });
+              }}
+              compact
+            >
+              Buy More Buzz
+            </Button>
+          </Group>
+        </Link>
       );
     },
-    [currentUser, features.buzz]
+    [currentUser, features.buzz, isMobile]
   );
 
   return (
@@ -685,7 +689,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
-              radius="lg"
+              // radius="lg"
               onClose={() => setUserMenuOpened(false)}
             >
               <Menu.Target>
@@ -702,7 +706,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               <Menu.Dropdown>
                 <BuzzMenuItem />
                 {userMenuItems}
-                <Divider />
+                <Divider my={4} />
                 <Menu.Item
                   closeMenuOnClick={false}
                   icon={<IconPalette stroke={1.5} />}

@@ -25,7 +25,7 @@ export function UserBuzz({
     <Text color="accent.5" transform="uppercase" {...textProps}>
       <Group spacing={4} noWrap>
         <IconBolt size={iconSize} color="currentColor" fill="currentColor" />
-        <Text size={textSize} weight={600} lh={1.2}>
+        <Text size={textSize} weight={600} lh={1.2} sx={{ fontVariantNumeric: 'tabular-nums' }}>
           {withAbbreviation ? abbreviateNumber(user.balance) : user.balance.toLocaleString()}
         </Text>
       </Group>
