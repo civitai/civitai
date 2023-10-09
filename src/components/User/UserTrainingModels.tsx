@@ -247,7 +247,7 @@ export default function UserTrainingModels() {
                 const { networkDim, networkAlpha, targetSteps } = thisTrainingDetails?.params || {};
 
                 // would love to use .every(isDefined) here but TS isn't smart enough
-                let etaMins =
+                const etaMins =
                   !!networkDim && !!networkAlpha && !!targetSteps && !!baseModel
                     ? calcEta(networkDim, networkAlpha, targetSteps, baseModel)
                     : undefined;
@@ -477,7 +477,7 @@ export default function UserTrainingModels() {
                                   'gray'
                                 }
                               >
-                                <Group spacing={6}>
+                                <Group spacing={6} noWrap>
                                   {splitUppercase(
                                     thisModelVersion.trainingStatus === TrainingStatus.InReview
                                       ? 'Ready'
