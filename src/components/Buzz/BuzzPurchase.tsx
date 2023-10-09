@@ -179,6 +179,14 @@ export const BuzzPurchase = ({
             </Text>
           </Stack>
         ),
+        onSuccess: async (stripePaymentIntentId) => {
+          // We do it here just in case, but the webhook should also do it
+          await completeStripeBuzzPurchaseMutation({
+            amount: buzzAmount,
+            details: metadata,
+            stripePaymentIntentId,
+          });
+        },
         metadata: metadata,
         // paymentMethodTypes: ['card'],
       },

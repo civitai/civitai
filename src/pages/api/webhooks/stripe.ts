@@ -13,7 +13,6 @@ import Stripe from 'stripe';
 // import { buffer } from 'micro';
 import { Readable } from 'node:stream';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
-import { completeStripeBuzzPurchaseTransactionInput } from '~/server/schema/buzz.schema';
 import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 
