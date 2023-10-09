@@ -312,6 +312,7 @@ const { openModal, Modal } = createContextModal<{
                 className={classes.submitButton}
                 buzzAmount={amountToSend ?? 0}
                 disabled={(amountToSend ?? 0) === 0}
+                loading={sending}
                 color="yellow.7"
                 type="submit"
               />

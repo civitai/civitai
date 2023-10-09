@@ -295,7 +295,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconMoneybag stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             <Text>Create a bounty</Text>
-            <CurrencyIcon currency={Currency.BUZZ} size={14} />
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
           </Group>
         ),
         rel: 'nofollow',

@@ -30,10 +30,10 @@ const transactionTypes = [
   TransactionType[TransactionType.Purchase],
   TransactionType[TransactionType.Refund],
   TransactionType[TransactionType.Bounty],
+  TransactionType[TransactionType.Training],
 ];
 
 const defaultFilters = {
-  type: TransactionType.Tip,
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
 };
@@ -80,6 +80,7 @@ export default function UserTransactions() {
             w="calc(50% - 12px)"
             defaultValue={defaultFilters.start}
             maxDate={dayjs(filters.end).subtract(1, 'day').toDate()}
+            clearButtonLabel="Clear start date"
           />
           <DatePicker
             label="To"
@@ -90,12 +91,13 @@ export default function UserTransactions() {
             defaultValue={defaultFilters.end}
             minDate={dayjs(filters.start).add(1, 'day').toDate()}
             maxDate={defaultFilters.end}
+            clearButtonLabel="Clear end date"
           />
           <Select
             label="Type"
             name="type"
             placeholder="Select a type"
-            value={filters.type != null ? TransactionType[filters.type] : undefined}
+            value={filters.type != null ? TransactionType[filters.type] : null}
             data={transactionTypes}
             onChange={(value) =>
               value != null
@@ -103,8 +105,10 @@ export default function UserTransactions() {
                     ...current,
                     type: TransactionType[value as keyof typeof TransactionType],
                   }))
-                : undefined
+                : setFilters((current) => ({ ...current, type: undefined }))
             }
+            clearButtonLabel="Clear tip filter"
+            clearable
           />
         </Group>
         {isLoading ? (

@@ -317,7 +317,7 @@ export const BuzzPurchase = ({
                       disabled={processing}
                       onChange={(value) => {
                         setError('');
-                        setCustomAmount(Math.floor((value ?? 0) / 10));
+                        setCustomAmount(Math.ceil((value ?? 0) / 10));
                       }}
                       hideControls
                       step={10}
