@@ -294,7 +294,7 @@ export const generation = {
     clipSkip: 10,
   },
   settingsCost: {
-    base: 1,
+    base: 0,
     quantity: 1,
     steps: 40,
     width: 512,

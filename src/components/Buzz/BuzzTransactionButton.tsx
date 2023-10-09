@@ -49,34 +49,41 @@ export function BuzzTransactionButton({
 
     conditionalPerformTransaction(buzzAmount, onPerformTransaction);
   };
+  const hasCost = buzzAmount > 0;
 
   return (
-    <Button color="yellow.7" {...buttonProps} onClick={onPerformTransaction ? onClick : undefined}>
+    <Button
+      color={hasCost ? 'yellow.7' : 'blue'}
+      {...buttonProps}
+      onClick={onPerformTransaction ? onClick : undefined}
+    >
       <Group spacing="md" noWrap>
-        <CurrencyBadge
-          currency={Currency.BUZZ}
-          unitAmount={buzzAmount}
-          displayCurrency={false}
-          radius={buttonProps?.radius ?? 'sm'}
-          px="xs"
-        >
-          {!hasRequiredAmount(buzzAmount) && (
-            <Tooltip
-              label="Insufficient buzz. Click to buy more"
-              style={{ textTransform: 'capitalize' }}
-              maw={250}
-              multiline
-              withArrow
-            >
-              <IconAlertTriangleFilled
-                color="red"
-                size={12}
-                fill="currentColor"
-                style={{ marginRight: 4 }}
-              />
-            </Tooltip>
-          )}
-        </CurrencyBadge>
+        {hasCost && (
+          <CurrencyBadge
+            currency={Currency.BUZZ}
+            unitAmount={buzzAmount}
+            displayCurrency={false}
+            radius={buttonProps?.radius ?? 'sm'}
+            px="xs"
+          >
+            {!hasRequiredAmount(buzzAmount) && (
+              <Tooltip
+                label="Insufficient buzz. Click to buy more"
+                style={{ textTransform: 'capitalize' }}
+                maw={250}
+                multiline
+                withArrow
+              >
+                <IconAlertTriangleFilled
+                  color="red"
+                  size={12}
+                  fill="currentColor"
+                  style={{ marginRight: 4 }}
+                />
+              </Tooltip>
+            )}
+          </CurrencyBadge>
+        )}
         <Text>{label}</Text>
       </Group>
     </Button>

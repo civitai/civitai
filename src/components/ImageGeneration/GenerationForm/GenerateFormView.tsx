@@ -312,7 +312,6 @@ export function GenerateFormView({
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
                   buzzAmount={totalCost}
-                  color="yellow.7"
                 />
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
