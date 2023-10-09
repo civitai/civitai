@@ -222,7 +222,7 @@ const { openModal, Modal } = createContextModal<{
       <Stack spacing="md">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>
-            Tip Buzz
+            Tip
           </Text>
           <Group spacing="sm" noWrap>
             <Badge

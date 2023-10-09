@@ -20,7 +20,7 @@ export function ProfileImageUpload({
   value,
   onChange,
   previewWidth = 96,
-  maxSize = constants.imageUpload.maxFileSize,
+  maxSize = constants.mediaUpload.maxImageFileSize,
   ...props
 }: SimpleImageUploadProps) {
   const { uploadToCF, files: imageFiles } = useCFImageUpload();

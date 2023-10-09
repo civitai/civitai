@@ -1,4 +1,5 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { removeAccents, trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
 import blocked from './lists/blocklist.json';
 import nsfwWords from './lists/words-nsfw.json';
@@ -87,23 +88,25 @@ const ages = [
   { age: 5, matches: ['five', 'fiv', 'fife', 'fivve', '5'] },
   { age: 4, matches: ['four', 'for', 'fore', 'foure', '4'] },
   { age: 3, matches: ['three', 'thee', 'thre', 'thri', '3'] },
-  { age: 2, matches: ['two', 'too', 'to', 'tu', '2'] },
+  { age: 2, matches: ['two', '2'] },
   { age: 1, matches: ['one', 'uno', '1'] },
 ];
 
 const templateParts = {
   age: [] as string[], // Filled in later
   teen: ['teen', 'ten', 'tein', 'tien', 'tn'],
-  years: ['y', 'yr', 'yrs', 'years', 'year'],
+  years: ['y', 'yr', 'yrs', 'years', 'year', 'anos'],
   old: ['o', 'old'],
 };
 const templates = [
   'aged {age}',
   'age {age}',
   '{age} age',
+  '{age} {old}',
   '{age} {years} {old}',
   '{age} {years}',
   '{age}th birthday',
+  "s?he [i|']s \\w* {age}",
 ];
 
 // --------------------------------------
@@ -162,6 +165,7 @@ export function includesMinor(prompt: string | undefined) {
 
   return { found, age };
 }
+
 // #endregion
 
 // #region [inappropriate]
@@ -178,7 +182,6 @@ export function checkable(words: string[], options?: { pluralize?: boolean }) {
     }
     if (options?.pluralize) regexStr += '[s|z]*';
     regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
-    if (regexStr.includes('high')) console.log(regexStr);
     return new RegExp(regexStr, 'i');
   });
   function inPrompt(prompt: string) {
@@ -188,7 +191,20 @@ export function checkable(words: string[], options?: { pluralize?: boolean }) {
     }
     return false;
   }
-  return { inPrompt };
+  function highlight(prompt: string, replaceFn: (word: string) => string) {
+    prompt = prompt.trim();
+    for (const regex of regexes) {
+      if (regex.test(prompt)) {
+        const match = regex.exec(prompt);
+        const word = trimNonAlphanumeric(match?.[0]);
+        if (!word) continue;
+        // prompt = prompt.replace(word, replaceFn(word));
+        prompt = highlightReplacement(prompt, match, replaceFn);
+      }
+    }
+    return prompt;
+  }
+  return { inPrompt, highlight };
 }
 
 const composedNouns = youngWords.partialNouns.flatMap((word) => {
@@ -197,13 +213,88 @@ const composedNouns = youngWords.partialNouns.flatMap((word) => {
 const words = {
   nsfw: checkable(nsfwWords),
   young: {
-    nouns: checkable(youngWords.nouns.concat(composedNouns), { pluralize: true }),
+    nouns: checkable(youngWords.nouns.concat(composedNouns), {
+      pluralize: true,
+    }),
   },
 };
 
 export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
   if (!prompt) return false;
+  prompt = removeAccents(prompt);
   if (!nsfw && !words.nsfw.inPrompt(prompt)) return false;
-  return words.young.nouns.inPrompt(prompt);
+  return words.young.nouns.inPrompt(prompt) || includesMinor(prompt).found;
 }
+
 // #endregion [inappropriate]
+
+// #region [highlight]
+const highlighters = [
+  {
+    color: '#7950F2',
+    fn: highlightMinor,
+  },
+  {
+    color: '#339AF0',
+    fn: words.young.nouns.highlight,
+  },
+  {
+    color: '#F03E3E',
+    fn: highlightBlocked,
+  },
+  {
+    color: '#FD7E14',
+    fn: words.nsfw.highlight,
+  },
+];
+
+function highlightReplacement(
+  prompt: string,
+  match: RegExpMatchArray | null,
+  replaceFn: (word: string) => string
+) {
+  if (!match || typeof match.index === 'undefined') return prompt;
+  const word = trimNonAlphanumeric(match[0]) as string;
+  return (
+    prompt.substring(0, match.index) + prompt.substring(match.index).replace(word, replaceFn(word))
+  );
+}
+
+function highlightBlocked(prompt: string, replaceFn: (word: string) => string) {
+  for (const { regex } of blockedNSFWRegex) {
+    if (regex.test(prompt)) {
+      const match = regex.exec(prompt);
+      const word = trimNonAlphanumeric(match?.[0]);
+      if (!word) continue;
+      prompt = prompt.replace(word, replaceFn(word));
+    }
+  }
+  return prompt;
+}
+
+function highlightMinor(prompt: string, replaceFn: (word: string) => string) {
+  for (const regex of ageRegexes) {
+    if (regex.test(prompt)) {
+      const match = regex.exec(prompt);
+      const ageText = match?.groups?.age?.toLowerCase();
+      const age = ages.find((x) => x.matches.includes(ageText ?? ''))?.age;
+      if (!age) continue;
+
+      const word = trimNonAlphanumeric(match?.[0]);
+      if (!word) continue;
+      prompt = prompt.replace(word, replaceFn(word));
+    }
+  }
+
+  return prompt;
+}
+
+export function highlightInappropriate(prompt: string | undefined) {
+  if (!prompt) return prompt;
+  prompt = removeAccents(prompt);
+  for (const { fn, color } of highlighters) {
+    prompt = fn(prompt, (word) => `<span style="color: ${color}">${word}</span>`);
+  }
+  return prompt;
+}
+// #endregion [highlight]

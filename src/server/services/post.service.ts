@@ -503,12 +503,18 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   };
 };
 
-export const reorderPostImages = async ({ imageIds }: ReorderPostImagesInput) => {
+export const reorderPostImages = async ({
+  id,
+  imageIds,
+  userId,
+}: ReorderPostImagesInput & { userId: number }) => {
   const transaction = dbWrite.$transaction(
     imageIds.map((id, index) =>
-      dbWrite.image.update({ where: { id }, data: { index }, select: { id: true } })
+      dbWrite.image.updateMany({ where: { id, userId }, data: { index } })
     )
   );
+
+  await updatePostNsfwLevel(id);
 
   return transaction;
 };
@@ -518,6 +524,17 @@ export const getPostResources = async ({ id }: GetByIdInput) => {
     where: { postId: id },
     orderBy: { modelName: 'asc' },
   });
+};
+
+export const updatePostNsfwLevel = async (ids: number | number[]) => {
+  if (!Array.isArray(ids)) ids = [ids];
+  ids = [...new Set(ids)].filter(isDefined); // dedupe
+  if (!ids.length) return;
+
+  await dbWrite.$executeRawUnsafe(`
+    -- Update post NSFW level
+    SELECT update_post_nsfw_levels(ARRAY[${ids.join(',')}]);
+  `);
 };
 
 type GetPostByCategoryRaw = {

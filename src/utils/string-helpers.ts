@@ -134,3 +134,11 @@ export function hashifyObject(obj: any) {
   const str = toJson(obj);
   return hashify(str);
 }
+
+export function trimNonAlphanumeric(str: string | null | undefined) {
+  return str?.replace(/^[^\w]+|[^\w]+$/g, '');
+}
+
+export function removeAccents(input: string): string {
+  return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}

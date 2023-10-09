@@ -7,6 +7,7 @@ import {
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
+  toggleHideCommentHandler,
 } from './../controllers/commentv2.controller';
 import {
   commentConnectorSchema,
@@ -22,6 +23,7 @@ import {
 } from '~/server/trpc';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { toggleHideCommentSchema } from '~/server/schema/commentv2.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -71,4 +73,5 @@ export const commentv2Router = router({
     .input(commentConnectorSchema)
     .use(isModerator)
     .mutation(toggleLockThreadDetailsHandler),
+  toggleHide: protectedProcedure.input(toggleHideCommentSchema).mutation(toggleHideCommentHandler),
 });

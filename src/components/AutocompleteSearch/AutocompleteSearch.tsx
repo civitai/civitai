@@ -555,6 +555,7 @@ function parseQuery(index: string, query: string) {
       }
 
       query = query.replace(regex, '');
+      if (query.length === 0 && filters.length !== 0) query = ' ';
     }
   }
 

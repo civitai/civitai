@@ -11,7 +11,7 @@ addRouteGuard({
 });
 addRouteGuard({
   matcher: ['/testing/:path*'],
-  canAccess: () => !isProd,
+  canAccess: ({ user }) => !isProd || user?.isModerator,
 });
 addRouteGuard({
   matcher: ['/api/testing/:path*'],

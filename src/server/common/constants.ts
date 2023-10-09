@@ -19,7 +19,6 @@ import {
   PostSort,
   QuestionSort,
 } from './enums';
-import { getBaseUrl } from '../utils/url-helpers';
 
 export const constants = {
   modelFilterDefaults: {
@@ -178,8 +177,10 @@ export const constants = {
     styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
   },
   maxTrainingRetries: 2,
-  imageUpload: {
-    maxFileSize: 32 * 1024 ** 2, // 32MB
+  mediaUpload: {
+    maxImageFileSize: 50 * 1024 ** 2, // 50MB
+    maxVideoDimension: 3840,
+    maxVideoDurationSeconds: 120,
   },
   bounties: {
     engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
@@ -275,7 +276,6 @@ export const generation = {
       sampler
     )
   ),
-  maxSeed: 4294967295,
   defaultValues: {
     cfgScale: 7,
     steps: 25,
@@ -286,6 +286,12 @@ export const generation = {
     aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
+  },
+  maxValues: {
+    seed: 4294967295,
+    steps: 80,
+    quantity: 10,
+    clipSkip: 10,
   },
   settingsCost: {
     base: 1,

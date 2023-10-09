@@ -1,6 +1,18 @@
-import { Box, Button, Container, Group, List, Stack, Text, Textarea, Title } from '@mantine/core';
+import {
+  Badge,
+  Box,
+  Button,
+  Card,
+  Container,
+  Group,
+  List,
+  Stack,
+  Text,
+  Textarea,
+  Title,
+} from '@mantine/core';
 import { useState } from 'react';
-import { includesInappropriate } from '~/utils/metadata/audit';
+import { highlightInappropriate, includesInappropriate } from '~/utils/metadata/audit';
 
 export default function MetadataTester() {
   const [prompts, setPrompts] = useState<string[]>([]);
@@ -11,31 +23,32 @@ export default function MetadataTester() {
 
   const updateJson = (json: string) => {
     try {
+      let setTo = [json];
       if (json.trim().startsWith('[')) {
         const parsed = JSON.parse(json) as { prompt: string }[];
-        setPrompts(parsed.map((p) => p.prompt));
-      } else {
-        setPrompts([json]);
+        setTo = parsed.map((p) => p.prompt);
       }
-      updateResults();
+      setPrompts(setTo);
+      updateResults(setTo);
     } catch (err) {
       console.log(err);
       setPrompts([]);
     }
   };
 
-  const updateResults = () => {
+  const updateResults = (input?: string[]) => {
+    input ??= prompts;
+    if (!input) return;
     const passed = new Set<string>();
     const failed = new Set<string>();
 
-    console.log(prompts);
-
-    for (const prompt of prompts) {
+    for (const prompt of input) {
       const isInappropriate = includesInappropriate(prompt);
+      const highlighted = highlightInappropriate(prompt) ?? prompt;
       if (isInappropriate) {
-        failed.add(prompt);
+        failed.add(highlighted);
       } else {
-        passed.add(prompt);
+        passed.add(highlighted);
       }
     }
     setResults({ passed: [...passed], failed: [...failed] });
@@ -44,25 +57,39 @@ export default function MetadataTester() {
   return (
     <Container size="md">
       <Stack>
-        <Title>Prompt Tester</Title>
+        <Group align="flex-end">
+          <Title>Prompt Tester</Title>
+          <Group spacing={4} ml="auto">
+            <Badge color="red" variant="light">
+              Blocked Word
+            </Badge>
+            <Badge color="orange" variant="light">
+              NSFW Word
+            </Badge>
+            <Badge color="blue" variant="light">
+              Minor Word
+            </Badge>
+          </Group>
+        </Group>
         <Textarea
           onChange={(e) => updateJson(e.target.value)}
           autosize
           minRows={5}
           placeholder={`Prompts JSON: {prompt: string}[]`}
         />
-        <Button onClick={updateResults}>Update</Button>
-        <Group grow>
+        <Group grow align="flex-start">
           {Object.entries(results).map(([key, values]) => (
-            <Box key={key} w="50%">
-              <Text size="md" weight={500}>
+            <Box key={key} w="50%" px="xs">
+              <Text size="lg" weight={500} tt="uppercase" mb="sm">
                 {key}
               </Text>
-              <List>
+              <Stack spacing="xs">
                 {values.map((value) => (
-                  <List.Item key={value}>{value}</List.Item>
+                  <Card withBorder key={value}>
+                    <div dangerouslySetInnerHTML={{ __html: value }} />
+                  </Card>
                 ))}
-              </List>
+              </Stack>
             </Box>
           ))}
         </Group>

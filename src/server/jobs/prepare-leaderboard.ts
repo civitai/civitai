@@ -28,26 +28,25 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
   for (const { id, query } of leaderboards) {
     log(`Started leaderboard ${id}`);
-    await dbWrite.$transaction([
-      dbWrite.$executeRawUnsafe(`
-        DELETE FROM "LeaderboardResult"
-        WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
-      `),
-      dbWrite.$executeRawUnsafe(`
-        WITH scores AS (
-          ${query}
-        )
-        INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
-        SELECT
-          '${id}' as "leaderboardId",
-          current_date + interval '${addDays} days' as date,
-          *,
-          row_number() OVER (ORDER BY score DESC) as position
-        FROM scores
-        ORDER BY position
-      `),
-    ]);
-    log(`Finished leaderboard ${id}`);
+    const start = Date.now();
+    await dbWrite.$executeRawUnsafe(`
+      DELETE FROM "LeaderboardResult"
+      WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
+    `);
+    log(`Cleared leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
+    await dbWrite.$executeRawUnsafe(`
+      WITH scores AS (
+        ${query}
+      )
+      INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
+      SELECT
+        '${id}' as "leaderboardId",
+        current_date + interval '${addDays} days' as date,
+        *,
+        row_number() OVER (ORDER BY score DESC) as position
+      FROM scores
+    `);
+    log(`Finished leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
   }
 
   await setLastRun();
@@ -58,30 +57,29 @@ const updateUserLeaderboardRank = createJob(
   '1 0 * * *',
   async () => {
     if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
-
     await updateLeaderboardRank();
+  }
+);
+
+const updateUserDiscordLeaderboardRoles = createJob(
+  'update-user-leaderboard-rank',
+  '10 0 * * *',
+  async () => {
+    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
     await applyDiscordLeaderboardRoles();
   }
 );
 
 async function setModelCoverImageNsfwLevel() {
   await dbWrite.$executeRaw`
-    -- set model nsfw image level
-    WITH model_images AS (
-      SELECT
-        m.id,
-        i.nsfw,
-        row_number() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId" * 1000 + i.index) row_num
+    -- set model nsfw image level based on post nsfw level
+    WITH model_nsfw_level AS (
+      SELECT DISTINCT ON (m.id) m.id, p.metadata->>'imageNsfw' nsfw
       FROM "Model" m
-      JOIN "ModelVersion" mv ON mv."modelId" = m.id
+      JOIN "ModelVersion" mv ON mv."modelId" = m.id AND mv.status = 'Published'
       JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId"
-      JOIN "Image" i ON i."postId" = p.id
-    ), model_nsfw_level AS (
-      SELECT
-        id,
-        nsfw
-      FROM model_images
-      WHERE row_num = 1
+      WHERE m.status = 'Published'
+      ORDER BY m.id, mv.index, p.id
     )
     UPDATE "Model" m
     SET
@@ -101,5 +99,6 @@ const clearLeaderboardCache = createJob('clear-leaderboard-cache', '0 0 * * *', 
 export const leaderboardJobs = [
   prepareLeaderboard,
   updateUserLeaderboardRank,
+  updateUserDiscordLeaderboardRoles,
   clearLeaderboardCache,
 ];

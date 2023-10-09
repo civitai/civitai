@@ -47,6 +47,8 @@ import {
   isImageResource,
 } from './../schema/image.schema';
 import { chunk } from 'lodash-es';
+import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { isDefined } from '~/utils/type-guards';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -64,15 +66,19 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
 
 export const deleteImageById = async ({ id }: GetByIdInput) => {
   try {
-    const image = await dbRead.image.findUnique({ where: { id }, select: { url: true } });
-    if (isProd && image && !imageUrlInUse({ url: image.url, id }))
+    const image = await dbRead.image.findUnique({
+      where: { id },
+      select: { url: true, postId: true, nsfw: true },
+    });
+    if (!image) return;
+
+    if (isProd && !imageUrlInUse({ url: image.url, id }))
       await deleteObject(env.S3_IMAGE_UPLOAD_BUCKET, image.url); // Remove from storage
 
-    if (image) {
-      await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    }
-
-    return await dbWrite.image.delete({ where: { id } });
+    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await dbWrite.image.deleteMany({ where: { id } });
+    if (image.postId) await updatePostNsfwLevel(image.postId);
+    return image;
   } catch {
     // Ignore errors
   }
@@ -111,7 +117,13 @@ export const moderateImages = async ({
         data: { nsfw, needsReview: null, ingestion: 'Blocked' },
       });
     } else {
+      const images = await dbRead.image.findMany({
+        where: { id: { in: ids } },
+        select: { postId: true },
+      });
       await dbWrite.image.deleteMany({ where: { id: { in: ids } } });
+      const postIds = images.map((x) => x.postId).filter(isDefined);
+      await updatePostNsfwLevel(postIds);
     }
 
     await imagesSearchIndex.queueUpdate(
@@ -300,15 +312,21 @@ export function applyUserPreferencesSql(
     excludedImageIds,
     excludedTagIds,
     userId,
-  }: UserPreferencesInput & { userId?: number }
+    hidden,
+  }: UserPreferencesInput & { userId?: number; hidden?: boolean }
 ) {
   // Exclude specific users
   if (excludedUserIds?.length)
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
 
   // Exclude specific images
-  if (excludedImageIds?.length)
-    AND.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`);
+  if (excludedImageIds?.length) {
+    AND.push(
+      hidden
+        ? Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds)})`
+        : Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`
+    );
+  }
 
   // Exclude specific tags
   if (excludedTagIds?.length) {
@@ -405,6 +423,7 @@ export const getAllImages = async ({
   headers,
   includeBaseModel,
   types,
+  hidden,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
@@ -414,6 +433,11 @@ export const getAllImages = async ({
   const AND = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
+
+  if (hidden && !userId) throw throwAuthorizationError();
+  if (hidden && (excludedImageIds ?? []).length === 0) {
+    return { items: [], nextCursor: undefined };
+  }
 
   // ensure that only scanned images make it to the main feed if no user is logged in
   if (!userId)
@@ -572,6 +596,7 @@ export const getAllImages = async ({
     excludedTagIds,
     excludedUserIds,
     userId,
+    hidden,
   });
 
   if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);

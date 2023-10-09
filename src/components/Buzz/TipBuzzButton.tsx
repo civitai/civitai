@@ -41,7 +41,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }
       >
         <Group spacing={4} noWrap>
           <IconBolt size={14} fill="currentColor" />
-          Tip Buzz
+          Tip
         </Group>
       </Button>
     </LoginPopover>

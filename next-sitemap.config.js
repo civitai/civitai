@@ -3,6 +3,7 @@ const exclude = [
   '/api/*',
   '/discord/*',
   '/dmca/*',
+  '/intent/*',
   '/models/train',
   '/moderator/*',
   '/payment/*',
@@ -18,9 +19,9 @@ const exclude = [
   '/sitemap-articles.xml',
   '/sitemap-models.xml',
   '/sitemap-questions.xml',
-]
+];
 
-const disallow = exclude.filter((path) => !path.includes('sitemap.xml'))
+const disallow = exclude.filter((path) => !path.includes('sitemap.xml'));
 
 /** @type {import('next-sitemap').IConfig} */
 module.exports = {
@@ -46,4 +47,4 @@ module.exports = {
       `${process.env.NEXTAUTH_URL}/sitemap-questions.xml`,
     ],
   },
-}
+};

@@ -85,7 +85,7 @@ export const deleteImageHandler = async ({
     if (image) {
       await ctx.track.image({
         type: 'Delete',
-        imageId: image.id,
+        imageId: input.id,
         nsfw: image.nsfw,
         tags: imageTags.map((x) => x.tagName),
       });

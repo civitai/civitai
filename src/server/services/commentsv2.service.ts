@@ -60,6 +60,7 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
   select,
   sort,
   excludedUserIds,
+  hidden = false,
 }: GetCommentsV2Input & {
   select: TSelect;
   excludedUserIds?: number[];
@@ -74,27 +75,33 @@ export const getComments = async <TSelect extends Prisma.CommentV2Select>({
     where: {
       thread: { [`${entityType}Id`]: entityId },
       userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
+      hidden,
     },
     orderBy,
     select,
   });
 };
 
-export const deleteComment = async ({ id }: { id: number }) => {
-  await dbWrite.commentV2.delete({ where: { id } });
+export const deleteComment = ({ id }: { id: number }) => {
+  return dbWrite.commentV2.delete({ where: { id } });
 };
 
-export const getCommentCount = async ({ entityId, entityType }: CommentConnectorInput) => {
+export const getCommentCount = async ({ entityId, entityType, hidden }: CommentConnectorInput) => {
   return await dbRead.commentV2.count({
     where: {
       thread: {
         [`${entityType}Id`]: entityId,
       },
+      hidden,
     },
   });
 };
 
-export const getCommentsThreadDetails = async ({ entityId, entityType }: CommentConnectorInput) => {
+export const getCommentsThreadDetails = async ({
+  entityId,
+  entityType,
+  hidden = false,
+}: CommentConnectorInput) => {
   return await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId },
     select: {
@@ -102,6 +109,7 @@ export const getCommentsThreadDetails = async ({ entityId, entityType }: Comment
       locked: true,
       comments: {
         orderBy: { createdAt: 'asc' },
+        where: { hidden },
         select: commentV2Select,
       },
     },
@@ -118,5 +126,15 @@ export const toggleLockCommentsThread = async ({ entityId, entityType }: Comment
     where: { [`${entityType}Id`]: entityId },
     data: { locked: !thread.locked },
     select: { locked: true },
+  });
+};
+
+export const toggleHideComment = async ({
+  id,
+  currentToggle,
+}: GetByIdInput & { currentToggle: boolean }) => {
+  return dbWrite.commentV2.update({
+    where: { id },
+    data: { hidden: !currentToggle },
   });
 };

@@ -33,7 +33,7 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
 export function SimpleImageUpload({
   value,
   onChange,
-  maxSize = constants.imageUpload.maxFileSize,
+  maxSize = constants.mediaUpload.maxImageFileSize,
   ...props
 }: SimpleImageUploadProps) {
   const theme = useMantineTheme();

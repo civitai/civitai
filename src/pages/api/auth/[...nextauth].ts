@@ -52,6 +52,7 @@ export function createAuthOptions(): NextAuthOptions {
     },
     events: {
       createUser: async ({ user }) => {
+        if (user.username) return; // Somehow this was being run for existing users, so we need to check for username...
         const startingUsername = user.email?.trim() ?? user.name?.trim() ?? `civ_`;
 
         if (startingUsername) {

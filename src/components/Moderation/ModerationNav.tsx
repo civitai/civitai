@@ -11,6 +11,8 @@ export function ModerationNav() {
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
         { label: 'Models', href: '/moderator/models' },
+        { label: 'Auditor', href: '/testing/auditor' },
+        { label: 'Metadata Tester', href: '/testing/metadata-test' },
       ].map((link) => (
         <Menu.Item key={link.href} component={NextLink} href={link.href}>
           {link.label}

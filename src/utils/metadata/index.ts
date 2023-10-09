@@ -8,6 +8,7 @@ import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { MediaType } from '@prisma/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
+import { constants } from '~/server/common/constants';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
@@ -15,35 +16,39 @@ const parsers = {
 };
 
 export async function getMetadata(file: File) {
-  const tags = await ExifReader.load(file, { includeUnknown: true });
-  delete tags['MakerNote'];
-  const exif = Object.entries(tags).reduce((acc, [key, value]) => {
-    acc[key] = value.value;
-    return acc;
-  }, {} as Record<string, any>); //eslint-disable-line
-
-  if (exif.UserComment) {
-    // @ts-ignore - this is a hack to not have to rework our downstream code
-    exif.userComment = Int32Array.from(exif.UserComment);
-  }
-
-  let metadata = {};
   try {
-    const { parse } = Object.values(parsers).find((x) => x.canParse(exif)) ?? {};
-    if (parse) metadata = parse(exif);
-  } catch (e: any) { //eslint-disable-line
-    console.error('Error parsing metadata', e);
+    const tags = await ExifReader.load(file, { includeUnknown: true });
+    delete tags['MakerNote'];
+    const exif = Object.entries(tags).reduce((acc, [key, value]) => {
+      acc[key] = value.value;
+      return acc;
+    }, {} as Record<string, any>); //eslint-disable-line
+
+    if (exif.UserComment) {
+      // @ts-ignore - this is a hack to not have to rework our downstream code
+      exif.userComment = Int32Array.from(exif.UserComment);
+    }
+
+    let metadata = {};
+    try {
+      const { parse } = Object.values(parsers).find((x) => x.canParse(exif)) ?? {};
+      if (parse) metadata = parse(exif);
+    } catch (e: any) { //eslint-disable-line
+      console.error('Error parsing metadata', e);
+    }
+    const result = imageMetaSchema.safeParse(metadata);
+    return result.success ? result.data : {};
+  } catch (e) {
+    return {};
   }
-  const result = imageMetaSchema.safeParse(metadata);
-  return result.success ? result.data : {};
 }
 
 export function encodeMetadata(meta: ImageMetaProps, type: keyof typeof parsers = 'automatic') {
   return parsers[type]?.encode(meta);
 }
 
-export const parsePromptMetadata = async (generationDetails: string) => {
-  return await automaticMetadataProcessor.parse({ generationDetails });
+export const parsePromptMetadata = (generationDetails: string) => {
+  return automaticMetadataProcessor.parse({ generationDetails });
 };
 
 export const getDataFromFile = async (file: File) => {
@@ -55,10 +60,17 @@ export const getDataFromFile = async (file: File) => {
   if (processed.type === 'video') {
     const { metadata } = processed;
     try {
-      if (metadata.duration && metadata.duration > 60)
-        throw new Error('video duration can not be longer than 60s');
-      if (metadata.width > 1920 || metadata.height > 1920)
-        throw new Error('please reduce image dimensions');
+      if (metadata.duration && metadata.duration > constants.mediaUpload.maxVideoDurationSeconds)
+        throw new Error(
+          `Video duration cannot be longer than ${constants.mediaUpload.maxVideoDurationSeconds} seconds. Please trim your video and try again.`
+        );
+      if (
+        metadata.width > constants.mediaUpload.maxVideoDimension ||
+        metadata.height > constants.mediaUpload.maxVideoDimension
+      )
+        throw new Error(
+          `Images cannot be larger than ${constants.mediaUpload.maxVideoDimension}px from either side. Please resize your image and try again.`
+        );
     } catch (error: any) {
       showErrorNotification({ error });
       return null;

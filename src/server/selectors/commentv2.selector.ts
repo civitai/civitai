@@ -14,6 +14,7 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   nsfw: true,
   tosViolation: true,
   content: true,
+  hidden: true,
   user: {
     select: userWithCosmeticsSelect,
   },

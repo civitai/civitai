@@ -686,24 +686,22 @@ export function ModelVersionDetails({
               <ResourceReviewSummary modelId={model.id} modelVersionId={version.id}>
                 <Accordion.Item value="resource-reviews">
                   <Accordion.Control>
-                    <Group position="apart">
+                    <Group>
                       <ResourceReviewSummary.Header
                         rating={version.rank?.ratingAllTime}
                         count={version.rank?.ratingCountAllTime}
                       />
-                      <Stack spacing={4}>
-                        <Link
+                      <Stack spacing={4} ml="auto">
+                        <Button
+                          component={NextLink}
                           href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
+                          variant="outline"
+                          size="xs"
+                          onClick={(e) => e.stopPropagation()}
+                          compact
                         >
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            onClick={(e) => e.stopPropagation()}
-                            compact
-                          >
-                            Add Review
-                          </Button>
-                        </Link>
+                          Add Review
+                        </Button>
                         <Text
                           component={NextLink}
                           href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
