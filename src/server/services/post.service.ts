@@ -145,6 +145,7 @@ export const getPostsInfinite = async ({
     }
   } else {
     if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
+    else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
   }
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
   if (collectionId) {
