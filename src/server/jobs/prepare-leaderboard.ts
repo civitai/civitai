@@ -34,10 +34,12 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
       WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
     `);
     log(`Cleared leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
+
+    const includesCTE = query.includes('WITH ');
+    if (includesCTE && !query.includes('scores')) throw new Error('Query must include scores CTE');
+
     await dbWrite.$executeRawUnsafe(`
-      WITH scores AS (
-        ${query}
-      )
+      ${includesCTE ? query : `WITH scores AS (${query})`}
       INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
       SELECT
         '${id}' as "leaderboardId",
