@@ -1,4 +1,4 @@
-import { Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
+import { Group, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -16,8 +16,8 @@ import { ArticleSort } from '~/server/common/enums';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 import { UserProfileLayout } from './';
+import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -62,7 +62,7 @@ export default function UserArticlesPage() {
           <Stack spacing="xs">
             <Group spacing={8}>
               {selfView && (
-                <ContentToggle
+                <FeedContentToggle
                   size="xs"
                   value={section}
                   onChange={(section) => {
@@ -105,32 +105,6 @@ export default function UserArticlesPage() {
         </MasonryContainer>
       </MasonryProvider>
     </Tabs.Panel>
-  );
-}
-
-function ContentToggle({
-  value,
-  onChange,
-  ...props
-}: Omit<SegmentedControlProps, 'value' | 'onChange' | 'data'> & {
-  value: 'published' | 'draft';
-  onChange: (value: 'published' | 'draft') => void;
-}) {
-  return (
-    <SegmentedControl
-      {...props}
-      value={value}
-      onChange={onChange}
-      data={[
-        { label: 'Published', value: 'published' },
-        { label: 'Draft', value: 'draft' },
-      ]}
-      sx={(theme) => ({
-        [theme.fn.smallerThan('sm')]: {
-          width: '100%',
-        },
-      })}
-    />
   );
 }
 

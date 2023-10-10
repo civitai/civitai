@@ -83,6 +83,7 @@ export const getPostsInfinite = async ({
   ids,
   collectionId,
   include,
+  draftOnly,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND = [Prisma.sql`1 = 1`];
 
@@ -142,6 +143,8 @@ export const getPostsInfinite = async ({
 
       AND.push(Prisma.sql`(${Prisma.join(collectionOr, ' OR ')})`);
     }
+  } else {
+    if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
   }
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
   if (collectionId) {
