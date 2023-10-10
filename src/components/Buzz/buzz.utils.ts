@@ -1,14 +1,13 @@
 import { useRouter } from 'next/router';
-import { trpc } from '~/utils/trpc';
+import React, { useState } from 'react';
+import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { useState } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import React from 'react';
+import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
@@ -78,24 +77,12 @@ export const useBuzzTransaction = (opts?: {
 
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
   const isMobile = useIsMobile();
 
   const { trackAction } = useTrackEvent();
 
+  // TODO.buzz extend this to use elsewhere
   const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
-    async onSuccess(_, { amount }) {
-      await queryUtils.buzz.getUserAccount.cancel();
-
-      queryUtils.buzz.getUserAccount.setData(undefined, (old) =>
-        old
-          ? {
-              ...old,
-              balance: amount <= old.balance ? old.balance - amount : old.balance,
-            }
-          : old
-      );
-    },
     onError(error) {
       showErrorNotification({
         title: 'Error performing transaction',

@@ -1,21 +1,22 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  CompleteStripeBuzzPurchaseTransactionInput,
+  CreateBuzzTransactionInput,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
-  GetUserBuzzTransactionsSchema,
-  GetUserBuzzTransactionsResponse,
-  CreateBuzzTransactionInput,
   getUserBuzzTransactionsResponse,
-  CompleteStripeBuzzPurchaseTransactionInput,
+  GetUserBuzzTransactionsResponse,
+  GetUserBuzzTransactionsSchema,
   TransactionType,
 } from '~/server/schema/buzz.schema';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { createNotification } from '~/server/services/notification.service';
 import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
   const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
@@ -130,7 +131,7 @@ export async function createBuzzTransaction({
   const account = await getUserBuzzAccount({ accountId: payload.fromAccountId });
 
   // 0 is the bank so technically, it always has funding.
-  if (payload.fromAccountId !== 0 && account.balance < amount) {
+  if (payload.fromAccountId !== 0 && (account.balance ?? 0) < amount) {
     throw throwInsufficientFundsError();
   }
 
@@ -160,6 +161,23 @@ export async function createBuzzTransaction({
           cause,
         });
     }
+  }
+
+  if (payload.type === TransactionType.Tip && toAccountId !== 0) {
+    const fromUser = await dbRead.user.findUnique({
+      where: { id: payload.fromAccountId },
+      select: { username: true },
+    });
+
+    await createNotification({
+      type: 'tip-received',
+      userId: toAccountId,
+      details: {
+        amount: amount,
+        user: fromUser?.username,
+        message: payload.description,
+      },
+    });
   }
 
   if (entityId && entityType) {
