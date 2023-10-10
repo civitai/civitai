@@ -220,16 +220,32 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image });
 };
 
-export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
+export const ingestImage = async ({
+  image,
+  tx,
+}: {
+  image: IngestImageInput;
+  tx?: Prisma.TransactionClient;
+}): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id, type, width, height } = ingestImageSchema.parse(image);
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
+  const dbClient = tx ?? dbWrite;
 
-  if (!isProd && !callbackUrl) {
+  if (!isProd || !callbackUrl) {
     console.log('skip ingest');
+    await dbClient.image.update({
+      where: { id },
+      data: {
+        scanRequestedAt,
+        scannedAt: scanRequestedAt,
+        ingestion: ImageIngestionStatus.Scanned,
+      },
+    });
+
     return true;
   }
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
@@ -247,7 +263,7 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
     }),
   });
   if (response.status === 202) {
-    await dbWrite.image.updateMany({
+    await dbClient.image.updateMany({
       where: { id },
       data: { scanRequestedAt },
     });
@@ -264,19 +280,32 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
 
 export const ingestImageBulk = async ({
   images,
+  tx,
 }: {
   images: IngestImageInput[];
+  tx?: Prisma.TransactionClient;
 }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
-  if (!isProd && !callbackUrl) {
+  const scanRequestedAt = new Date();
+  const imageIds = images.map(({ id }) => id);
+  const dbClient = tx ?? dbWrite;
+
+  if (!isProd || !callbackUrl) {
     console.log('skip ingest');
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: {
+        scanRequestedAt,
+        scannedAt: scanRequestedAt,
+        ingestion: ImageIngestionStatus.Scanned,
+      },
+    });
     return true;
   }
 
-  const scanRequestedAt = new Date();
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue-bulk', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -294,9 +323,8 @@ export const ingestImageBulk = async ({
     ),
   });
   if (response.status === 202) {
-    const ids = images.map((image) => image.id);
-    await dbWrite.image.updateMany({
-      where: { id: { in: ids } },
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
       data: { scanRequestedAt },
     });
     return true;
@@ -1702,27 +1730,16 @@ export const createEntityImages = async ({
   });
 
   const imageRecords = await tx.image.findMany({
-    select: { id: true, ingestion: true, url: true },
+    select: { id: true, url: true, type: true, width: true, height: true },
     where: {
-      url: {
-        in: images.map((i) => i.url),
-      },
+      url: { in: images.map((i) => i.url) },
+      ingestion: ImageIngestionStatus.Pending,
       userId,
     },
   });
 
   const batches = chunk(imageRecords, 50);
-  for (const batch of batches) {
-    await Promise.all(
-      batch.map((image) => {
-        if (image.ingestion === ImageIngestionStatus.Pending) {
-          return ingestImage({ image });
-        }
-
-        return;
-      })
-    );
-  }
+  await Promise.all(batches.map((images) => ingestImageBulk({ images, tx })));
 
   await tx.imageConnection.createMany({
     data: imageRecords.map((image) => ({
@@ -1731,4 +1748,6 @@ export const createEntityImages = async ({
       entityType,
     })),
   });
+
+  return imageRecords;
 };
