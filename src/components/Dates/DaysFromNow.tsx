@@ -16,6 +16,6 @@ export const DaysFromNow = ({ date, withoutSuffix = false }: Props) => {
 };
 
 type Props = {
-  date: Date;
+  date: dayjs.ConfigType;
   withoutSuffix?: boolean;
 };

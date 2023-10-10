@@ -34,7 +34,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { formatDate, isFutureDate } from '~/utils/date-helpers';
+import { formatDate, isFutureDate, stripTime } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNsfwImage } from '~/server/common/model-helpers';
@@ -236,7 +236,7 @@ export default function BountyDetailsPage({
                     icon={<IconClockHour4 size={18} />}
                     style={{ color: theme.colors.success[5] }}
                   >
-                    <DaysFromNow date={bounty.expiresAt} withoutSuffix />
+                    <DaysFromNow date={stripTime(bounty.expiresAt)} withoutSuffix />
                   </IconBadge>
                 )}
                 <LoginRedirect reason="perform-action">
@@ -498,11 +498,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     },
     {
       label: isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started',
-      value: <Text>{formatDate(bounty.startsAt)}</Text>,
+      value: <Text>{formatDate(stripTime(bounty.startsAt))}</Text>,
     },
     {
       label: 'Deadline',
-      value: <Text>{formatDate(bounty.expiresAt)}</Text>,
+      value: <Text>{formatDate(stripTime(bounty.expiresAt))}</Text>,
     },
   ];
 

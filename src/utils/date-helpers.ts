@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 
-export function formatDate(value: Date, format = 'MMM DD, YYYY') {
+export function formatDate(value: dayjs.ConfigType, format = 'MMM DD, YYYY') {
   return dayjs(value).format(format);
 }
 
@@ -45,3 +45,15 @@ export function isBetweenToday(value: Date) {
 }
 
 export const aDayAgo = dayjs().subtract(1, 'day').toDate();
+
+export function stripTime(value: Date) {
+  return value.toISOString().substring(0, 10);
+}
+
+export function startOfDay(value: Date) {
+  return dayjs(value).startOf('day').toDate();
+}
+
+export function endOfDay(value: Date) {
+  return dayjs(value).endOf('day').toDate();
+}
