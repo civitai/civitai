@@ -73,6 +73,7 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { deleteCookies } from '~/utils/cookies-helpers';
 
 const HEADER_HEIGHT = 70;
 
@@ -575,6 +576,12 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
     [currentUser, features.buzz, isMobile]
   );
 
+  const handleSignOut = async () => {
+    // Removes referral cookies on sign out
+    deleteCookies(['ref_code', 'ref_source']);
+    await signOut();
+  };
+
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
@@ -733,7 +740,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                     </Menu.Item>
                     <Menu.Item
                       icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                      onClick={() => signOut()}
+                      onClick={handleSignOut}
                     >
                       Logout
                     </Menu.Item>
