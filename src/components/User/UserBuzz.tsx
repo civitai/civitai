@@ -41,9 +41,7 @@ export function UserBuzz({
 
   return withTooltip ? (
     <Tooltip
-      label={`Total balance: ${
-        balance === null ? <Loader size="sm" variant="dots" /> : balance.toLocaleString()
-      }`}
+      label={`Total balance: ${balance === null ? '(Loading...)' : balance.toLocaleString()}`}
     >
       {content}
     </Tooltip>

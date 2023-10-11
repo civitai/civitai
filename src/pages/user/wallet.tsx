@@ -219,7 +219,7 @@ export default function UserWallet() {
                     <Group className={classes.lifetimeBuzzBadge} spacing={2}>
                       <CurrencyIcon currency={Currency.BUZZ} size={24} />
                       {lifetimeBalance === null ? (
-                        <Loader variant="dots" />
+                        <Loader variant="dots" color="yellow.7" />
                       ) : (
                         <Text
                           size="xl"
