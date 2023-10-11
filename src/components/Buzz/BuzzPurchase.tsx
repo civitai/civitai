@@ -143,6 +143,11 @@ export const BuzzPurchase = ({
     const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
     const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
 
+    if (unitAmount < constants.buzz.minChargeAmount)
+      return setError(
+        `Minimum amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount)} USD`
+      );
+
     if (!currentUser) {
       return setError('Please log in to continue');
     }
@@ -312,15 +317,14 @@ export const BuzzPurchase = ({
                       placeholder={`Minimum ${Number(minBuzzAmountPrice * 10).toLocaleString()}`}
                       icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                       value={customAmount ? customAmount * 10 : undefined}
-                      min={minBuzzAmountPrice * 10}
+                      min={1000}
                       max={constants.buzz.maxChargeAmount * 10}
                       disabled={processing}
                       onChange={(value) => {
                         setError('');
                         setCustomAmount(Math.ceil((value ?? 0) / 10));
                       }}
-                      hideControls
-                      step={10}
+                      step={100}
                     />
                     {/* @ts-ignore: transparent variant works with ThemeIcon */}
                     <ThemeIcon size={36} maw={24} variant="transparent" color="gray">
@@ -332,20 +336,28 @@ export const BuzzPurchase = ({
                       placeholder={`Minimum $${formatPriceForDisplay(minBuzzAmountPrice)}`}
                       icon={<CurrencyIcon currency="USD" size={18} fill="transparent" />}
                       value={customAmount}
-                      min={minBuzzAmountPrice}
+                      min={100}
+                      step={100}
                       max={constants.buzz.maxChargeAmount}
                       precision={2}
                       disabled={processing}
                       rightSection={null}
+                      rightSectionWidth="auto"
                       format="currency"
                       currency="USD"
                       onChange={(value) => {
                         setError('');
                         setCustomAmount(value ?? 0);
                       }}
-                      hideControls
                     />
                   </Group>
+                  <Text size="xs" color="dimmed" mt="xs">
+                    {`Minimum amount ${Number(
+                      constants.buzz.minChargeAmount * 10
+                    ).toLocaleString()} Buzz or $${formatPriceForDisplay(
+                      constants.buzz.minChargeAmount
+                    )} USD`}
+                  </Text>
                 </Accordion.Panel>
               </Accordion.Item>
             </Accordion>

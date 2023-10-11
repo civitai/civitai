@@ -19,7 +19,7 @@ export function BuzzTransactionButton({
   buzzAmount,
   onPerformTransaction,
   purchaseSuccessMessage,
-  message = "You don't have enough funds to perform this action.",
+  message = "You don't have enough funds. Buy or earn more buzz to perform this action",
   performTransactionOnPurchase = true,
   label,
   ...buttonProps

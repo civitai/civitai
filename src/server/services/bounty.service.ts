@@ -6,7 +6,7 @@ import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { createEntityImages } from '~/server/services/image.service';
-import { decreaseDate } from '~/utils/date-helpers';
+import { decreaseDate, startOfDay, toUtc } from '~/utils/date-helpers';
 import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
@@ -115,6 +115,8 @@ export const createBounty = async ({
   tags,
   unitAmount,
   currency,
+  startsAt: incomingStartsAt,
+  expiresAt: incomingExpiresAt,
   ...data
 }: CreateBountyInput & { userId: number }) => {
   const { userId } = data;
@@ -129,10 +131,15 @@ export const createBounty = async ({
       break;
   }
 
+  const startsAt = startOfDay(toUtc(incomingStartsAt));
+  const expiresAt = startOfDay(toUtc(incomingExpiresAt));
+
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.create({
       data: {
         ...data,
+        startsAt,
+        expiresAt,
         // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
         entryMode: BountyEntryMode.BenefactorsOnly,
         details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -196,12 +203,25 @@ export const createBounty = async ({
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
 
-export const updateBountyById = async ({ id, files, tags, ...data }: UpdateBountyInput) => {
+export const updateBountyById = async ({
+  id,
+  files,
+  tags,
+  startsAt: incomingStartsAt,
+  expiresAt: incomingExpiresAt,
+  ...data
+}: UpdateBountyInput) => {
+  // Convert dates to UTC for storing
+  const startsAt = startOfDay(toUtc(incomingStartsAt));
+  const expiresAt = startOfDay(toUtc(incomingExpiresAt));
+
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.update({
       where: { id },
       data: {
         ...data,
+        startsAt,
+        expiresAt,
         tags: tags
           ? {
               deleteMany: {

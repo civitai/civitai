@@ -320,9 +320,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const currentUser = useCurrentUser();
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
-      `You don't have enough funds to train this model. Buy ${numberWithCommas(
+      `You don't have enough funds to train this model. Required buzz: ${numberWithCommas(
         requiredBalance
-      )} more BUZZ to train this model.`,
+      )}. Buy or earn more buzz to complete the training process.`,
     performTransactionOnPurchase: false,
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>
