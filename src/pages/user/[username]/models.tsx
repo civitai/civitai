@@ -1,9 +1,7 @@
-import { Center, Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
+import { Group, SegmentedControl, SegmentedControlProps, Stack, Tabs } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import { IconInfoCircle } from '@tabler/icons-react';
 import { useState } from 'react';
 
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
@@ -76,7 +74,6 @@ export default function UserModelsPage() {
                       type="models"
                       value={period}
                       onChange={(x) => set({ period: x })}
-                      hideMode={selfView}
                     />
                     <ModelFiltersDropdown />
                   </Group>
@@ -91,7 +88,6 @@ export default function UserModelsPage() {
                     ...queryFilters,
                     sort,
                     period,
-                    periodMode: selfView ? 'stats' : undefined,
                   }}
                 />
               </>
