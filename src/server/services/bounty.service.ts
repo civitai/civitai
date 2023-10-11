@@ -1,20 +1,15 @@
-import {
-  BountyEntryMode,
-  Currency,
-  ImageIngestionStatus,
-  MetricTimeframe,
-  Prisma,
-  TagTarget,
-} from '@prisma/client';
+import { BountyEntryMode, Currency, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
+import { ManipulateType } from 'dayjs';
+import { groupBy } from 'lodash-es';
+import { isProd } from '~/env/other';
+import { bountyRefundedEmail } from '~/server/email/templates';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { createEntityImages } from '~/server/services/image.service';
+import { decreaseDate } from '~/utils/date-helpers';
+import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
-import { updateEntityFiles } from './file.service';
-import {
-  throwAuthorizationError,
-  throwBadRequestError,
-  throwInsufficientFundsError,
-  throwNotFoundError,
-} from '../utils/errorHandling';
 import {
   AddBenefactorUnitAmountInputSchema,
   BountyDetailsSchema,
@@ -22,17 +17,15 @@ import {
   GetInfiniteBountySchema,
   UpdateBountyInput,
 } from '../schema/bounty.schema';
-import { imageSelect } from '../selectors/image.selector';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { createEntityImages, ingestImage } from '~/server/services/image.service';
-import { chunk, groupBy } from 'lodash-es';
-import { BountySort, BountyStatus } from '../common/enums';
 import { isNotTag, isTag } from '../schema/tag.schema';
-import { decreaseDate } from '~/utils/date-helpers';
-import { ManipulateType } from 'dayjs';
-import { isProd } from '~/env/other';
-import { bountyRefundedEmail } from '~/server/email/templates';
+import { imageSelect } from '../selectors/image.selector';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwNotFoundError,
+} from '../utils/errorHandling';
+import { updateEntityFiles } from './file.service';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -128,7 +121,7 @@ export const createBounty = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      if (account.balance < unitAmount) {
+      if ((account.balance ?? 0) < unitAmount) {
         throw throwInsufficientFundsError();
       }
       break;
@@ -354,7 +347,7 @@ export const addBenefactorUnitAmount = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      if (account.balance < unitAmount) {
+      if ((account.balance ?? 0) < unitAmount) {
         throw throwInsufficientFundsError();
       }
       break;
