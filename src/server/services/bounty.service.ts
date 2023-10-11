@@ -6,7 +6,7 @@ import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { createEntityImages } from '~/server/services/image.service';
-import { decreaseDate } from '~/utils/date-helpers';
+import { decreaseDate, startOfDay, toUtc } from '~/utils/date-helpers';
 import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
