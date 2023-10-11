@@ -49,7 +49,7 @@ export function BountyCard({ data }: Props) {
       sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
     >
       <Text size="xs">
-        <DaysFromNow date={stripTime(expiresAt)} withoutSuffix />
+        <DaysFromNow date={stripTime(expiresAt)} withoutSuffix inUtc />
       </Text>
     </IconBadge>
   );

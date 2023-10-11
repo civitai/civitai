@@ -1,6 +1,7 @@
 import dayjs from 'dayjs';
 
-export function formatDate(value: dayjs.ConfigType, format = 'MMM DD, YYYY') {
+export function formatDate(value: dayjs.ConfigType, format = 'MMM DD, YYYY', utc = false) {
+  if (utc) return dayjs.utc(value).format(format);
   return dayjs(value).format(format);
 }
 
@@ -48,6 +49,10 @@ export const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
 export function stripTime(value: Date) {
   return value.toISOString().substring(0, 10);
+}
+
+export function toUtc(value: Date) {
+  return dayjs(value).utc().toDate();
 }
 
 export function startOfDay(value: Date) {

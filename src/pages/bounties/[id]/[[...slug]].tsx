@@ -236,7 +236,7 @@ export default function BountyDetailsPage({
                     icon={<IconClockHour4 size={18} />}
                     style={{ color: theme.colors.success[5] }}
                   >
-                    <DaysFromNow date={stripTime(bounty.expiresAt)} withoutSuffix />
+                    <DaysFromNow date={bounty.expiresAt} withoutSuffix inUtc />
                   </IconBadge>
                 )}
                 <LoginRedirect reason="perform-action">
@@ -284,7 +284,7 @@ export default function BountyDetailsPage({
           <Group spacing={8}>
             <Text color="dimmed" size="xs">
               {isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started'}:{' '}
-              {formatDate(bounty.startsAt)}
+              {formatDate(bounty.startsAt, undefined, true)}
             </Text>
             {bounty.tags.length > 0 && (
               <>
@@ -498,11 +498,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     },
     {
       label: isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started',
-      value: <Text>{formatDate(stripTime(bounty.startsAt))}</Text>,
+      value: <Text>{formatDate(bounty.startsAt, undefined, true)}</Text>,
     },
     {
       label: 'Deadline',
-      value: <Text>{formatDate(stripTime(bounty.expiresAt))}</Text>,
+      value: <Text>{formatDate(bounty.expiresAt, undefined, true)}</Text>,
     },
   ];
 
