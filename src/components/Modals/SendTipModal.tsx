@@ -3,30 +3,29 @@ import {
   Button,
   Chip,
   CloseButton,
+  createStyles,
   Divider,
   Group,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
+import { Currency } from '@prisma/client';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { z } from 'zod';
-
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputChipGroup, InputNumber, InputTextArea, useForm } from '~/libs/form';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import { UserBuzz } from '../User/UserBuzz';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
+import { UserBuzz } from '../User/UserBuzz';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -111,7 +110,7 @@ const schema = z
   .object({
     // Using string here since chip component only works with string values
     amount: z.string(),
-    customAmount: z.number().positive().min(1).optional(),
+    customAmount: z.number().positive().min(100).optional(),
     description: z.string().trim().max(100, 'Cannot be longer than 100 characters').optional(),
   })
   .refine((data) => data.amount !== '-1' || data.customAmount, {
@@ -138,7 +137,6 @@ const { openModal, Modal } = createContextModal<{
   Element: ({ context, props: { toUserId, entityId, entityType } }) => {
     const { classes } = useStyles();
     const currentUser = useCurrentUser();
-    const queryUtils = trpc.useContext();
 
     const [loading, setLoading] = useState(false);
 
@@ -163,19 +161,8 @@ const { openModal, Modal } = createContextModal<{
     });
 
     const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
-      async onSuccess(_, { amount }) {
+      async onSuccess() {
         setLoading(false);
-
-        await queryUtils.buzz.getUserAccount.cancel();
-        queryUtils.buzz.getUserAccount.setData(undefined, (old) =>
-          old
-            ? {
-                ...old,
-                balance: amount <= old.balance ? old.balance - amount : old.balance,
-              }
-            : old
-        );
-
         handleClose();
       },
       onError(error) {
@@ -274,10 +261,10 @@ const { openModal, Modal } = createContextModal<{
             {amount === '-1' && (
               <InputNumber
                 name="customAmount"
-                placeholder="Your tip. Minimum 1000 BUZZ"
+                placeholder="Your tip. Minimum 100 BUZZ"
                 variant="filled"
                 rightSectionWidth="10%"
-                min={1000}
+                min={1}
                 disabled={sending}
                 icon={<CurrencyIcon currency="BUZZ" size={16} />}
                 parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}

@@ -174,7 +174,7 @@ export const createTrainingRequest = async ({
     );
   }
   const account = await getUserBuzzAccount({ accountId: userId });
-  if (account.balance < price) {
+  if ((account.balance ?? 0) < price) {
     throw throwInsufficientFundsError(
       `You don't have enough Buzz to perform this action (required: ${price})`
     );

@@ -1,35 +1,23 @@
 import {
-  Text,
-  Center,
-  Container,
-  Grid,
-  Loader,
-  Paper,
-  Stack,
-  ScrollArea,
-  Title,
-  Group,
-  createStyles,
-  Divider,
   Button,
   ButtonProps,
-  RingProgress,
-  Tooltip,
+  Center,
+  Container,
+  createStyles,
+  Divider,
+  Grid,
+  Group,
   keyframes,
+  Loader,
+  Paper,
+  RingProgress,
+  ScrollArea,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
 } from '@mantine/core';
-import React, { MouseEvent, useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Tooltip as ChartTooltip,
-} from 'chart.js';
-import { Line } from 'react-chartjs-2';
-import { UserBuzz } from '~/components/User/UserBuzz';
+import { Currency } from '@prisma/client';
 import {
   IconArrowRight,
   IconBarbell,
@@ -44,17 +32,29 @@ import {
   IconShoppingCart,
   IconUsers,
 } from '@tabler/icons-react';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { useGenerationStore } from '~/store/generation.store';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
+import {
+  CategoryScale,
+  Chart as ChartJS,
+  LinearScale,
+  LineElement,
+  PointElement,
+  Tooltip as ChartTooltip,
+} from 'chart.js';
+import React, { MouseEvent, useMemo } from 'react';
+import { Line } from 'react-chartjs-2';
 import { useQueryBuzzAccount } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { formatDate } from '~/utils/date-helpers';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { UserBuzz } from '~/components/User/UserBuzz';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { useGenerationStore } from '~/store/generation.store';
+import { formatDate } from '~/utils/date-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -162,6 +162,7 @@ export default function UserWallet() {
 
       return updated;
     }, {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions]);
 
   const dateCount = Object.keys(items).length;
@@ -217,14 +218,18 @@ export default function UserWallet() {
                     </Title>
                     <Group className={classes.lifetimeBuzzBadge} spacing={2}>
                       <CurrencyIcon currency={Currency.BUZZ} size={24} />
-                      <Text
-                        size="xl"
-                        style={{ fontSize: 32, fontWeight: 700, lineHeight: '24px' }}
-                        color="yellow.7"
-                        className={classes.lifetimeBuzz}
-                      >
-                        {numberWithCommas(lifetimeBalance ?? 0)}
-                      </Text>
+                      {lifetimeBalance === null ? (
+                        <Loader variant="dots" color="yellow.7" />
+                      ) : (
+                        <Text
+                          size="xl"
+                          style={{ fontSize: 32, fontWeight: 700, lineHeight: '24px' }}
+                          color="yellow.7"
+                          className={classes.lifetimeBuzz}
+                        >
+                          {numberWithCommas(lifetimeBalance ?? 0)}
+                        </Text>
+                      )}
                     </Group>
                   </Group>
                 </Paper>
