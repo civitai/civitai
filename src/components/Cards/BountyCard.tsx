@@ -17,7 +17,6 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { stripTime } from '~/utils/date-helpers';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -49,7 +48,7 @@ export function BountyCard({ data }: Props) {
       sx={(theme) => ({ backgroundColor: theme.fn.rgba('#000', 0.31) })}
     >
       <Text size="xs">
-        <DaysFromNow date={stripTime(expiresAt)} withoutSuffix inUtc />
+        <DaysFromNow date={expiresAt} withoutSuffix />
       </Text>
     </IconBadge>
   );

@@ -51,8 +51,8 @@ export function stripTime(value: Date) {
   return value.toISOString().substring(0, 10);
 }
 
-export function toUtc(value: Date) {
-  return dayjs(value).utc().toDate();
+export function toUtc(value: dayjs.ConfigType) {
+  return dayjs.utc(value).toDate();
 }
 
 export function startOfDay(value: Date) {

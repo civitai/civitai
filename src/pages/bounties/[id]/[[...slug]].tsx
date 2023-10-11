@@ -236,7 +236,7 @@ export default function BountyDetailsPage({
                     icon={<IconClockHour4 size={18} />}
                     style={{ color: theme.colors.success[5] }}
                   >
-                    <DaysFromNow date={bounty.expiresAt} withoutSuffix inUtc />
+                    <DaysFromNow date={bounty.expiresAt} withoutSuffix />
                   </IconBadge>
                 )}
                 <LoginRedirect reason="perform-action">

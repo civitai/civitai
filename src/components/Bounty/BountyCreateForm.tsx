@@ -64,7 +64,6 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
-import { endOfDay, startOfDay, toUtc } from '~/utils/date-helpers';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -236,7 +235,7 @@ export function BountyCreateForm() {
 
   const { createBounty, creating: creatingBounty } = useMutateBounty();
 
-  const handleSubmit = async ({ expiresAt, startsAt, ...data }: z.infer<typeof formSchema>) => {
+  const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
       .filter((file) => file.status === 'success')
       .map(({ id, url, ...file }) => ({ ...file, url: id }));
@@ -246,8 +245,6 @@ export function BountyCreateForm() {
         const result = await createBounty({
           ...data,
           images: filteredImages,
-          startsAt: startOfDay(toUtc(startsAt)),
-          expiresAt: endOfDay(toUtc(expiresAt)),
         });
         await router.push(`/bounties/${result.id}`);
         clearStorage();
