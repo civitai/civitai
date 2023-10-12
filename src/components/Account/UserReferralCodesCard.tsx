@@ -58,7 +58,7 @@ export function UserReferralCodesCard() {
   const referralUrl = `${env.NEXT_PUBLIC_BASE_URL}/login?ref_code=`;
 
   return (
-    <Card withBorder>
+    <Card withBorder id="referrals">
       <Stack>
         <Stack spacing={0}>
           <Title order={2}>Referral Codes</Title>

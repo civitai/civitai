@@ -331,7 +331,7 @@ const EarningBuzz = () => {
       title: 'Referrals',
       description: 'You & your friends can earn more buzz!',
       btnProps: {
-        href: '/user/referrals',
+        href: '/user/account#referrals',
         children: 'Invite a friend',
       },
     },
