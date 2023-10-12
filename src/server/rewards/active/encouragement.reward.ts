@@ -9,6 +9,8 @@ export const encouragementReward = createBuzzEvent({
   cap: 100,
   onDemand: true,
   getKey: async (input: ReactionEvent) => {
+    if (input.ownerId === input.reactorId) return false;
+
     return {
       toUserId: input.reactorId,
       forId: input.entityId,
@@ -22,4 +24,5 @@ type ReactionEvent = {
   type: ReactionEntityType;
   reactorId: number;
   entityId: number;
+  ownerId?: number;
 };

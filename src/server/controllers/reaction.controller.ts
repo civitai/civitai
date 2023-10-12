@@ -22,6 +22,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         },
         select: {
           nsfw: true,
+          userId: true,
         },
       });
 
@@ -29,6 +30,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Image_${action}`,
           nsfw: image.nsfw,
+          userId: image.userId,
           ...shared,
         };
       }
@@ -40,6 +42,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         },
         select: {
           nsfw: true,
+          userId: true,
         },
       });
 
@@ -47,6 +50,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Post_${action}`,
           nsfw: post.nsfw ? NsfwLevel.Mature : NsfwLevel.None,
+          userId: post.userId,
           ...shared,
         };
       }
@@ -58,6 +62,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         },
         select: {
           nsfw: true,
+          userId: true,
         },
       });
 
@@ -65,41 +70,81 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Article_${action}`,
           nsfw: article.nsfw ? NsfwLevel.Mature : NsfwLevel.None,
+          userId: article.userId,
           ...shared,
         };
       }
       break;
     case 'commentOld':
-      return {
-        type: `Comment_${action}`,
-        nsfw: NsfwLevel.None,
-        ...shared,
-      };
+      const commentOld = await dbRead.comment.findFirst({
+        where: { id: input.entityId },
+        select: { userId: true },
+      });
+      if (commentOld) {
+        return {
+          type: `Comment_${action}`,
+          nsfw: NsfwLevel.None,
+          userId: commentOld.userId,
+          ...shared,
+        };
+      }
+      break;
     case 'comment':
-      return {
-        type: `CommentV2_${action}`,
-        nsfw: NsfwLevel.None,
-        ...shared,
-      };
+      const commentV2 = await dbRead.commentV2.findFirst({
+        where: { id: input.entityId },
+        select: { userId: true },
+      });
+      if (commentV2) {
+        return {
+          type: `CommentV2_${action}`,
+          nsfw: NsfwLevel.None,
+          userId: commentV2.userId,
+          ...shared,
+        };
+      }
       break;
     case 'question':
-      return {
-        type: `Question_${action}`,
-        nsfw: NsfwLevel.None,
-        ...shared,
-      };
+      const question = await dbRead.question.findFirst({
+        where: { id: input.entityId },
+        select: { userId: true },
+      });
+      if (question) {
+        return {
+          type: `Question_${action}`,
+          nsfw: NsfwLevel.None,
+          userId: question?.userId,
+          ...shared,
+        };
+      }
+      break;
     case 'answer':
-      return {
-        type: `Answer_${action}`,
-        nsfw: NsfwLevel.None,
-        ...shared,
-      };
+      const answer = await dbRead.answer.findFirst({
+        where: { id: input.entityId },
+        select: { userId: true },
+      });
+      if (answer) {
+        return {
+          type: `Answer_${action}`,
+          nsfw: NsfwLevel.None,
+          userId: answer.userId,
+          ...shared,
+        };
+      }
+      break;
     case 'bountyEntry':
-      return {
-        type: `BountyEntry_${action}`,
-        nsfw: NsfwLevel.None,
-        ...shared,
-      };
+      const bountyEntry = await dbRead.answer.findFirst({
+        where: { id: input.entityId },
+        select: { userId: true },
+      });
+      if (bountyEntry) {
+        return {
+          type: `BountyEntry_${action}`,
+          nsfw: NsfwLevel.None,
+          userId: bountyEntry?.userId,
+          ...shared,
+        };
+      }
+      break;
   }
 }
 
@@ -124,10 +169,26 @@ export const toggleReactionHandler = async ({
 
     if (result == 'created') {
       encouragementReward
-        .apply({ type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId }, ctx.ip)
+        .apply(
+          {
+            type: input.entityType,
+            reactorId: ctx.user.id,
+            entityId: input.entityId,
+            ownerId: trackerEvent?.userId,
+          },
+          ctx.ip
+        )
         .catch(handleLogError);
       goodContentReward
-        .apply({ type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId }, ctx.ip)
+        .apply(
+          {
+            type: input.entityType,
+            reactorId: ctx.user.id,
+            entityId: input.entityId,
+            ownerId: trackerEvent?.userId,
+          },
+          ctx.ip
+        )
         .catch(handleLogError);
     }
     return result;

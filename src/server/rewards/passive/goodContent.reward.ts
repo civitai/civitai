@@ -17,6 +17,8 @@ export const goodContentReward = createBuzzEvent({
     },
   ],
   getKey: async (input: ReactionEvent, { db }) => {
+    if (input.ownerId === input.reactorId) return false;
+
     const table = typeToTable[input.type];
     if (!table) return false;
     try {
@@ -97,4 +99,5 @@ type ReactionEvent = {
   type: ReactionEntityType;
   reactorId: number;
   entityId: number;
+  ownerId?: number;
 };
