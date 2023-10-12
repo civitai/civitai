@@ -15,8 +15,10 @@ import {
   deleteGenerationRequest,
   getGenerationRequests,
   getGenerationResources,
+  getGenerationStatusMessage,
 } from '~/server/services/generation/generation.service';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { edgeCacheIt } from '~/server/middleware.trpc';
 
 export const generationRouter = router({
   // #region [requests related]
@@ -50,4 +52,7 @@ export const generationRouter = router({
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .query(({ input }) => checkResourcesCoverage(input)),
+  getStatusMessage: protectedProcedure
+    .use(edgeCacheIt({ ttl: 60 }))
+    .query(() => getGenerationStatusMessage()),
 });

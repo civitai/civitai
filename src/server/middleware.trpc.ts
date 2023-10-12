@@ -79,11 +79,13 @@ export function cacheIt<TInput extends object>({
   return middleware(async ({ input, ctx, next, path }) => {
     const _input = input as TInput;
     const cacheKeyObj: Record<string, any> = {};
-    for (const [key, value] of Object.entries(_input)) {
-      if (excludeKeys?.includes(key as keyof TInput)) continue;
-      if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value.sort())];
+    if (_input) {
+      for (const [key, value] of Object.entries(_input)) {
+        if (excludeKeys?.includes(key as keyof TInput)) continue;
+        if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value.sort())];
 
-      if (value) cacheKeyObj[key] = value;
+        if (value) cacheKeyObj[key] = value;
+      }
     }
     const cacheKey = `trpc:${key ?? path.replace('.', ':')}:${hashifyObject(cacheKeyObj)}`;
     const cached = await redis.get(cacheKey);

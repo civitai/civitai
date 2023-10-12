@@ -402,6 +402,16 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   return result?.covered ?? false;
 }
 
+export async function getGenerationStatusMessage() {
+  const { value } =
+    (await dbWrite.keyValue.findUnique({
+      where: { key: 'generationStatusMessage' },
+      select: { value: true },
+    })) ?? {};
+
+  return value ? (value as string) : undefined;
+}
+
 export const getGenerationData = async (
   props: GetGenerationDataInput
 ): Promise<Generation.Data> => {
