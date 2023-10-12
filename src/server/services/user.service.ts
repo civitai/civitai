@@ -43,6 +43,7 @@ import {
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
+import { handleTrackError } from '~/server/utils/errorHandling';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -779,12 +780,18 @@ export const createUserReferral = async ({
     return;
   }
 
-  const applyRewards = ({ refereeId, referrerId }: { refereeId: number; referrerId: number }) => {
-    refereeCreatedReward.apply({
+  const applyRewards = async ({
+    refereeId,
+    referrerId,
+  }: {
+    refereeId: number;
+    referrerId: number;
+  }) => {
+    await refereeCreatedReward.apply({
       refereeId,
       referrerId,
     });
-    userReferredReward.apply({
+    await userReferredReward.apply({
       refereeId,
       referrerId,
     });
@@ -813,10 +820,10 @@ export const createUserReferral = async ({
         },
       });
 
-      applyRewards({
+      await applyRewards({
         refereeId: id,
         referrerId: referralCode.userId,
-      });
+      }).catch(handleTrackError);
     } else if (!user.referral) {
       // Create new referral:
       await dbWrite.userReferral.create({
@@ -828,10 +835,10 @@ export const createUserReferral = async ({
       });
 
       if (referralCode?.id) {
-        applyRewards({
+        await applyRewards({
           refereeId: id,
           referrerId: referralCode.userId,
-        });
+        }).catch(handleTrackError);
       }
     }
   }
