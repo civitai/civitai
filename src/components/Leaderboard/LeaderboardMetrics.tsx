@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import {
   IconBookmark,
+  IconBox,
   IconBulb,
   IconCheck,
   IconChecks,
@@ -135,6 +136,10 @@ const metricTypes: Record<
   reports: () => ({
     tooltip: 'Report Processed',
     icon: <IconReport {...iconProps} />,
+  }),
+  entries: () => ({
+    tooltip: 'Entries',
+    icon: <IconBox {...iconProps} />,
   }),
 };
 

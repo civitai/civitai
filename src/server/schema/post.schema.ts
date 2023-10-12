@@ -13,6 +13,7 @@ export const postsFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(constants.postFilterDefaults.period),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
+  draftOnly: z.boolean().optional(),
 });
 
 const postInclude = z.enum(['cosmetics']);

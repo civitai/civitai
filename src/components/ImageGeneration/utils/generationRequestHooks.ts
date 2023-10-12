@@ -98,6 +98,13 @@ export const useCreateGenerationRequest = () => {
     onSuccess: (data) => {
       update((old) => {
         if (!old) return;
+        for (const image of data.images ?? []) {
+          const status = unmatchedSignals[image.hash];
+          if (status) {
+            image.status = status;
+            delete unmatchedSignals[image.hash];
+          }
+        }
         old.pages[0].items.unshift(data);
       });
     },
@@ -166,16 +173,20 @@ export const useDeleteGenerationRequestImages = (
   });
 };
 
+const unmatchedSignals: Record<string, 'Success' | 'Started' | 'Error'> = {};
+
 export const useImageGenStatusUpdate = () => {
   const update = useUpdateGenerationRequests();
   const onStatusUpdate = useCallback(
     ({ status, imageHash }: { status: 'Success' | 'Started' | 'Error'; imageHash: string }) => {
+      let matched = false;
       update((old) => {
         if (!old) return;
         pages: for (const page of old.pages) {
           for (const item of page.items) {
             const image = item.images?.find((x) => x.hash === imageHash);
             if (image) {
+              matched = true;
               image.status = status;
               if (image.status === 'Success') image.available = true;
               break pages;
@@ -183,6 +194,7 @@ export const useImageGenStatusUpdate = () => {
           }
         }
       });
+      if (!matched) unmatchedSignals[imageHash] = status;
     },
     [] //eslint-disable-line
   );

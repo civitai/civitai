@@ -1,7 +1,12 @@
-import { HttpTransportType, HubConnection, HubConnectionBuilder } from '@microsoft/signalr';
+import {
+  HttpTransportType,
+  HubConnection,
+  HubConnectionBuilder,
+  HubConnectionState,
+} from '@microsoft/signalr';
+import { env } from '~/env/client.mjs';
 import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
 import { Deferred, EventEmitter } from './utils';
-import { env } from '~/env/client.mjs';
 
 // --------------------------------
 // Types
@@ -48,10 +53,19 @@ const getConnection = async ({ token }: { token: string }) => {
       emitter.emit('connectionError', { message: JSON.stringify(error) })
     );
 
-    setInterval(() => {
-      if (!connection) return;
-      connection.send('ping');
+    // send a ping every 5 minutes
+    setInterval(async () => {
+      if (!connection || connection.state !== HubConnectionState.Connected) return;
+      await connection.send('ping');
     }, 5 * 60 * 1000);
+
+    // try to reconnect every 5 seconds
+    setInterval(async () => {
+      if (!connection) return;
+      if (connection.state === HubConnectionState.Disconnected) {
+        await connection.start();
+      }
+    }, 5 * 1000);
   } catch (e) {
     emitter.emit('connectionError', { message: JSON.stringify(e) });
   }

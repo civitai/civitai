@@ -21,6 +21,7 @@ type PostsInfiniteState = {
   period?: MetricTimeframe;
   sort?: PostSort;
   collectionId?: number;
+  draftOnly?: boolean;
 };
 
 type PostsInfiniteProps = {

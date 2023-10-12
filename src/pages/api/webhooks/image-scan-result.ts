@@ -1,7 +1,14 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { ImageIngestionStatus, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
+import {
+  ImageIngestionStatus,
+  Prisma,
+  SearchIndexUpdateQueueAction,
+  TagSource,
+  TagTarget,
+  TagType,
+} from '@prisma/client';
 import { auditMetaData } from '~/utils/metadata/audit';
 import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview } from '~/libs/tags';
@@ -9,6 +16,7 @@ import { logToDb } from '~/utils/logging';
 import { constants } from '~/server/common/constants';
 import { getComputedTags } from '~/server/utils/tag-computation';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { imagesSearchIndex } from '~/server/search-index';
 
 const tagCache: Record<string, number> = {};
 
@@ -178,6 +186,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
       `);
+
+      // Update search index
+      await imagesSearchIndex.queueUpdate([
+        {
+          id,
+          action: SearchIndexUpdateQueueAction.Update,
+        },
+      ]);
     }
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });

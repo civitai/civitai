@@ -25,6 +25,7 @@ const postQueryParamSchema = z
     period: z.nativeEnum(MetricTimeframe),
     sort: z.nativeEnum(PostSort),
     collectionId: numericString(),
+    section: z.enum(['published', 'draft']),
   })
   .partial();
 type PostQueryParams = z.output<typeof postQueryParamSchema>;
