@@ -328,7 +328,6 @@ const onFetchItemsToIndex = async ({
     const tags = rawTags
       .filter((rt) => rt.imageId === imageRecord.id)
       .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
-    if (imageRecord.id === 1929608) console.log(tags);
 
     return {
       ...imageRecord,
