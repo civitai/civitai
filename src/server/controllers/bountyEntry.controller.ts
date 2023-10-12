@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '../createContext';
 import { GetByIdInput } from '../schema/base.schema';
 import {
-  handleTrackError,
+  handleLogError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
@@ -119,7 +119,7 @@ export const upsertBountyEntryHandler = async ({
 
     ctx.track
       .bountyEntry({ type: input.id ? 'Create' : 'Update', bountyEntryId: entry.id })
-      .catch(handleTrackError);
+      .catch(handleLogError);
 
     return entry;
   } catch (error) {
@@ -148,7 +148,7 @@ export const awardBountyEntryHandler = async ({
           bountyEntryId: benefactor.awardedToId,
           benefactorId: benefactor.userId,
         })
-        .catch(handleTrackError);
+        .catch(handleLogError);
 
     return benefactor;
   } catch (error) {
@@ -191,7 +191,7 @@ export const deleteBountyEntryHandler = async ({
     });
     if (!deleted) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
-    ctx.track.bountyEntry({ type: 'Delete', bountyEntryId: deleted.id }).catch(handleTrackError);
+    ctx.track.bountyEntry({ type: 'Delete', bountyEntryId: deleted.id }).catch(handleLogError);
 
     return deleted;
   } catch (error) {

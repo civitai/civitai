@@ -16,7 +16,7 @@ import {
 } from './../schema/commentv2.schema';
 import { Context } from '~/server/createContext';
 import {
-  handleTrackError,
+  handleLogError,
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
@@ -121,7 +121,7 @@ export const deleteCommentV2Handler = async ({
     const deleted = await deleteComment(input);
     if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
-    ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id }).catch(handleTrackError);
+    ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id }).catch(handleLogError);
 
     return deleted;
   } catch (error) {

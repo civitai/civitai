@@ -43,7 +43,7 @@ import {
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userMetrics } from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
-import { handleTrackError } from '~/server/utils/errorHandling';
+import { handleLogError } from '~/server/utils/errorHandling';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -823,7 +823,7 @@ export const createUserReferral = async ({
       await applyRewards({
         refereeId: id,
         referrerId: referralCode.userId,
-      }).catch(handleTrackError);
+      }).catch(handleLogError);
     } else if (!user.referral) {
       // Create new referral:
       await dbWrite.userReferral.create({
@@ -838,7 +838,7 @@ export const createUserReferral = async ({
         await applyRewards({
           refereeId: id,
           referrerId: referralCode.userId,
-        }).catch(handleTrackError);
+        }).catch(handleLogError);
       }
     }
   }

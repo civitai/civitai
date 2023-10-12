@@ -23,7 +23,7 @@ export const goodContentReward = createBuzzEvent({
       const [{ userId } = { userId: undefined }] = await db.$queryRawUnsafe<{ userId?: number }[]>(`
         SELECT "userId"
         FROM "${table}"
-        WHERE "createdAt" >= NOW() - INTERVAL '${CUTOFF_DAYS} days'
+        WHERE "createdAt" >= now() - INTERVAL '${CUTOFF_DAYS} days'
           AND id = ${input.entityId} AND "userId" != ${input.reactorId}
       `);
 

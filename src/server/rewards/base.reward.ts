@@ -43,7 +43,7 @@ export function createBuzzEvent<T>({
     const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
     const typeCache = JSON.parse(typeCacheJson);
 
-    data.awarded = Object.keys(typeCache).length * awardAmount;
+    data.awarded = Math.min(Object.keys(typeCache).length * awardAmount, buzzEvent.cap ?? Infinity);
 
     return data;
   };

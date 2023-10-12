@@ -611,7 +611,7 @@ export const upsertCollection = async ({
           ],
         },
       },
-      items: { create: { ...collectionItem, addedById: userId } },
+      items: { create: { ...collectionItem, imageId, addedById: userId } },
     },
   });
 

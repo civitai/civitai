@@ -361,8 +361,8 @@ const EarningBuzz = () => {
       title: 'Get tipped',
       description: 'Create awesome content!',
       btnProps: {
-        href: '/images',
-        children: 'Learn more',
+        href: '/posts/create',
+        children: 'Create post',
       },
     },
   ];
@@ -440,34 +440,34 @@ const EarningBuzz = () => {
 };
 
 const SpendingBuzz = () => {
-  const open = useGenerationStore((state) => state.open);
+  // const open = useGenerationStore((state) => state.open);
   const data: (FeatureCardProps & { key: string })[] = [
     {
       key: 'train',
       icon: <IconBarbell size={32} />,
       title: 'Train',
-      description: 'Simple per-minute pricing, in buzz',
+      description: 'Train your own LoRAs to generate images',
       btnProps: {
         href: '/models/train',
         children: 'Train now',
         rightIcon: <IconArrowRight size={14} />,
       },
     },
-    {
-      key: 'generate',
-      icon: <IconBrush size={32} />,
-      title: 'Generate Images',
-      description: 'Use any of our models to create',
-      btnProps: {
-        component: 'button',
-        onClick: (e: MouseEvent<HTMLElement>) => {
-          e.preventDefault();
-          open();
-        },
-        children: 'Generate now',
-        rightIcon: <IconArrowRight size={14} />,
-      },
-    },
+    // {
+    //   key: 'generate',
+    //   icon: <IconBrush size={32} />,
+    //   title: 'Generate Images',
+    //   description: 'Use any of our models to create',
+    //   btnProps: {
+    //     component: 'button',
+    //     onClick: (e: MouseEvent<HTMLElement>) => {
+    //       e.preventDefault();
+    //       open();
+    //     },
+    //     children: 'Generate now',
+    //     rightIcon: <IconArrowRight size={14} />,
+    //   },
+    // },
     {
       key: 'tip',
       icon: <IconCoins size={32} />,
@@ -483,10 +483,10 @@ const SpendingBuzz = () => {
       key: 'bounties',
       icon: <IconMoneybag size={32} />,
       title: 'Bounties',
-      description: 'Submit work to a bounty to win buzz',
+      description: 'Post a bounty and award buzz',
       btnProps: {
         href: '/bounties/create',
-        children: 'Create a bounty',
+        children: 'Post a bounty',
         rightIcon: <IconArrowRight size={14} />,
       },
     },

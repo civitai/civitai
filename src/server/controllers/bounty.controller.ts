@@ -38,7 +38,7 @@ import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
-import { handleTrackError } from '~/server/utils/errorHandling';
+import { handleLogError } from '~/server/utils/errorHandling';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -273,7 +273,7 @@ export const createBountyHandler = async ({
     const bounty = await createBounty({ ...input, userId });
 
     // Let it run in the background
-    ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleTrackError);
+    ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
 
     return bounty;
   } catch (error) {
@@ -294,7 +294,7 @@ export const updateBountyHandler = async ({
     if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background
-    ctx.track.bounty({ type: 'Update', bountyId: updated.id }).catch(handleTrackError);
+    ctx.track.bounty({ type: 'Update', bountyId: updated.id }).catch(handleLogError);
 
     return updated;
   } catch (error) {
@@ -315,7 +315,7 @@ export const deleteBountyHandler = async ({
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background
-    ctx.track.bounty({ type: 'Delete', bountyId: deleted.id }).catch(handleTrackError);
+    ctx.track.bounty({ type: 'Delete', bountyId: deleted.id }).catch(handleLogError);
 
     return deleted;
   } catch (error) {
@@ -341,7 +341,7 @@ export const addBenefactorUnitAmountHandler = async ({
         bountyId: bountyBenefactor.bountyId,
         userId: bountyBenefactor.userId,
       })
-      .catch(handleTrackError);
+      .catch(handleLogError);
 
     return bountyBenefactor;
   } catch (error) {

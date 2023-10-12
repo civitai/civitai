@@ -6,7 +6,7 @@ import { Currency } from '@prisma/client';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { Tracker } from '../clickhouse/client';
-import { handleTrackError } from '../utils/errorHandling';
+import { handleLogError } from '../utils/errorHandling';
 import {
   bountyAutomaticallyAwardedEmail,
   bountyExpiredEmail,
@@ -241,7 +241,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
         });
       }
 
-      tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleTrackError);
+      tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleLogError);
       log(` No entry winner detected, bounty has been refunded`);
       continue;
     }
@@ -278,7 +278,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
     ]);
     tracker
       .bountyEntry({ type: 'Award', bountyEntryId: winnerEntryId, userId: -1 })
-      .catch(handleTrackError);
+      .catch(handleLogError);
 
     if (awardedAmount > 0) {
       switch (currency) {

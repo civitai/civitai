@@ -1,7 +1,7 @@
 import { toggleReaction } from './../services/reaction.service';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { Context } from '~/server/createContext';
-import { throwDbError } from '~/server/utils/errorHandling';
+import { handleLogError, throwDbError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { ReactionType } from '../clickhouse/client';
 import { NsfwLevel } from '@prisma/client';
@@ -114,20 +114,21 @@ export const toggleReactionHandler = async ({
     const result = await toggleReaction({ ...input, userId: ctx.user.id });
     const trackerEvent = await getTrackerEvent(input, result);
     if (trackerEvent) {
-      await ctx.track.reaction({
-        ...trackerEvent,
-        type: trackerEvent.type as ReactionType,
-      });
+      ctx.track
+        .reaction({
+          ...trackerEvent,
+          type: trackerEvent.type as ReactionType,
+        })
+        .catch(handleLogError);
     }
+
     if (result == 'created') {
-      await encouragementReward.apply(
-        { type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId },
-        ctx.ip
-      );
-      await goodContentReward.apply(
-        { type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId },
-        ctx.ip
-      );
+      encouragementReward
+        .apply({ type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId }, ctx.ip)
+        .catch(handleLogError);
+      goodContentReward
+        .apply({ type: input.entityType, reactorId: ctx.user.id, entityId: input.entityId }, ctx.ip)
+        .catch(handleLogError);
     }
     return result;
   } catch (error) {

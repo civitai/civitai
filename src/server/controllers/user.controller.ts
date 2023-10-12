@@ -47,7 +47,7 @@ import {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
 import {
-  handleTrackError,
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -831,7 +831,7 @@ export const toggleBountyEngagementHandler = async ({
         ...input,
         type: on ? input.type : `Delete${input.type}`,
       })
-      .catch(handleTrackError);
+      .catch(handleLogError);
 
     return on;
   } catch (error) {
