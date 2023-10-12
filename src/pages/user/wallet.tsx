@@ -512,7 +512,7 @@ const SpendingBuzz = () => {
       key: 'merch',
       icon: <IconShoppingCart size={32} />,
       title: 'Shop merch',
-      description: 'Tens of fun stickers to choose from...',
+      description: 'Tons of fun stickers to choose from...',
       btnProps: {
         disabled: true,
         children: 'COMING SOON',
@@ -521,7 +521,7 @@ const SpendingBuzz = () => {
     {
       key: 'badges',
       icon: <IconShoppingBag size={32} />,
-      title: 'Shop badges',
+      title: 'Shop badges and cosmetics',
       description: 'Make your profile stand out!',
       btnProps: {
         disabled: true,
