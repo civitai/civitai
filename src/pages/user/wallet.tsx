@@ -313,6 +313,8 @@ type FeatureCardProps = {
   btnProps: ButtonProps & {
     href?: string;
     component?: 'a' | 'button';
+    target?: string;
+    rel?: string;
     onClick?: (e: MouseEvent<HTMLElement>) => void;
   };
 };
@@ -440,6 +442,7 @@ const EarningBuzz = () => {
 };
 
 const SpendingBuzz = () => {
+  const currentUser = useCurrentUser();
   // const open = useGenerationStore((state) => state.open);
   const data: (FeatureCardProps & { key: string })[] = [
     {
@@ -496,7 +499,11 @@ const SpendingBuzz = () => {
       title: 'Get showcased',
       description: 'Boost your model to our homepage',
       btnProps: {
-        href: '/contact', // TODO.Justin: BuzzPage: Clickup form.
+        target: '_blank',
+        rel: 'noreferrer nofollow',
+        href: `https://forms.clickup.com/8459928/f/825mr-8431/V3OV7JWR6SQFUYT7ON?Civitai%20Username=${encodeURIComponent(
+          currentUser?.username ?? ''
+        )}&Buzz%20Available=${currentUser?.balance ?? 0}`,
         children: 'Contact us',
         rightIcon: <IconArrowRight size={14} />,
       },
