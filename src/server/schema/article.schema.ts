@@ -15,6 +15,7 @@ export const userPreferencesForArticlesSchema = z.object({
   excludedTagIds: z.array(z.number()).optional(),
 });
 
+export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
 export const articleWhereSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).default(constants.articleFilterDefaults.browsingMode),
   query: z.string().optional(),

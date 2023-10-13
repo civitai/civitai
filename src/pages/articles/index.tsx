@@ -1,9 +1,10 @@
-import { Group, Stack, Title } from '@mantine/core';
+import { createStyles, Group, Stack, Title, useMantineTheme } from '@mantine/core';
 
 import { Announcements } from '~/components/Announcements/Announcements';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategoriesInfinite } from '~/components/Article/Categories/ArticleCategoriesInfinite';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
+import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
@@ -31,7 +32,19 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const useStyles = createStyles((theme) => ({
+  filtersWrapper: {
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+
+      '> *': { flexGrow: 1 },
+    },
+  },
+}));
+
 export default function ArticlesPage() {
+  const { classes } = useStyles();
+  const theme = useMantineTheme();
   const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.articles.view);
   const { view: queryView, ...filters } = useArticleQueryParams();
@@ -61,21 +74,19 @@ export default function ArticlesPage() {
                 },
               })}
             />
-            <Group position="left">
-              {features.alternateHome ? (
-                <FullHomeContentToggle />
-              ) : (
-                <HomeContentToggle sx={showMobile} />
-              )}
-            </Group>
-            <Group position="apart" spacing={0}>
-              <Group>
-                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
-                <SortFilter type="articles" />
-              </Group>
-              <Group spacing={4}>
-                <PeriodFilter type="articles" />
-                <ViewToggle type="articles" />
+
+            <Group position="apart" spacing={8}>
+              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+              <Group className={classes.filtersWrapper} spacing={8} noWrap>
+                <SortFilter type="posts" variant="button" />
+                <ArticleFiltersDropdown />
+                <ViewToggle
+                  type="articles"
+                  color="gray"
+                  radius="xl"
+                  size={36}
+                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                />
               </Group>
             </Group>
             {view === 'categories' ? (

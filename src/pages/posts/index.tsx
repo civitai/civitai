@@ -1,4 +1,4 @@
-import { Group, Stack } from '@mantine/core';
+import { Group, Stack, createStyles, useMantineTheme } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
@@ -9,6 +9,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { PostCategoriesInfinite } from '~/components/Post/Categories/PostCategoriesInfinite';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
+import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { env } from '~/env/client.mjs';
@@ -18,7 +19,19 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 
+const useStyles = createStyles((theme) => ({
+  filtersWrapper: {
+    [theme.fn.smallerThan('sm')]: {
+      width: '100%',
+
+      '> *': { flexGrow: 1 },
+    },
+  },
+}));
+
 export default function PostsPage() {
+  const { classes } = useStyles();
+  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.posts.view);
@@ -49,21 +62,19 @@ export default function PostsPage() {
                 },
               })}
             />
-            <Group position="left">
-              {features.alternateHome ? (
-                <FullHomeContentToggle />
-              ) : (
-                <HomeContentToggle sx={showMobile} />
-              )}
-            </Group>
-            <Group position="apart" spacing={0}>
-              <Group>
-                {!features.alternateHome && <HomeContentToggle sx={hideMobile} />}
-                <SortFilter type="posts" />
-              </Group>
-              <Group spacing={4}>
-                <PeriodFilter type="posts" />
-                <ViewToggle type="posts" />
+
+            <Group position="apart" spacing={8}>
+              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
+              <Group className={classes.filtersWrapper} spacing={8} noWrap>
+                <SortFilter type="posts" variant="button" />
+                <PostFiltersDropdown />
+                <ViewToggle
+                  type="posts"
+                  color="gray"
+                  radius="xl"
+                  size={36}
+                  variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                />
               </Group>
             </Group>
             <IsClient>

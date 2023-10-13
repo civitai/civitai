@@ -16,7 +16,7 @@ import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { PostsQueryInput } from '~/server/schema/post.schema';
+import { ArticleQueryInput } from '~/server/schema/article.schema';
 
 const useStyles = createStyles((theme) => ({
   label: {
@@ -47,15 +47,15 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function PostFiltersDropdown({ query, onChange }: Props) {
+export function ArticleFiltersDropdown({ query, onChange }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
-    filters: state.posts,
-    setFilters: state.setPostFilters,
+    filters: state.articles,
+    setFilters: state.setArticleFilters,
   }));
 
   const mergedFilters = query || filters;
@@ -113,7 +113,7 @@ export function PostFiltersDropdown({ query, onChange }: Props) {
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
         {query?.period && onChange ? (
           <PeriodFilter
-            type="posts"
+            type="articles"
             variant="chips"
             value={query.period}
             onChange={(period) => onChange({ period })}
@@ -189,6 +189,6 @@ export function PostFiltersDropdown({ query, onChange }: Props) {
 }
 
 type Props = {
-  query?: Partial<PostsQueryInput>;
-  onChange?: (params: Partial<PostsQueryInput>) => void;
+  query?: Partial<ArticleQueryInput>;
+  onChange?: (params: Partial<ArticleQueryInput>) => void;
 };
