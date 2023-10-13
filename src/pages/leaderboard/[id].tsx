@@ -19,6 +19,7 @@ import {
   createStyles,
   SegmentedControl,
   HoverCard,
+  SegmentedControlProps,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
@@ -36,11 +37,13 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, stringDate } from '~/utils/zod-helpers';
 import { env } from '~/env/client.mjs';
+import { removeEmpty } from '~/utils/object-helpers';
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
   date: stringDate(),
   position: numericString().optional(),
+  board: z.enum(['season', 'legend']).default('season'),
 });
 
 export const getServerSideProps = createServerSideProps({
@@ -53,7 +56,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Leaderboard() {
   const { query, replace } = useRouter();
-  const { id, date, position } = leaderboardQuerySchema.parse(query);
+  const { id, date, position, board } = leaderboardQuerySchema.parse(query);
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
 
@@ -64,8 +67,20 @@ export default function Leaderboard() {
       if (selectedLeaderboard?.id !== id) setSelectedLeaderboard(data.find((x) => x.id === id));
     },
   });
-  const { data: leaderboardResults = [], isLoading: loadingLeaderboardResults } =
-    trpc.leaderboard.getLeaderboard.useQuery({ id, date });
+  const { data: leaderboardSeason = [], isLoading: loadingLeaderboardSeason } =
+    trpc.leaderboard.getLeaderboard.useQuery(
+      { id, date },
+      {
+        enabled: board === 'season',
+      }
+    );
+  const { data: leaderboardLegend = [], isLoading: loadingLeaderboardLegend } =
+    trpc.leaderboard.getLeadboardLegends.useQuery(
+      { id, date },
+      {
+        enabled: board === 'legend',
+      }
+    );
   const { data: leaderboardPositionsRaw = [], isLoading: loadingLeaderboardPositions } =
     trpc.leaderboard.getLeaderboardPositions.useQuery(
       { date, userId: currentUser?.id, top: 1000 },
@@ -84,6 +99,9 @@ export default function Leaderboard() {
     leaderboards.find((x) => x.id === id)
   );
   const [selectedPosition, setSelectedPosition] = useState<number | null>(null);
+  const leaderboardResults = board === 'season' ? leaderboardSeason : leaderboardLegend;
+  const loadingLeaderboardResults =
+    board === 'season' ? loadingLeaderboardSeason : loadingLeaderboardLegend;
 
   if (
     (selectedLeaderboard && selectedLeaderboard.id !== id) ||
@@ -92,9 +110,13 @@ export default function Leaderboard() {
     const shallow = selectedLeaderboard?.id === id && selectedPosition !== position;
 
     replace(
-      `/leaderboard/${selectedLeaderboard?.id}${
-        selectedPosition ? `?position=${selectedPosition}` : ''
-      }`,
+      {
+        pathname: `/leaderboard/${selectedLeaderboard?.id}`,
+        query: removeEmpty({
+          position: selectedPosition ? String(selectedPosition) : undefined,
+          board: board === 'season' ? undefined : board,
+        }),
+      },
       undefined,
       { shallow }
     );
@@ -180,15 +202,30 @@ export default function Leaderboard() {
                     </ActionIcon>
                   </Popover.Target>
                   <Popover.Dropdown>
-                    <Stack spacing={4}>
-                      <Text weight={500}>Rank is calculated based on:</Text>
-                      <Code block color="blue">
-                        {selectedLeaderboard?.scoringDescription}
-                      </Code>
-                      <Text color="dimmed" size="xs">
-                        Only the last 30 days are considered
-                      </Text>
-                    </Stack>
+                    {board === 'season' ? (
+                      <Stack spacing={4}>
+                        <Text weight={500}>Rank is calculated based on:</Text>
+                        <Code block color="blue">
+                          {selectedLeaderboard?.scoringDescription}
+                        </Code>
+                        <Text color="dimmed" size="xs">
+                          Only the last 30 days are considered
+                        </Text>
+                      </Stack>
+                    ) : board === 'legend' ? (
+                      <Stack spacing={4}>
+                        <Text weight={500}>Score is calculated based on:</Text>
+                        <Code block color="blue">
+                          {`Diamond - 1st place: 1,000 points per day
+Gold - Top 3: 800 points per day
+Silver - Top 10: 600 points per day
+Bronze - Top 100: 400 points per day`}
+                        </Code>
+                        <Text color="dimmed" size="xs">
+                          The entire history of the leaderboard is considered
+                        </Text>
+                      </Stack>
+                    ) : null}
                   </Popover.Dropdown>
                 </Popover>
               </Group>
@@ -231,41 +268,45 @@ export default function Leaderboard() {
   );
 }
 
-const LegendsToggle = ({ className }: { className?: string }) => {
+const LegendsToggle = (props: Omit<SegmentedControlProps, 'data' | 'onChange' | 'value'>) => {
+  const { query, pathname, replace } = useRouter();
+  const { board } = leaderboardQuerySchema.parse(query);
+  const setBoard = (board: 'season' | 'legend') => {
+    replace(
+      {
+        pathname,
+        query: removeEmpty({
+          ...query,
+          board: board === 'season' ? undefined : board,
+        }),
+      },
+      undefined,
+      { shallow: true }
+    );
+  };
+
   return (
-    <HoverCard withArrow>
-      <HoverCard.Target>
-        <SegmentedControl
-          className={className}
-          data={[
-            { value: 'season', label: 'Season' },
-            { value: 'legend', label: 'Legend' },
-          ]}
-          size="xs"
-          value="season"
-          color="blue"
-          ml="auto"
-          orientation="horizontal"
-          styles={(theme) => ({
-            root: {
-              border: `1px solid ${
-                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-              }`,
-              background: 'none',
-            },
-          })}
-        />
-      </HoverCard.Target>
-      <HoverCard.Dropdown maw={300}>
-        <Text weight={500} color="orange">
-          Coming soon!
-        </Text>
-        <Text size="xs">
-          See the creators that have become the Legends of Civitai. Earn points in the season to
-          claim your spot along side them.
-        </Text>
-      </HoverCard.Dropdown>
-    </HoverCard>
+    <SegmentedControl
+      data={[
+        { value: 'season', label: 'Season' },
+        { value: 'legend', label: 'Legend' },
+      ]}
+      size="xs"
+      value={board}
+      onChange={setBoard}
+      color="blue"
+      ml="auto"
+      orientation="horizontal"
+      styles={(theme) => ({
+        root: {
+          border: `1px solid ${
+            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+          }`,
+          background: 'none',
+        },
+      })}
+      {...props}
+    />
   );
 };
 

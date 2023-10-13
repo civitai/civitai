@@ -8,6 +8,7 @@ import {
   getLeaderboard,
   getLeaderboards,
   getLeaderboardPositions,
+  getLeaderboardLegends,
 } from '~/server/services/leaderboard.service';
 import { publicProcedure, router } from '~/server/trpc';
 
@@ -40,5 +41,16 @@ export const leaderboardRouter = router({
     )
     .query(({ input, ctx }) =>
       getLeaderboard({ ...input, isModerator: ctx?.user?.isModerator ?? false })
+    ),
+  getLeadboardLegends: publicProcedure
+    .input(getLeaderboardSchema)
+    .use(
+      edgeCacheIt({
+        ttl: false,
+        tags: (input) => ['leaderboard', `leaderboard-${input.id}`, 'leaderboard-legends'],
+      })
+    )
+    .query(({ input, ctx }) =>
+      getLeaderboardLegends({ ...input, isModerator: ctx?.user?.isModerator ?? false })
     ),
 });

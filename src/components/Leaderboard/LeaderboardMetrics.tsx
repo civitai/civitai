@@ -8,6 +8,7 @@ import {
   Rating,
   Stack,
   Text,
+  ThemeIcon,
 } from '@mantine/core';
 import {
   IconBookmark,
@@ -20,6 +21,7 @@ import {
   IconEye,
   IconFileStar,
   IconHeart,
+  IconHexagonFilled,
   IconMessageCircle2,
   IconMoodSmile,
   IconPhoto,
@@ -140,6 +142,38 @@ const metricTypes: Record<
   entries: () => ({
     tooltip: 'Entries',
     icon: <IconBox {...iconProps} />,
+  }),
+  diamond: () => ({
+    tooltip: 'Diamond Days',
+    icon: (
+      <ThemeIcon color="blue" variant="outline" sx={{ border: 'none' }}>
+        <IconHexagonFilled {...iconProps} />
+      </ThemeIcon>
+    ),
+  }),
+  gold: () => ({
+    tooltip: 'Gold Days',
+    icon: (
+      <ThemeIcon color="yellow" variant="outline" sx={{ border: 'none' }}>
+        <IconHexagonFilled {...iconProps} />
+      </ThemeIcon>
+    ),
+  }),
+  silver: () => ({
+    tooltip: 'Silver Days',
+    icon: (
+      <ThemeIcon color="gray" variant="outline" sx={{ border: 'none' }}>
+        <IconHexagonFilled {...iconProps} />
+      </ThemeIcon>
+    ),
+  }),
+  bronze: () => ({
+    tooltip: 'Bronze Days',
+    icon: (
+      <ThemeIcon color="orange" variant="outline" sx={{ border: 'none' }}>
+        <IconHexagonFilled {...iconProps} />
+      </ThemeIcon>
+    ),
   }),
 };
 

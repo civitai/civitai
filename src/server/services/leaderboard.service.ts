@@ -162,34 +162,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
     ORDER BY lr.position
   `;
 
-  return leaderboardResultsRaw.map(
-    ({ metrics: metricsRaw, userId, username, deletedAt, image, cosmetics, ...results }) => {
-      const metrics = Object.entries(metricsRaw)
-        .map(([type, value]) => ({
-          type,
-          value,
-        }))
-        .sort((a, b) => {
-          const aIndex = metricOrder.indexOf(a.type);
-          const bIndex = metricOrder.indexOf(b.type);
-          if (aIndex === -1) return 1;
-          if (bIndex === -1) return -1;
-          return aIndex - bIndex;
-        });
-
-      return {
-        ...results,
-        user: {
-          id: userId,
-          username,
-          deletedAt,
-          image,
-          cosmetics: cosmetics?.map((cosmetic) => ({ cosmetic })) ?? [],
-        },
-        metrics,
-      };
-    }
-  );
+  return formatLeaderboardResults(leaderboardResultsRaw, metricOrder);
 }
 
 export type LeaderboardWithResults = Awaited<ReturnType<typeof getLeaderboardsWithResults>>[number];
@@ -234,4 +207,97 @@ export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResul
   );
 
   return leaderboardsWithResults;
+}
+
+const legendsMetricOrder = ['diamond', 'gold', 'silver', 'bronze'];
+export async function getLeaderboardLegends(input: GetLeaderboardInput) {
+  const date = dayjs(input.date ?? dayjs().utc()).format('YYYY-MM-DD');
+
+  const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
+    WITH scores AS (
+      SELECT
+        "userId",
+        SUM(CASE
+          WHEN position <= 1 THEN 10
+          WHEN position <= 3 THEN 8
+          WHEN position <= 10 THEN 6
+          WHEN position <= 100 THEN 4
+        END) * 100 score,
+        jsonb_build_object(
+          'diamond', SUM(IIF(position<=1, 1, 0)),
+          'gold', SUM(IIF(position BETWEEN 2 AND 3, 1, 0)),
+          'silver', SUM(IIF(position BETWEEN 4 AND 10, 1, 0)),
+          'bronze', SUM(IIF(position BETWEEN 11 AND 100, 1, 0))
+        ) metrics
+      FROM "LeaderboardResult"
+      WHERE
+        "leaderboardId" = ${input.id}
+        AND date <= date(${date})
+        AND position < 100
+        ${Prisma.raw(!input.isModerator ? 'AND l.public = true' : '')}
+      GROUP BY "userId"
+    )
+    SELECT
+      s."userId",
+      date(${date}) date,
+      CAST(row_number() OVER (ORDER BY score DESC) as int) position,
+      s.score,
+      s.metrics,
+      u.username,
+      u."deletedAt",
+      u.image,
+      (
+        SELECT
+          jsonb_agg(jsonb_build_object(
+            'id', c.id,
+            'data', c.data,
+            'type', c.type,
+            'source', c.source,
+            'name', c.name,
+            'leaderboardId', c."leaderboardId",
+            'leaderboardPosition', c."leaderboardPosition"
+          ))
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        AND "equippedAt" IS NOT NULL
+        WHERE uc."userId" = s."userId"
+      ) cosmetics,
+      null delta
+    FROM scores s
+    JOIN "User" u ON u.id = s."userId"
+    ORDER BY s.score DESC
+  `;
+
+  return formatLeaderboardResults(leaderboardResultsRaw, legendsMetricOrder);
+}
+
+function formatLeaderboardResults(results: LeaderboardRaw[], metricSortOrder = metricOrder) {
+  return results.map(
+    ({ metrics: metricsRaw, userId, username, deletedAt, image, cosmetics, ...results }) => {
+      const metrics = Object.entries(metricsRaw)
+        .map(([type, value]) => ({
+          type,
+          value,
+        }))
+        .sort((a, b) => {
+          const aIndex = metricSortOrder.indexOf(a.type);
+          const bIndex = metricSortOrder.indexOf(b.type);
+          if (aIndex === -1) return 1;
+          if (bIndex === -1) return -1;
+          return aIndex - bIndex;
+        });
+
+      return {
+        ...results,
+        user: {
+          id: userId,
+          username,
+          deletedAt,
+          image,
+          cosmetics: cosmetics?.map((cosmetic) => ({ cosmetic })) ?? [],
+        },
+        metrics,
+      };
+    }
+  );
 }
