@@ -13,14 +13,14 @@ import {
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType } from '@prisma/client';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons-react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
-import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
-import { useCallback, useEffect, useMemo } from 'react';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
@@ -50,7 +50,8 @@ export function ModelFiltersDropdown() {
     (filters.status?.length ?? 0) +
     (showCheckpointType && filters.checkpointType ? 1 : 0) +
     (filters.earlyAccess ? 1 : 0) +
-    (filters.supportsGeneration ? 1 : 0);
+    (filters.supportsGeneration ? 1 : 0) +
+    (filters.followed ? 1 : 0);
 
   const shouldClearFilters = useMemo(
     () =>
@@ -69,6 +70,7 @@ export function ModelFiltersDropdown() {
         checkpointType: undefined,
         earlyAccess: false,
         supportsGeneration: false,
+        followed: false,
       }),
     [setFilters]
   );
@@ -213,6 +215,19 @@ export function ModelFiltersDropdown() {
                 </Chip>
               ))}
             </Chip.Group>
+
+            <Divider label="Modifiers" labelProps={{ weight: 'bold' }} mb={4} />
+            <Group>
+              {/* TODO this should not show up when on the user images page */}
+              {/* TODO this should not show up when the user is not logged in */}
+              <Chip
+                checked={filters.followed}
+                onChange={(checked) => setFilters({ followed: checked })}
+                {...chipProps}
+              >
+                Followed Only
+              </Chip>
+            </Group>
             {filterLength > 0 && (
               <Button mt="xs" compact onClick={clearFilters} leftIcon={<IconFilterOff size={20} />}>
                 Clear Filters

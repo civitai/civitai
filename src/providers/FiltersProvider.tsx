@@ -1,12 +1,17 @@
-import { useRef, createContext, useContext, useCallback } from 'react';
 import {
   CheckpointType,
   ImageGenerationProcess,
+  MediaType,
   MetricTimeframe,
   ModelStatus,
   ModelType,
-  MediaType,
 } from '@prisma/client';
+import { createContext, useCallback, useContext, useRef } from 'react';
+import { z } from 'zod';
+import { createStore, useStore } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import {
   ArticleSort,
   BountySort,
@@ -19,15 +24,10 @@ import {
   QuestionSort,
   QuestionStatus,
 } from '~/server/common/enums';
-import { setCookie } from '~/utils/cookies-helpers';
-import { createStore, useStore } from 'zustand';
-import { devtools } from 'zustand/middleware';
-import { z } from 'zod';
-import { constants } from '~/server/common/constants';
-import { removeEmpty } from '~/utils/object-helpers';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
+import { setCookie } from '~/utils/cookies-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
@@ -48,6 +48,7 @@ const modelFilterSchema = z.object({
   earlyAccess: z.boolean().optional(),
   view: viewModeSchema.default('feed'),
   supportsGeneration: z.boolean().optional(),
+  followed: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
@@ -68,6 +69,7 @@ const imageFilterSchema = z.object({
   types: z.array(z.nativeEnum(MediaType)).optional(),
   withMeta: z.boolean().optional(),
   hidden: z.boolean().optional(),
+  followed: z.boolean().optional(),
 });
 
 const modelImageFilterSchema = imageFilterSchema.extend({
@@ -81,6 +83,7 @@ const postFilterSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
   view: viewModeSchema.default('categories'),
+  followed: z.boolean().optional(),
 });
 
 type ArticleFilterSchema = z.infer<typeof articleFilterSchema>;
@@ -89,6 +92,7 @@ const articleFilterSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(ArticleSort.MostBookmarks),
   view: viewModeSchema.default('categories'),
+  followed: z.boolean().optional(),
 });
 
 type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;
