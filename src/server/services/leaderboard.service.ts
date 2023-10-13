@@ -211,36 +211,20 @@ export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResul
 
 const legendsMetricOrder = ['diamond', 'gold', 'silver', 'bronze'];
 export async function getLeaderboardLegends(input: GetLeaderboardInput) {
-  const date = dayjs(input.date ?? dayjs().utc()).format('YYYY-MM-DD');
-
   const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
     WITH scores AS (
       SELECT
         "userId",
-        SUM(CASE
-          WHEN position <= 1 THEN 10
-          WHEN position <= 3 THEN 8
-          WHEN position <= 10 THEN 6
-          WHEN position <= 100 THEN 4
-        END) * 100 score,
-        jsonb_build_object(
-          'diamond', SUM(IIF(position<=1, 1, 0)),
-          'gold', SUM(IIF(position BETWEEN 2 AND 3, 1, 0)),
-          'silver', SUM(IIF(position BETWEEN 4 AND 10, 1, 0)),
-          'bronze', SUM(IIF(position BETWEEN 11 AND 100, 1, 0))
-        ) metrics
-      FROM "LeaderboardResult"
-      WHERE
-        "leaderboardId" = ${input.id}
-        AND date <= date(${date})
-        AND position < 100
-        ${Prisma.raw(!input.isModerator ? 'AND l.public = true' : '')}
-      GROUP BY "userId"
+        score,
+        metrics,
+        position
+      FROM "LegendsBoardResult"
+      WHERE "leaderboardId" = ${input.id}
     )
     SELECT
       s."userId",
-      date(${date}) date,
-      CAST(row_number() OVER (ORDER BY score DESC) as int) position,
+      current_date date,
+      s.position,
       s.score,
       s.metrics,
       u.username,

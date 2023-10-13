@@ -191,6 +191,14 @@ export const constants = {
     referralCodeMinLength: 6,
     referralCodeMaxCount: 3,
   },
+  leaderboard: {
+    legendScoring: {
+      diamond: 10,
+      gold: 8,
+      silver: 6,
+      bronze: 4,
+    },
+  },
 } as const;
 
 export const POST_IMAGE_LIMIT = 20;

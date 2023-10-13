@@ -6,6 +6,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
+import { constants } from '~/server/common/constants';
 
 const log = createLogger('leaderboard', 'blue');
 
@@ -51,8 +52,38 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     log(`Finished leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
   }
 
+  await updateLegendsBoardResults();
+
   await setLastRun();
 });
+
+async function updateLegendsBoardResults() {
+  await dbWrite.$transaction([
+    dbWrite.$executeRaw`DROP TABLE IF EXISTS "LegendsBoardResult";`,
+    dbWrite.$executeRaw`
+      CREATE TABLE "LegendsBoardResult" AS
+      WITH scores AS (
+        SELECT
+          "userId",
+          "leaderboardId",
+          SUM(CASE
+            WHEN position <= 1 THEN ${constants.leaderboard.legendScoring.diamond}
+            WHEN position <= 3 THEN ${constants.leaderboard.legendScoring.gold}
+            WHEN position <= 10 THEN ${constants.leaderboard.legendScoring.silver}
+            WHEN position <= 100 THEN ${constants.leaderboard.legendScoring.bronze}
+          END) * 100 score
+        FROM "LeaderboardResult"
+        WHERE date <= now()
+          AND position < 100
+        GROUP BY "userId", "leaderboardId"
+      )
+      SELECT
+        *,
+        row_number() OVER (PARTITION BY "leaderboardId" ORDER BY score DESC) rank
+      FROM scores;
+    `,
+  ]);
+}
 
 const updateUserLeaderboardRank = createJob(
   'update-user-leaderboard-rank',

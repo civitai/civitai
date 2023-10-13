@@ -38,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { numericString, stringDate } from '~/utils/zod-helpers';
 import { env } from '~/env/client.mjs';
 import { removeEmpty } from '~/utils/object-helpers';
+import { constants } from '~/server/common/constants';
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
@@ -216,10 +217,12 @@ export default function Leaderboard() {
                       <Stack spacing={4}>
                         <Text weight={500}>Score is calculated based on:</Text>
                         <Code block color="blue">
-                          {`Diamond - 1st place: 1,000 points per day
-Gold - Top 3: 800 points per day
-Silver - Top 10: 600 points per day
-Bronze - Top 100: 400 points per day`}
+                          {`Diamond - 1st place: ${
+                            constants.leaderboard.legendScoring.diamond * 100
+                          } points per day
+Gold - Top 3: ${constants.leaderboard.legendScoring.gold * 100} points per day
+Silver - Top 10: ${constants.leaderboard.legendScoring.silver * 100} points per day
+Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per day`}
                         </Code>
                         <Text color="dimmed" size="xs">
                           The entire history of the leaderboard is considered
