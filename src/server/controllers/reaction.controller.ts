@@ -159,7 +159,7 @@ export const toggleReactionHandler = async ({
     const result = await toggleReaction({ ...input, userId: ctx.user.id });
     const trackerEvent = await getTrackerEvent(input, result);
     if (trackerEvent) {
-      ctx.track
+      await ctx.track
         .reaction({
           ...trackerEvent,
           type: trackerEvent.type as ReactionType,
@@ -168,28 +168,30 @@ export const toggleReactionHandler = async ({
     }
 
     if (result == 'created') {
-      encouragementReward
-        .apply(
-          {
-            type: input.entityType,
-            reactorId: ctx.user.id,
-            entityId: input.entityId,
-            ownerId: trackerEvent?.userId,
-          },
-          ctx.ip
-        )
-        .catch(handleLogError);
-      goodContentReward
-        .apply(
-          {
-            type: input.entityType,
-            reactorId: ctx.user.id,
-            entityId: input.entityId,
-            ownerId: trackerEvent?.userId,
-          },
-          ctx.ip
-        )
-        .catch(handleLogError);
+      await Promise.all([
+        encouragementReward
+          .apply(
+            {
+              type: input.entityType,
+              reactorId: ctx.user.id,
+              entityId: input.entityId,
+              ownerId: trackerEvent?.userId,
+            },
+            ctx.ip
+          )
+          .catch(handleLogError),
+        goodContentReward
+          .apply(
+            {
+              type: input.entityType,
+              reactorId: ctx.user.id,
+              entityId: input.entityId,
+              ownerId: trackerEvent?.userId,
+            },
+            ctx.ip
+          )
+          .catch(handleLogError),
+      ]);
     }
     return result;
   } catch (error) {

@@ -32,6 +32,10 @@ export const clickhouse = (() => {
         host: env.CLICKHOUSE_HOST,
         username: env.CLICKHOUSE_USERNAME,
         password: env.CLICKHOUSE_PASSWORD,
+        clickhouse_settings: {
+          async_insert: 1,
+          wait_for_async_insert: 0,
+        },
       })
     : null;
 })();
@@ -175,10 +179,6 @@ export class Tracker {
       table: table,
       values: [data],
       format: 'JSONEachRow',
-      query_params: {
-        async_insert: 1,
-        wait_for_async_insert: 1,
-      },
     });
   }
 

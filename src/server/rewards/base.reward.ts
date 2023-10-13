@@ -27,7 +27,16 @@ export function createBuzzEvent<T>({
       type,
       awardAmount,
       description,
-      cap: 'cap' in buzzEvent ? buzzEvent.cap : undefined,
+      cap:
+        'cap' in buzzEvent
+          ? buzzEvent.cap
+          : 'caps' in buzzEvent
+          ? buzzEvent.caps?.filter((cap) => !!cap.interval)?.[0]?.amount
+          : undefined,
+      interval:
+        'caps' in buzzEvent
+          ? buzzEvent.caps?.filter((cap) => !!cap.interval)?.[0]?.interval
+          : undefined,
       triggerDescription: buzzEvent.triggerDescription,
       tooltip: buzzEvent.tooltip,
       // -1 determines that this award is not on demand, as such, would require a full
@@ -36,14 +45,30 @@ export function createBuzzEvent<T>({
       awarded: -1,
     };
 
-    if (!isOnDemand) {
-      return data;
-    }
+    // get the awardAmount from clickhouse based on the type for this month
+    const awarded =
+      (await clickhouse
+        ?.query({
+          query: `
+        SELECT COUNT(*) AS total
+        FROM buzzEvents
+        WHERE type = '${type}'
+          AND status = 'awarded'
+          AND time > now() - INTERVAL '1 month'
+          AND toUserId = ${userId}
+      `,
+          format: 'JSONEachRow',
+        })
+        .then((x) => x.json<{ total: number }[]>())) ?? [];
 
     const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
     const typeCache = JSON.parse(typeCacheJson);
+    const eventCount = Object.keys(typeCache).length;
 
-    data.awarded = Math.min(Object.keys(typeCache).length * awardAmount, buzzEvent.cap ?? Infinity);
+    data.awarded =
+      eventCount > 0
+        ? Math.min(eventCount * awardAmount, data.cap ?? Infinity)
+        : Math.min((awarded[0]?.total ?? 0) * awardAmount, data.cap ?? Infinity);
 
     return data;
   };
@@ -248,10 +273,6 @@ async function addBuzzEvent(event: BuzzEventLog) {
     table: 'buzzEvents',
     values: [event],
     format: 'JSONEachRow',
-    query_params: {
-      async_insert: 1,
-      wait_for_async_insert: 1,
-    },
   });
 }
 

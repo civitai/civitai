@@ -416,7 +416,8 @@ const EarningBuzz = () => {
                     {reward.cap && reward.awarded != -1 && (
                       <Group spacing={4}>
                         <Text color="dimmed" size="xs">
-                          {reward.awarded}/{reward.cap.toLocaleString()} day
+                          {reward.awarded} / {reward.cap.toLocaleString()}{' '}
+                          {reward.interval ?? 'day'}
                         </Text>
                         <RingProgress
                           size={30}

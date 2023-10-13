@@ -38,7 +38,7 @@ export const createBountyInputSchema = z.object({
   description: getSanitizedStringSchema().refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  unitAmount: z.number().min(5000),
+  unitAmount: z.number().min(constants.bounties.minCreateAmount),
   currency: z.nativeEnum(Currency),
   expiresAt: z
     .date()

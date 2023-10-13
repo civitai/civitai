@@ -184,7 +184,7 @@ export const constants = {
   },
   bounties: {
     engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
-    minCreateAmount: 5000,
+    minCreateAmount: 500,
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
