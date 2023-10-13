@@ -898,9 +898,9 @@ export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<C
     const rewardDetails = await Promise.all([
       encouragementReward.getUserRewardDetails(ctx.user.id),
       collectedContentReward.getUserRewardDetails(ctx.user.id),
+      goodContentReward.getUserRewardDetails(ctx.user.id),
       imagePostedToModelReward.getUserRewardDetails(ctx.user.id),
       userReferredReward.getUserRewardDetails(ctx.user.id),
-      goodContentReward.getUserRewardDetails(ctx.user.id),
     ]);
 
     return rewardDetails;

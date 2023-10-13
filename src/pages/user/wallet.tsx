@@ -555,7 +555,7 @@ const FeatureCard = ({ title, description, icon, btnProps }: FeatureCardProps) =
     <Paper withBorder className={classes.featureCard} h="100%">
       <Stack spacing={4} p="md" align="center" h="100%">
         <Center>{icon}</Center>
-        <Text weight={500} size="xl">
+        <Text weight={500} size="xl" align="center">
           {title}
         </Text>
         <Text color="dimmed" align="center">

@@ -46,29 +46,36 @@ export function createBuzzEvent<T>({
     };
 
     // get the awardAmount from clickhouse based on the type for this month
-    const awarded =
-      (await clickhouse
-        ?.query({
-          query: `
+    const awarded = data.cap
+      ? (await clickhouse
+          ?.query({
+            query: `
         SELECT COUNT(*) AS total
         FROM buzzEvents
-        WHERE type = '${type}'
+        WHERE type like '${type}%'
           AND status = 'awarded'
-          AND time > now() - INTERVAL '1 month'
+          ${
+            data.interval === 'month'
+              ? 'AND time > toStartOfMonth(today())'
+              : data.interval === 'week'
+              ? 'AND time > toStartOfWeek(today())'
+              : 'AND time > today()'
+          }
           AND toUserId = ${userId}
       `,
-          format: 'JSONEachRow',
-        })
-        .then((x) => x.json<{ total: number }[]>())) ?? [];
+            format: 'JSONEachRow',
+          })
+          .then((x) => x.json<{ total: number }[]>())) ?? []
+      : [];
 
-    const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
-    const typeCache = JSON.parse(typeCacheJson);
-    const eventCount = Object.keys(typeCache).length;
+    // const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
+    // const typeCache = JSON.parse(typeCacheJson);
+    // const eventCount = Object.keys(typeCache).length;
 
-    data.awarded =
-      eventCount > 0
-        ? Math.min(eventCount * awardAmount, data.cap ?? Infinity)
-        : Math.min((awarded[0]?.total ?? 0) * awardAmount, data.cap ?? Infinity);
+    data.awarded = Math.min((awarded[0]?.total ?? 0) * awardAmount, data.cap ?? Infinity);
+    // eventCount > 0
+    //   ? Math.min(eventCount * awardAmount, data.cap ?? Infinity)
+    // : Math.min((awarded[0]?.total ?? 0) * awardAmount, data.cap ?? Infinity);
 
     return data;
   };
@@ -181,9 +188,11 @@ export function createBuzzEvent<T>({
               ${
                 !interval
                   ? ''
-                  : interval === 'day'
-                  ? 'AND time > today()'
-                  : `AND time > now() - INTERVAL '1 ${interval}'`
+                  : interval === 'month'
+                  ? 'AND time > toStartOfMonth(today())'
+                  : interval === 'week'
+                  ? 'AND time > toStartOfWeek(today())'
+                  : 'AND time > today()'
               }
               AND (${keyParts.join(', ')}) IN (${idTuples})
             GROUP BY ${keyParts.join(', ')}
