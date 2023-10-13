@@ -50,19 +50,19 @@ export function createBuzzEvent<T>({
       ? (await clickhouse
           ?.query({
             query: `
-        SELECT COUNT(*) AS total
-        FROM buzzEvents
-        WHERE type like '${type}%'
-          AND status = 'awarded'
-          ${
-            data.interval === 'month'
-              ? 'AND time > toStartOfMonth(today())'
-              : data.interval === 'week'
-              ? 'AND time > toStartOfWeek(today())'
-              : 'AND time > today()'
-          }
-          AND toUserId = ${userId}
-      `,
+              SELECT COUNT(*) AS total
+              FROM buzzEvents
+              WHERE type like '${type}%'
+              AND status = 'awarded'
+              ${
+                data.interval === 'month'
+                  ? 'AND time > toStartOfMonth(today())'
+                  : data.interval === 'week'
+                  ? 'AND time > toStartOfWeek(today())'
+                  : 'AND time > today()'
+              }
+              AND toUserId = ${userId}
+            `,
             format: 'JSONEachRow',
           })
           .then((x) => x.json<{ total: number }[]>())) ?? []

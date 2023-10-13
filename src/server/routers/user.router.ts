@@ -44,6 +44,7 @@ import {
   toggleUserBountyEngagementSchema,
   reportProhibitedRequestSchema,
   userByReferralCodeSchema,
+  completeOnboardStepSchema,
 } from '~/server/schema/user.schema';
 import {
   getUserArticleEngagements,
@@ -51,6 +52,8 @@ import {
   removeAllContent,
 } from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { cacheIt } from '../middleware.trpc';
+import { Context } from '../createContext';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -81,7 +84,9 @@ export const userRouter = router({
   //   .input(toggleModelEngagementInput)
   //   .mutation(toggleHideModelHandler),
   acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
-  completeOnboarding: protectedProcedure.mutation(completeOnboardingHandler),
+  completeOnboarding: protectedProcedure
+    .input(completeOnboardStepSchema)
+    .mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
   // toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
   // toggleBlockedTag: protectedProcedure
@@ -115,5 +120,8 @@ export const userRouter = router({
   userByReferralCode: publicProcedure
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),
-  userRewardDetails: protectedProcedure.query(userRewardDetailsHandler),
+  userRewardDetails: protectedProcedure
+    .use(cacheIt())
+    // Need to explicit cast ctx here
+    .query(({ ctx }) => userRewardDetailsHandler({ ctx: ctx as DeepNonNullable<Context> })),
 });

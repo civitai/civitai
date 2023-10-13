@@ -14,6 +14,7 @@ import {
   StackProps,
   ThemeIcon,
   Badge,
+  TextInput,
 } from '@mantine/core';
 import { useState } from 'react';
 import { z } from 'zod';
@@ -35,6 +36,9 @@ import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { Currency, OnboardingStep } from '@prisma/client';
+import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
+import { CurrencyBadge } from '../Currency/CurrencyBadge';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -44,9 +48,12 @@ const schema = z.object({
       required_error: 'Please provide an email',
     })
     .email(),
-  userReferralCode: z
+});
+
+const referralSchema = z.object({
+  code: z
     .string()
-    .transform((code) => (code ? code.trim() : code))
+    .trim()
     .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
       message: `Referral codes must be at least ${constants.referrals.referralCodeMinLength} characters long`,
     })
@@ -61,22 +68,25 @@ export default function OnboardingModal() {
   const { classes } = useStyles();
   const features = useFeatureFlags();
 
+  const [userReferral, setUserReferral] = useState(!user?.referral ? { code, source } : {});
+
   const form = useForm({
     schema,
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: { ...user, ...(!user?.referral ? { userReferralCode: code, source } : {}) },
+    defaultValues: { ...user },
   });
   const username = form.watch('username');
-  const userReferralCode = form.watch('userReferralCode');
   const [debounced] = useDebouncedValue(username, 300);
-  const [debouncedUserReferralCode] = useDebouncedValue(userReferralCode, 300);
+  const [debouncedUserReferralCode] = useDebouncedValue(userReferral.code, 300);
 
   const onboarded = {
     tos: !!user?.tos,
     profile: !!user?.username || !!user?.email,
-    content: !!user?.onboarded,
+    content: !user?.onboardingSteps?.includes(OnboardingStep.Moderation),
+    buzz: !user?.onboardingSteps?.includes(OnboardingStep.Buzz),
   };
+  const stepCount = Object.keys(onboarded).length;
   const [activeStep, setActiveStep] = useState(Object.values(onboarded).indexOf(false));
 
   const { data: terms, isLoading: termsLoading } = trpc.content.get.useQuery(
@@ -103,7 +113,7 @@ export default function OnboardingModal() {
 
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
   const { mutate: acceptTOS, isLoading: acceptTOSLoading } = trpc.user.acceptTOS.useMutation();
-  const { mutate: completeOnboarding, isLoading: completeOnboardingLoading } =
+  const { mutate: completeStep, isLoading: completeStepLoading } =
     trpc.user.completeOnboarding.useMutation({
       async onSuccess() {
         user?.refresh();
@@ -112,14 +122,19 @@ export default function OnboardingModal() {
       },
     });
 
+  const goNext = () => {
+    if (activeStep >= stepCount) return;
+    setActiveStep((x) => x + 1);
+  };
+
   const handleSubmit = (values: z.infer<typeof schema>) => {
     if (!user) return;
     // TOS is true here because it was already accepted
     mutate(
       { ...user, ...values, tos: true },
       {
-        onSuccess: async () => {
-          setActiveStep((x) => x + 1);
+        onSuccess: () => {
+          goNext();
         },
       }
     );
@@ -129,12 +144,25 @@ export default function OnboardingModal() {
   const handleAcceptTOS = () => {
     acceptTOS(undefined, {
       async onSuccess() {
-        setActiveStep((x) => x + 1);
+        goNext();
       },
     });
   };
-  const handleCompleteOnboarding = () => {
-    completeOnboarding();
+  const handleCompleteStep = (step: OnboardingStep) => {
+    completeStep(
+      { step },
+      {
+        onSuccess: (result) => {
+          if (result.onboardingSteps.length > 0) goNext();
+        },
+      }
+    );
+  };
+  const handleCompleteBuzzStep = () => {
+    const result = referralSchema.safeParse(userReferral);
+    if (!result.success) return;
+
+    handleCompleteStep(OnboardingStep.Buzz);
   };
 
   return (
@@ -148,7 +176,13 @@ export default function OnboardingModal() {
           </Stack>
         </Group>
       </Center>
-      <Stepper active={activeStep} color="green" allowNextStepsSelect={false} classNames={classes}>
+      <Stepper
+        active={activeStep}
+        color="green"
+        // breakpoint="md"
+        allowNextStepsSelect={false}
+        classNames={classes}
+      >
         <Stepper.Step label="Terms" description="Review our terms">
           <Stack>
             <StepperTitle
@@ -235,35 +269,6 @@ export default function OnboardingModal() {
                     }
                     withAsterisk
                   />
-                  {features.buzz && !user?.referral && (
-                    <InputText
-                      size="lg"
-                      name="userReferralCode"
-                      label="Referral Code"
-                      type="text"
-                      clearable={false}
-                      rightSection={
-                        userReferralCode &&
-                        userReferralCode.length >= constants.referrals.referralCodeMinLength &&
-                        referrerLoading ? (
-                          <Loader size="sm" mr="xs" />
-                        ) : (
-                          userReferralCode &&
-                          userReferralCode.length >= constants.referrals.referralCodeMinLength && (
-                            <ThemeIcon
-                              variant="outline"
-                              color={referrer ? 'green' : 'red'}
-                              radius="xl"
-                              mr="xs"
-                            >
-                              {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
-                            </ThemeIcon>
-                          )
-                        )
-                      }
-                    />
-                  )}
-
                   {error && (
                     <Alert color="red" variant="light">
                       {error.data?.code === 'CONFLICT'
@@ -320,9 +325,66 @@ export default function OnboardingModal() {
               />
               <Button
                 size="lg"
-                onClick={handleCompleteOnboarding}
-                loading={completeOnboardingLoading}
+                onClick={() => handleCompleteStep(OnboardingStep.Moderation)}
+                loading={completeStepLoading}
               >
+                Save
+              </Button>
+            </Stack>
+          </Container>
+        </Stepper.Step>
+        <Stepper.Step label="Buzz" description="Power-up your experience">
+          <Container size="md" px={0}>
+            <Stack>
+              <EarningBuzz />
+              <SpendingBuzz />
+              <StepperTitle
+                title="Getting Started"
+                description={
+                  <Text>
+                    To get you started, we will grant you{' '}
+                    <Text span>
+                      <CurrencyBadge currency={Currency.BUZZ} unitAmount={100} />
+                    </Text>{' '}
+                    and if you have a referral code, you can use it here to claim{' '}
+                    <Text span>
+                      <CurrencyBadge currency={Currency.BUZZ} unitAmount={500} />
+                    </Text>{' '}
+                    as a bonus for you and the person who referred you.
+                  </Text>
+                }
+              />
+              {!user?.referral && (
+                <TextInput
+                  size="lg"
+                  label="Referral Code"
+                  type="text"
+                  value={userReferral.code}
+                  onChange={(e) =>
+                    setUserReferral((current) => ({ ...current, code: e.target.value }))
+                  }
+                  rightSection={
+                    userReferral.code &&
+                    userReferral.code.length >= constants.referrals.referralCodeMinLength &&
+                    referrerLoading ? (
+                      <Loader size="sm" mr="xs" />
+                    ) : (
+                      userReferral.code &&
+                      userReferral.code.length >= constants.referrals.referralCodeMinLength && (
+                        <ThemeIcon
+                          variant="outline"
+                          color={referrer ? 'green' : 'red'}
+                          radius="xl"
+                          mr="xs"
+                        >
+                          {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
+                        </ThemeIcon>
+                      )
+                    )
+                  }
+                />
+              )}
+              <Button size="lg" onClick={handleCompleteBuzzStep} loading={completeStepLoading}>
                 Done
               </Button>
             </Stack>

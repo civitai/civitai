@@ -89,7 +89,6 @@ model User {
   blurNsfw            Boolean?              @default(true)
   isModerator         Boolean?              @default(false)
   tos                 Boolean?              @default(false)
-  onboarded           Boolean?              @default(false)
   createdAt           DateTime              @default(now())
   deletedAt           DateTime?
   customerId          String?               @unique
@@ -101,6 +100,7 @@ model User {
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
   leaderboardShowcase String?
   referral            UserReferral?
+  onboardingSteps     OnboardingStep[]      @default([Moderation, Buzz])
 
   accounts             Account[]
   sessions             Session[]
@@ -162,6 +162,11 @@ model User {
   engagedBounties         BountyEngagement[]
   bountyEntryReactions    BountyEntryReaction[]
   referralCodes           UserReferralCode[]
+}
+
+enum OnboardingStep {
+  Moderation
+  Buzz
 }
 
 model CustomerSubscription {

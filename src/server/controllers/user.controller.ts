@@ -17,7 +17,7 @@ import {
   toggleModelFavorite,
   getUserCosmetics,
   acceptTOS,
-  completeOnboarding,
+  // completeOnboarding,
   isUsernamePermitted,
   toggleUserArticleEngagement,
   updateLeaderboardRank,
@@ -25,6 +25,7 @@ import {
   toggleUserBountyEngagement,
   userByReferralCode,
   createUserReferral,
+  updateOnboardingSteps,
 } from '~/server/services/user.service';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -43,6 +44,7 @@ import {
   ToggleUserBountyEngagementsInput,
   ReportProhibitedRequestInput,
   UserByReferralCodeSchema,
+  CompleteOnboardingStepInput,
 } from '~/server/schema/user.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
@@ -58,8 +60,6 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { isUUID } from '~/utils/string-helpers';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
-import { dbWrite } from '~/server/db/client';
-import { cancelSubscription } from '~/server/services/stripe.service';
 import { redis } from '~/server/redis/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
@@ -70,6 +70,8 @@ import {
   imagePostedToModelReward,
   userReferredReward,
 } from '~/server/rewards';
+import { createBuzzTransaction } from '../services/buzz.service';
+import { TransactionType } from '../schema/buzz.schema';
 
 export const getAllUsersHandler = async ({
   input,
@@ -198,11 +200,35 @@ export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> 
   }
 };
 
-export const completeOnboardingHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+export const completeOnboardingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CompleteOnboardingStepInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const { id } = ctx.user;
-    await completeOnboarding({ id });
+    const user = await getUserById({ id, select: { onboardingSteps: true } });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    const steps = user.onboardingSteps.filter((step) => step !== input.step);
+    const updatedUser = await updateOnboardingSteps({ id, steps });
+
+    // There are no more onboarding steps, so we can reward the user
+    if (updatedUser.onboardingSteps.length === 0) {
+      await createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: updatedUser.id,
+        // TODO.manuel: calculate the correct amount
+        amount: 500,
+        type: TransactionType.Reward,
+      });
+    }
+
+    return updatedUser;
   } catch (e) {
+    if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
 };

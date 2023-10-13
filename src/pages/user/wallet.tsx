@@ -42,6 +42,7 @@ import {
 } from 'chart.js';
 import React, { MouseEvent, useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
+import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { useQueryBuzzAccount } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -122,9 +123,6 @@ const useStyles = createStyles((theme) => ({
   tileCard: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
   },
-  featureCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-  },
   lifetimeBuzz: {
     animation: `${pulse} 1s ease-in-out infinite`,
   },
@@ -169,6 +167,13 @@ export default function UserWallet() {
   // Last 7 days of data pretty much.
   const labels = Object.keys(items).slice(Math.max(0, dateCount - 7), dateCount);
   const data = Object.values(items).slice(Math.max(0, dateCount - 7), dateCount);
+
+  const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
+    undefined,
+    {
+      enabled: !!currentUser,
+    }
+  );
 
   return (
     <Container size="lg">
@@ -299,270 +304,67 @@ export default function UserWallet() {
           </Grid>
         )}
 
-        <EarningBuzz />
-        <SpendingBuzz />
+        <EarningBuzz withCTA />
+
+        <Paper withBorder className={classes.tileCard} h="100%">
+          <Stack p="md">
+            <Title order={3}>Other ways you&rsquo;ll earn some buzz</Title>
+            {loadingRewards ? (
+              <Center py="xl">
+                <Loader />
+              </Center>
+            ) : (
+              rewards.map((reward) => {
+                const awardedAmountPercent =
+                  reward.cap && reward.awarded !== -1 ? reward.awarded / reward.cap : 0;
+
+                return (
+                  <Stack key={reward.type} spacing={4}>
+                    <Group position="apart">
+                      <Group noWrap>
+                        <Text>
+                          <CurrencyBadge
+                            w={100}
+                            currency={Currency.BUZZ}
+                            unitAmount={reward.awardAmount}
+                          />{' '}
+                          {reward.triggerDescription ?? reward.description}
+                        </Text>
+                        {reward.tooltip && (
+                          <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
+                            <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
+                          </Tooltip>
+                        )}
+                      </Group>
+                      {reward.cap && reward.awarded != -1 && (
+                        <Group spacing={4}>
+                          <Text color="dimmed" size="xs">
+                            {reward.awarded} / {reward.cap.toLocaleString()}{' '}
+                            {reward.interval ?? 'day'}
+                          </Text>
+                          <RingProgress
+                            size={30}
+                            thickness={9}
+                            sections={[
+                              {
+                                value: awardedAmountPercent * 100,
+                                color: awardedAmountPercent === 1 ? 'green' : 'yellow.7',
+                              },
+                            ]}
+                          />
+                        </Group>
+                      )}
+                    </Group>
+                    <Divider mt="xs" />
+                  </Stack>
+                );
+              })
+            )}
+          </Stack>
+        </Paper>
+
+        <SpendingBuzz withCTA />
       </Stack>
     </Container>
   );
 }
-
-type FeatureCardProps = {
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  btnProps: ButtonProps & {
-    href?: string;
-    component?: 'a' | 'button';
-    target?: string;
-    rel?: string;
-    onClick?: (e: MouseEvent<HTMLElement>) => void;
-  };
-};
-
-const EarningBuzz = () => {
-  const { classes } = useStyles();
-  const currentUser = useCurrentUser();
-  const { data: rewards = [], isLoading } = trpc.user.userRewardDetails.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
-
-  const data: (FeatureCardProps & { key: string })[] = [
-    {
-      key: 'referrals',
-      icon: <IconUsers size={32} />,
-      title: 'Referrals',
-      description: 'You & your friends can earn more buzz!',
-      btnProps: {
-        href: '/user/account#referrals',
-        children: 'Invite a friend',
-      },
-    },
-    {
-      key: 'bounties',
-      icon: <IconMoneybag size={32} />,
-      title: 'Bounties',
-      description: 'Submit work to a bounty to win buzz',
-      btnProps: {
-        href: '/bounties',
-        children: 'Learn more',
-      },
-    },
-    {
-      key: 'purchase',
-      icon: <IconCoin size={32} />,
-      title: 'Purchase',
-      description: 'Purchase buzz directly',
-      btnProps: {
-        href: '/purchase/buzz',
-        children: 'Buy now',
-      },
-    },
-    {
-      key: 'tips',
-      icon: <IconCoins size={32} />,
-      title: 'Get tipped',
-      description: 'Create awesome content!',
-      btnProps: {
-        href: '/posts/create',
-        children: 'Create post',
-      },
-    },
-  ];
-
-  return (
-    <Stack spacing={20}>
-      <Stack spacing={4}>
-        <Title order={2}>Earning Buzz</Title>
-        <Text>Need some buzz? Here&rsquo;s how you can earn it</Text>
-      </Stack>
-      <Grid gutter={20}>
-        {data.map((item) => (
-          <Grid.Col key={item.key} xs={12} md={3}>
-            <FeatureCard {...item} />
-          </Grid.Col>
-        ))}
-      </Grid>
-      <Paper withBorder className={classes.tileCard} h="100%">
-        <Stack p="md">
-          <Title order={3}>Other ways you&rsquo;ll earn some buzz</Title>
-          {isLoading && (
-            <Center py="xl">
-              <Loader />
-            </Center>
-          )}
-          {!isLoading &&
-            rewards.map((reward) => {
-              const awardedAmountPercent =
-                reward.cap && reward.awarded !== -1 ? reward.awarded / reward.cap : 0;
-
-              return (
-                <Stack key={reward.type} spacing={4}>
-                  <Group position="apart">
-                    <Group noWrap>
-                      <Text>
-                        <CurrencyBadge
-                          w={100}
-                          currency={Currency.BUZZ}
-                          unitAmount={reward.awardAmount}
-                        />{' '}
-                        {reward.triggerDescription ?? reward.description}
-                      </Text>
-                      {reward.tooltip && (
-                        <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
-                          <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
-                        </Tooltip>
-                      )}
-                    </Group>
-                    {reward.cap && reward.awarded != -1 && (
-                      <Group spacing={4}>
-                        <Text color="dimmed" size="xs">
-                          {reward.awarded} / {reward.cap.toLocaleString()}{' '}
-                          {reward.interval ?? 'day'}
-                        </Text>
-                        <RingProgress
-                          size={30}
-                          thickness={9}
-                          sections={[
-                            {
-                              value: awardedAmountPercent * 100,
-                              color: awardedAmountPercent === 1 ? 'green' : 'yellow.7',
-                            },
-                          ]}
-                        />
-                      </Group>
-                    )}
-                  </Group>
-                  <Divider mt="xs" />
-                </Stack>
-              );
-            })}
-        </Stack>
-      </Paper>
-    </Stack>
-  );
-};
-
-const SpendingBuzz = () => {
-  const currentUser = useCurrentUser();
-  // const open = useGenerationStore((state) => state.open);
-  const data: (FeatureCardProps & { key: string })[] = [
-    {
-      key: 'train',
-      icon: <IconBarbell size={32} />,
-      title: 'Train',
-      description: 'Train your own LoRAs to generate images',
-      btnProps: {
-        href: '/models/train',
-        children: 'Train now',
-        rightIcon: <IconArrowRight size={14} />,
-      },
-    },
-    // {
-    //   key: 'generate',
-    //   icon: <IconBrush size={32} />,
-    //   title: 'Generate Images',
-    //   description: 'Use any of our models to create',
-    //   btnProps: {
-    //     component: 'button',
-    //     onClick: (e: MouseEvent<HTMLElement>) => {
-    //       e.preventDefault();
-    //       open();
-    //     },
-    //     children: 'Generate now',
-    //     rightIcon: <IconArrowRight size={14} />,
-    //   },
-    // },
-    {
-      key: 'tip',
-      icon: <IconCoins size={32} />,
-      title: 'Tip an artist',
-      description: 'Support an artist you love!',
-      btnProps: {
-        href: '/images',
-        children: 'View artists',
-        rightIcon: <IconArrowRight size={14} />,
-      },
-    },
-    {
-      key: 'bounties',
-      icon: <IconMoneybag size={32} />,
-      title: 'Bounties',
-      description: 'Post a bounty and award buzz',
-      btnProps: {
-        href: '/bounties/create',
-        children: 'Post a bounty',
-        rightIcon: <IconArrowRight size={14} />,
-      },
-    },
-    {
-      key: 'showcase',
-      icon: <IconHighlight size={32} />,
-      title: 'Get showcased',
-      description: 'Boost your model to our homepage',
-      btnProps: {
-        target: '_blank',
-        rel: 'noreferrer nofollow',
-        href: `https://forms.clickup.com/8459928/f/825mr-8431/V3OV7JWR6SQFUYT7ON?Civitai%20Username=${encodeURIComponent(
-          currentUser?.username ?? ''
-        )}&Buzz%20Available=${currentUser?.balance ?? 0}`,
-        children: 'Contact us',
-        rightIcon: <IconArrowRight size={14} />,
-      },
-    },
-    {
-      key: 'merch',
-      icon: <IconShoppingCart size={32} />,
-      title: 'Shop merch',
-      description: 'Tons of fun stickers to choose from...',
-      btnProps: {
-        disabled: true,
-        children: 'COMING SOON',
-      },
-    },
-    {
-      key: 'badges',
-      icon: <IconShoppingBag size={32} />,
-      title: 'Shop badges and cosmetics',
-      description: 'Make your profile stand out!',
-      btnProps: {
-        disabled: true,
-        children: 'COMING SOON',
-      },
-    },
-  ];
-
-  return (
-    <Stack spacing={20}>
-      <Stack spacing={4}>
-        <Title order={2}>Spending Buzz</Title>
-        <Text>Got some buzz? Here&rsquo;s what you can do with it</Text>
-      </Stack>
-      <Grid gutter={20}>
-        {data.map((item) => (
-          <Grid.Col key={item.key} xs={12} md={3}>
-            <FeatureCard {...item} />
-          </Grid.Col>
-        ))}
-      </Grid>
-    </Stack>
-  );
-};
-
-const FeatureCard = ({ title, description, icon, btnProps }: FeatureCardProps) => {
-  const { classes } = useStyles();
-
-  return (
-    <Paper withBorder className={classes.featureCard} h="100%">
-      <Stack spacing={4} p="md" align="center" h="100%">
-        <Center>{icon}</Center>
-        <Text weight={500} size="xl" align="center">
-          {title}
-        </Text>
-        <Text color="dimmed" align="center">
-          {description}
-        </Text>
-        <Button component="a" mt="auto" w="100%" {...btnProps} />
-      </Stack>
-    </Paper>
-  );
-};
