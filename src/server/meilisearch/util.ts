@@ -63,11 +63,29 @@ const swapIndex = async ({
 const onSearchIndexDocumentsCleanup = async ({
   db,
   indexName,
+  ids,
 }: {
   db: PrismaClient;
   indexName: string;
+  ids?: number[];
 }) => {
   if (!client) {
+    return;
+  }
+
+  if (ids) {
+    console.log(`onSearchIndexDocumentsCleanup :: About to delete: ${ids.length} items...`);
+
+    const index = await getOrCreateIndex(indexName);
+
+    if (!index) {
+      // If for some reason we don't get an index, abort the entire process
+      return;
+    }
+
+    await index.deleteDocuments(ids);
+    console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
+
     return;
   }
 
