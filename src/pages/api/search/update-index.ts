@@ -26,8 +26,6 @@ export default ModEndpoint(async function updateIndexSync(
       ...(input.deleteIds ?? []).map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
     ];
 
-    console.log(data);
-
     if (!data.length) {
       throw new Error('No ids provided');
     }
