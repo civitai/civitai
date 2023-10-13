@@ -278,11 +278,11 @@ export async function completeStripeBuzzTransaction({
 
     const metadata: PaymentIntentMetadataSchema =
       paymentIntent.metadata as PaymentIntentMetadataSchema;
-
     if (metadata.transactionId) {
       // Avoid double down on buzz
       return { transactionId: metadata.transactionId };
     }
+
     const body = JSON.stringify({
       amount,
       fromAccountId: 0,
@@ -290,7 +290,7 @@ export async function completeStripeBuzzTransaction({
       type: TransactionType.Purchase,
       description: `Purchase of ${amount} buzz`,
       details: { ...(details ?? {}), stripePaymentIntentId },
-      // TODO.brett: Specify new buzz transaction ID here based off of paymentIntentId.
+      externalTransactionId: paymentIntent.id,
     });
 
     const response = await fetch(`${env.BUZZ_ENDPOINT}/transaction`, {
