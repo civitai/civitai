@@ -29,6 +29,7 @@ export const articleWhereSchema = z.object({
   includeDrafts: z.boolean().optional(),
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
   collectionId: z.number().optional(),
+  followed: z.boolean().optional(),
 });
 
 // export const articleSortSchema = z.object({

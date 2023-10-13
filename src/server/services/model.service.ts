@@ -231,6 +231,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     AND.push({ generationCoverage: { some: { covered: true } } });
   }
 
+  // Filter only followed users
   if (!!sessionUser && followed) {
     const followedUsers = await dbRead.user.findUnique({
       where: { id: sessionUser.id },

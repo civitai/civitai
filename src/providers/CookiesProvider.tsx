@@ -19,6 +19,7 @@ import {
   QuestionStatus,
 } from '~/server/common/enums';
 
+// TODO: @Briant, do we need to put "followed" in here and below?
 export const modelFilterSchema = z.object({
   sort: z.nativeEnum(ModelSort).optional(),
   period: z.nativeEnum(MetricTimeframe).optional(),

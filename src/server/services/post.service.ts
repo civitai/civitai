@@ -1,36 +1,22 @@
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { SessionUser } from 'next-auth';
-import { getSystemTags } from '~/server/services/system-cache';
-import { editPostSelect } from './../selectors/post.selector';
-import { isDefined } from '~/utils/type-guards';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
-  PostUpdateInput,
-  AddPostTagInput,
-  AddPostImageInput,
-  UpdatePostImageInput,
-  PostCreateInput,
-  ReorderPostImagesInput,
-  RemovePostTagInput,
-  GetPostTagsInput,
-  PostsQueryInput,
-  GetPostsByCategoryInput,
-} from './../schema/post.schema';
-import { dbWrite, dbRead } from '~/server/db/client';
-import {
-  TagType,
-  TagTarget,
-  Prisma,
   ImageGenerationProcess,
-  NsfwLevel,
   ImageIngestionStatus,
   MediaType,
+  NsfwLevel,
+  Prisma,
+  TagTarget,
+  TagType,
 } from '@prisma/client';
+import { SessionUser } from 'next-auth';
+import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   applyModRulesSql,
   applyUserPreferencesSql,
@@ -39,12 +25,22 @@ import {
   ingestImage,
 } from '~/server/services/image.service';
 import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
-import {
-  getAvailableCollectionItemsFilterForUser,
-  getUserCollectionPermissionsById,
-} from '~/server/services/collection.service';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getCosmeticsForUsers } from '~/server/services/user.service';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
+import {
+  AddPostImageInput,
+  AddPostTagInput,
+  GetPostsByCategoryInput,
+  GetPostTagsInput,
+  PostCreateInput,
+  PostsQueryInput,
+  PostUpdateInput,
+  RemovePostTagInput,
+  ReorderPostImagesInput,
+  UpdatePostImageInput,
+} from './../schema/post.schema';
+import { editPostSelect } from './../selectors/post.selector';
 
 type GetAllPostsRaw = {
   id: number;
@@ -84,6 +80,7 @@ export const getPostsInfinite = async ({
   collectionId,
   include,
   draftOnly,
+  followed,
 }: PostsQueryInput & { user?: SessionUser }) => {
   const AND = [Prisma.sql`1 = 1`];
 
@@ -96,6 +93,25 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p."userId" = ${targetUser}`);
     }
   }
+
+  // Filter only followed users
+  if (!!user && followed) {
+    const followedUsers = await dbRead.user.findUnique({
+      where: { id: user.id },
+      select: {
+        engagingUsers: {
+          select: { targetUser: { select: { id: true } } },
+          where: { type: 'Follow' },
+        },
+      },
+    });
+    const followedUsersIds =
+      followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
+    AND.push(
+      Prisma.sql`u."id" IN (${followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null})`
+    );
+  }
+
   if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
   const joins: string[] = [];
