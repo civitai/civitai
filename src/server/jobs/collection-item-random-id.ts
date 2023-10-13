@@ -7,14 +7,14 @@ export const updateCollectionItemRandomId = createJob(
   async () => {
     // Updates the random order IDs of items on an hourly basis for contest collections.
     await dbWrite.$executeRaw`
-    UPDATE "CollectionItem" ci SET "randomId" = FLOOR(RANDOM() * 1000000000)
-    FROM "Collection" c
-    WHERE c.id = ci."collectionId"
-      AND c."mode" = 'Contest'
-      AND ci."status" = 'ACCEPTED'
-      AND (
-        (c."metadata"->'endsAt') IS NULL OR DATE(c."metadata"->>'endsAt') >= NOW()::DATE
-      )
-  `;
+      UPDATE "CollectionItem" ci SET "randomId" = FLOOR(RANDOM() * 1000000000)
+      FROM "Collection" c
+      WHERE c.id = ci."collectionId"
+        AND c."mode" = 'Contest'
+        AND ci."status" = 'ACCEPTED'
+        AND (
+          (c."metadata"->'endsAt') IS NULL OR DATE(c."metadata"->>'endsAt') >= NOW()::DATE
+        )
+    `;
   }
 );
