@@ -13,10 +13,11 @@ import {
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType } from '@prisma/client';
 import { IconChevronDown, IconFilter, IconFilterOff } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { BaseModel, constants } from '~/server/common/constants';
@@ -33,7 +34,9 @@ const queryFiltersOverwrite: (keyof ModelQueryParams & keyof ModelFilterSchema)[
 ];
 
 export function ModelFiltersDropdown() {
-  const user = useCurrentUser();
+  const currentUser = useCurrentUser();
+  const router = useRouter();
+  const isSameUser = useIsSameUser(router.query.username);
   const { classes } = useStyles();
   const flags = useFeatureFlags();
   const { set: setQueryFilters, ...queryFilters } = useModelQueryParams();
@@ -123,7 +126,7 @@ export function ModelFiltersDropdown() {
         <Popover.Dropdown maw={350} w="100%">
           <Stack spacing={0}>
             <Divider label="Model status" labelProps={{ weight: 'bold' }} mb={4} />
-            {user?.isModerator && (
+            {currentUser?.isModerator && (
               <Chip.Group
                 spacing={4}
                 value={filters.status ?? []}
@@ -143,7 +146,7 @@ export function ModelFiltersDropdown() {
               <Chip
                 checked={filters.earlyAccess}
                 onChange={(checked) => setFilters({ earlyAccess: checked })}
-                mt={user?.isModerator ? 4 : undefined}
+                mt={currentUser?.isModerator ? 4 : undefined}
                 {...chipProps}
               >
                 Early Access
@@ -152,7 +155,7 @@ export function ModelFiltersDropdown() {
                 <Chip
                   checked={filters.supportsGeneration}
                   onChange={(checked) => setFilters({ supportsGeneration: checked })}
-                  mt={user?.isModerator ? 4 : undefined}
+                  mt={currentUser?.isModerator ? 4 : undefined}
                   {...chipProps}
                 >
                   Onsite Generation
@@ -216,18 +219,20 @@ export function ModelFiltersDropdown() {
               ))}
             </Chip.Group>
 
-            <Divider label="Modifiers" labelProps={{ weight: 'bold' }} mb={4} />
-            <Group>
-              {/* TODO this should not show up when on the user images page */}
-              {/* TODO this should not show up when the user is not logged in */}
-              <Chip
-                checked={filters.followed}
-                onChange={(checked) => setFilters({ followed: checked })}
-                {...chipProps}
-              >
-                Followed Only
-              </Chip>
-            </Group>
+            {currentUser && !isSameUser && (
+              <>
+                <Divider label="Modifiers" labelProps={{ weight: 'bold' }} mb={4} />
+                <Group>
+                  <Chip
+                    checked={filters.followed}
+                    onChange={(checked) => setFilters({ followed: checked })}
+                    {...chipProps}
+                  >
+                    Followed Only
+                  </Chip>
+                </Group>
+              </>
+            )}
             {filterLength > 0 && (
               <Button mt="xs" compact onClick={clearFilters} leftIcon={<IconFilterOff size={20} />}>
                 Clear Filters

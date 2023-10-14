@@ -6,14 +6,13 @@ import { ArticleCategoriesInfinite } from '~/components/Article/Categories/Artic
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
@@ -47,9 +46,9 @@ export default function ArticlesPage() {
   const theme = useMantineTheme();
   const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.articles.view);
-  const { view: queryView, ...filters } = useArticleQueryParams();
+  const { query } = useArticleQueryParams();
 
-  const view = queryView ?? storedView;
+  const view = query.view ?? storedView;
 
   return (
     <>
@@ -64,7 +63,7 @@ export default function ArticlesPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer fluid>
-          {filters.favorites && <Title>Your Bookmarked Articles</Title>}
+          {query.favorites && <Title>Your Bookmarked Articles</Title>}
           <Stack spacing="xs">
             <Announcements
               sx={(theme) => ({
@@ -90,11 +89,11 @@ export default function ArticlesPage() {
               </Group>
             </Group>
             {view === 'categories' ? (
-              <ArticleCategoriesInfinite filters={filters} />
+              <ArticleCategoriesInfinite filters={query} />
             ) : (
               <>
                 <ArticleCategories />
-                <ArticlesInfinite filters={filters} />
+                <ArticlesInfinite filters={query} />
               </>
             )}
           </Stack>

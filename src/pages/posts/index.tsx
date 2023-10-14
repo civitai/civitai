@@ -1,6 +1,6 @@
 import { Group, Stack, createStyles, useMantineTheme } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { PeriodFilter, SortFilter, ViewToggle } from '~/components/Filters';
+import { SortFilter, ViewToggle } from '~/components/Filters';
 import { FullHomeContentToggle } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -14,7 +14,6 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
@@ -35,9 +34,9 @@ export default function PostsPage() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const storedView = useFiltersContext((state) => state.posts.view);
-  const { view: queryView, ...filters } = usePostQueryParams();
+  const { query } = usePostQueryParams();
 
-  const view = queryView ?? storedView;
+  const view = query.view ?? storedView;
   return (
     <>
       <Meta
@@ -79,11 +78,11 @@ export default function PostsPage() {
             </Group>
             <IsClient>
               {view === 'categories' ? (
-                <PostCategoriesInfinite filters={filters} />
+                <PostCategoriesInfinite filters={query} />
               ) : (
                 <>
                   <PostCategories />
-                  <PostsInfinite filters={filters} showEof />
+                  <PostsInfinite filters={query} showEof />
                 </>
               )}
             </IsClient>

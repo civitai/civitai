@@ -12,8 +12,10 @@ import {
 } from '@mantine/core';
 import { MediaType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
+import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
@@ -56,6 +58,9 @@ const useStyles = createStyles((theme) => ({
 export function ImageFiltersDropdown({ query, onChange }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
+  const currentUser = useCurrentUser();
+  const router = useRouter();
+  const isSameUser = useIsSameUser(router.query.username);
 
   const [opened, setOpened] = useState(false);
 
@@ -71,7 +76,7 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.followed ? 1 : 0) +
-    (mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -171,17 +176,17 @@ export function ImageFiltersDropdown({ query, onChange }: Props) {
           >
             My hidden Images
           </Chip>
-          {/* TODO this should not show up when on the user images page */}
-          {/* TODO this should not show up when the user is not logged in */}
-          <Chip
-            {...chipProps}
-            checked={mergedFilters.followed}
-            onChange={(checked) =>
-              onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
-            }
-          >
-            Followed Only
-          </Chip>
+          {currentUser && !isSameUser && (
+            <Chip
+              {...chipProps}
+              checked={mergedFilters.followed}
+              onChange={(checked) =>
+                onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
+              }
+            >
+              Followed Only
+            </Chip>
+          )}
         </Group>
       </Stack>
       {filterLength > 0 && (

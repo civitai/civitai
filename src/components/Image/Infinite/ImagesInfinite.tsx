@@ -30,6 +30,7 @@ type ImagesInfiniteState = {
   reactions?: ReviewReactions[];
   types?: MediaType[];
   withMeta?: boolean;
+  followed?: boolean;
 };
 const ImagesInfiniteContext = createContext<ImagesInfiniteState | null>(null);
 export const useImagesInfiniteContext = () => {

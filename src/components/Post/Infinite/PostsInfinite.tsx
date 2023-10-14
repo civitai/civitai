@@ -17,11 +17,12 @@ type PostsInfiniteState = {
   modelId?: number; // not hooked up to service/schema yet
   modelVersionId?: number; // not hooked up to service/schema yet
   tags?: number[];
-  username?: string;
+  username?: string | null;
   period?: MetricTimeframe;
   sort?: PostSort;
   collectionId?: number;
   draftOnly?: boolean;
+  followed?: boolean;
 };
 
 type PostsInfiniteProps = {

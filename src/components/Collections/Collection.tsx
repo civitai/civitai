@@ -13,19 +13,8 @@ import {
   createStyles,
   Menu,
 } from '@mantine/core';
-import {
-  CollectionContributorPermission,
-  CollectionMode,
-  CollectionType,
-  MetricTimeframe,
-} from '@prisma/client';
-import {
-  IconCirclePlus,
-  IconCloudOff,
-  IconDotsVertical,
-  IconPhoto,
-  IconPlaylistAdd,
-} from '@tabler/icons-react';
+import { CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
+import { IconCirclePlus, IconCloudOff, IconDotsVertical, IconPhoto } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -55,9 +44,6 @@ import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
-import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { ImageUploadProps } from '~/server/schema/image.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { Meta } from '../Meta/Meta';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
@@ -203,7 +189,7 @@ const ImageCollection = ({
   );
 };
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
-  const { set, ...query } = usePostQueryParams();
+  const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
@@ -219,9 +205,13 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
               <SortFilter
                 type="posts"
                 value={sort}
-                onChange={(sort) => set({ sort: sort as any })}
+                onChange={(sort) => replace({ sort: sort as any })}
               />
-              <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
+              <PeriodFilter
+                type="posts"
+                value={period}
+                onChange={(period) => replace({ period })}
+              />
             </Group>
             <PostCategories />
           </>
@@ -242,7 +232,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
 };
 
 const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
-  const { set, ...query } = useArticleQueryParams();
+  const { replace, query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
@@ -258,9 +248,13 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
               <SortFilter
                 type="articles"
                 value={sort}
-                onChange={(x) => set({ sort: x as ArticleSort })}
+                onChange={(x) => replace({ sort: x as ArticleSort })}
               />
-              <PeriodFilter type="articles" value={period} onChange={(x) => set({ period: x })} />
+              <PeriodFilter
+                type="articles"
+                value={period}
+                onChange={(x) => replace({ period: x })}
+              />
             </Group>
             <ArticleCategories />
           </>
