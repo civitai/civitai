@@ -15,6 +15,7 @@ export const userPreferencesForArticlesSchema = z.object({
   excludedTagIds: z.array(z.number()).optional(),
 });
 
+export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
 export const articleWhereSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).default(constants.articleFilterDefaults.browsingMode),
   query: z.string().optional(),
@@ -29,6 +30,7 @@ export const articleWhereSchema = z.object({
   includeDrafts: z.boolean().optional(),
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
   collectionId: z.number().optional(),
+  followed: z.boolean().optional(),
 });
 
 // export const articleSortSchema = z.object({

@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
+import { chunk } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
@@ -24,6 +25,7 @@ import { ImageEntityType, ImageUploadProps, UpdateImageInput } from '~/server/sc
 import { imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getCosmeticsForUsers } from '~/server/services/user.service';
@@ -36,6 +38,7 @@ import {
 import { logToDb } from '~/utils/logging';
 import { deleteObject } from '~/utils/s3-utils';
 import { hashifyObject } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
   GetImagesByCategoryInput,
@@ -46,9 +49,6 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
-import { chunk } from 'lodash-es';
-import { updatePostNsfwLevel } from '~/server/services/post.service';
-import { isDefined } from '~/utils/type-guards';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -423,6 +423,7 @@ export const getAllImages = async ({
   includeBaseModel,
   types,
   hidden,
+  followed,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
@@ -516,6 +517,24 @@ export const getAllImages = async ({
     const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
     if (!targetUser) throw new Error('User not found');
     AND.push(Prisma.sql`u."id" = ${targetUser.id}`);
+  }
+
+  // Filter only followed users
+  if (userId && followed) {
+    const followedUsers = await dbRead.user.findUnique({
+      where: { id: userId },
+      select: {
+        engagingUsers: {
+          select: { targetUser: { select: { id: true } } },
+          where: { type: 'Follow' },
+        },
+      },
+    });
+    const followedUsersIds =
+      followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
+    AND.push(
+      Prisma.sql`u."id" IN (${followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null})`
+    );
   }
 
   // Filter to specific tags

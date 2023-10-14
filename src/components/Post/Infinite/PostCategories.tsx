@@ -4,7 +4,7 @@ import { trpc } from '~/utils/trpc';
 
 export function PostCategories() {
   const { data: items = [] } = trpc.post.getTags.useQuery({ limit: 100 });
-  const { tags, set } = usePostQueryParams();
+  const { query, replace } = usePostQueryParams();
 
-  return <TagScroller data={items} value={tags} onChange={(tags) => set({ tags })} />;
+  return <TagScroller data={items} value={query.tags} onChange={(tags) => replace({ tags })} />;
 }

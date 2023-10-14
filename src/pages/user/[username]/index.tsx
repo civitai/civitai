@@ -153,6 +153,7 @@ export function UserImagesPage() {
       reactions,
       types = [],
       withMeta = false,
+      followed = undefined,
       ...query
     },
   } = useImageQueryParams();
@@ -216,7 +217,7 @@ export function UserImagesPage() {
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
                 <ImageFiltersDropdown
-                  query={{ ...query, period, types, withMeta }}
+                  query={{ ...query, period, types, withMeta, followed }}
                   onChange={(filters) => replace(filters)}
                 />
               </Group>
@@ -230,6 +231,7 @@ export function UserImagesPage() {
                 withMeta,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
+                followed,
               }}
             />
           </Stack>

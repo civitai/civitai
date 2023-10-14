@@ -2,6 +2,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ArticleSort } from '~/server/common/enums';
@@ -29,24 +30,26 @@ const articleQueryParamSchema = z
     hidden: booleanString(),
     username: z.string(),
     collectionId: numericString(),
+    followed: z.coerce.boolean(),
   })
   .partial();
+export const useArticleQueryParams = () => useZodRouteParams(articleQueryParamSchema);
 export type ArticleQueryParams = z.output<typeof articleQueryParamSchema>;
-export const useArticleQueryParams = () => {
-  const { query, pathname, replace } = useRouter();
+// export const useArticleQueryParams = () => {
+//   const { query, pathname, replace } = useRouter();
 
-  return useMemo(() => {
-    const result = articleQueryParamSchema.safeParse(query);
-    const data: ArticleQueryParams = result.success ? result.data : { view: 'categories' };
+//   return useMemo(() => {
+//     const result = articleQueryParamSchema.safeParse(query);
+//     const data: ArticleQueryParams = result.success ? result.data : { view: 'categories' };
 
-    return {
-      ...data,
-      set: (filters: Partial<ArticleQueryParams>) => {
-        replace({ pathname, query: { ...query, ...filters } }, undefined, { shallow: true });
-      },
-    };
-  }, [query, pathname, replace]);
-};
+//     return {
+//       ...data,
+//       replace: (filters: Partial<ArticleQueryParams>) => {
+//         replace({ pathname, query: { ...query, ...filters } }, undefined, { shallow: true });
+//       },
+//     };
+//   }, [query, pathname, replace]);
+// };
 
 export const useQueryArticles = (
   filters?: Partial<GetInfiniteArticlesSchema>,
