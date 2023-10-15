@@ -315,8 +315,9 @@ export default function UserWallet() {
               </Center>
             ) : (
               rewards.map((reward) => {
+                const hasAwarded = reward.awarded !== -1;
                 const awardedAmountPercent =
-                  reward.cap && reward.awarded !== -1 ? reward.awarded / reward.cap : 0;
+                  reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
 
                 return (
                   <Stack key={reward.type} spacing={4}>
@@ -336,22 +337,26 @@ export default function UserWallet() {
                           </Tooltip>
                         )}
                       </Group>
-                      {reward.cap && reward.awarded != -1 && (
+                      {reward.cap && (
                         <Group spacing={4}>
                           <Text color="dimmed" size="xs">
-                            {reward.awarded} / {reward.cap.toLocaleString()}{' '}
+                            {hasAwarded
+                              ? `${reward.awarded} / ${reward.cap.toLocaleString()}`
+                              : reward.cap.toLocaleString()}{' '}
                             {reward.interval ?? 'day'}
                           </Text>
-                          <RingProgress
-                            size={30}
-                            thickness={9}
-                            sections={[
-                              {
-                                value: awardedAmountPercent * 100,
-                                color: awardedAmountPercent === 1 ? 'green' : 'yellow.7',
-                              },
-                            ]}
-                          />
+                          {hasAwarded && (
+                            <RingProgress
+                              size={30}
+                              thickness={9}
+                              sections={[
+                                {
+                                  value: awardedAmountPercent * 100,
+                                  color: awardedAmountPercent === 1 ? 'green' : 'yellow.7',
+                                },
+                              ]}
+                            />
+                          )}
                         </Group>
                       )}
                     </Group>

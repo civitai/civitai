@@ -45,34 +45,41 @@ export function createBuzzEvent<T>({
       awarded: -1,
     };
 
-    // get the awardAmount from clickhouse based on the type for this month
-    const awarded = data.cap
-      ? (await clickhouse
-          ?.query({
-            query: `
-              SELECT COUNT(*) AS total
-              FROM buzzEvents
-              WHERE type like '${type}%'
-              AND status = 'awarded'
-              ${
-                data.interval === 'month'
-                  ? 'AND time > toStartOfMonth(today())'
-                  : data.interval === 'week'
-                  ? 'AND time > toStartOfWeek(today())'
-                  : 'AND time > today()'
-              }
-              AND toUserId = ${userId}
-            `,
-            format: 'JSONEachRow',
-          })
-          .then((x) => x.json<{ total: number }[]>())) ?? []
-      : [];
+    if (!isOnDemand) {
+      return data;
+    }
 
-    // const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
-    // const typeCache = JSON.parse(typeCacheJson);
-    // const eventCount = Object.keys(typeCache).length;
+    /**
+     * NOTE: Based on discussion with Justin, this might be too expensive to do on demand.
+     *       We'll need to revisit this in the future.
+      const awarded = data.cap
+        ? (await clickhouse
+            ?.query({
+              query: `
+                SELECT COUNT(*) AS total
+                FROM buzzEvents
+                WHERE type like '${type}%'
+                AND status = 'awarded'
+                ${
+                  data.interval === 'month'
+                    ? 'AND time > toStartOfMonth(today())'
+                    : data.interval === 'week'
+                    ? 'AND time > toStartOfWeek(today())'
+                    : 'AND time > today()'
+                }
+                AND toUserId = ${userId}
+              `,
+              format: 'JSONEachRow',
+            })
+            .then((x) => x.json<{ total: number }[]>())) ?? []
+        : [];
+     */
 
-    data.awarded = Math.min((awarded[0]?.total ?? 0) * awardAmount, data.cap ?? Infinity);
+    const typeCacheJson = (await redis.hGet('buzz-events', `${userId}:${type}`)) ?? '{}';
+    const typeCache = JSON.parse(typeCacheJson);
+    const eventCount = Object.keys(typeCache).length;
+
+    data.awarded = Math.min(eventCount * awardAmount, data.cap ?? Infinity);
     // eventCount > 0
     //   ? Math.min(eventCount * awardAmount, data.cap ?? Infinity)
     // : Math.min((awarded[0]?.total ?? 0) * awardAmount, data.cap ?? Infinity);
@@ -188,11 +195,9 @@ export function createBuzzEvent<T>({
               ${
                 !interval
                   ? ''
-                  : interval === 'month'
-                  ? 'AND time > toStartOfMonth(today())'
-                  : interval === 'week'
-                  ? 'AND time > toStartOfWeek(today())'
-                  : 'AND time > today()'
+                  : interval === 'day'
+                  ? 'AND time > TODAY()'
+                  : `AND time > NOW() - INTERVAL '1 ${interval}'`
               }
               AND (${keyParts.join(', ')}) IN (${idTuples})
             GROUP BY ${keyParts.join(', ')}

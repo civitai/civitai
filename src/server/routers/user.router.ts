@@ -52,7 +52,6 @@ import {
   removeAllContent,
 } from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { cacheIt } from '../middleware.trpc';
 import { Context } from '../createContext';
 
 export const userRouter = router({
@@ -120,8 +119,5 @@ export const userRouter = router({
   userByReferralCode: publicProcedure
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),
-  userRewardDetails: protectedProcedure
-    .use(cacheIt())
-    // Need to explicit cast ctx here
-    .query(({ ctx }) => userRewardDetailsHandler({ ctx: ctx as DeepNonNullable<Context> })),
+  userRewardDetails: protectedProcedure.query(userRewardDetailsHandler),
 });
