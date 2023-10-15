@@ -39,6 +39,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency, OnboardingStep } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
+import { getUserBuzzBonusAmount } from '~/server/common/user-helpers';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -55,7 +56,9 @@ const referralSchema = z.object({
     .string()
     .trim()
     .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
-      message: `Referral codes must be at least ${constants.referrals.referralCodeMinLength} characters long`,
+      message: `Referral codes must be at least ${
+        constants.referrals.referralCodeMinLength + 1
+      } characters long`,
     })
     .optional(),
   source: z.string().optional(),
@@ -69,6 +72,7 @@ export default function OnboardingModal() {
   const features = useFeatureFlags();
 
   const [userReferral, setUserReferral] = useState(!user?.referral ? { code, source } : {});
+  const [referralError, setReferralError] = useState('');
 
   const form = useForm({
     schema,
@@ -159,8 +163,12 @@ export default function OnboardingModal() {
     );
   };
   const handleCompleteBuzzStep = () => {
+    setReferralError('');
+
     const result = referralSchema.safeParse(userReferral);
-    if (!result.success) return;
+    if (!result.success)
+      return setReferralError(result.error.format().code?._errors[0] ?? 'Invalid value');
+    if (referrerLoading) return;
 
     handleCompleteStep(OnboardingStep.Buzz);
   };
@@ -176,13 +184,7 @@ export default function OnboardingModal() {
           </Stack>
         </Group>
       </Center>
-      <Stepper
-        active={activeStep}
-        color="green"
-        // breakpoint="md"
-        allowNextStepsSelect={false}
-        classNames={classes}
-      >
+      <Stepper active={activeStep} color="green" allowNextStepsSelect={false} classNames={classes}>
         <Stepper.Step label="Terms" description="Review our terms">
           <Stack>
             <StepperTitle
@@ -344,7 +346,10 @@ export default function OnboardingModal() {
                   <Text>
                     To get you started, we will grant you{' '}
                     <Text span>
-                      <CurrencyBadge currency={Currency.BUZZ} unitAmount={100} />
+                      <CurrencyBadge
+                        currency={Currency.BUZZ}
+                        unitAmount={getUserBuzzBonusAmount(user)}
+                      />
                     </Text>{' '}
                     and if you have a referral code, you can use it here to claim{' '}
                     <Text span>
@@ -358,19 +363,19 @@ export default function OnboardingModal() {
                 <TextInput
                   size="lg"
                   label="Referral Code"
-                  type="text"
-                  value={userReferral.code}
+                  error={referralError}
+                  value={userReferral.code ?? ''}
                   onChange={(e) =>
                     setUserReferral((current) => ({ ...current, code: e.target.value }))
                   }
                   rightSection={
                     userReferral.code &&
-                    userReferral.code.length >= constants.referrals.referralCodeMinLength &&
+                    userReferral.code.length > constants.referrals.referralCodeMinLength &&
                     referrerLoading ? (
                       <Loader size="sm" mr="xs" />
                     ) : (
                       userReferral.code &&
-                      userReferral.code.length >= constants.referrals.referralCodeMinLength && (
+                      userReferral.code.length > constants.referrals.referralCodeMinLength && (
                         <ThemeIcon
                           variant="outline"
                           color={referrer ? 'green' : 'red'}
@@ -384,7 +389,12 @@ export default function OnboardingModal() {
                   }
                 />
               )}
-              <Button size="lg" onClick={handleCompleteBuzzStep} loading={completeStepLoading}>
+              <Button
+                size="lg"
+                onClick={handleCompleteBuzzStep}
+                loading={completeStepLoading}
+                // disabled={!referrer}
+              >
                 Done
               </Button>
             </Stack>

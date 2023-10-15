@@ -72,6 +72,7 @@ import {
 } from '~/server/rewards';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { TransactionType } from '../schema/buzz.schema';
+import { getUserBuzzBonusAmount } from '../common/user-helpers';
 
 export const getAllUsersHandler = async ({
   input,
@@ -221,7 +222,7 @@ export const completeOnboardingHandler = async ({
         fromAccountId: 0,
         toAccountId: updatedUser.id,
         // TODO.manuel: calculate the correct amount
-        amount: 500,
+        amount: getUserBuzzBonusAmount(ctx.user),
         type: TransactionType.Reward,
       });
     }
