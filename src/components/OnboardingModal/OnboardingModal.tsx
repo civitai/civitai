@@ -25,7 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { IconCheck, IconX, IconAlertCircle } from '@tabler/icons-react';
+import { IconCheck, IconX, IconAlertCircle, IconProgressBolt } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import { useDebouncedValue } from '@mantine/hooks';
 import { ModerationCard } from '~/components/Account/ModerationCard';
@@ -71,7 +71,7 @@ export default function OnboardingModal() {
   const user = useCurrentUser();
   const utils = trpc.useContext();
   const { code, source } = useReferralsContext();
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const features = useFeatureFlags();
 
   const [userReferral, setUserReferral] = useState(
@@ -355,7 +355,13 @@ export default function OnboardingModal() {
             <Stack spacing="xl">
               <Text>
                 On Civitai you&apos;ll encounter Buzz, which is an internal currency that can be
-                earned and spent in a variety of ways!
+                earned and spent in a variety of ways! You can learn more by going into your{' '}
+                <IconProgressBolt
+                  color={theme.colors.yellow[7]}
+                  size={20}
+                  style={{ verticalAlign: 'middle' }}
+                />{' '}
+                Buzz Dashboard from your user menu.
               </Text>
               <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
                 <SpendingBuzz asList />
