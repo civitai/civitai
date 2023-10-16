@@ -381,11 +381,9 @@ export const CurrencyConfig: Record<
 };
 
 export const BUZZ_FEATURE_LIST = [
-  'Pay for on-site model generation',
   'Support your favorite creators via tips and subscriptions',
   'Pay for on-site model training',
   'Create bounties for models, images and more!',
-  'Pay for exclusive and early access to models',
   'Purchase user cosmetics from our upcoming user cosmetic store!',
 ];
 
