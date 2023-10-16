@@ -221,8 +221,8 @@ export const completeOnboardingHandler = async ({
       await createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: updatedUser.id,
-        // TODO.manuel: calculate the correct amount
         amount: getUserBuzzBonusAmount(ctx.user),
+        description: 'Onboarding bonus',
         type: TransactionType.Reward,
       });
     }

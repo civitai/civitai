@@ -259,11 +259,18 @@ export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: Fea
 
 export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
   return (
-    <List listStyleType="none" icon={<CurrencyIcon currency="BUZZ" size={14} />}>
+    <List
+      listStyleType="none"
+      spacing={8}
+      icon={<CurrencyIcon currency="BUZZ" size={20} style={{ verticalAlign: 'middle' }} />}
+    >
       {data.map((item, index) => (
         <List.Item key={index}>
           <Stack spacing={0}>
-            <Text weight={590}>{item.title}</Text>
+            <Text weight={590}>
+              {item.title}
+              {item.btnProps.disabled ? ' (Coming Soon)' : ''}
+            </Text>
             <Text color="dimmed">{item.description}</Text>
           </Stack>
         </List.Item>

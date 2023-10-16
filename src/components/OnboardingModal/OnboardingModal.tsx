@@ -39,7 +39,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency, OnboardingStep } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
-import { getUserBuzzBonusAmount } from '~/server/common/user-helpers';
+import {
+  checkUserCreateAfterBuzzLaunch,
+  getUserBuzzBonusAmount,
+} from '~/server/common/user-helpers';
 
 const schema = z.object({
   username: usernameInputSchema,
@@ -157,7 +160,13 @@ export default function OnboardingModal() {
       { step },
       {
         onSuccess: (result) => {
-          if (result.onboardingSteps.length > 0) goNext();
+          if (result.onboardingSteps.length > 0) {
+            goNext();
+            return;
+          }
+
+          if (showReferral && user)
+            mutate({ ...user, userReferralCode: userReferral.code, source: userReferral.source });
         },
       }
     );
@@ -168,10 +177,12 @@ export default function OnboardingModal() {
     const result = referralSchema.safeParse(userReferral);
     if (!result.success)
       return setReferralError(result.error.format().code?._errors[0] ?? 'Invalid value');
-    if (referrerLoading) return;
+    // if (referrerLoading) return;
 
     handleCompleteStep(OnboardingStep.Buzz);
   };
+
+  const showReferral = !!user && !user.referral && checkUserCreateAfterBuzzLaunch(user);
 
   return (
     <Container size="lg" px={0}>
@@ -337,29 +348,42 @@ export default function OnboardingModal() {
         </Stepper.Step>
         <Stepper.Step label="Buzz" description="Power-up your experience">
           <Container size="md" px={0}>
-            <Stack>
-              <EarningBuzz />
-              <SpendingBuzz />
+            <Stack spacing="xl">
+              <Text>
+                On Civitai you&apos;ll encounter Buzz, which is an internal currency that can be
+                earned and spent in a variety of ways!
+              </Text>
+              <Group align="start" noWrap grow>
+                <SpendingBuzz asList />
+                <EarningBuzz asList />
+              </Group>
               <StepperTitle
                 title="Getting Started"
                 description={
                   <Text>
                     To get you started, we will grant you{' '}
                     <Text span>
-                      <CurrencyBadge
-                        currency={Currency.BUZZ}
-                        unitAmount={getUserBuzzBonusAmount(user)}
-                      />
+                      {user && (
+                        <CurrencyBadge
+                          currency={Currency.BUZZ}
+                          unitAmount={getUserBuzzBonusAmount(user)}
+                        />
+                      )}
                     </Text>{' '}
-                    and if you have a referral code, you can use it here to claim{' '}
-                    <Text span>
-                      <CurrencyBadge currency={Currency.BUZZ} unitAmount={500} />
-                    </Text>{' '}
-                    as a bonus for you and the person who referred you.
+                    as a gift.
+                    {showReferral && (
+                      <>
+                        {' If you have a referral code, you can use it here to claim '}
+                        <Text span>
+                          <CurrencyBadge currency={Currency.BUZZ} unitAmount={500} />
+                        </Text>
+                        {' as a bonus for you and the person who referred you.'}
+                      </>
+                    )}
                   </Text>
                 }
               />
-              {!user?.referral && (
+              {showReferral && (
                 <TextInput
                   size="lg"
                   label="Referral Code"

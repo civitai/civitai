@@ -52,7 +52,6 @@ import {
   removeAllContent,
 } from '~/server/services/user.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { Context } from '../createContext';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
