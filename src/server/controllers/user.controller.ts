@@ -14,6 +14,7 @@ import {
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   BatchBlockTagsSchema,
+  CompleteOnboardingStepInput,
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -34,7 +35,6 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import {
   acceptTOS,
-  completeOnboarding,
   createUserReferral,
   deleteUser,
   getCreators,
@@ -42,11 +42,11 @@ import {
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
-  getUserEngagedModels,
   getUserEngagedModelVersions,
-  getUsers,
+  getUserEngagedModels,
   getUserTags,
   getUserUnreadNotificationsCount,
+  getUsers,
   isUsernamePermitted,
   toggleBan,
   toggleBlockedTag,
@@ -57,6 +57,7 @@ import {
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
   updateLeaderboardRank,
+  updateOnboardingSteps,
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
@@ -70,6 +71,9 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { isUUID } from '~/utils/string-helpers';
+import { getUserBuzzBonusAmount } from '../common/user-helpers';
+import { TransactionType } from '../schema/buzz.schema';
+import { createBuzzTransaction } from '../services/buzz.service';
 
 export const getAllUsersHandler = async ({
   input,

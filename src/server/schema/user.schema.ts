@@ -138,5 +138,4 @@ export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSchema>;
 export const completeOnboardStepSchema = z.object({
   step: z.nativeEnum(OnboardingStep),
-  referralCode: z.string().trim().min(constants.referrals.referralCodeMinLength).optional(),
 });

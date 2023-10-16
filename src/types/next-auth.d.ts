@@ -18,7 +18,6 @@ interface ExtendedUser {
   muted?: boolean;
   bannedAt?: Date;
   autoplayGifs?: boolean;
-  onboarded?: boolean;
   onboardingSteps?: OnboardingStep[];
   permissions?: string[];
   filePreferences?: UserFilePreferences;
