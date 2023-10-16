@@ -235,7 +235,7 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd || !callbackUrl) {
+  if (!isProd && !callbackUrl) {
     console.log('skip ingest');
     await dbClient.image.update({
       where: { id },
@@ -295,7 +295,7 @@ export const ingestImageBulk = async ({
   const imageIds = images.map(({ id }) => id);
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd || !callbackUrl) {
+  if (!isProd && !callbackUrl) {
     console.log('skip ingest');
     await dbClient.image.updateMany({
       where: { id: { in: imageIds } },
