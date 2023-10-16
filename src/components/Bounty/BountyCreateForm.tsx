@@ -459,6 +459,7 @@ export function BountyCreateForm() {
                     label="Bounty Amount"
                     placeholder="How much are you willing to reward for this bounty"
                     min={constants.bounties.minCreateAmount}
+                    max={constants.bounties.maxCreateAmount}
                     step={100}
                     icon={<CurrencyIcon currency="BUZZ" size={16} />}
                     format={currency !== Currency.BUZZ ? 'currency' : undefined}

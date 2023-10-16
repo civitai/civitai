@@ -26,6 +26,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
+import { constants } from '~/server/common/constants';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -110,7 +111,7 @@ const schema = z
   .object({
     // Using string here since chip component only works with string values
     amount: z.string(),
-    customAmount: z.number().positive().min(100).optional(),
+    customAmount: z.number().positive().min(100).max(constants.buzz.maxTipAmount).optional(),
     description: z.string().trim().max(100, 'Cannot be longer than 100 characters').optional(),
   })
   .refine((data) => data.amount !== '-1' || data.customAmount, {
@@ -265,6 +266,7 @@ const { openModal, Modal } = createContextModal<{
                 variant="filled"
                 rightSectionWidth="10%"
                 min={1}
+                max={constants.buzz.maxTipAmount}
                 disabled={sending}
                 icon={<CurrencyIcon currency="BUZZ" size={16} />}
                 parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
