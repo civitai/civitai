@@ -12,6 +12,9 @@ import { env } from '~/env/server.mjs';
 import Stripe from 'stripe';
 // import { buffer } from 'micro';
 import { Readable } from 'node:stream';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
+import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -40,6 +43,7 @@ const relevantEvents = new Set([
   'product.deleted',
   'product.updated',
   'invoice.paid',
+  'payment_intent.succeeded',
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -93,6 +97,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               // do nothing
             } else if (checkoutSession.mode === 'payment') {
               await manageCheckoutPayment(checkoutSession.id, checkoutSession.customer as string);
+            }
+            break;
+          case 'payment_intent.succeeded':
+            const paymentIntent = event.data.object as Stripe.PaymentIntent;
+            const metadata = paymentIntent.metadata as PaymentIntentMetadataSchema;
+
+            // Wait the processing time on the FE to avoid racing conditions and granting double buzz.
+            await new Promise((res) => setTimeout(res, STRIPE_PROCESSING_AWAIT_TIME));
+
+            if (metadata.type === 'buzzPurchase') {
+              await completeStripeBuzzTransaction({
+                amount: metadata.buzzAmount,
+                stripePaymentIntentId: paymentIntent.id,
+                details: metadata,
+                userId: metadata.userId,
+              });
             }
             break;
           default:

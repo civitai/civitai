@@ -19,6 +19,7 @@ import {
   toggleBountyEngagementHandler,
   reportProhibitedRequestHandler,
   userByReferralCodeHandler,
+  userRewardDetailsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -43,6 +44,7 @@ import {
   toggleUserBountyEngagementSchema,
   reportProhibitedRequestSchema,
   userByReferralCodeSchema,
+  completeOnboardStepSchema,
 } from '~/server/schema/user.schema';
 import {
   getUserArticleEngagements,
@@ -80,7 +82,9 @@ export const userRouter = router({
   //   .input(toggleModelEngagementInput)
   //   .mutation(toggleHideModelHandler),
   acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
-  completeOnboarding: protectedProcedure.mutation(completeOnboardingHandler),
+  completeOnboarding: protectedProcedure
+    .input(completeOnboardStepSchema)
+    .mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
   // toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
   // toggleBlockedTag: protectedProcedure
@@ -114,4 +118,5 @@ export const userRouter = router({
   userByReferralCode: publicProcedure
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),
+  userRewardDetails: protectedProcedure.query(userRewardDetailsHandler),
 });

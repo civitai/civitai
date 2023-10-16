@@ -12,6 +12,8 @@ export function CurrencyIcon({ currency = Currency.BUZZ, ...iconProps }: Props) 
   const theme = useMantineTheme();
   const Icon = CurrencyConfig[currency].icon;
 
+  // TODO: Add tooltip: this action will cost <CURRENCY>
+
   return (
     <Icon
       color={CurrencyConfig[currency].color(theme)}

@@ -4,25 +4,24 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { openSendTipModal } from '../Modals/SendTipModal';
+import { useTrackEvent } from '../TrackView/track.utils';
 
-type Props = ButtonProps & { toUserId: number };
+type Props = ButtonProps & { toUserId: number; entityId?: number; entityType?: string };
 
-export function TipBuzzButton({ toUserId, ...buttonProps }: Props) {
+export function TipBuzzButton({ toUserId, entityId, entityType, ...buttonProps }: Props) {
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
   const theme = useMantineTheme();
 
-  const handleClick = () => {
-    if (!currentUser?.balance)
-      return openBuyBuzzModal({
-        message:
-          'You have insufficient funds to tip. You can buy more Buzz below to send a tip to your favorite creators.',
-      });
+  const { trackAction } = useTrackEvent();
 
-    openSendTipModal({ toUserId }, { fullScreen: isMobile });
+  const handleClick = () => {
+    openSendTipModal({ toUserId, entityId, entityType }, { fullScreen: isMobile });
+    trackAction({ type: 'Tip_Click', details: { toUserId, entityId, entityType } }).catch(
+      () => undefined
+    );
   };
 
   if (!features.buzz) return null;

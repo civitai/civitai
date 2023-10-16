@@ -1,14 +1,20 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  CompleteStripeBuzzPurchaseTransactionInput,
+  CreateBuzzTransactionInput,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
-  GetUserBuzzTransactionsSchema,
-  GetUserBuzzTransactionsResponse,
-  CreateBuzzTransactionInput,
   getUserBuzzTransactionsResponse,
+  GetUserBuzzTransactionsResponse,
+  GetUserBuzzTransactionsSchema,
+  TransactionType,
 } from '~/server/schema/buzz.schema';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { createNotification } from '~/server/services/notification.service';
+import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
 
@@ -90,11 +96,144 @@ export async function getUserBuzzTransactions({
   };
 }
 
-export async function createBuzzTransaction(
-  payload: CreateBuzzTransactionInput & { fromAccountId: number }
-) {
-  const body = JSON.stringify(payload);
+export async function createBuzzTransaction({
+  entityId,
+  entityType,
+  toAccountId,
+  amount,
+  details,
+  ...payload
+}: CreateBuzzTransactionInput & { fromAccountId: number }) {
+  if (entityType && entityId && toAccountId === undefined) {
+    const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
+      [{ userId?: number }]
+    >(`
+        SELECT i."userId"
+        FROM "${entityType}" i 
+        WHERE i.id = ${entityId}
+      `);
+
+    if (!userId) {
+      throw throwBadRequestError('Entity not found');
+    }
+
+    toAccountId = userId;
+  }
+
+  if (toAccountId === undefined) {
+    throw throwBadRequestError('No target account provided');
+  }
+
+  if (toAccountId === payload.fromAccountId) {
+    throw throwBadRequestError('You cannot send buzz to the same account');
+  }
+
+  const account = await getUserBuzzAccount({ accountId: payload.fromAccountId });
+
+  // 0 is the bank so technically, it always has funding.
+  if (payload.fromAccountId !== 0 && (account.balance ?? 0) < amount) {
+    throw throwInsufficientFundsError();
+  }
+
+  const body = JSON.stringify({
+    ...payload,
+    details,
+    amount,
+    toAccountId,
+  });
+
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transaction`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+
+  if (!response.ok) {
+    const cause: { reason: string } = JSON.parse(await response.text());
+
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError(cause.reason, cause);
+      case 409:
+        throw throwBadRequestError('There is a conflict with the transaction', cause);
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+          cause,
+        });
+    }
+  }
+
+  if (payload.type === TransactionType.Tip && toAccountId !== 0) {
+    const fromUser = await dbRead.user.findUnique({
+      where: { id: payload.fromAccountId },
+      select: { username: true },
+    });
+
+    await createNotification({
+      type: 'tip-received',
+      userId: toAccountId,
+      details: {
+        amount: amount,
+        user: fromUser?.username,
+        message: payload.description,
+      },
+    });
+  }
+
+  if (entityId && entityType) {
+    // Store this action in the DB:
+    const existingRecord = await dbRead.buzzTip.findUnique({
+      where: {
+        entityType_entityId_fromUserId: {
+          entityId,
+          entityType,
+          fromUserId: payload.fromAccountId,
+        },
+      },
+      select: {
+        amount: true,
+      },
+    });
+
+    if (existingRecord) {
+      // Update it:
+      await dbWrite.buzzTip.update({
+        where: {
+          entityType_entityId_fromUserId: {
+            entityId,
+            entityType,
+            fromUserId: payload.fromAccountId,
+          },
+        },
+        data: {
+          amount: existingRecord.amount + amount,
+        },
+      });
+    } else {
+      await dbWrite.buzzTip.create({
+        data: {
+          amount,
+          entityId,
+          entityType,
+          toUserId: toAccountId,
+          fromUserId: payload.fromAccountId,
+        },
+      });
+    }
+  }
+
+  const data: { transactionId: string } = await response.json();
+
+  return data;
+}
+
+export async function createBuzzTransactionMany(
+  transactions: (CreateBuzzTransactionInput & { fromAccountId: number })[]
+) {
+  const body = JSON.stringify(transactions);
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
@@ -114,6 +253,89 @@ export async function createBuzzTransaction(
     }
   }
 
-  const data: { transactionId: string } = await response.json();
+  const data: { transactions: { transactionId: string }[] } = await response.json();
   return data;
+}
+
+export async function completeStripeBuzzTransaction({
+  amount,
+  stripePaymentIntentId,
+  details,
+  userId,
+  // This is a safeguard in case for some reason something fails when getting
+  // payment intent or buzz from another endpoint.
+  retry = 0,
+}: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
+  transactionId: string;
+}> {
+  const MAX_RETRIES = 3;
+
+  try {
+    const stripe = await getServerStripe();
+    const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
+
+    if (!paymentIntent || paymentIntent.status !== 'succeeded') {
+      throw throwBadRequestError('Payment intent not found');
+    }
+
+    const metadata: PaymentIntentMetadataSchema =
+      paymentIntent.metadata as PaymentIntentMetadataSchema;
+    if (metadata.transactionId) {
+      // Avoid double down on buzz
+      return { transactionId: metadata.transactionId };
+    }
+
+    const body = JSON.stringify({
+      amount,
+      fromAccountId: 0,
+      toAccountId: userId,
+      type: TransactionType.Purchase,
+      description: `Purchase of ${amount} buzz`,
+      details: { ...(details ?? {}), stripePaymentIntentId },
+      externalTransactionId: paymentIntent.id,
+    });
+
+    const response = await fetch(`${env.BUZZ_ENDPOINT}/transaction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+
+    if (!response.ok) {
+      const cause: { reason: string } = JSON.parse(await response.text());
+
+      switch (response.status) {
+        case 400:
+          throw throwBadRequestError(cause.reason, cause);
+        default:
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'An unexpected error ocurred, please try again later',
+            cause,
+          });
+      }
+    }
+
+    const data: { transactionId: string } = await response.json();
+
+    // Update the payment intent with the transaction id
+    // A payment intent without a transaction ID can be tied to a DB failure delivering buzz.
+    await stripe.paymentIntents.update(stripePaymentIntentId, {
+      metadata: { transactionId: data.transactionId },
+    });
+
+    return data;
+  } catch (error) {
+    if (retry < MAX_RETRIES) {
+      return completeStripeBuzzTransaction({
+        amount,
+        stripePaymentIntentId,
+        details,
+        userId,
+        retry: retry + 1,
+      });
+    }
+
+    throw error;
+  }
 }

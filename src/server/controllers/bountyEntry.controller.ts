@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '../createContext';
 import { GetByIdInput } from '../schema/base.schema';
 import {
-  handleTrackError,
+  handleLogError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
@@ -49,6 +49,7 @@ export const getBountyEntryHandler = async ({
             laughCountAllTime: true,
             cryCountAllTime: true,
             unitAmountCountAllTime: true,
+            tippedAmountCountAllTime: true,
           },
         },
       },
@@ -117,17 +118,8 @@ export const upsertBountyEntryHandler = async ({
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
     ctx.track
-      .bountyEntry({
-        type: input.id ? 'Create' : 'Update',
-        data: {
-          ...entry,
-          files: input.files.map((file) => ({
-            ...file.metadata,
-            fileType: file.name.split('.').pop(),
-          })),
-        },
-      })
-      .catch(handleTrackError);
+      .bountyEntry({ type: input.id ? 'Create' : 'Update', bountyEntryId: entry.id })
+      .catch(handleLogError);
 
     return entry;
   } catch (error) {
@@ -149,7 +141,14 @@ export const awardBountyEntryHandler = async ({
       userId: ctx.user.id,
     });
 
-    ctx.track.bountyEntry({ type: 'Award', data: benefactor }).catch(handleTrackError);
+    if (benefactor.awardedToId)
+      ctx.track
+        .bountyEntry({
+          type: 'Award',
+          bountyEntryId: benefactor.awardedToId,
+          benefactorId: benefactor.userId,
+        })
+        .catch(handleLogError);
 
     return benefactor;
   } catch (error) {
@@ -192,7 +191,7 @@ export const deleteBountyEntryHandler = async ({
     });
     if (!deleted) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
 
-    ctx.track.bountyEntry({ type: 'Delete', data: deleted }).catch(handleTrackError);
+    ctx.track.bountyEntry({ type: 'Delete', bountyEntryId: deleted.id }).catch(handleLogError);
 
     return deleted;
   } catch (error) {

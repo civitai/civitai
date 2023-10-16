@@ -284,7 +284,7 @@ export default function BountyDetailsPage({
           <Group spacing={8}>
             <Text color="dimmed" size="xs">
               {isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started'}:{' '}
-              {formatDate(bounty.startsAt)}
+              {formatDate(bounty.startsAt, undefined, true)}
             </Text>
             {bounty.tags.length > 0 && (
               <>
@@ -364,7 +364,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
   const expired = bounty.expiresAt < new Date();
 
-  const { trackEvent } = useTrackEvent();
+  const { trackAction } = useTrackEvent();
 
   const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useQuery({
     id: bounty.id,
@@ -498,11 +498,11 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     },
     {
       label: isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started',
-      value: <Text>{formatDate(bounty.startsAt)}</Text>,
+      value: <Text>{formatDate(bounty.startsAt, undefined, true)}</Text>,
     },
     {
       label: 'Deadline',
-      value: <Text>{formatDate(bounty.expiresAt)}</Text>,
+      value: <Text>{formatDate(bounty.expiresAt, undefined, true)}</Text>,
     },
   ];
 
@@ -578,7 +578,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                 e.stopPropagation();
 
                 // Ignore track error
-                trackEvent({ type: 'AddToBounty_Click' }).catch(() => undefined);
+                trackAction({ type: 'AddToBounty_Click' }).catch(() => undefined);
 
                 openConfirmModal({
                   title: isBenefactor ? 'Add to bounty' : 'Become a supporter',
@@ -609,7 +609,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                   labels: { confirm: 'Confirm', cancel: 'No, go back' },
                   onConfirm: () => {
                     onAddToBounty(minUnitAmount);
-                    trackEvent({ type: 'AddToBounty_Confirm' }).catch(() => undefined);
+                    trackAction({ type: 'AddToBounty_Confirm' }).catch(() => undefined);
                   },
                 });
               }}

@@ -5,6 +5,7 @@ import { parseFilterCookies } from '~/providers/FiltersProvider';
 import { BrowsingMode } from '~/server/common/enums';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { Tracker } from './clickhouse/client';
+import requestIp from 'request-ip';
 
 export const parseBrowsingMode = (
   cookies: Partial<{ [key: string]: string }>,
@@ -33,6 +34,7 @@ export const createContext = async ({
   res: NextApiResponse;
 }) => {
   const session = await getServerAuthSession({ req, res });
+  const ip = requestIp.getClientIp(req) ?? '';
   const acceptableOrigin = origins.some((o) => req.headers.referer?.startsWith(o)) ?? false;
   const browsingMode = parseBrowsingMode(req.cookies, session);
   const track = new Tracker(req, res);
@@ -48,6 +50,7 @@ export const createContext = async ({
     browsingMode,
     acceptableOrigin,
     track,
+    ip,
     cache,
     res,
   };
@@ -58,6 +61,7 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
   acceptableOrigin: true,
   browsingMode: BrowsingMode.All,
   track: new Tracker(req, res),
+  ip: requestIp.getClientIp(req) ?? '',
   cache: {
     browserCacheTTL: 3 * 60,
     edgeCacheTTL: 3 * 60,

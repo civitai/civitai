@@ -8,9 +8,11 @@ export const createSignalWorker = async ({
   onConnected,
   onClosed,
   onError,
+  onReconnected,
 }: {
   token: string;
   onConnected?: () => void;
+  onReconnected?: () => void;
   onClosed?: (message?: string) => void;
   onError?: (message?: string) => void;
 }) => {
@@ -28,6 +30,7 @@ export const createSignalWorker = async ({
     else if (data.type === 'connection:ready') onConnected?.();
     else if (data.type === 'connection:closed') onClosed?.(data.message);
     else if (data.type === 'connection:error') onError?.(data.message);
+    else if (data.type === 'connection:reconnected') onReconnected?.();
     else if (data.type === 'event:received') emitter.emit(data.target, data.payload);
   };
 

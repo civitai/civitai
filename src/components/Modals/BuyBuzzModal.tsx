@@ -1,152 +1,73 @@
-import {
-  Button,
-  Card,
-  Center,
-  Group,
-  SimpleGrid,
-  Skeleton,
-  Stack,
-  Text,
-  ThemeIcon,
-  createStyles,
-} from '@mantine/core';
-import { Price } from '@prisma/client';
-import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import { Badge, CloseButton, Group, Stack, Text, Divider } from '@mantine/core';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getClientStripe } from '~/utils/get-client-stripe';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { UserBuzz } from '../User/UserBuzz';
+import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
+import { useTrackEvent } from '../TrackView/track.utils';
 
-const useStyles = createStyles((theme) => ({
-  buzzPreset: {
-    ...theme.fn.focusStyles(),
-    cursor: 'pointer',
-
-    '&:hover': {
-      borderColor: theme.colors.blue[6],
-    },
-  },
-
-  selected: {
-    borderColor: theme.colors.blue[6],
-  },
-
-  priceBanner: {
-    backgroundColor: theme.colors.blue[6],
-  },
-}));
-
-type SelectablePackage = Pick<Price, 'id' | 'unitAmount' | 'description'>;
-
-const { openModal, Modal } = createContextModal<{ message?: string }>({
+const { openModal, Modal } = createContextModal<{
+  message?: string;
+  purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
+  onPurchaseSuccess?: () => void;
+  minBuzzAmount?: number;
+}>({
   name: 'buyBuzz',
-  title: 'Buy Buzz',
+  withCloseButton: false,
+  centered: true,
   size: 'lg',
-  Element: ({ context, props: { message } }) => {
-    const currentUser = useCurrentUser();
-    const { classes, cx } = useStyles();
-    const router = useRouter();
-
-    const [selectedPackage, setSelectedPackage] = useState<SelectablePackage | null>(null);
-    const [customMessage, setCustomMessage] = useState<string>(message ?? '');
-
-    const { data = [], isLoading } = trpc.stripe.getBuzzPackages.useQuery();
-    const createBuzzSessionMutation = trpc.stripe.createBuzzSession.useMutation();
-
-    const handleClose = () => context.close();
-    const handleSubmit = () => {
-      if (selectedPackage) {
-        createBuzzSessionMutation.mutate(
-          { priceId: selectedPackage.id, returnUrl: location.href },
-          {
-            onSuccess: async ({ url, sessionId }) => {
-              if (url) await router.push(url);
-              else {
-                const stripe = await getClientStripe();
-                await stripe.redirectToCheckout({ sessionId });
-              }
-            },
-            onError: (error) => {
-              showErrorNotification({
-                title: 'Could not process purchase',
-                error: new Error(error.message),
-              });
-            },
-          }
-        );
-      }
+  radius: 'lg',
+  zIndex: 400,
+  Element: ({
+    context,
+    props: { message, onPurchaseSuccess, minBuzzAmount, purchaseSuccessMessage },
+  }) => {
+    const { trackAction } = useTrackEvent();
+    const handleClose = () => {
+      trackAction({ type: 'PurchaseFunds_Cancel', details: { step: 1 } }).catch(() => undefined);
+      context.close();
     };
+    const currentUser = useCurrentUser();
 
     return (
-      <Stack spacing="xl">
-        {customMessage && (
-          <AlertWithIcon icon={<IconInfoCircle />} iconSize="md">
-            {customMessage}
-          </AlertWithIcon>
-        )}
-        <SimpleGrid
-          breakpoints={[
-            { minWidth: 'xs', cols: 1 },
-            { minWidth: 'md', cols: 3 },
-          ]}
-          spacing="sm"
-        >
-          {isLoading
-            ? Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} width="100%" height={250} />
-              ))
-            : data.map((buzzPackage) => {
-                if (!buzzPackage.unitAmount) return null;
-
-                const price = (buzzPackage.unitAmount ?? 0) / 100;
-
-                return (
-                  <Card
-                    component="button"
-                    key={buzzPackage.id}
-                    className={cx(classes.buzzPreset, {
-                      [classes.selected]: selectedPackage?.id === buzzPackage.id,
-                    })}
-                    onClick={() => setSelectedPackage(buzzPackage)}
-                    withBorder
-                  >
-                    <Stack align="center" mb="xs">
-                      <ThemeIcon size="xl" radius="xl">
-                        <IconBolt />
-                      </ThemeIcon>
-                      <Stack spacing={0}>
-                        <Text size="lg" align="center">
-                          {buzzPackage.buzzAmount ? buzzPackage.buzzAmount.toLocaleString() : 0}
-                        </Text>
-                        <Text size="lg" align="center">
-                          {buzzPackage.description ?? 'Buzz'}
-                        </Text>
-                      </Stack>
-                    </Stack>
-                    <Card.Section className={classes.priceBanner} py="xs" withBorder inheritPadding>
-                      <Center>
-                        <Text color="white" weight="bold" align="center">
-                          {`$${price.toFixed(2)}`}
-                        </Text>
-                      </Center>
-                    </Card.Section>
-                  </Card>
-                );
+      <Stack spacing="md">
+        <Group position="apart" noWrap>
+          <Text size="lg" weight={700}>
+            Buy Buzz
+          </Text>
+          <Group spacing="sm" noWrap>
+            <Badge
+              radius="xl"
+              variant="filled"
+              h="auto"
+              py={4}
+              px={12}
+              sx={(theme) => ({
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
               })}
-        </SimpleGrid>
-        <Group position="right">
-          <Button variant="default" onClick={handleClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} loading={createBuzzSessionMutation.isLoading}>
-            Buy
-          </Button>
+            >
+              <Group spacing={4} noWrap>
+                <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
+                  Available Buzz
+                </Text>
+                <UserBuzz user={currentUser} iconSize={16} textSize="sm" withTooltip />
+              </Group>
+            </Badge>
+            <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
+          </Group>
         </Group>
+        <Divider mx="-lg" />
+        <BuzzPurchase
+          message={message}
+          onPurchaseSuccess={() => {
+            onPurchaseSuccess?.();
+            context.close();
+          }}
+          minBuzzAmount={minBuzzAmount}
+          purchaseSuccessMessage={purchaseSuccessMessage}
+          onCancel={handleClose}
+        />
       </Stack>
     );
   },

@@ -10,9 +10,15 @@ import {
   getBountyFiles,
   getBountyImages,
   getImagesForBounties,
+  refundBounty,
   updateBountyById,
 } from '../services/bounty.service';
-import { throwBadRequestError, throwDbError, throwNotFoundError } from '../utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import {
   AddBenefactorUnitAmountInputSchema,
@@ -32,7 +38,7 @@ import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
-import { handleTrackError } from '~/server/utils/errorHandling';
+import { handleLogError } from '~/server/utils/errorHandling';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -172,6 +178,7 @@ export const getBountyEntriesHandler = async ({
             laughCountAllTime: true,
             cryCountAllTime: true,
             unitAmountCountAllTime: true,
+            tippedAmountCountAllTime: true,
           },
         },
       },
@@ -266,12 +273,7 @@ export const createBountyHandler = async ({
     const bounty = await createBounty({ ...input, userId });
 
     // Let it run in the background
-    ctx.track
-      .bounty({
-        type: 'Create',
-        data: { ...bounty, attachments: !!input.files?.length, tags: !!input.tags?.length },
-      })
-      .catch(handleTrackError);
+    ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
 
     return bounty;
   } catch (error) {
@@ -292,12 +294,7 @@ export const updateBountyHandler = async ({
     if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background
-    ctx.track
-      .bounty({
-        type: 'Update',
-        data: { ...updated, attachments: !!input.files?.length, tags: !!input.tags?.length },
-      })
-      .catch(handleTrackError);
+    ctx.track.bounty({ type: 'Update', bountyId: updated.id }).catch(handleLogError);
 
     return updated;
   } catch (error) {
@@ -318,7 +315,7 @@ export const deleteBountyHandler = async ({
     if (!deleted) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     // Let it run in the background
-    ctx.track.bounty({ type: 'Delete', data: deleted }).catch(handleTrackError);
+    ctx.track.bounty({ type: 'Delete', bountyId: deleted.id }).catch(handleLogError);
 
     return deleted;
   } catch (error) {
@@ -342,11 +339,34 @@ export const addBenefactorUnitAmountHandler = async ({
       .bountyBenefactor({
         type: 'Create',
         bountyId: bountyBenefactor.bountyId,
-        unitAmount: bountyBenefactor.unitAmount,
+        userId: bountyBenefactor.userId,
       })
-      .catch(handleTrackError);
+      .catch(handleLogError);
 
     return bountyBenefactor;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const refundBountyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+
+    if (!isModerator) {
+      throw throwAuthorizationError();
+    }
+
+    const refundedBounty = await refundBounty({ ...input, isModerator });
+
+    return refundedBounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

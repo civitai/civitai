@@ -93,7 +93,9 @@ export function UnroutedImageCard({ data }: Props) {
                 heartCount: data.stats?.heartCountAllTime,
                 laughCount: data.stats?.laughCountAllTime,
                 cryCount: data.stats?.cryCountAllTime,
+                tippedAmountCount: data.stats?.tippedAmountCountAllTime,
               }}
+              targetUserId={data.user.id}
             />
             {!data.hideMeta && data.meta && (
               <ImageMetaPopover

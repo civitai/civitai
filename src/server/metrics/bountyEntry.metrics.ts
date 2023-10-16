@@ -21,6 +21,13 @@ export const bountyEntryMetrics = createMetricProcessor({
       WHERE ("createdAt" > ${lastUpdate})
 
       UNION
+      
+      SELECT bt."entityId" as id
+        FROM "BuzzTip" bt
+      WHERE bt."entityId" IS NOT NULL AND bt."entityType" = 'BountyEntry'
+        AND (bt."createdAt" > ${lastUpdate} OR bt."updatedAt" > ${lastUpdate})
+
+      UNION
 
       SELECT
         "id"
@@ -49,7 +56,7 @@ export const bountyEntryMetrics = createMetricProcessor({
       )
       -- upsert metrics for all affected
       -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "likeCount", "dislikeCount", "laughCount", "cryCount", "heartCount", "unitAmountCount")
+      INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "likeCount", "dislikeCount", "laughCount", "cryCount", "heartCount", "unitAmountCount", "tippedCount", "tippedAmountCount")
       SELECT
         m.id,
         tf.timeframe,
@@ -94,7 +101,21 @@ export const bountyEntryMetrics = createMetricProcessor({
           WHEN tf.timeframe = 'Month' THEN month_unit_amount_count
           WHEN tf.timeframe = 'Week' THEN week_unit_amount_count
           WHEN tf.timeframe = 'Day' THEN day_unit_amount_count
-        END AS unit_amount_count
+        END AS unit_amount_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN tipped_count
+          WHEN tf.timeframe = 'Year' THEN year_tipped_count
+          WHEN tf.timeframe = 'Month' THEN month_tipped_count
+          WHEN tf.timeframe = 'Week' THEN week_tipped_count
+          WHEN tf.timeframe = 'Day' THEN day_tipped_count
+        END AS tipped_count,
+        CASE
+          WHEN tf.timeframe = 'AllTime' THEN tipped_amount_count
+          WHEN tf.timeframe = 'Year' THEN year_tipped_amount_count
+          WHEN tf.timeframe = 'Month' THEN month_tipped_amount_count
+          WHEN tf.timeframe = 'Week' THEN week_tipped_amount_count
+          WHEN tf.timeframe = 'Day' THEN day_tipped_amount_count
+        END AS tipped_amount_count
       FROM
       (
         SELECT
@@ -128,7 +149,17 @@ export const bountyEntryMetrics = createMetricProcessor({
           COALESCE(bf.year_unit_amount_count, 0) AS year_unit_amount_count,
           COALESCE(bf.month_unit_amount_count, 0) AS month_unit_amount_count,
           COALESCE(bf.week_unit_amount_count, 0) AS week_unit_amount_count,
-          COALESCE(bf.day_unit_amount_count, 0) AS day_unit_amount_count
+          COALESCE(bf.day_unit_amount_count, 0) AS day_unit_amount_count,
+          COALESCE(bt.tipped_count, 0) AS tipped_count,
+          COALESCE(bt.year_tipped_count, 0) AS year_tipped_count,
+          COALESCE(bt.month_tipped_count, 0) AS month_tipped_count,
+          COALESCE(bt.week_tipped_count, 0) AS week_tipped_count,
+          COALESCE(bt.day_tipped_count, 0) AS day_tipped_count,
+          COALESCE(bt.tipped_amount_count, 0) AS tipped_amount_count,
+          COALESCE(bt.year_tipped_amount_count, 0) AS year_tipped_amount_count,
+          COALESCE(bt.month_tipped_amount_count, 0) AS month_tipped_amount_count,
+          COALESCE(bt.week_tipped_amount_count, 0) AS week_tipped_amount_count,
+          COALESCE(bt.day_tipped_amount_count, 0) AS day_tipped_amount_count
         FROM affected a
         LEFT JOIN (
           SELECT
@@ -172,17 +203,34 @@ export const bountyEntryMetrics = createMetricProcessor({
           FROM "BountyBenefactor" bf
           GROUP BY bf."awardedToId"
         ) bf ON bf."awardedToId" = a.id
+        LEFT JOIN (
+          SELECT
+            abt."entityId" AS id,
+            COALESCE(COUNT(*), 0) AS tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_tipped_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_tipped_count,
+            COALESCE(SUM(abt.amount), 0) AS tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '365 days'), abt.amount, 0)) AS year_tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '30 days'), abt.amount, 0)) AS month_tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '7 days'), abt.amount, 0)) AS week_tipped_amount_count,
+            SUM(IIF(abt."updatedAt" >= (NOW() - interval '1 days'), abt.amount, 0)) AS day_tipped_amount_count
+          FROM "BuzzTip" abt
+          WHERE abt."entityType" = 'BountyEntry' AND abt."entityId" IS NOT NULL
+          GROUP BY abt."entityId"
+        ) bt ON a.id = bt.id
       ) m
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
-        SET "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount",  "cryCount" = EXCLUDED."cryCount", "heartCount" = EXCLUDED."heartCount", "unitAmountCount" = EXCLUDED."unitAmountCount";
+        SET "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount",  "cryCount" = EXCLUDED."cryCount", "heartCount" = EXCLUDED."heartCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount";
     `;
   },
   async clearDay({ db }) {
     await db.$executeRaw`
-      UPDATE "BountyEntryMetric" SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0, "unitAmountCount" = 0  WHERE timeframe = 'Day';
+      UPDATE "BountyEntryMetric" SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0, "unitAmountCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day';
     `;
   },
   rank: {

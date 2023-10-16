@@ -72,7 +72,7 @@ import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers
 import { ModelById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes } from '~/utils/number-helpers';
+import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -88,7 +88,6 @@ export function ModelVersionDetails({
   const router = useRouter();
   const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
-
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [opened, { toggle }] = useDisclosure(false);
@@ -113,7 +112,6 @@ export function ModelVersionDetails({
     { enabled: features.imageGeneration && !!version }
   );
   const canGenerate = features.imageGeneration && !!resourceCovered;
-
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -355,7 +353,6 @@ export function ModelVersionDetails({
               meta: file.metadata,
             })}
             disabled={archived}
-            download
             compact
           >
             Download
@@ -755,7 +752,7 @@ export function ModelVersionDetails({
               </Accordion.Item>
             )}
           </Accordion>
-          <CreatorCard user={model.user} />
+          <CreatorCard user={model.user} tipBuzzEntityType="Model" tipBuzzEntityId={model.id} />
 
           <Group position="apart" align="flex-start" noWrap>
             {model.type === 'Checkpoint' && (

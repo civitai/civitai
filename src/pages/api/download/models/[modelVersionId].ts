@@ -1,4 +1,10 @@
-import { ModelModifier, ModelStatus, ModelType, Prisma } from '@prisma/client';
+import {
+  ModelModifier,
+  ModelStatus,
+  ModelType,
+  ModelVersionMonetizationType,
+  Prisma,
+} from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
@@ -18,6 +24,7 @@ import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -86,12 +93,14 @@ export default RateLimitedEndpoint(
         vaeId: true,
       },
     });
+
     if (!modelVersion) return errorResponse(404, 'Model not found');
 
     // Handle non-published models
     const isMod = session?.user?.isModerator;
     const userId = session?.user?.id;
     const archived = modelVersion.model.mode === ModelModifier.Archived;
+
     if (archived) return errorResponse(410, 'Model archived, not available for download');
 
     const canDownload =

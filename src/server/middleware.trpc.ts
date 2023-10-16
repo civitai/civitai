@@ -1,14 +1,14 @@
+import { z } from 'zod';
+import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
+import { purgeCache } from '~/server/cloudflare/client';
+import { BrowsingMode } from '~/server/common/enums';
+import { redis } from '~/server/redis/client';
+import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getHiddenTagsForUser, userCache } from '~/server/services/user-cache.service';
 import { middleware } from '~/server/trpc';
-import { z } from 'zod';
-import { BrowsingMode } from '~/server/common/enums';
-import { env } from '~/env/server.mjs';
-import { redis } from '~/server/redis/client';
-import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { isProd } from '~/env/other';
-import { purgeCache } from '~/server/cloudflare/client';
-import { UserPreferencesInput } from '~/server/schema/base.schema';
+import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {

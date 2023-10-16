@@ -1,6 +1,5 @@
-import { isFutureDate } from '~/utils/date-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
@@ -9,9 +8,11 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
 import { playfab } from '~/server/playfab/client';
-import { TransactionType } from '../schema/buzz.schema';
-import { isDefined } from '~/utils/type-guards';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { Currency } from '@prisma/client';
+import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
+import { MetadataParam } from '@stripe/stripe-js';
+import { constants } from '~/server/common/constants';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -186,6 +187,7 @@ export const createDonateSession = async ({
     cancel_url: returnUrl,
     line_items: [{ price: env.STRIPE_DONATE_ID, quantity: 1 }],
     mode: 'payment',
+    submit_type: 'donate',
     success_url: `${baseUrl}/payment/success?type=donation&cid=${customerId.slice(-8)}`,
   });
 
@@ -208,6 +210,7 @@ export const createBuzzSession = async ({
   user,
   returnUrl,
   priceId,
+  customAmount,
 }: Schema.CreateBuzzSessionInput & { customerId?: string; user: Schema.CreateCustomerInput }) => {
   const stripe = await getServerStripe();
 
@@ -215,11 +218,29 @@ export const createBuzzSession = async ({
     customerId = await createCustomer(user);
   }
 
+  const price = await dbRead.price.findUnique({
+    where: { id: priceId },
+    select: { productId: true, currency: true, type: true },
+  });
+  if (!price)
+    throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
+
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     cancel_url: returnUrl,
-    line_items: [{ price: priceId, quantity: 1 }],
-    mode: 'payment',
+    line_items: [
+      customAmount
+        ? {
+            price_data: {
+              unit_amount: customAmount * 100,
+              currency: price.currency,
+              product: price.productId,
+            },
+            quantity: 1,
+          }
+        : { price: priceId, quantity: 1 },
+    ],
+    mode: price.type === 'recurring' ? 'subscription' : 'payment',
     success_url: returnUrl,
   });
 
@@ -371,51 +392,6 @@ export const manageCheckoutPayment = async (sessionId: string, customerId: strin
   if (purchases.length > 0) {
     await dbWrite.purchase.createMany({ data: purchases });
   }
-
-  await creditBuzzPurchases({ customerId, items: line_items?.data ?? [] });
-};
-
-const creditBuzzPurchases = async ({
-  customerId,
-  items,
-}: {
-  customerId: string;
-  items: Stripe.LineItem[];
-}) => {
-  const user = await dbRead.user.findUnique({ where: { customerId } });
-  // Early return if user is not found
-  if (!user) {
-    // TODO.buzz: Confirm what should happen if user is not found
-    log(`Could not find user with customerId: ${customerId}`);
-    return;
-  }
-
-  // Check if there were buzz purchases to credit to the user
-  const buzzPurchases =
-    items
-      .filter(({ price }) => !!price?.metadata.buzzAmount)
-      .map(({ price }) => {
-        const meta = Schema.buzzPriceMetadataSchema.safeParse(price?.metadata);
-        if (!meta.success) return null;
-
-        return {
-          amount: meta.data.buzzAmount,
-          type: TransactionType.Purchase,
-          details: { stripeCustomerId: customerId, stripePriceId: price?.id },
-        };
-      })
-      .filter(isDefined) ?? [];
-  if (!buzzPurchases.length) return;
-
-  return await Promise.all(
-    buzzPurchases.map((purchase) =>
-      createBuzzTransaction({
-        ...purchase,
-        fromAccountId: 0,
-        toAccountId: user.id,
-      })
-    )
-  );
 };
 
 export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
@@ -483,12 +459,57 @@ export const getBuzzPackages = async () => {
     },
   });
 
-  return buzzProduct.prices.map(({ metadata, ...price }) => {
+  return buzzProduct.prices.map(({ metadata, description, ...price }) => {
     const meta = Schema.buzzPriceMetadataSchema.safeParse(metadata);
 
     return {
       ...price,
+      name: description,
       buzzAmount: meta.success ? meta.data.buzzAmount : null,
+      description: meta.success ? meta.data.bonusDescription : null,
     };
   });
+};
+
+export const getPaymentIntent = async ({
+  unitAmount,
+  currency = Currency.USD,
+  metadata,
+  paymentMethodTypes,
+  customerId,
+  user,
+}: PaymentIntentCreationSchema & { user: { id: number; email: string }; customerId?: string }) => {
+  // TODO: If a user doesn't exist, create one. Initially, this will be protected, but ideally, we should create the user on our end
+  if (!customerId) {
+    customerId = await createCustomer(user);
+  }
+
+  if (unitAmount < constants.buzz.minChargeAmount) {
+    throw throwBadRequestError(
+      `Minimum purchase amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount / 100)}`
+    );
+  }
+  if (unitAmount > constants.buzz.maxChargeAmount) {
+    throw throwBadRequestError(
+      `Maximum purchase amount is $${formatPriceForDisplay(constants.buzz.maxChargeAmount / 100)}`
+    );
+  }
+
+  const stripe = await getServerStripe();
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: unitAmount,
+    currency,
+    automatic_payment_methods: !paymentMethodTypes
+      ? {
+          enabled: true,
+        }
+      : undefined,
+    customer: customerId,
+    metadata: metadata as MetadataParam,
+    payment_method_types: paymentMethodTypes || undefined,
+  });
+
+  return {
+    clientSecret: paymentIntent.client_secret,
+  };
 };

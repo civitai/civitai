@@ -20,8 +20,9 @@ import { useClipboard } from '@mantine/hooks';
 import { IconClipboardCopy, IconTrash } from '@tabler/icons-react';
 import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
-import { IconBolt } from '@tabler/icons-react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { CurrencyBadge } from '../Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
@@ -56,7 +57,7 @@ export function UserReferralCodesCard() {
   const referralUrl = `${env.NEXT_PUBLIC_BASE_URL}/login?ref_code=`;
 
   return (
-    <Card withBorder>
+    <Card id="referrals" withBorder>
       <Stack>
         <Stack spacing={0}>
           <Title order={2}>Referral Codes</Title>
@@ -65,7 +66,10 @@ export function UserReferralCodesCard() {
               You can use referral codes to invite your friends to join the platform. Referring
               accounts will grant you and your friend{' '}
               <Text color="accent.5" span inline>
-                <IconBolt size={14} fill="currentColor" style={{ verticalAlign: 'middle' }} /> Buzz
+                <CurrencyBadge
+                  currency={Currency.BUZZ}
+                  unitAmount={constants.buzz.referralBonusAmount}
+                />
               </Text>{' '}
               which you can use to generate content, run bounties and more!
             </Text>

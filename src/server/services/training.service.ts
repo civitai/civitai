@@ -3,10 +3,17 @@ import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingS
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { CreateTrainingRequestInput, MoveAssetInput } from '~/server/schema/training.schema';
-import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import {
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwRateLimitError,
+} from '~/server/utils/errorHandling';
 import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
+import { calcBuzzFromEta, calcEta } from '~/utils/training';
 
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
@@ -154,6 +161,31 @@ export const createTrainingRequest = async ({
     }
   }
 
+  const eta = calcEta(
+    trainingParams.networkDim,
+    trainingParams.networkAlpha,
+    trainingParams.targetSteps,
+    baseModel
+  );
+  const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
+  if (price === undefined) {
+    throw throwBadRequestError(
+      'Could not compute Buzz price for training - please check your parameters.'
+    );
+  }
+  const account = await getUserBuzzAccount({ accountId: userId });
+  if ((account.balance ?? 0) < price) {
+    throw throwInsufficientFundsError(
+      `You don't have enough Buzz to perform this action (required: ${price})`
+    );
+  }
+  await createBuzzTransaction({
+    fromAccountId: userId,
+    toAccountId: 0,
+    amount: price,
+    type: TransactionType.Training,
+  });
+
   const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
 
   const generationRequest = {
@@ -161,7 +193,7 @@ export const createTrainingRequest = async ({
     // priority: 10,
     callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/image-resource-training?token=${env.WEBHOOK_TOKEN}`,
     properties: { userId },
-    model: modelMap[modelVersion.trainingDetails.baseModel!],
+    model: modelMap[baseModel!],
     trainingData: trainingUrl,
     maxRetryAttempt: constants.maxTrainingRetries,
     params: {
@@ -183,6 +215,16 @@ export const createTrainingRequest = async ({
   });
 
   // console.log(response);
+
+  if (!response.ok) {
+    await createBuzzTransaction({
+      fromAccountId: 0,
+      toAccountId: userId,
+      amount: price,
+      type: TransactionType.Refund,
+      description: 'Refunding due to an error submitting the training job',
+    });
+  }
 
   if (response.status === 429) {
     throw throwRateLimitError();

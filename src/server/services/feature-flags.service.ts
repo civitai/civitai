@@ -57,7 +57,7 @@ const featureFlags = createFeatureFlags({
   },
   profileCollections: ['mod', 'founder'],
   imageSearch: ['dev'],
-  buzz: ['mod'],
+  buzz: ['public'],
   signal: ['user'],
   assistant: {
     toggleable: true,

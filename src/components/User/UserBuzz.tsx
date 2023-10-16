@@ -1,9 +1,9 @@
-import { Group, MantineSize, Text, Tooltip } from '@mantine/core';
+import { Group, Loader, MantineSize, Text, TextProps, Tooltip } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { CivitaiSessionState } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
-type Props = {
+type Props = TextProps & {
   user: CivitaiSessionState | null;
   iconSize?: number;
   textSize?: MantineSize;
@@ -11,22 +11,40 @@ type Props = {
   withAbbreviation?: boolean;
 };
 
-export function UserBuzz({ user, iconSize = 20, withTooltip, withAbbreviation = true }: Props) {
+export function UserBuzz({
+  user,
+  iconSize = 20,
+  textSize = 'md',
+  withTooltip,
+  withAbbreviation = true,
+  ...textProps
+}: Props) {
   if (!user) return null;
+  const { balance } = user;
 
   const content = (
-    <Text color="accent.5" pr="sm" transform="uppercase">
+    <Text color="accent.5" transform="uppercase" {...textProps}>
       <Group spacing={4} noWrap>
         <IconBolt size={iconSize} color="currentColor" fill="currentColor" />
-        <Text size="md" weight={600} lh={1.2}>
-          {withAbbreviation ? abbreviateNumber(user.balance) : user.balance.toLocaleString()}
+        <Text size={textSize} weight={600} lh={0} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+          {balance === null ? (
+            <Loader size="sm" variant="dots" color="accent.5" />
+          ) : withAbbreviation ? (
+            abbreviateNumber(balance)
+          ) : (
+            balance.toLocaleString()
+          )}
         </Text>
       </Group>
     </Text>
   );
 
   return withTooltip ? (
-    <Tooltip label={`Total balance: ${user.balance.toLocaleString()}`}>{content}</Tooltip>
+    <Tooltip
+      label={`Total balance: ${balance === null ? '(Loading...)' : balance.toLocaleString()}`}
+    >
+      {content}
+    </Tooltip>
   ) : (
     content
   );

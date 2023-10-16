@@ -137,6 +137,7 @@ export function ResourceReviewCarousel({
                           }}
                           readonly={!safe}
                           className={classes.reactions}
+                          targetUserId={image.user.id}
                         />
                         {!image.hideMeta && image.meta && (
                           <ImageMetaPopover

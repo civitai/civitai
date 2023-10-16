@@ -196,6 +196,7 @@ const onFetchItemsToIndex = async ({
           rating: true,
           ratingCount: true,
           collectedCount: true,
+          tippedAmountCount: true,
         },
         where: {
           timeframe: MetricTimeframe.AllTime,
@@ -208,6 +209,7 @@ const onFetchItemsToIndex = async ({
           [`commentCount${MetricTimeframe.AllTime}`]: true,
           [`ratingCount${MetricTimeframe.AllTime}`]: true,
           [`rating${MetricTimeframe.AllTime}`]: true,
+          [`tippedAmountCount${MetricTimeframe.AllTime}`]: true,
         },
       },
     },

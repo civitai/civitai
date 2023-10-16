@@ -25,6 +25,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
       favoriteCountAllTime: true,
       ratingCountAllTime: true,
       ratingAllTime: true,
+      tippedAmountCountAllTimeRank: true,
     },
   },
   user: {
@@ -143,6 +144,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       favoriteCountAllTime: true,
       imageCountAllTime: true,
       collectedCountAllTime: true,
+      tippedAmountCountAllTime: true,
     },
   },
   tagsOnModels: {

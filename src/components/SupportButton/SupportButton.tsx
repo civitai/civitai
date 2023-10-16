@@ -88,7 +88,6 @@ const useStyles = createStyles((theme) => ({
   pulser: {
     transformOrigin: 'center',
     transform: 'scale(1) translateZ(0)',
-
     // animation: `${pulse} 1s ease-in-out infinite`,
   },
 }));

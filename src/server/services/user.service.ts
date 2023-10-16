@@ -7,6 +7,7 @@ import {
   ArticleEngagementType,
   BountyEngagementType,
   ModelEngagementType,
+  OnboardingStep,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagEngagementType,
@@ -42,6 +43,8 @@ import {
 } from '~/server/search-index';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userMetrics } from '~/server/metrics';
+import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
+import { handleLogError } from '~/server/utils/errorHandling';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -169,10 +172,23 @@ export const acceptTOS = ({ id }: { id: number }) => {
   });
 };
 
-export const completeOnboarding = async ({ id }: { id: number }) => {
+// export const completeOnboarding = async ({ id }: { id: number }) => {
+//   return dbWrite.user.update({
+//     where: { id },
+//     data: { onboarded: true },
+//   });
+// };
+
+export const updateOnboardingSteps = async ({
+  id,
+  steps,
+}: {
+  id: number;
+  steps: OnboardingStep[];
+}) => {
   return dbWrite.user.update({
     where: { id },
-    data: { onboarded: true },
+    data: { onboardingSteps: steps },
   });
 };
 
@@ -778,6 +794,23 @@ export const createUserReferral = async ({
     return;
   }
 
+  const applyRewards = async ({
+    refereeId,
+    referrerId,
+  }: {
+    refereeId: number;
+    referrerId: number;
+  }) => {
+    await refereeCreatedReward.apply({
+      refereeId,
+      referrerId,
+    });
+    await userReferredReward.apply({
+      refereeId,
+      referrerId,
+    });
+  };
+
   if (userReferralCode || source) {
     // Confirm userReferralCode is valid:
     const referralCode = !!userReferralCode
@@ -792,7 +825,7 @@ export const createUserReferral = async ({
 
     if (user.referral && referralCode) {
       // Allow to update a referral with a user-referral-code:
-      return await dbWrite.userReferral.update({
+      await dbWrite.userReferral.update({
         where: {
           id: user.referral.id,
         },
@@ -800,15 +833,27 @@ export const createUserReferral = async ({
           userReferralCodeId: referralCode.id,
         },
       });
+
+      await applyRewards({
+        refereeId: id,
+        referrerId: referralCode.userId,
+      }).catch(handleLogError);
     } else if (!user.referral) {
       // Create new referral:
-      return await dbWrite.userReferral.create({
+      await dbWrite.userReferral.create({
         data: {
           userId: id,
           source,
           userReferralCodeId: referralCode?.id ?? undefined,
         },
       });
+
+      if (referralCode?.id) {
+        await applyRewards({
+          refereeId: id,
+          referrerId: referralCode.userId,
+        }).catch(handleLogError);
+      }
     }
   }
 };

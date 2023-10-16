@@ -184,9 +184,10 @@ export const constants = {
   },
   bounties: {
     engagementTypes: ['favorite', 'tracking', 'supporter', 'awarded'],
-    minCreateAmount: 5000,
+    minCreateAmount: 500,
+    maxCreateAmount: 100000000,
   },
-  defaultCurrency: 'USD',
+  defaultCurrency: Currency.BUZZ,
   referrals: {
     referralCodeMinLength: 6,
     referralCodeMaxCount: 3,
@@ -198,6 +199,13 @@ export const constants = {
       silver: 6,
       bronze: 4,
     },
+  },
+  buzz: {
+    minChargeAmount: 500, // $5.00
+    maxChargeAmount: 99999999, // $999,999.99
+    cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
+    referralBonusAmount: 500,
+    maxTipAmount: 100000000,
   },
 } as const;
 
@@ -301,7 +309,18 @@ export const generation = {
     quantity: 10,
     clipSkip: 10,
   },
-};
+  settingsCost: {
+    base: 0,
+    quantity: 1,
+    steps: 40,
+    width: 512,
+    height: 512,
+    baseModel: {
+      SD1: 1,
+      SDXL: 8,
+    },
+  },
+} as const;
 
 export const generationConfig = {
   SD1: {
@@ -321,6 +340,8 @@ export const generationConfig = {
     ],
   },
 };
+
+export type GenerationBaseModel = keyof typeof generationConfig;
 
 export const getGenerationConfig = (baseModel?: string) => {
   const key = baseModel as keyof typeof generationConfig | undefined;
@@ -358,3 +379,15 @@ export const CurrencyConfig: Record<
   [Currency.BUZZ]: { icon: IconBolt, color: (theme) => theme.colors.accent[5] },
   [Currency.USD]: { icon: IconCurrencyDollar, color: (theme) => theme.colors.accent[5] },
 };
+
+export const BUZZ_FEATURE_LIST = [
+  'Pay for on-site model generation',
+  'Support your favorite creators via tips and subscriptions',
+  'Pay for on-site model training',
+  'Create bounties for models, images and more!',
+  'Pay for exclusive and early access to models',
+  'Purchase user cosmetics from our upcoming user cosmetic store!',
+];
+
+export const STRIPE_PROCESSING_AWAIT_TIME = 20000; // 20s
+export const STRIPE_PROCESSING_CHECK_INTERVAL = 1000; // 1s

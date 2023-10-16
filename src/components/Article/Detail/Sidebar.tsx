@@ -16,7 +16,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function Sidebar({ attachments, creator }: Props) {
+export function Sidebar({ articleId, attachments, creator }: Props) {
   const { classes, theme } = useStyles();
   const { nestedHeadings } = useHeadingsData();
 
@@ -78,10 +78,14 @@ export function Sidebar({ attachments, creator }: Props) {
             </Stack>
           </Accordion>
         )}
-        <CreatorCard user={creator} />
+        <CreatorCard user={creator} tipBuzzEntityId={articleId} tipBuzzEntityType="Article" />
       </Stack>
     </aside>
   );
 }
 
-type Props = { attachments: ArticleGetById['attachments']; creator: ArticleGetById['user'] };
+type Props = {
+  articleId: number;
+  attachments: ArticleGetById['attachments'];
+  creator: ArticleGetById['user'];
+};

@@ -365,6 +365,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           [`ratingCount${input.period}`]: true,
           [`rating${input.period}`]: true,
           [`collectedCount${input.period}`]: true,
+          [`tippedAmountCount${input.period}`]: true,
         },
       },
       modelVersions: {
@@ -435,6 +436,7 @@ export const getModelsWithImagesAndModelVersions = async ({
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,
+            tippedAmountCount: rank?.[`tippedAmountCount${input.period}`] ?? 0,
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,

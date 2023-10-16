@@ -1,3 +1,4 @@
+import { OnboardingStep } from '@prisma/client';
 import type { DefaultSession } from 'next-auth';
 
 interface ExtendedUser {
@@ -17,7 +18,7 @@ interface ExtendedUser {
   muted?: boolean;
   bannedAt?: Date;
   autoplayGifs?: boolean;
-  onboarded?: boolean;
+  onboardingSteps?: OnboardingStep[];
   permissions?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string;

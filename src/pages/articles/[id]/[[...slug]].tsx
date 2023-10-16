@@ -3,27 +3,31 @@ import {
   Box,
   Button,
   Container,
+  createStyles,
   Divider,
   Grid,
   Group,
   Stack,
   Text,
   Title,
-  createStyles,
 } from '@mantine/core';
-import { ArticleEngagementType, ModelStatus } from '@prisma/client';
-import { IconBookmark, IconShare3 } from '@tabler/icons-react';
+import { ArticleEngagementType } from '@prisma/client';
+import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
 import { z } from 'zod';
-
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
 import { Collection } from '~/components/Collection/Collection';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -36,6 +40,7 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -44,10 +49,8 @@ import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { slugit, removeTags } from '~/utils/string-helpers';
+import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { env } from '~/env/client.mjs';
-import { truncate } from 'lodash-es';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -78,6 +81,7 @@ export default function ArticleDetailsPage({
   const mobile = useIsMobile();
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
   const meta = (
     <Meta
@@ -120,6 +124,19 @@ export default function ArticleDetailsPage({
 
   const actionButtons = (
     <Group spacing={4} noWrap>
+      <InteractiveTipBuzzButton toUserId={article.user.id} entityType={'Article'} entityId={id}>
+        <IconBadge
+          radius="sm"
+          sx={{ cursor: 'pointer' }}
+          color="gray"
+          size="lg"
+          icon={<IconBolt />}
+        >
+          <Text className={classes.badgeText}>
+            {abbreviateNumber((article.stats?.tippedAmountCountAllTime ?? 0) + tippedAmount)}
+          </Text>
+        </IconBadge>
+      </InteractiveTipBuzzButton>
       <LoginRedirect reason="favorite-model">
         <ToggleArticleEngagement articleId={article.id}>
           {({ toggle, isToggled }) => {
@@ -245,13 +262,18 @@ export default function ArticleDetailsPage({
                     laughCount: article.stats?.laughCountAllTime,
                     cryCount: article.stats?.cryCountAllTime,
                   }}
+                  targetUserId={article.user.id}
                 />
                 {actionButtons}
               </Group>
             </Stack>
           </Grid.Col>
-          <Grid.Col xs={12} md={3} offsetMd={1}>
-            <Sidebar creator={article.user} attachments={article.attachments} />
+          <Grid.Col xs={12} md={4}>
+            <Sidebar
+              creator={article.user}
+              attachments={article.attachments}
+              articleId={article.id}
+            />
           </Grid.Col>
         </Grid>
         {article.user && <ArticleDetailComments articleId={article.id} userId={article.user.id} />}

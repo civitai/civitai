@@ -1,14 +1,19 @@
-import { Button, Group, Text, GroupProps } from '@mantine/core';
+import { Button, Group, Text, GroupProps, useMantineTheme, Badge } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
-import { IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
+import { IconBolt, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 
 export type ReactionMetrics = {
@@ -17,6 +22,7 @@ export type ReactionMetrics = {
   heartCount?: number;
   laughCount?: number;
   cryCount?: number;
+  tippedAmountCount?: number;
 };
 
 type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
@@ -66,17 +72,26 @@ export function Reactions({
   entityType,
   entityId,
   readonly,
+  targetUserId,
   ...groupProps
-}: ReactionsProps & Omit<GroupProps, 'children' | 'onClick'>) {
+}: ReactionsProps &
+  Omit<GroupProps, 'children' | 'onClick'> & {
+    targetUserId?: number;
+  }) {
+  const currentUser = useCurrentUser();
   const storedReactions = useReactionsStore({ entityType, entityId }) ?? {};
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
     defaultValue: false,
   });
 
+  const ignoredKeys = ['tippedAmountCount'];
   const hasAllReactions =
     !!metrics &&
     Object.entries(metrics).every(([key, value]) => {
+      if (ignoredKeys.includes(key)) {
+        return true;
+      }
       // ie. converts the key `likeCount` to `Like`
       const reactionType = capitalize(key).replace(/count/, '');
       const hasReaction =
@@ -86,6 +101,8 @@ export function Reactions({
 
       return value > 0 || !!storedReactions[reactionType] || hasReaction;
     });
+
+  const supportsBuzzTipping = targetUserId !== currentUser?.id && ['image'].includes(entityType);
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -128,6 +145,14 @@ export function Reactions({
         >
           {ReactionBadge}
         </ReactionsList>
+        {supportsBuzzTipping && targetUserId && (
+          <BuzzTippingBadge
+            toUserId={targetUserId}
+            tippedAmountCount={metrics?.tippedAmountCount ?? 0}
+            entityType={entityType}
+            entityId={entityId}
+          />
+        )}
       </Group>
     </LoginPopover>
   );
@@ -167,6 +192,7 @@ function ReactionsList({
           const userReaction = reactions.find(
             (x) => x.userId === currentUser?.id && x.reaction === reaction
           );
+
           return (
             <ReactionButton
               key={reaction}
@@ -234,6 +260,46 @@ function ReactionBadge({
         )}
       </Group>
     </Button>
+  );
+}
+
+function BuzzTippingBadge({
+  tippedAmountCount,
+  entityId,
+  entityType,
+  toUserId,
+  ...props
+}: {
+  tippedAmountCount: number;
+  toUserId: number;
+  entityType: string;
+  entityId: number;
+}) {
+  const theme = useMantineTheme();
+  const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {
+    image: 'Image',
+  };
+  const buzzTipEntryType = typeToBuzzTipType[entityType];
+  const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType ?? 'Image', entityId });
+
+  if (!buzzTipEntryType) {
+    return null;
+  }
+
+  return (
+    <InteractiveTipBuzzButton
+      toUserId={toUserId}
+      entityType={buzzTipEntryType}
+      entityId={entityId}
+      {...props}
+    >
+      <Badge size="md" radius="xs" variant="light" py={10} px={3} color="yellow.7">
+        <Group spacing={2} align="center" noWrap>
+          <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
+          <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
+        </Group>
+      </Badge>
+    </InteractiveTipBuzzButton>
   );
 }
 
