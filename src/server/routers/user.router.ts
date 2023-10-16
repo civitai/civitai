@@ -85,6 +85,9 @@ export const userRouter = router({
   completeOnboardingStep: protectedProcedure
     .input(completeOnboardStepSchema)
     .mutation(completeOnboardingHandler),
+  completeOnboarding: protectedProcedure // HACK: this is a hack to deal with people having clients behind...
+    .input(completeOnboardStepSchema)
+    .mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
   // toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
   // toggleBlockedTag: protectedProcedure

@@ -1,8 +1,14 @@
-import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
+import {
+  CosmeticType,
+  ModelEngagementType,
+  ModelVersionEngagementType,
+  OnboardingStep,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
+import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import {
   collectedContentReward,
@@ -202,6 +208,7 @@ export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> 
   }
 };
 
+const temp_onboardingOrder: OnboardingStep[] = [OnboardingStep.Moderation, OnboardingStep.Buzz];
 export const completeOnboardingHandler = async ({
   input,
   ctx,
@@ -211,10 +218,16 @@ export const completeOnboardingHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const user = await getUserById({ id, select: { onboardingSteps: true } });
+    const user = await dbWrite.user.findUnique({
+      where: { id },
+      select: { onboardingSteps: true },
+    });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-    const steps = user.onboardingSteps.filter((step) => step !== input.step);
+    if (!input.step) {
+      input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
+    }
+    const steps = !input.step ? [] : user.onboardingSteps.filter((step) => step !== input.step);
     const updatedUser = await updateOnboardingSteps({ id, steps });
 
     // There are no more onboarding steps, so we can reward the user
