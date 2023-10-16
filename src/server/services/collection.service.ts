@@ -1266,7 +1266,9 @@ export const getCollectionCoverImages = async ({
       ) image
   `;
 
-  const itemImages = await dbRead.$queryRaw<CollectionImageRaw[]>`
+  const itemImages: CollectionImageRaw[] =
+    collectionIds?.length > 0
+      ? await dbRead.$queryRaw<CollectionImageRaw[]>`
     WITH target AS MATERIALIZED (
       SELECT *
       FROM (
@@ -1329,7 +1331,8 @@ export const getCollectionCoverImages = async ({
         ) image,
         (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
     FROM target
-  `;
+  `
+      : [];
 
   const tags = await dbRead.tagsOnImage.findMany({
     where: {

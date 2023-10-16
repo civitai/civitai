@@ -64,7 +64,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const collectionRouter = router({
-  getInfinite: protectedProcedure
+  getInfinite: publicProcedure
     .input(getAllCollectionsInfiniteSchema)
     .use(isFlagProtected('profileCollections'))
     .query(getAllCollectionsInfiniteHandler),
