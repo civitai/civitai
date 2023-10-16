@@ -82,7 +82,7 @@ export const userRouter = router({
   //   .input(toggleModelEngagementInput)
   //   .mutation(toggleHideModelHandler),
   acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
-  completeOnboarding: protectedProcedure
+  completeOnboardingStep: protectedProcedure
     .input(completeOnboardStepSchema)
     .mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),

@@ -125,7 +125,7 @@ export default function OnboardingModal() {
   const { mutate, isLoading, error } = trpc.user.update.useMutation();
   const { mutate: acceptTOS, isLoading: acceptTOSLoading } = trpc.user.acceptTOS.useMutation();
   const { mutate: completeStep, isLoading: completeStepLoading } =
-    trpc.user.completeOnboarding.useMutation({
+    trpc.user.completeOnboardingStep.useMutation({
       async onSuccess() {
         user?.refresh();
         await invalidateModeratedContent(utils);
