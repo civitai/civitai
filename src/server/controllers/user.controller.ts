@@ -225,6 +225,7 @@ export const completeOnboardingHandler = async ({
         amount: getUserBuzzBonusAmount(ctx.user),
         description: 'Onboarding bonus',
         type: TransactionType.Reward,
+        externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
       });
     }
 

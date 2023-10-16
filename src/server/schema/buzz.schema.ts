@@ -73,6 +73,7 @@ export const createBuzzTransactionInput = z
     details: z.object({}).passthrough().nullish(),
     entityId: z.number().optional(),
     entityType: z.string().optional(),
+    externalTransactionId: z.string().optional(),
   })
   .refine(
     (data) => {

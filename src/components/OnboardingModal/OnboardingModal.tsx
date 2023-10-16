@@ -74,7 +74,11 @@ export default function OnboardingModal() {
   const { classes } = useStyles();
   const features = useFeatureFlags();
 
-  const [userReferral, setUserReferral] = useState(!user?.referral ? { code, source } : {});
+  const [userReferral, setUserReferral] = useState(
+    !user?.referral
+      ? { code, source, showInput: false }
+      : { code: '', source: '', showInput: false }
+  );
   const [referralError, setReferralError] = useState('');
 
   const form = useForm({
@@ -347,13 +351,13 @@ export default function OnboardingModal() {
           </Container>
         </Stepper.Step>
         <Stepper.Step label="Buzz" description="Power-up your experience">
-          <Container size="md" px={0}>
+          <Container size="sm" px={0}>
             <Stack spacing="xl">
               <Text>
                 On Civitai you&apos;ll encounter Buzz, which is an internal currency that can be
                 earned and spent in a variety of ways!
               </Text>
-              <Group align="start" noWrap grow>
+              <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
                 <SpendingBuzz asList />
                 <EarningBuzz asList />
               </Group>
@@ -371,22 +375,44 @@ export default function OnboardingModal() {
                       )}
                     </Text>{' '}
                     as a gift.
-                    {showReferral && (
-                      <>
-                        {' If you have a referral code, you can use it here to claim '}
-                        <Text span>
-                          <CurrencyBadge currency={Currency.BUZZ} unitAmount={500} />
-                        </Text>
-                        {' as a bonus for you and the person who referred you.'}
-                      </>
-                    )}
                   </Text>
                 }
               />
+              <Button size="lg" onClick={handleCompleteBuzzStep} loading={completeStepLoading}>
+                Done
+              </Button>
               {showReferral && (
+                <Button
+                  variant="subtle"
+                  mt="-md"
+                  onClick={() =>
+                    setUserReferral((current) => ({
+                      ...current,
+                      showInput: !current.showInput,
+                      code,
+                    }))
+                  }
+                >
+                  Have a referral code? Click here to claim a bonus
+                </Button>
+              )}
+
+              {showReferral && userReferral.showInput && (
                 <TextInput
                   size="lg"
                   label="Referral Code"
+                  description={
+                    <Text size="sm">
+                      Both you and the person who referred you will receive{' '}
+                      <Text span>
+                        <CurrencyBadge
+                          currency={Currency.BUZZ}
+                          unitAmount={constants.buzz.referralBonusAmount}
+                        />
+                      </Text>{' '}
+                      bonus with a valid referral code.
+                    </Text>
+                  }
                   error={referralError}
                   value={userReferral.code ?? ''}
                   onChange={(e) =>
@@ -413,14 +439,6 @@ export default function OnboardingModal() {
                   }
                 />
               )}
-              <Button
-                size="lg"
-                onClick={handleCompleteBuzzStep}
-                loading={completeStepLoading}
-                // disabled={!referrer}
-              >
-                Done
-              </Button>
             </Stack>
           </Container>
         </Stepper.Step>
@@ -454,7 +472,7 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     },
   },
   step: {
-    [theme.fn.smallerThan('xs')]: {
+    [theme.fn.smallerThan('md')]: {
       '&[data-progress]': {
         display: 'flex',
         [`& .${getRef('stepBody')}`]: {
@@ -465,12 +483,30 @@ const useStyles = createStyles((theme, _params, getRef) => ({
   },
   stepBody: {
     ref: getRef('stepBody'),
-    [theme.fn.smallerThan('xs')]: {
+    [theme.fn.smallerThan('md')]: {
       display: 'none',
     },
   },
   stepDescription: {
     whiteSpace: 'nowrap',
+  },
+  stepIcon: {
+    [theme.fn.smallerThan('sm')]: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 24,
+      height: 24,
+      minWidth: 24,
+    },
+  },
+  stepCompletedIcon: {
+    [theme.fn.smallerThan('sm')]: {
+      width: 14,
+      height: 14,
+      minWidth: 14,
+      position: 'relative',
+    },
   },
   separator: {
     [theme.fn.smallerThan('xs')]: {
