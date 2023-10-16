@@ -1,12 +1,12 @@
-import { clickhouse } from '~/server/clickhouse/client';
-import { dbWrite } from '~/server/db/client';
 import { ClickHouseClient } from '@clickhouse/client';
 import { PrismaClient } from '@prisma/client';
-import { redis } from '~/server/redis/client';
-import { hashifyObject } from '~/utils/string-helpers';
 import { chunk } from 'lodash';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { clickhouse } from '~/server/clickhouse/client';
+import { dbWrite } from '~/server/db/client';
+import { redis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { hashifyObject } from '~/utils/string-helpers';
 
 export function createBuzzEvent<T>({
   type,
@@ -282,6 +282,9 @@ export function createBuzzEvent<T>({
   };
 }
 
+// TODO: sometimes this can cause duplicate entries.
+//  hypothesis is that this occurs due to a combination of
+//  async inserts + ch's merge strategy
 async function addBuzzEvent(event: BuzzEventLog) {
   return await clickhouse?.insert({
     table: 'buzzEvents',

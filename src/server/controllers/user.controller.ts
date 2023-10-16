@@ -1,53 +1,65 @@
 import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
+import { redis } from '~/server/redis/client';
 import {
+  collectedContentReward,
+  encouragementReward,
+  goodContentReward,
+  imagePostedToModelReward,
+  userReferredReward,
+} from '~/server/rewards';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import {
+  BatchBlockTagsSchema,
+  DeleteUserInput,
+  GetAllUsersInput,
+  GetByUsernameSchema,
+  GetUserByUsernameSchema,
+  GetUserCosmeticsSchema,
+  GetUserTagsSchema,
+  ReportProhibitedRequestInput,
+  ToggleBlockedTagSchema,
+  ToggleFollowUserSchema,
+  ToggleModelEngagementInput,
+  ToggleUserArticleEngagementsInput,
+  ToggleUserBountyEngagementsInput,
+  UserByReferralCodeSchema,
+  UserUpdateInput,
+} from '~/server/schema/user.schema';
+import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
+import {
+  acceptTOS,
+  completeOnboarding,
+  createUserReferral,
+  deleteUser,
   getCreators,
+  getUserById,
   getUserByUsername,
+  getUserCosmetics,
   getUserCreator,
   getUserEngagedModels,
   getUserEngagedModelVersions,
+  getUsers,
   getUserTags,
   getUserUnreadNotificationsCount,
+  isUsernamePermitted,
+  toggleBan,
   toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
-  toggleModelHide,
   toggleModelFavorite,
-  getUserCosmetics,
-  acceptTOS,
-  // completeOnboarding,
-  isUsernamePermitted,
+  toggleModelHide,
   toggleUserArticleEngagement,
-  updateLeaderboardRank,
-  toggleBan,
   toggleUserBountyEngagement,
+  updateLeaderboardRank,
+  updateUserById,
   userByReferralCode,
-  createUserReferral,
-  updateOnboardingSteps,
 } from '~/server/services/user.service';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import {
-  GetAllUsersInput,
-  UserUpdateInput,
-  GetUserByUsernameSchema,
-  ToggleFollowUserSchema,
-  GetByUsernameSchema,
-  DeleteUserInput,
-  ToggleBlockedTagSchema,
-  GetUserTagsSchema,
-  BatchBlockTagsSchema,
-  ToggleModelEngagementInput,
-  GetUserCosmeticsSchema,
-  ToggleUserArticleEngagementsInput,
-  ToggleUserBountyEngagementsInput,
-  ReportProhibitedRequestInput,
-  UserByReferralCodeSchema,
-  CompleteOnboardingStepInput,
-} from '~/server/schema/user.schema';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -57,22 +69,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { isUUID } from '~/utils/string-helpers';
-import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
-import { redis } from '~/server/redis/client';
-import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
-import {
-  collectedContentReward,
-  encouragementReward,
-  goodContentReward,
-  imagePostedToModelReward,
-  userReferredReward,
-} from '~/server/rewards';
-import { createBuzzTransaction } from '../services/buzz.service';
-import { TransactionType } from '../schema/buzz.schema';
-import { getUserBuzzBonusAmount } from '../common/user-helpers';
 
 export const getAllUsersHandler = async ({
   input,
@@ -924,8 +921,8 @@ export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<C
   try {
     const rewardDetails = await Promise.all([
       encouragementReward.getUserRewardDetails(ctx.user.id),
-      collectedContentReward.getUserRewardDetails(ctx.user.id),
       goodContentReward.getUserRewardDetails(ctx.user.id),
+      collectedContentReward.getUserRewardDetails(ctx.user.id),
       imagePostedToModelReward.getUserRewardDetails(ctx.user.id),
       userReferredReward.getUserRewardDetails(ctx.user.id),
     ]);

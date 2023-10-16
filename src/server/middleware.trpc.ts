@@ -1,14 +1,14 @@
+import { z } from 'zod';
+import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
+import { purgeCache } from '~/server/cloudflare/client';
+import { BrowsingMode } from '~/server/common/enums';
+import { redis } from '~/server/redis/client';
+import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getHiddenTagsForUser, userCache } from '~/server/services/user-cache.service';
 import { middleware } from '~/server/trpc';
-import { z } from 'zod';
-import { BrowsingMode } from '~/server/common/enums';
-import { env } from '~/env/server.mjs';
-import { redis } from '~/server/redis/client';
-import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { isProd } from '~/env/other';
-import { purgeCache } from '~/server/cloudflare/client';
-import { UserPreferencesInput } from '~/server/schema/base.schema';
+import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const applyUserPreferences = <TInput extends UserPreferencesInput>() =>
   middleware(async ({ input, ctx, next }) => {
@@ -79,7 +79,7 @@ export function cacheIt<TInput extends object>({
   return middleware(async ({ input, ctx, next, path }) => {
     const _input = input as TInput;
     const cacheKeyObj: Record<string, any> = {};
-    for (const [key, value] of Object.entries(_input)) {
+    for (const [key, value] of Object.entries(_input ?? {})) {
       if (excludeKeys?.includes(key as keyof TInput)) continue;
       if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value.sort())];
 
