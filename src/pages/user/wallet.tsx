@@ -153,7 +153,7 @@ export default function UserWallet() {
     return transactionsReversed.reduce((acc, transaction) => {
       const updated = {
         ...acc,
-        [formatDate(transaction.date, 'DD/MM/YYYY')]: start + transaction.amount,
+        [formatDate(transaction.date, 'MMM-DD')]: start + transaction.amount,
       };
 
       start += transaction.amount;
