@@ -79,7 +79,7 @@ async function updateLegendsBoardResults() {
       )
       SELECT
         *,
-        row_number() OVER (PARTITION BY "leaderboardId" ORDER BY score DESC) rank
+        row_number() OVER (PARTITION BY "leaderboardId" ORDER BY score DESC) position
       FROM scores;
     `,
   ]);
