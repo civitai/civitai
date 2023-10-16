@@ -183,6 +183,7 @@ export function RoutedContextProvider2() {
   const query = QS.parse(QS.stringify(router.query));
   delete query.ref;
   const Modal = registry[modal as keyof typeof registry]?.Component;
+  // TODO.logging - log when modal is specified by we didn't get a Modal
   return Modal ? <Modal {...(query as any)} /> : null;
 }
 
