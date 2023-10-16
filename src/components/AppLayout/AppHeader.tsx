@@ -378,7 +378,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
       {
-        href: '/user/wallet',
+        href: '/user/buzz-dashboard',
         visible: !!currentUser && features.buzz,
         label: (
           <Group align="center" spacing="xs">
@@ -540,7 +540,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       if (!currentUser) return null;
 
       return (
-        <Link href="/user/wallet">
+        <Link href="/user/buzz-dashboard">
           <Group
             p="sm"
             position="apart"

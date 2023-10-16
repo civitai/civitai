@@ -128,7 +128,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export default function UserWallet() {
+export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
 
@@ -153,7 +153,7 @@ export default function UserWallet() {
     return transactionsReversed.reduce((acc, transaction) => {
       const updated = {
         ...acc,
-        [formatDate(transaction.date, 'DD/MM/YYYY')]: start + transaction.amount,
+        [formatDate(transaction.date, 'MMM-DD')]: start + transaction.amount,
       };
 
       start += transaction.amount;
@@ -178,7 +178,7 @@ export default function UserWallet() {
   return (
     <Container size="lg">
       <Stack spacing="xl">
-        <Title order={1}>My Wallet</Title>
+        <Title order={1}>My Buzz Dashboard</Title>
 
         {isLoading ? (
           <Center py="xl">
