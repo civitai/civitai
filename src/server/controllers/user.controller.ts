@@ -226,7 +226,7 @@ export const completeOnboardingHandler = async ({
         description: 'Onboarding bonus',
         type: TransactionType.Reward,
         externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
-      });
+      }).catch(handleLogError);
     }
 
     return updatedUser;

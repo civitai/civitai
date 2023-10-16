@@ -154,6 +154,8 @@ export async function createBuzzTransaction({
     switch (response.status) {
       case 400:
         throw throwBadRequestError(cause.reason, cause);
+      case 409:
+        throw throwBadRequestError('There is a conflict with the transaction', cause);
       default:
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
