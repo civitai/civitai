@@ -378,8 +378,8 @@ export default function OnboardingModal() {
                           unitAmount={getUserBuzzBonusAmount(user)}
                         />
                       )}
-                    </Text>{' '}
-                    as a gift.
+                    </Text>
+                    {user?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
                   </Text>
                 }
               />
