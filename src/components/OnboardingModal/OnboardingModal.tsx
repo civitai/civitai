@@ -354,14 +354,13 @@ export default function OnboardingModal() {
           <Container size="sm" px={0}>
             <Stack spacing="xl">
               <Text>
-                On Civitai you&apos;ll encounter Buzz, which is an internal currency that can be
-                earned and spent in a variety of ways! You can learn more by going into your{' '}
+                {`On Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
                 <IconProgressBolt
                   color={theme.colors.yellow[7]}
                   size={20}
                   style={{ verticalAlign: 'middle' }}
-                />{' '}
-                Buzz Dashboard from your user menu.
+                />
+                {` Buzz Dashboard.`}
               </Text>
               <Group align="start" sx={{ ['&>*']: { flexGrow: 1 } }}>
                 <SpendingBuzz asList />
