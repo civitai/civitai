@@ -7,6 +7,7 @@ import {
   ArticleEngagementType,
   BountyEngagementType,
   ModelEngagementType,
+  OnboardingStep,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagEngagementType,
@@ -171,10 +172,23 @@ export const acceptTOS = ({ id }: { id: number }) => {
   });
 };
 
-export const completeOnboarding = async ({ id }: { id: number }) => {
+// export const completeOnboarding = async ({ id }: { id: number }) => {
+//   return dbWrite.user.update({
+//     where: { id },
+//     data: { onboarded: true },
+//   });
+// };
+
+export const updateOnboardingSteps = async ({
+  id,
+  steps,
+}: {
+  id: number;
+  steps: OnboardingStep[];
+}) => {
   return dbWrite.user.update({
     where: { id },
-    data: { onboarded: true },
+    data: { onboardingSteps: steps },
   });
 };
 

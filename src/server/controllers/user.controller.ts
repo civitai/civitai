@@ -14,6 +14,7 @@ import {
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   BatchBlockTagsSchema,
+  CompleteOnboardingStepInput,
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -34,7 +35,6 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import {
   acceptTOS,
-  completeOnboarding,
   createUserReferral,
   deleteUser,
   getCreators,
@@ -42,11 +42,11 @@ import {
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
-  getUserEngagedModels,
   getUserEngagedModelVersions,
-  getUsers,
+  getUserEngagedModels,
   getUserTags,
   getUserUnreadNotificationsCount,
+  getUsers,
   isUsernamePermitted,
   toggleBan,
   toggleBlockedTag,
@@ -57,6 +57,7 @@ import {
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
   updateLeaderboardRank,
+  updateOnboardingSteps,
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
@@ -70,6 +71,9 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { isUUID } from '~/utils/string-helpers';
+import { getUserBuzzBonusAmount } from '../common/user-helpers';
+import { TransactionType } from '../schema/buzz.schema';
+import { createBuzzTransaction } from '../services/buzz.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -198,11 +202,36 @@ export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> 
   }
 };
 
-export const completeOnboardingHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+export const completeOnboardingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CompleteOnboardingStepInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const { id } = ctx.user;
-    await completeOnboarding({ id });
+    const user = await getUserById({ id, select: { onboardingSteps: true } });
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    const steps = user.onboardingSteps.filter((step) => step !== input.step);
+    const updatedUser = await updateOnboardingSteps({ id, steps });
+
+    // There are no more onboarding steps, so we can reward the user
+    if (updatedUser.onboardingSteps.length === 0) {
+      await createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: updatedUser.id,
+        amount: getUserBuzzBonusAmount(ctx.user),
+        description: 'Onboarding bonus',
+        type: TransactionType.Reward,
+        externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
+      });
+    }
+
+    return updatedUser;
   } catch (e) {
+    if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
 };
