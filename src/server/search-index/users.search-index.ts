@@ -313,13 +313,23 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
 
   return itemsToIndex;
 };
-const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
+const onIndexUpdate = async ({
+  db,
+  lastUpdatedAt,
+  indexName,
+  updateIds,
+  deleteIds,
+}: SearchIndexRunContext) => {
   // Confirm index setup & working:
   await onIndexSetup({ indexName });
   // Cleanup documents that require deletion:
   // Always pass INDEX_ID here, not index name, as pending to delete will
   // always use this name.
   await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
+
+  if (deleteIds && deleteIds.length > 0) {
+    await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID, ids: deleteIds });
+  }
 
   let offset = 0;
   const userTasks: EnqueuedTask[] = [];
@@ -353,11 +363,21 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       offset + READ_BATCH_SIZE - 1
     );
 
+    const whereOr: Prisma.Sql[] = [];
+
+    if (updateIds && updateIds.length > 0) {
+      whereOr.push(Prisma.sql`u.id IN (${Prisma.join(updateIds)})`);
+    }
+
+    if (lastUpdatedAt) {
+      whereOr.push(Prisma.sql`u."createdAt" > ${lastUpdatedAt}`);
+    }
+
     const indexReadyRecords = await onFetchItemsToIndex({
       db,
       indexName,
       skip: offset,
-      whereOr: !lastUpdatedAt ? undefined : [Prisma.sql`u."createdAt" > ${lastUpdatedAt}`],
+      whereOr,
     });
 
     if (indexReadyRecords.length === 0) break;
