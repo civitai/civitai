@@ -55,7 +55,7 @@ const featureFlags = createFeatureFlags({
     description: `A fresh style for model cards with more information and a better layout.`,
     availability: ['user'],
   },
-  profileCollections: ['mod', 'founder'],
+  profileCollections: ['public'],
   imageSearch: ['dev'],
   buzz: ['public'],
   signal: ['user'],
