@@ -6,7 +6,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { PostCategoryCard } from './PostCategoryCard';
 
 type PostCategoriesState = {
-  username?: string;
+  username?: string | null;
   modelId?: number;
   modelVersionId?: number;
 };

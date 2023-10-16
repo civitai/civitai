@@ -3,7 +3,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
@@ -15,23 +15,28 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from './';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
+import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 
 export default function UserPostsPage() {
   const currentUser = useCurrentUser();
-  const { set, section: querySection, ...queryFilters } = usePostQueryParams();
-  const period = queryFilters.period ?? MetricTimeframe.AllTime;
-  const sort = queryFilters.sort ?? PostSort.Newest;
+  const {
+    replace,
+    query: { followed = undefined, ...query },
+  } = usePostQueryParams();
+  // const { replace, section: querySection, ...queryFilters } = usePostQueryParams();
+  const period = query.period ?? MetricTimeframe.AllTime;
+  const sort = query.sort ?? PostSort.Newest;
   const selfView =
     !!currentUser &&
-    !!queryFilters.username &&
-    postgresSlugify(currentUser.username) === postgresSlugify(queryFilters.username);
+    !!query.username &&
+    postgresSlugify(currentUser.username) === postgresSlugify(query.username);
 
   const [section, setSection] = useState<'published' | 'draft'>(
-    selfView ? querySection ?? 'published' : 'published'
+    selfView ? query.section ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
 
-  if (!queryFilters.username) return <NotFound />;
+  if (!query.username) return <NotFound />;
 
   return (
     <Tabs.Panel value="/posts">
@@ -42,27 +47,33 @@ export default function UserPostsPage() {
       >
         <MasonryContainer fluid>
           <Stack spacing="xs">
-            <Group spacing={8}>
+            <Group spacing={8} position="apart">
               {selfView && (
                 <FeedContentToggle
                   size="xs"
                   value={section}
                   onChange={(section) => {
                     setSection(section);
-                    set({ section });
+                    replace({ section });
                   }}
                 />
               )}
-              <Group spacing={8} position="apart" sx={{ flexGrow: 1 }}>
+              <Group spacing={8} noWrap>
                 <SortFilter
                   type="posts"
+                  variant="button"
                   value={sort}
-                  onChange={(sort) => set({ sort: sort as any })}
+                  onChange={(x) => replace({ sort: x as PostSort })}
                 />
-                <PeriodFilter type="posts" value={period} onChange={(period) => set({ period })} />
+                <PostFiltersDropdown
+                  query={{ ...query, followed }}
+                  onChange={(filters) => replace(filters)}
+                />
               </Group>
             </Group>
-            <PostsInfinite filters={{ ...queryFilters, period, sort, draftOnly: viewingDraft }} />
+            <PostsInfinite
+              filters={{ ...query, followed, period, sort, draftOnly: viewingDraft }}
+            />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

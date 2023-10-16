@@ -1,11 +1,11 @@
+import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
+import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { constants } from '~/server/common/constants';
-import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
-import { periodModeSchema } from '~/server/schema/base.schema';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
@@ -35,6 +35,7 @@ export const postsQuerySchema = postsFilterSchema.extend({
   ids: z.array(z.number()).optional(),
   collectionId: z.number().optional(),
   include: z.array(postInclude).default(['cosmetics']).optional(),
+  followed: z.boolean().optional(),
 });
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;

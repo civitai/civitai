@@ -1,7 +1,6 @@
 import { Button, Group, Stack, useMantineTheme } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconArrowLeft, IconChevronLeft } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
+import { IconChevronLeft } from '@tabler/icons-react';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
@@ -13,7 +12,7 @@ import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { constants } from '~/server/common/constants';
 
 export default function PostFeed() {
-  const filters = usePostQueryParams();
+  const { query } = usePostQueryParams();
   const theme = useMantineTheme();
 
   return (
@@ -57,7 +56,7 @@ export default function PostFeed() {
               </Group>
             </Button>
           </Group>
-          <PostsInfinite filters={filters} />
+          <PostsInfinite filters={query} />
         </Stack>
       </MasonryContainer>
     </MasonryProvider>

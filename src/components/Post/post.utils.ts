@@ -2,6 +2,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostSort } from '~/server/common/enums';
 import { GetPostsByCategoryInput, PostsQueryInput } from '~/server/schema/post.schema';
@@ -10,9 +11,12 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, numericStringArray } from '~/utils/zod-helpers';
 
+export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
+
 export const usePostFilters = () => {
   const storeFilters = useFiltersContext((state) => state.posts);
-  return removeEmpty(storeFilters);
+  const { query } = usePostQueryParams();
+  return removeEmpty({ ...storeFilters, ...query });
 };
 
 const postQueryParamSchema = z
@@ -20,30 +24,15 @@ const postQueryParamSchema = z
     tags: numericStringArray(),
     modelId: numericString(),
     modelVersionId: numericString(),
-    username: z.string().transform(postgresSlugify),
+    username: z.string().transform(postgresSlugify).nullish(),
     view: z.enum(['categories', 'feed']),
     period: z.nativeEnum(MetricTimeframe),
     sort: z.nativeEnum(PostSort),
     collectionId: numericString(),
     section: z.enum(['published', 'draft']),
+    followed: z.coerce.boolean(),
   })
   .partial();
-type PostQueryParams = z.output<typeof postQueryParamSchema>;
-export const usePostQueryParams = () => {
-  const { query, pathname, replace } = useRouter();
-
-  return useMemo(() => {
-    const result = postQueryParamSchema.safeParse(query);
-    const data: PostQueryParams = result.success ? result.data : { view: 'categories' };
-
-    return {
-      ...data,
-      set: (filters: Partial<PostQueryParams>) => {
-        replace({ pathname, query: { ...query, ...filters } }, undefined, { shallow: true });
-      },
-    };
-  }, [query, pathname, replace]);
-};
 
 export const useQueryPosts = (
   filters?: Partial<PostsQueryInput>,

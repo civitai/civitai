@@ -191,6 +191,14 @@ export const constants = {
     referralCodeMinLength: 6,
     referralCodeMaxCount: 3,
   },
+  leaderboard: {
+    legendScoring: {
+      diamond: 10,
+      gold: 8,
+      silver: 6,
+      bronze: 4,
+    },
+  },
   buzz: {
     minChargeAmount: 500, // $5.00
     maxChargeAmount: 99999999, // $999,999.99

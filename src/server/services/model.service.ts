@@ -127,6 +127,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     needsReview,
     earlyAccess,
     supportsGeneration,
+    followed,
     collectionId,
   } = input;
 
@@ -228,6 +229,23 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 
   if (supportsGeneration) {
     AND.push({ generationCoverage: { some: { covered: true } } });
+  }
+
+  // Filter only followed users
+  if (!!sessionUser && followed) {
+    const followedUsers = await dbRead.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        engagingUsers: {
+          select: { targetUser: { select: { id: true } } },
+          where: { type: 'Follow' },
+        },
+      },
+    });
+    const followedUsersIds =
+      followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
+    AND.push({ userId: { in: followedUsersIds } });
+    isPrivate = true;
   }
 
   if (collectionId) {

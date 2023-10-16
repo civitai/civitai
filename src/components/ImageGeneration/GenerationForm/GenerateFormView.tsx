@@ -16,10 +16,11 @@ import {
   ScrollArea,
 } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconArrowAutofitDown } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowAutofitDown } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { BaseModelProvider } from '~/components/ImageGeneration/GenerationForm/BaseModelProvider';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
@@ -49,6 +50,7 @@ import { generationStore } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { calculateGenerationBill } from '../utils/generation.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
@@ -325,29 +327,7 @@ export function GenerateFormView({
                 </Button>
                 {/* </Tooltip> */}
               </Group>
-              {showSurvey && (
-                <DismissibleAlert
-                  id="generation-alpha-feedback"
-                  title="Share your feedback!"
-                  content={
-                    <Text>
-                      Thank you for participating in our generation beta. To help us improve the
-                      service and prioritize feature development, please take a moment to fill out{' '}
-                      <Text
-                        component="a"
-                        td="underline"
-                        href="https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4"
-                        variant="link"
-                        target="_blank"
-                        rel="nofollow noreferrer"
-                      >
-                        our survey
-                      </Text>
-                      .
-                    </Text>
-                  }
-                />
-              )}
+              <GenerationStatusMessage />
               {isSDXL && (
                 <DismissibleAlert
                   id="sdxl-preview"
@@ -487,6 +467,24 @@ const getAspectRatioControls = (baseModel?: string) => {
     ),
     value: `${index}`,
   }));
+};
+
+const GenerationStatusMessage = () => {
+  const { data: status, isLoading } = trpc.generation.getStatusMessage.useQuery(undefined, {
+    cacheTime: 0,
+  });
+  if (isLoading || !status) return null;
+
+  return (
+    <AlertWithIcon
+      color="yellow"
+      title="Image Generation Status Alert"
+      icon={<IconAlertTriangle />}
+      iconColor="yellow"
+    >
+      {status}
+    </AlertWithIcon>
+  );
 };
 
 const clipSkipMarks = Array(10)

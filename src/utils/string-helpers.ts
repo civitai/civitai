@@ -132,6 +132,7 @@ export function hashify(str: string) {
 }
 
 export function hashifyObject(obj: any) {
+  if (!obj) return '';
   const str = toJson(obj);
   return hashify(str);
 }

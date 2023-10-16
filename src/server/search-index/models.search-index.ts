@@ -402,6 +402,8 @@ const onIndexUpdate = async ({
   db,
   lastUpdatedAt,
   indexName = INDEX_ID,
+  updateIds,
+  deleteIds,
 }: SearchIndexRunContext) => {
   if (!client) return;
 
@@ -412,6 +414,9 @@ const onIndexUpdate = async ({
   // Always pass INDEX_ID here, not index name, as pending to delete will
   // always use this name.
   await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
+  if (deleteIds && deleteIds.length > 0) {
+    await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID, ids: deleteIds });
+  }
 
   const modelTasks: EnqueuedTask[] = [];
 
@@ -455,24 +460,34 @@ const onIndexUpdate = async ({
   // Now, we can tackle new additions
   let offset = 0;
   while (true) {
+    const whereOr: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
+    if (lastUpdatedAt) {
+      whereOr.push({
+        createdAt: {
+          gt: lastUpdatedAt,
+        },
+      });
+
+      whereOr.push({
+        updatedAt: {
+          gt: lastUpdatedAt,
+        },
+      });
+    }
+
+    if (updateIds && updateIds.length > 0) {
+      whereOr.push({
+        id: {
+          in: updateIds,
+        },
+      });
+    }
+
     const { indexReadyRecords, indexRecordsWithImages } = await onFetchItemsToIndex({
       db,
       indexName,
       skip: offset,
-      whereOr: lastUpdatedAt
-        ? [
-            {
-              createdAt: {
-                gt: lastUpdatedAt,
-              },
-            },
-            {
-              updatedAt: {
-                gt: lastUpdatedAt,
-              },
-            },
-          ]
-        : undefined,
+      whereOr,
     });
 
     if (indexReadyRecords.length === 0 && indexRecordsWithImages.length === 0) {

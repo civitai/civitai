@@ -7,7 +7,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { UserDraftArticles } from '~/components/Article/UserDraftArticles';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -18,6 +18,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from './';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
+import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -36,15 +37,18 @@ export const getServerSideProps = createServerSideProps({
 export default function UserArticlesPage() {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { set, section: querySection, ...queryFilters } = useArticleQueryParams();
-  const period = queryFilters.period ?? MetricTimeframe.AllTime;
-  const sort = queryFilters.sort ?? ArticleSort.Newest;
+  const {
+    replace,
+    query: { followed = undefined, ...query },
+  } = useArticleQueryParams();
+  const period = query.period ?? MetricTimeframe.AllTime;
+  const sort = query.sort ?? ArticleSort.Newest;
   const username = (router.query.username as string) ?? '';
   const selfView =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
 
   const [section, setSection] = useState<'published' | 'draft'>(
-    selfView ? querySection ?? 'published' : 'published'
+    selfView ? query.section ?? 'published' : 'published'
   );
   const viewingPublished = section === 'published';
 
@@ -60,39 +64,36 @@ export default function UserArticlesPage() {
       >
         <MasonryContainer fluid>
           <Stack spacing="xs">
-            <Group spacing={8}>
+            <Group spacing={8} position="apart">
               {selfView && (
                 <FeedContentToggle
                   size="xs"
                   value={section}
                   onChange={(section) => {
                     setSection(section);
-                    set({ section });
+                    replace({ section });
                   }}
                 />
               )}
               {viewingPublished && (
-                <>
+                <Group spacing={8} noWrap>
                   <SortFilter
                     type="articles"
+                    variant="button"
                     value={sort}
-                    onChange={(x) => set({ sort: x as ArticleSort })}
+                    onChange={(x) => replace({ sort: x as ArticleSort })}
                   />
-                  <Group spacing="xs" ml="auto">
-                    <PeriodFilter
-                      type="articles"
-                      value={period}
-                      onChange={(x) => set({ period: x })}
-                      hideMode={selfView}
-                    />
-                  </Group>
-                </>
+                  <ArticleFiltersDropdown
+                    query={{ ...query, followed }}
+                    onChange={(filters) => replace(filters)}
+                  />
+                </Group>
               )}
             </Group>
             {viewingPublished ? (
               <ArticlesInfinite
                 filters={{
-                  ...queryFilters,
+                  ...query,
                   sort,
                   period,
                   includeDrafts: !!currentUser?.isModerator,

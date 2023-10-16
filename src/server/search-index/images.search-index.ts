@@ -28,6 +28,7 @@ import {
 import { imageGenerationSchema, imageMetaSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
+import { chunk } from 'lodash';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -326,6 +327,9 @@ const onFetchItemsToIndex = async ({
 
   const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
     const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
+    const tags = rawTags
+      .filter((rt) => rt.imageId === imageRecord.id)
+      .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
 
     return {
       ...imageRecord,
@@ -334,9 +338,7 @@ const onFetchItemsToIndex = async ({
         ...user,
         cosmetics: (cosmetics || []).map((cosmetic) => ({ cosmetic })),
       },
-      tags: rawTags
-        .filter((rt) => rt.imageId === imageRecord.id)
-        .map((rt) => ({ id: rt.tagId, name: rt.tagName })),
+      tags,
       reactions: [],
     };
   });
@@ -358,22 +360,16 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     ' have been updated and will be re-indexed'
   );
 
-  const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
-
   const itemsToIndex: ImageSearchIndexRecord[] = [];
-
-  for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-    const batch = queuedItems.slice(
-      batchNumber * READ_BATCH_SIZE,
-      batchNumber * READ_BATCH_SIZE + READ_BATCH_SIZE
-    );
-
-    const itemIds = batch.map(({ id }) => id);
-
+  const batches = chunk(
+    queuedItems.map((x) => x.id),
+    READ_BATCH_SIZE
+  );
+  for (const batch of batches) {
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [Prisma.sql`i.id IN (${Prisma.join(itemIds)})`],
+      whereOr: [Prisma.sql`i.id IN (${Prisma.join(batch)})`],
       isIndexUpdate: true,
     });
 
@@ -421,12 +417,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       db,
       indexName,
       cursor: offset,
-      whereOr: lastUpdatedAt
-        ? [
-            Prisma.sql`i."createdAt" > ${lastUpdatedAt}`,
-            Prisma.sql`i."updatedAt" > ${lastUpdatedAt}`,
-          ]
-        : undefined,
+      whereOr: lastUpdatedAt ? [Prisma.sql`i."createdAt" > ${lastUpdatedAt}`] : undefined,
       isIndexUpdate: !!lastUpdatedAt,
     });
 

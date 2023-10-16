@@ -67,6 +67,28 @@ export function createSearchIndexUpdateProcessor({
         where: { type: indexName, createdAt: { lt: new Date() } },
       });
     },
+    async updateSync(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+      if (!items.length) {
+        return;
+      }
+
+      console.log(
+        `createSearchIndexUpdateProcessor :: ${indexName} :: updateSync :: Called with ${items.length} items`
+      );
+
+      const batches = chunk(items, 500);
+
+      for (const batch of batches) {
+        const updateIds = batch
+          .filter((i) => !i.action || i.action === SearchIndexUpdateQueueAction.Update)
+          .map(({ id }) => id);
+        const deleteIds = batch
+          .filter((i) => i.action === SearchIndexUpdateQueueAction.Delete)
+          .map(({ id }) => id);
+
+        await onIndexUpdate({ db: dbWrite, indexName, updateIds, deleteIds });
+      }
+    },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
       if (!items.length) {
         return;
@@ -94,8 +116,10 @@ export function createSearchIndexUpdateProcessor({
 }
 export type SearchIndexRunContext = {
   db: PrismaClient;
-  lastUpdatedAt?: Date;
   indexName: string;
+  lastUpdatedAt?: Date;
+  updateIds?: number[];
+  deleteIds?: number[];
 };
 
 export type SearchIndexSetupContext = {

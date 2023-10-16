@@ -6,32 +6,32 @@ import {
   TagTarget,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { ManipulateType } from 'dayjs';
 import { SessionUser } from 'next-auth';
 
 import { ArticleSort, BrowsingMode } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetArticlesByCategorySchema,
   GetInfiniteArticlesSchema,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
-import { dbRead, dbWrite } from '~/server/db/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getTypeCategories } from '~/server/services/tag.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { getCategoryTags } from '~/server/services/system-cache';
-import { isDefined } from '~/utils/type-guards';
-import { decreaseDate } from '~/utils/date-helpers';
-import { ManipulateType } from 'dayjs';
-import { articlesSearchIndex } from '~/server/search-index';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { getCategoryTags } from '~/server/services/system-cache';
+import { getTypeCategories } from '~/server/services/tag.service';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
+import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 
 export const getArticles = async ({
@@ -54,6 +54,7 @@ export const getArticles = async ({
   ids,
   collectionId,
   browsingMode,
+  followed,
 }: GetInfiniteArticlesSchema & { sessionUser?: SessionUser }) => {
   try {
     const take = limit + 1;
@@ -106,6 +107,22 @@ export const getArticles = async ({
           engagements: { some: { userId: sessionUser?.id, type: ArticleEngagementType.Hide } },
         });
       }
+    }
+
+    // Filter only followed users
+    if (!!sessionUser && followed) {
+      const followedUsers = await dbRead.user.findUnique({
+        where: { id: sessionUser.id },
+        select: {
+          engagingUsers: {
+            select: { targetUser: { select: { id: true } } },
+            where: { type: 'Follow' },
+          },
+        },
+      });
+      const followedUsersIds =
+        followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
+      AND.push({ userId: { in: followedUsersIds } });
     }
 
     const where: Prisma.ArticleFindManyArgs['where'] = {

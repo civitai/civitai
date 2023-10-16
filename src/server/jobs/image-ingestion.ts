@@ -1,6 +1,7 @@
 import { ImageIngestionStatus } from '@prisma/client';
 import { chunk } from 'lodash';
 import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { deleteImageById, ingestImage, ingestImageBulk } from '~/server/services/image.service';
@@ -12,7 +13,9 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     where: {
       OR: [
         {
-          scanRequestedAt: { lte: decreaseDate(new Date(), 5, 'minute') },
+          scanRequestedAt: {
+            lte: decreaseDate(new Date(), env.IMAGE_SCANNING_RETRY_DELAY, 'minute'),
+          },
           ingestion: ImageIngestionStatus.Pending,
         },
         { scanRequestedAt: null },

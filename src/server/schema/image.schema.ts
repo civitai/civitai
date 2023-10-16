@@ -1,4 +1,3 @@
-import { BrowsingMode, ImageSort } from './../common/enums';
 import {
   ImageGenerationProcess,
   MediaType,
@@ -7,10 +6,11 @@ import {
   ReviewReactions,
 } from '@prisma/client';
 import { z } from 'zod';
-import { Sampler, constants } from '~/server/common/constants';
-import { usernameSchema } from '~/server/schema/user.schema';
+import { constants } from '~/server/common/constants';
 import { periodModeSchema } from '~/server/schema/base.schema';
+import { usernameSchema } from '~/server/schema/user.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { BrowsingMode, ImageSort } from './../common/enums';
 
 const stringToNumber = z.preprocess(
   (value) => (value ? Number(value) : undefined),
@@ -221,6 +221,7 @@ export const getInfiniteImagesSchema = z
     types: z.array(z.nativeEnum(MediaType)).optional(),
     withMeta: z.boolean().optional(),
     hidden: z.boolean().optional(),
+    followed: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

@@ -2,7 +2,7 @@ import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
-import { useFiltersContext, FilterKeys } from '~/providers/FiltersProvider';
+import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schema/image.schema';
@@ -37,6 +37,7 @@ export const imagesQueryParamSchema = z
     withMeta: booleanString(),
     section: z.enum(['images', 'reactions']),
     hidden: z.coerce.boolean(),
+    followed: z.coerce.boolean(),
   })
   .partial();
 

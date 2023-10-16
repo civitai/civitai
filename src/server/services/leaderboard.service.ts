@@ -162,34 +162,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
     ORDER BY lr.position
   `;
 
-  return leaderboardResultsRaw.map(
-    ({ metrics: metricsRaw, userId, username, deletedAt, image, cosmetics, ...results }) => {
-      const metrics = Object.entries(metricsRaw)
-        .map(([type, value]) => ({
-          type,
-          value,
-        }))
-        .sort((a, b) => {
-          const aIndex = metricOrder.indexOf(a.type);
-          const bIndex = metricOrder.indexOf(b.type);
-          if (aIndex === -1) return 1;
-          if (bIndex === -1) return -1;
-          return aIndex - bIndex;
-        });
-
-      return {
-        ...results,
-        user: {
-          id: userId,
-          username,
-          deletedAt,
-          image,
-          cosmetics: cosmetics?.map((cosmetic) => ({ cosmetic })) ?? [],
-        },
-        metrics,
-      };
-    }
-  );
+  return formatLeaderboardResults(leaderboardResultsRaw, metricOrder);
 }
 
 export type LeaderboardWithResults = Awaited<ReturnType<typeof getLeaderboardsWithResults>>[number];
@@ -234,4 +207,81 @@ export async function getLeaderboardsWithResults(input: GetLeaderboardsWithResul
   );
 
   return leaderboardsWithResults;
+}
+
+const legendsMetricOrder = ['diamond', 'gold', 'silver', 'bronze'];
+export async function getLeaderboardLegends(input: GetLeaderboardInput) {
+  const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
+    WITH scores AS (
+      SELECT
+        "userId",
+        score,
+        metrics,
+        position
+      FROM "LegendsBoardResult"
+      WHERE "leaderboardId" = ${input.id}
+    )
+    SELECT
+      s."userId",
+      current_date date,
+      s.position,
+      s.score,
+      s.metrics,
+      u.username,
+      u."deletedAt",
+      u.image,
+      (
+        SELECT
+          jsonb_agg(jsonb_build_object(
+            'id', c.id,
+            'data', c.data,
+            'type', c.type,
+            'source', c.source,
+            'name', c.name,
+            'leaderboardId', c."leaderboardId",
+            'leaderboardPosition', c."leaderboardPosition"
+          ))
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        AND "equippedAt" IS NOT NULL
+        WHERE uc."userId" = s."userId"
+      ) cosmetics,
+      null delta
+    FROM scores s
+    JOIN "User" u ON u.id = s."userId"
+    ORDER BY s.score DESC
+  `;
+
+  return formatLeaderboardResults(leaderboardResultsRaw, legendsMetricOrder);
+}
+
+function formatLeaderboardResults(results: LeaderboardRaw[], metricSortOrder = metricOrder) {
+  return results.map(
+    ({ metrics: metricsRaw, userId, username, deletedAt, image, cosmetics, ...results }) => {
+      const metrics = Object.entries(metricsRaw)
+        .map(([type, value]) => ({
+          type,
+          value,
+        }))
+        .sort((a, b) => {
+          const aIndex = metricSortOrder.indexOf(a.type);
+          const bIndex = metricSortOrder.indexOf(b.type);
+          if (aIndex === -1) return 1;
+          if (bIndex === -1) return -1;
+          return aIndex - bIndex;
+        });
+
+      return {
+        ...results,
+        user: {
+          id: userId,
+          username,
+          deletedAt,
+          image,
+          cosmetics: cosmetics?.map((cosmetic) => ({ cosmetic })) ?? [],
+        },
+        metrics,
+      };
+    }
+  );
 }
