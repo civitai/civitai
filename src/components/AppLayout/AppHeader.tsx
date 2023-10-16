@@ -562,7 +562,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 user={currentUser}
                 textSize={textSize}
                 withAbbreviation={withAbbreviation}
-                withTooltip
+                withTooltip={withAbbreviation}
               />
             </Group>
             <Button
@@ -577,7 +577,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               }}
               compact
             >
-              Buy More Buzz
+              Buy More
             </Button>
           </Group>
         </Link>
@@ -721,7 +721,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
-                <BuzzMenuItem />
+                <BuzzMenuItem withAbbreviation={false} />
                 {userMenuItems}
                 <Divider my={4} />
                 <Menu.Item

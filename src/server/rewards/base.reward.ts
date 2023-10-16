@@ -196,8 +196,8 @@ export function createBuzzEvent<T>({
                 !interval
                   ? ''
                   : interval === 'day'
-                  ? 'AND time > TODAY()'
-                  : `AND time > NOW() - INTERVAL '1 ${interval}'`
+                  ? 'AND time > today()'
+                  : `AND time > now() - INTERVAL '1 ${interval}'`
               }
               AND (${keyParts.join(', ')}) IN (${idTuples})
             GROUP BY ${keyParts.join(', ')}
