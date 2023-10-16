@@ -152,9 +152,10 @@ export function InteractiveTipBuzzButton({
   };
 
   const startCounter = () => {
-    if (interval.active || timeoutRef.current) {
+    if (interval.active || timeoutRef.current || !currentUser) {
       return;
     }
+
     interval.start();
   };
 
