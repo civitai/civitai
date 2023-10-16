@@ -18,7 +18,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
           },
           ingestion: ImageIngestionStatus.Pending,
         },
-        { scanRequestedAt: null },
+        { scanRequestedAt: null, ingestion: ImageIngestionStatus.Pending },
       ],
     },
     select: {

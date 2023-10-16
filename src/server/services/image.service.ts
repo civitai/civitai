@@ -281,9 +281,11 @@ export const ingestImage = async ({
 export const ingestImageBulk = async ({
   images,
   tx,
+  lowPriority = true,
 }: {
   images: IngestImageInput[];
   tx?: Prisma.TransactionClient;
+  lowPriority?: boolean;
 }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
@@ -306,21 +308,24 @@ export const ingestImageBulk = async ({
     return true;
   }
 
-  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue-bulk', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(
-      images.map((image) => ({
-        imageId: image.id,
-        imageKey: image.url,
-        type: image.type,
-        width: image.width,
-        height: image.height,
-        scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
-        callbackUrl,
-      }))
-    ),
-  });
+  const response = await fetch(
+    env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        images.map((image) => ({
+          imageId: image.id,
+          imageKey: image.url,
+          type: image.type,
+          width: image.width,
+          height: image.height,
+          scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
+          callbackUrl,
+        }))
+      ),
+    }
+  );
   if (response.status === 202) {
     await dbClient.image.updateMany({
       where: { id: { in: imageIds } },
