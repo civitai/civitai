@@ -28,6 +28,7 @@ import {
   IconDotsVertical,
   IconPlaylistAdd,
   IconInfoCircle,
+  IconBolt,
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
@@ -61,6 +62,10 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit, getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
 
 const mantineColors: DefaultMantineColor[] = [
   'blue',
@@ -189,6 +194,7 @@ export function AmbientModelCard({ data, height }: Props) {
   const { classes, cx, theme } = useStyles();
   const { push } = useRouter();
   const features = useFeatureFlags();
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
   const { id, image, name, rank, user, locked, earlyAccessDeadline } = data ?? {};
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
@@ -251,6 +257,14 @@ export function AmbientModelCard({ data, height }: Props) {
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
       <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
+  );
+
+  const modelBuzz = (
+    <InteractiveTipBuzzButton toUserId={data.user.id} entityType={'Model'} entityId={data.id}>
+      <IconBadge className={classes.statBadge} icon={<IconBolt size={14} />}>
+        <Text size="xs">{abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}</Text>
+      </IconBadge>
+    </InteractiveTipBuzzButton>
   );
 
   const modelLikes = !!rank.favoriteCount && (
@@ -564,6 +578,7 @@ export function AmbientModelCard({ data, height }: Props) {
                             {modelLikes}
                             {modelComments}
                             {modelDownloads}
+                            {modelBuzz}
                           </Group>
                         </Group>
                       </Stack>
