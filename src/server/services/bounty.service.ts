@@ -77,7 +77,6 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   }
 
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
-  // TODO.bounty: consider showing only open bounties when sorting by ending soon
   if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
   else if (sort === BountySort.HighestBounty)
     orderBy.push({ rank: { [`unitAmountCount${period}Rank`]: 'asc' } });
@@ -89,6 +88,8 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     orderBy.push({ rank: { [`favoriteCount${period}Rank`]: 'asc' } });
   else if (sort === BountySort.MostTracked)
     orderBy.push({ rank: { [`trackCount${period}Rank`]: 'asc' } });
+  else if (sort === BountySort.MostEntries)
+    orderBy.push({ rank: { [`entryCount${period}Rank`]: 'asc' } });
   else orderBy.push({ createdAt: 'desc' });
 
   return dbRead.bounty.findMany({

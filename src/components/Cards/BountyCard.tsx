@@ -25,6 +25,7 @@ import {
   IconClockHour4,
   IconHeart,
   IconMessageCircle2,
+  IconSwords,
   IconViewfinder,
 } from '@tabler/icons-react';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';
@@ -256,6 +257,16 @@ export function BountyCard({ data }: Props) {
                   variant="transparent"
                 >
                   <Text size="xs">{abbreviateNumber(stats?.commentCountAllTime ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  icon={<IconSwords size={14} />}
+                  color="dark"
+                  p={0}
+                  size="lg"
+                  // @ts-ignore
+                  variant="transparent"
+                >
+                  <Text size="xs">{abbreviateNumber(stats?.entryCountAllTime ?? 0)}</Text>
                 </IconBadge>
               </Group>
             </Badge>

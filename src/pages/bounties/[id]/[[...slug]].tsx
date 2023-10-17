@@ -52,6 +52,7 @@ import {
   IconMessageCircle2,
   IconShare3,
   IconStar,
+  IconSwords,
   IconTournament,
   IconTrophy,
   IconViewfinder,
@@ -297,6 +298,9 @@ export default function BountyDetailsPage({
                   }}
                 >
                   {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}
+                </IconBadge>
+                <IconBadge {...defaultBadgeProps} icon={<IconSwords size={18} />} sx={undefined}>
+                  {abbreviateNumber(bounty.stats?.entryCountAllTime ?? 0)}
                 </IconBadge>
               </Group>
             </Group>
