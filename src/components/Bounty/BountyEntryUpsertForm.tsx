@@ -289,7 +289,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart">
+                    <Group position="apart" noWrap>
                       <Stack spacing={0}>
                         {bountyEntry && file.id ? (
                           <Anchor
@@ -382,7 +382,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
               return (
                 <Paper key={file.id} p={16} radius="md" w="100%" bg="dark.4">
                   <Stack>
-                    <Group position="apart">
+                    <Group position="apart" noWrap>
                       <Stack spacing={0}>
                         {bountyEntry && file.id ? (
                           <Anchor

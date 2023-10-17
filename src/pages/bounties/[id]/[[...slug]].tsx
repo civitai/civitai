@@ -781,21 +781,23 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
               </Group>
             </Accordion.Control>
             <Accordion.Panel>
-              <Stack spacing={2}>
-                {filesCount > 0 ? (
-                  <SimpleGrid cols={1} spacing={2}>
-                    {files.map((file) => (
-                      <AttachmentCard key={file.id} {...file} />
-                    ))}
-                  </SimpleGrid>
-                ) : (
-                  <Center p="xl">
-                    <Text size="md" color="dimmed">
-                      No files were provided for this bounty
-                    </Text>
-                  </Center>
-                )}
-              </Stack>
+              <ScrollArea.Autosize maxHeight={300}>
+                <Stack spacing={2}>
+                  {filesCount > 0 ? (
+                    <SimpleGrid cols={1} spacing={2}>
+                      {files.map((file) => (
+                        <AttachmentCard key={file.id} {...file} />
+                      ))}
+                    </SimpleGrid>
+                  ) : (
+                    <Center p="xl">
+                      <Text size="md" color="dimmed">
+                        No files were provided for this bounty
+                      </Text>
+                    </Center>
+                  )}
+                </Stack>
+              </ScrollArea.Autosize>
             </Accordion.Panel>
           </Accordion.Item>
         )}
