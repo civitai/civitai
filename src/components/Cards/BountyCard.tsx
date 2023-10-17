@@ -50,7 +50,7 @@ export function BountyCard({ data }: Props) {
   const cover = images?.[0];
   const expired = expiresAt < new Date();
 
-  const { engagements } = useBountyEngagement({ bountyId: id });
+  const { engagements } = useBountyEngagement();
 
   const isFavorite = !!engagements?.Favorite?.find((value) => value === id);
   const isTracked = !!engagements?.Track?.find((value) => value === id);

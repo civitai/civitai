@@ -126,7 +126,7 @@ export default function BountyDetailsPage({
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
-  const { toggle, engagements, toggling } = useBountyEngagement({ bountyId: bounty?.id });
+  const { toggle, engagements, toggling } = useBountyEngagement();
 
   const discussionSectionRef = useRef<HTMLDivElement>(null);
 
@@ -456,7 +456,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const minUnitAmount = bounty.minBenefactorUnitAmount;
 
-  const { toggle, engagements, toggling } = useBountyEngagement({ bountyId: bounty.id });
+  const { toggle, engagements, toggling } = useBountyEngagement();
 
   const isFavorite = !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !!engagements?.Track?.find((id) => id === bounty.id);

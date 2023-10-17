@@ -139,7 +139,7 @@ export const useQueryBountyEngagements = () => {
   return { engagements, loading };
 };
 
-export const useBountyEngagement = ({ bountyId }: { bountyId?: number }) => {
+export const useBountyEngagement = () => {
   const queryUtils = trpc.useContext();
   const { engagements } = useQueryBountyEngagements();
 
@@ -182,22 +182,14 @@ export const useBountyEngagement = ({ bountyId }: { bountyId?: number }) => {
 
       return { previousEngagements, previousBounty };
     },
-    onError: (_error, _variables, context) => {
-      if (!bountyId) {
-        return;
-      }
-
+    onError: (_error, { bountyId }, context) => {
       queryUtils.user.getBountyEngagement.setData(undefined, context?.previousEngagements);
       queryUtils.bounty.getById.setData({ id: bountyId }, context?.previousBounty);
     },
   });
 
-  const handleToggle = async ({ type }: ToggleUserBountyEngagementsInput) => {
-    if (!bountyId) {
-      return;
-    }
-
-    await toggleEngagementMutation.mutateAsync({ bountyId, type });
+  const handleToggle = async (payload: ToggleUserBountyEngagementsInput) => {
+    await toggleEngagementMutation.mutateAsync(payload);
   };
 
   return { engagements, toggle: handleToggle, toggling: toggleEngagementMutation.isLoading };
@@ -225,8 +217,11 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
   const { bountyId } = opts ?? {};
   const queryUtils = trpc.useContext();
 
+  const { toggle } = useBountyEngagement();
+
   const createBountyMutation = trpc.bounty.create.useMutation({
-    async onSuccess() {
+    async onSuccess({ id }) {
+      await toggle({ type: BountyEngagementType.Track, bountyId: id });
       await queryUtils.bounty.getInfinite.invalidate();
     },
     onError(error) {
