@@ -89,7 +89,11 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const images = await getImagesForBounties({ bountyIds: bountIds });
+    const images = await getImagesForBounties({
+      bountyIds: bountIds,
+      userId: user?.id,
+      isModerator: user?.isModerator,
+    });
 
     return {
       nextCursor,
@@ -115,6 +119,7 @@ export const getInfiniteBountiesHandler = async ({
 
 export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
+    const { user } = ctx;
     const bounty = await getBountyById({
       ...input,
       select: {
@@ -135,6 +140,10 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
 
     const images = await getBountyImages({ id: bounty.id });
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
+    const allImagesScanned = images.every((image) => !!image.scannedAt);
+    const isOwner = user?.id === bounty.user?.id || user?.isModerator;
+    if (!allImagesScanned && !isOwner)
+      throw throwAuthorizationError('You are not authorized to view this bounty');
 
     return {
       ...bounty,

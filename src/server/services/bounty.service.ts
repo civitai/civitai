@@ -1,4 +1,11 @@
-import { BountyEntryMode, Currency, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
+import {
+  BountyEntryMode,
+  Currency,
+  ImageIngestionStatus,
+  MetricTimeframe,
+  Prisma,
+  TagTarget,
+} from '@prisma/client';
 import { ManipulateType } from 'dayjs';
 import { groupBy } from 'lodash-es';
 import { isProd } from '~/env/other';
@@ -409,12 +416,25 @@ export const addBenefactorUnitAmount = async ({
   return updatedBenefactor;
 };
 
-export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] }) => {
+export const getImagesForBounties = async ({
+  bountyIds,
+  userId,
+  isModerator,
+}: {
+  bountyIds: number[];
+  userId?: number;
+  isModerator?: boolean;
+}) => {
+  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
+    ? [{ ingestion: { notIn: [] } }]
+    : [{ ingestion: ImageIngestionStatus.Scanned }];
+  if (userId) imageOr.push({ userId });
+
   const connections = await dbRead.imageConnection.findMany({
     where: {
       entityType: 'Bounty',
       entityId: { in: bountyIds },
-      image: { ingestion: isProd ? 'Scanned' : { in: ['Pending', 'Scanned'] } },
+      image: { OR: imageOr },
     },
     select: {
       entityId: true,

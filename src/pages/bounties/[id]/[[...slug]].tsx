@@ -46,6 +46,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconAward,
   IconClockHour4,
+  IconExclamationMark,
   IconHeart,
   IconInfoCircle,
   IconMessageCircle2,
@@ -92,6 +93,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { scrollToTop } from '~/utils/scroll-utils';
 import { env } from '~/env/client.mjs';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -151,7 +153,7 @@ export default function BountyDetailsPage({
     <Meta
       title={`Civitai | ${bounty?.name}`}
       image={
-        !mainImage || isNsfwImage(mainImage) || bounty?.nsfw
+        !mainImage || isNsfwImage(mainImage) || bounty?.nsfw || !mainImage.scannedAt
           ? undefined
           : getEdgeUrl(mainImage.url, { width: 1200 })
       }
@@ -195,6 +197,7 @@ export default function BountyDetailsPage({
   };
 
   const expired = bounty.expiresAt < new Date();
+  const allImagesScanned = bounty.images.every((image) => image.scannedAt);
 
   return (
     <>
@@ -202,6 +205,24 @@ export default function BountyDetailsPage({
       <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
       <Container size="xl" mb={32}>
         <Stack spacing="xs" mb="xl">
+          {!allImagesScanned && (
+            <AlertWithIcon
+              icon={<IconExclamationMark size={20} />}
+              color="yellow"
+              iconColor="yellow"
+              title={
+                <Text weight={590} size="md" ml="xs">
+                  Pending Scan
+                </Text>
+              }
+              px="md"
+            >
+              <Text size="sm" ml="xs">
+                This bounty has images that are still being scanned and it won&apos;t be availble to
+                the public until the process is finished.
+              </Text>
+            </AlertWithIcon>
+          )}
           <Group position="apart" className={classes.titleWrapper} noWrap>
             <Group spacing="xs">
               <Title weight="bold" className={classes.title} lineClamp={2} order={1}>
