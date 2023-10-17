@@ -354,24 +354,18 @@ export const saveItemInCollections = async ({
   collectionIds = uniq(collectionIds);
   removeFromCollectionIds = uniq(removeFromCollectionIds);
 
+  const collections = await dbRead.collection.findMany({
+    where: {
+      id: { in: collectionIds },
+    },
+  });
+
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
     const type = inputToCollectionType[itemKey as keyof typeof inputToCollectionType];
     // check if all collections match the Model type
-    const collections = await dbRead.collection.findMany({
-      where: {
-        id: { in: collectionIds },
-        OR: [
-          {
-            type: null,
-          },
-          {
-            type,
-          },
-        ],
-      },
-    });
+    const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
-    if (collections.length !== collectionIds.length) {
+    if (filteredCollections.length !== collectionIds.length) {
       throw throwBadRequestError('Collection type mismatch');
     }
   }
@@ -379,11 +373,42 @@ export const saveItemInCollections = async ({
   const data = (
     await Promise.all(
       collectionIds.map(async (collectionId) => {
+        const collection = collections.find((c) => c.id === collectionId);
+
+        if (!collection) {
+          return null;
+        }
+
+        const metadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
         const permission = await getUserCollectionPermissionsById({
           userId,
           isModerator,
           id: collectionId,
         });
+
+        if (metadata.maxItemsPerUser) {
+          // check how many items user has created:
+          const itemCount = await dbRead.collectionItem.count({
+            where: {
+              collectionId,
+              addedById: userId,
+            },
+          });
+
+          if (itemCount > metadata.maxItemsPerUser) {
+            throw throwBadRequestError(
+              `You have reached the maximum number of items in collection ${collection.name}`
+            );
+          }
+        }
+
+        if (
+          metadata.submissionStartDate &&
+          metadata.submissionEndDate &&
+          (metadata.submissionStartDate > new Date() || metadata.submissionEndDate < new Date())
+        ) {
+          throw throwBadRequestError('Collection is not accepting submissions at this time');
+        }
 
         if (!permission.isContributor && !permission.isOwner) {
           // Person adding content to stuff they don't follow.
@@ -1121,9 +1146,41 @@ export const bulkSaveItems = async ({
 }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { type: true },
+    select: { type: true, metadata: true, name: true },
   });
+
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
+  const savedItemsCount =
+    (articleIds?.length ?? 0) +
+    (modelIds?.length ?? 0) +
+    (imageIds?.length ?? 0) +
+    (postIds?.length ?? 0);
+
+  if (metadata.maxItemsPerUser) {
+    // check how many items user has created:
+    const itemCount = await dbRead.collectionItem.count({
+      where: {
+        collectionId,
+        addedById: userId,
+      },
+    });
+
+    if (itemCount + savedItemsCount > metadata.maxItemsPerUser) {
+      throw throwBadRequestError(
+        `You have reached the maximum number of items in collection ${collection.name}`
+      );
+    }
+  }
+
+  if (
+    metadata.submissionStartDate &&
+    metadata.submissionEndDate &&
+    (metadata.submissionStartDate > new Date() || metadata.submissionEndDate < new Date())
+  ) {
+    throw throwBadRequestError('Collection is not accepting submissions at this time');
+  }
 
   let data: Prisma.CollectionItemCreateManyInput[] = [];
   if (

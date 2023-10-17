@@ -10,6 +10,7 @@ import {
   Form,
   InputCheckbox,
   InputDatePicker,
+  InputNumber,
   InputSelect,
   InputSimpleImageUpload,
   InputText,
@@ -141,6 +142,26 @@ export default createRoutedContext({
                         suggest you add this in to save some resources, but this value will not be
                         shown to end-users.
                       </Text>
+                      <InputDatePicker
+                        name="metadata.submissionStartsAt"
+                        label="Submission Start Date"
+                        placeholder="Select an start date"
+                        icon={<IconCalendar size={16} />}
+                        clearable
+                      />
+                      <InputDatePicker
+                        name="metadata.submissionEndsAt"
+                        label="Submission End Date"
+                        placeholder="Select an start date"
+                        icon={<IconCalendar size={16} />}
+                        clearable
+                      />
+                      <InputNumber
+                        name="metadata.maxItemsPerUser"
+                        label="Max items per user"
+                        placeholder="Leave blank for unlimited"
+                        clearable
+                      />
                     </>
                   )}
                 </>

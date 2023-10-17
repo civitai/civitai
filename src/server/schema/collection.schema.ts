@@ -86,7 +86,12 @@ export const getAllUserCollectionsInputSchema = z
   .partial();
 
 export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
-export const collectionMetadataSchema = z.object({ endsAt: z.coerce.date().optional() });
+export const collectionMetadataSchema = z.object({
+  endsAt: z.coerce.date().optional(),
+  maxItemsPerUser: z.coerce.number().optional(),
+  submissionStartDate: z.coerce.date().optional(),
+  submissionEndDate: z.coerce.date().optional(),
+});
 
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z
