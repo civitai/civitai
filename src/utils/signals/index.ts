@@ -2,6 +2,10 @@ import { Deferred, EventEmitter } from './utils';
 import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
 import SharedWorker from '@okikio/sharedworker';
 
+// Debugging
+const logs: Record<string, boolean> = {};
+const logFn = (args: unknown) => console.log(args);
+
 export type SignalWorker = AsyncReturnType<typeof createSignalWorker>;
 export const createSignalWorker = async ({
   token,
@@ -51,6 +55,18 @@ export const createSignalWorker = async ({
   };
 
   await deferred.promise;
+
+  if (typeof window !== 'undefined') {
+    window.logSignal = (target) => {
+      if (!logs[target]) {
+        logs[target] = true;
+        on(target, logFn);
+      } else {
+        delete logs[target];
+        off(target, logFn);
+      }
+    };
+  }
 
   // fire off an event to remove this port from the worker
   window.addEventListener('beforeunload', () => unload(), {
