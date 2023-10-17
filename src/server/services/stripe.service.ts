@@ -1,5 +1,9 @@
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import * as Schema from '../schema/stripe.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
@@ -13,6 +17,8 @@ import { PaymentIntentCreationSchema } from '../schema/stripe.schema';
 import { MetadataParam } from '@stripe/stripe-js';
 import { constants } from '~/server/common/constants';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { createBuzzTransaction } from './buzz.service';
+import { TransactionType } from '../schema/buzz.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -396,7 +402,10 @@ export const manageCheckoutPayment = async (sessionId: string, customerId: strin
 
 export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   // Check if user exists and has a customerId
-  const user = await dbRead.user.findUnique({ where: { email: invoice.customer_email as string } });
+  const user = await dbRead.user.findUnique({
+    where: { email: invoice.customer_email as string },
+    select: { id: true, customerId: true, subscription: { select: { status: true } } },
+  });
   if (user && !user.customerId) {
     // Since we're handling an invoice, we assume that the user
     // is already created in stripe. We just update in our records
@@ -414,6 +423,17 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   }));
 
   await dbWrite.purchase.createMany({ data: purchases });
+
+  if (invoice.subscription && user && user.subscription?.status === 'active') {
+    await createBuzzTransaction({
+      fromAccountId: 0,
+      toAccountId: user.id,
+      type: TransactionType.Reward,
+      amount: 5000, // Hardcoded for now cause we only have one subscription option
+      description: 'Membership bonus',
+      details: { invoiceId: invoice.id },
+    }).catch(handleLogError);
+  }
 };
 
 export const cancelSubscription = async ({

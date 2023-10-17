@@ -577,7 +577,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               }}
               compact
             >
-              Buy More
+              Buy Buzz
             </Button>
           </Group>
         </Link>

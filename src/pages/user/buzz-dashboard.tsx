@@ -341,8 +341,8 @@ export default function UserBuzzDashboard() {
                         <Group spacing={4}>
                           <Text color="dimmed" size="xs">
                             {hasAwarded
-                              ? `${reward.awarded} / ${reward.cap.toLocaleString()}`
-                              : reward.cap.toLocaleString()}{' '}
+                              ? `⚡️ ${reward.awarded} / ${reward.cap.toLocaleString()} `
+                              : `⚡️ ${reward.cap.toLocaleString()} `}{' '}
                             {reward.interval ?? 'day'}
                           </Text>
                           {hasAwarded && (
