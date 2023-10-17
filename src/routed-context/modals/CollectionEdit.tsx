@@ -143,14 +143,14 @@ export default createRoutedContext({
                         shown to end-users.
                       </Text>
                       <InputDatePicker
-                        name="metadata.submissionStartsAt"
+                        name="metadata.submissionStartDate"
                         label="Submission Start Date"
                         placeholder="Select an start date"
                         icon={<IconCalendar size={16} />}
                         clearable
                       />
                       <InputDatePicker
-                        name="metadata.submissionEndsAt"
+                        name="metadata.submissionEndDate"
                         label="Submission End Date"
                         placeholder="Select an start date"
                         icon={<IconCalendar size={16} />}

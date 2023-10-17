@@ -1175,9 +1175,8 @@ export const bulkSaveItems = async ({
   }
 
   if (
-    metadata.submissionStartDate &&
-    metadata.submissionEndDate &&
-    (metadata.submissionStartDate > new Date() || metadata.submissionEndDate < new Date())
+    (metadata.submissionStartDate && new Date(metadata.submissionStartDate) > new Date()) ||
+    (metadata.submissionEndDate && new Date(metadata.submissionEndDate) < new Date())
   ) {
     throw throwBadRequestError('Collection is not accepting submissions at this time');
   }
