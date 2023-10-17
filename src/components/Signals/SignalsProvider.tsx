@@ -55,7 +55,7 @@ function FakeSignalProvider({ children }: { children: React.ReactNode }) {
 
 function RealSignalProvider({ children }: { children: React.ReactNode }) {
   const session = useSession();
-  const firstRunRef = useRef(true);
+  const loadingRef = useRef(false);
   const workerRef = useRef<SignalWorker | null>(null);
   const [connected, setConnected] = useState(false);
   const { data } = trpc.signals.getAccessToken.useQuery(undefined, {
@@ -65,10 +65,11 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const createWorker = () => {
-      if (!data) {
+      if (!data || loadingRef.current) {
         return;
       }
-
+      console.log('create');
+      loadingRef.current = true;
       createSignalWorker({
         token: data.accessToken,
         onConnected: () => {
@@ -91,15 +92,18 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
             createWorker();
           }, 5000);
         },
+        onPing: (status) => {
+          if (status !== 'available') createWorker();
+        },
         onError: (message) =>
           console.error({ type: 'SignalsProvider :: signal service error', message }),
       }).then((worker) => {
         workerRef.current = worker;
+        loadingRef.current = false;
       });
     };
 
-    if (!workerRef.current && data?.accessToken && firstRunRef.current) {
-      firstRunRef.current = false;
+    if (data?.accessToken) {
       createWorker();
     }
     return () => workerRef.current?.unload();

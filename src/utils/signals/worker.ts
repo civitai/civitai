@@ -26,6 +26,7 @@ const emitter = new EventEmitter<{
   connectionError: { message?: string };
   connectionReconnected: undefined;
   eventReceived: { target: string; payload: any };
+  pong: undefined;
 }>();
 
 const getConnection = async ({ token }: { token: string }) => {
@@ -105,6 +106,7 @@ const start = async (port: MessagePort) => {
     emitter.on('eventReceived', ({ target, payload }) =>
       postMessage({ type: 'event:received', target, payload })
     ),
+    emitter.on('pong', () => postMessage({ type: 'pong' })),
   ];
 
   // incoming messages
@@ -118,7 +120,7 @@ const start = async (port: MessagePort) => {
     else if (data.type === 'beforeunload') {
       emitterOffHandlers.forEach((fn) => fn());
       port.close();
-    }
+    } else if (data.type === 'ping') emitter.emit('pong', undefined);
   };
 };
 

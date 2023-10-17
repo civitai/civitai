@@ -13,16 +13,19 @@ export const createSignalWorker = async ({
   onClosed,
   onError,
   onReconnected,
+  onPing,
 }: {
   token: string;
   onConnected?: () => void;
   onReconnected?: () => void;
   onClosed?: (message?: string) => void;
   onError?: (message?: string) => void;
+  onPing?: (status: 'available' | 'unavailable') => void;
 }) => {
-  const deferred = new Deferred<void>();
+  const deferred = new Deferred();
   const emitter = new EventEmitter();
   const events: Record<string, boolean> = {};
+  let pingDeferred: Deferred | undefined;
 
   const worker = new SharedWorker(new URL('./worker.ts', import.meta.url), {
     name: 'civitai-signals',
@@ -36,6 +39,7 @@ export const createSignalWorker = async ({
     else if (data.type === 'connection:error') onError?.(data.message);
     else if (data.type === 'connection:reconnected') onReconnected?.();
     else if (data.type === 'event:received') emitter.emit(data.target, data.payload);
+    else if (data.type === 'pong') pingDeferred?.resolve();
   };
 
   const postMessage = (message: WorkerIncomingMessage) => worker.port.postMessage(message);
@@ -57,6 +61,26 @@ export const createSignalWorker = async ({
     emitter.stop();
   };
 
+  const ping = async () => {
+    if (!pingDeferred && onPing && document.visibilityState === 'visible') {
+      pingDeferred = new Deferred();
+      postMessage({ type: 'ping' });
+      setTimeout(() => {
+        if (pingDeferred) pingDeferred.reject();
+      }, 1000);
+
+      const result = (await pingDeferred.promise
+        .then(() => 'available')
+        .catch(() => 'unavailable')) as 'available' | 'unavailable';
+      pingDeferred = undefined;
+      onPing(result);
+      if (result === 'unavailable') {
+        document.removeEventListener('visibilitychange', ping);
+        window.removeEventListener('beforeunload', unload);
+      }
+    }
+  };
+
   await deferred.promise;
 
   if (typeof window !== 'undefined') {
@@ -72,9 +96,9 @@ export const createSignalWorker = async ({
   }
 
   // fire off an event to remove this port from the worker
-  window.addEventListener('beforeunload', () => unload(), {
-    once: true,
-  });
+  window.addEventListener('beforeunload', unload, { once: true });
+
+  document.addEventListener('visibilitychange', ping);
 
   postMessage({ type: 'connection:init', token });
 
