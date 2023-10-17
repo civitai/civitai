@@ -13,29 +13,35 @@ import {
 } from '~/server/schema/buzz.schema';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
-import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  withRetries,
+} from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
 
 export async function getUserBuzzAccount({ accountId }: GetUserBuzzAccountSchema) {
-  const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
-  if (!response.ok) {
-    switch (response.status) {
-      case 400:
-        throw throwBadRequestError();
-      case 404:
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
-      default:
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'An unexpected error ocurred, please try again later',
-        });
+  return withRetries(async () => {
+    const response = await fetch(`${env.BUZZ_ENDPOINT}/account/${accountId}`);
+    if (!response.ok) {
+      switch (response.status) {
+        case 400:
+          throw throwBadRequestError();
+        case 404:
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
+        default:
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'An unexpected error ocurred, please try again later',
+          });
+      }
     }
-  }
 
-  const data: GetUserBuzzAccountResponse = await response.json();
-  return data;
+    const data: GetUserBuzzAccountResponse = await response.json();
+    return data;
+  });
 }
 
 export async function getUserBuzzTransactions({

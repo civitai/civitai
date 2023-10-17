@@ -143,3 +143,13 @@ export function handleLogError(e: Error) {
     ).catch();
   else console.error(error);
 }
+
+export function withRetries<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  return fn().catch((error: Error) => {
+    if (retries > 0) {
+      return withRetries(fn, retries - 1);
+    } else {
+      throw error;
+    }
+  });
+}
