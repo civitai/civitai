@@ -27,7 +27,7 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "User" u ON u.id = bb."userId"
         JOIN "Bounty" b ON b.id = bb."bountyId"
         JOIN "BountyBenefactor" bo ON bo."bountyId" = bb."bountyId" AND bo."createdAt" < bb."createdAt"
-        WHERE bb."createdAt" > ${lastSent}
+        WHERE bb."createdAt" > '${lastSent}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
@@ -53,7 +53,7 @@ export const bountyNotifications = createNotificationProcessor({
           -- Now is in 24 hour expiration window
           now() BETWEEN b."expiresAt" - interval '24 hours' AND b."expiresAt"
           -- And last send was before 24 hour window
-          AND ${lastSent} < b."expiresAt" - interval '24 hours'
+          AND '${lastSent}' < b."expiresAt" - interval '24 hours'
       ), target_users AS (
         SELECT DISTINCT id, "userId"
         FROM (
@@ -120,7 +120,7 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "Bounty" b ON b.id = bb."bountyId"
         JOIN "User" bene ON bb."userId" = bene.id
         JOIN "BountyEntry" be ON be.id = bb."awardedToId"
-        WHERE bb."awardedAt" > ${lastSent} AND bb."userId" != be."userId"
+        WHERE bb."awardedAt" > '${lastSent}' AND bb."userId" != be."userId"
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
@@ -145,7 +145,7 @@ export const bountyNotifications = createNotificationProcessor({
         SELECT DISTINCT
           "bountyEntryId"
         FROM "BountyEntryReaction"
-        WHERE "createdAt" > ${lastSent}
+        WHERE "createdAt" > '${lastSent}'
       ), affected_value AS (
         SELECT
           br."bountyEntryId",
@@ -190,7 +190,7 @@ export const bountyNotifications = createNotificationProcessor({
         SELECT DISTINCT
           "bountyId"
         FROM "BountyEntry" be
-        WHERE "createdAt" > ${lastSent}
+        WHERE "createdAt" > '${lastSent}'
       ), target_users AS (
         SELECT DISTINCT id, "userId"
         FROM (
@@ -220,7 +220,7 @@ export const bountyNotifications = createNotificationProcessor({
           be.id "bountyEntryId"
         FROM target_users tu
         JOIN "Bounty" b ON b.id = tu.id
-        JOIN "BountyEntry" be ON be."bountyId" = tu.id AND be."createdAt" > ${lastSent}
+        JOIN "BountyEntry" be ON be."bountyId" = tu.id AND be."createdAt" > '${lastSent}'
         JOIN "User" u ON u.id = be."userId"
         WHERE be."userId" != tu."userId"
       )
