@@ -92,21 +92,28 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
             createWorker();
           }, 5000);
         },
-        onPing: (status) => {
-          if (status !== 'available') createWorker();
-        },
+        // onPing: (status) => {
+        //   if (status !== 'available') createWorker();
+        // },
         onError: (message) =>
           console.error({ type: 'SignalsProvider :: signal service error', message }),
       }).then((worker) => {
         workerRef.current = worker;
         loadingRef.current = false;
+        worker.subscribe(({ available }) => {
+          if (!available) {
+            workerRef.current = null;
+            worker.close();
+            createWorker();
+          }
+        });
       });
     };
 
     if (data?.accessToken) {
       createWorker();
     }
-    return () => workerRef.current?.unload();
+    return () => workerRef.current?.close();
   }, [data?.accessToken]);
 
   return (

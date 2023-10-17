@@ -1,10 +1,14 @@
 import { Deferred, EventEmitter } from './utils';
 import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
 import SharedWorker from '@okikio/sharedworker';
+import { createStore } from 'zustand/vanilla';
 
 // Debugging
 const logs: Record<string, boolean> = {};
 const logFn = (args: unknown) => console.log(args);
+
+type State = { available: boolean };
+type Store = State & { update: (fn: (args: State) => State) => void };
 
 export type SignalWorker = AsyncReturnType<typeof createSignalWorker>;
 export const createSignalWorker = async ({
@@ -13,19 +17,23 @@ export const createSignalWorker = async ({
   onClosed,
   onError,
   onReconnected,
-  onPing,
 }: {
   token: string;
   onConnected?: () => void;
   onReconnected?: () => void;
   onClosed?: (message?: string) => void;
   onError?: (message?: string) => void;
-  onPing?: (status: 'available' | 'unavailable') => void;
 }) => {
   const deferred = new Deferred();
   const emitter = new EventEmitter();
   const events: Record<string, boolean> = {};
   let pingDeferred: Deferred | undefined;
+
+  const { getState, subscribe } = createStore<Store>((set) => ({
+    available: false,
+    signal: 'closed',
+    update: (fn) => set((args) => ({ ...fn(args) })),
+  }));
 
   const worker = new SharedWorker(new URL('./worker.ts', import.meta.url), {
     name: 'civitai-signals',
@@ -62,22 +70,17 @@ export const createSignalWorker = async ({
   };
 
   const ping = async () => {
-    if (!pingDeferred && onPing && document.visibilityState === 'visible') {
+    if (!pingDeferred && document.visibilityState === 'visible') {
       pingDeferred = new Deferred();
       postMessage({ type: 'ping' });
       setTimeout(() => {
         if (pingDeferred) pingDeferred.reject();
       }, 1000);
 
-      const result = (await pingDeferred.promise
-        .then(() => 'available')
-        .catch(() => 'unavailable')) as 'available' | 'unavailable';
+      await pingDeferred.promise
+        .then(() => getState().update((state) => ({ ...state, available: true })))
+        .catch(() => getState().update((state) => ({ ...state, available: false })));
       pingDeferred = undefined;
-      onPing(result);
-      if (result === 'unavailable') {
-        document.removeEventListener('visibilitychange', ping);
-        window.removeEventListener('beforeunload', unload);
-      }
     }
   };
 
@@ -95,9 +98,15 @@ export const createSignalWorker = async ({
     };
   }
 
+  const close = () => {
+    document.removeEventListener('visibilitychange', ping);
+    window.removeEventListener('beforeunload', unload);
+    unload();
+  };
+
   // fire off an event to remove this port from the worker
   window.addEventListener('beforeunload', unload, { once: true });
-
+  // ping-pong with worker to check for worker availability
   document.addEventListener('visibilitychange', ping);
 
   postMessage({ type: 'connection:init', token });
@@ -105,6 +114,7 @@ export const createSignalWorker = async ({
   return {
     on,
     off,
-    unload,
+    close,
+    subscribe,
   };
 };
