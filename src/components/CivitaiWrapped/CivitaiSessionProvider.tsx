@@ -1,16 +1,16 @@
 import { SessionUser } from 'next-auth';
 import { useSession } from 'next-auth/react';
 import { createContext, useCallback, useContext, useMemo } from 'react';
-import { trpc } from '~/utils/trpc';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { trpc } from '~/utils/trpc';
 
 export type CivitaiSessionState = SessionUser & {
   isMember: boolean;
   refresh: () => void;
-  balance: number;
+  balance: number | null;
 };
 const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);
 export const useCivitaiSessionContext = () => useContext(CivitaiSessionContext);
@@ -20,7 +20,9 @@ export let isAuthed = false;
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
   const features = useFeatureFlags();
-  const { balance = 0 } = useQueryBuzzAccount({ enabled: !!data?.user && features.buzz });
+  const { balance = 0 } = useQueryBuzzAccount({
+    enabled: !!data?.user && features.buzz,
+  });
 
   const value = useMemo(() => {
     if (!data?.user) return null;
@@ -59,5 +61,5 @@ export const useQueryBuzzAccount = (options?: QueryOptions) => {
 
   useSignalConnection(SignalMessages.BuzzUpdate, onBalanceUpdate);
 
-  return data ?? { balance: 0 };
+  return data ?? { balance: null, lifetimeBalance: null };
 };

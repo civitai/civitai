@@ -77,7 +77,7 @@ export default function ArticlesPage() {
             <Group position="apart" spacing={8}>
               {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
-                <SortFilter type="posts" variant="button" />
+                <SortFilter type="articles" variant="button" />
                 <ArticleFiltersDropdown />
                 <ViewToggle
                   type="articles"

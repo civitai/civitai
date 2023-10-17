@@ -97,7 +97,7 @@ export const vibrate = (amount = 2) =>
     },
   });
 
-export const jelloVerical = keyframes({
+export const jelloVertical = keyframes({
   '0%': {
     transform: 'scale3d(1, 1, 1)',
   },

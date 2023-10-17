@@ -55,9 +55,9 @@ const featureFlags = createFeatureFlags({
     description: `A fresh style for model cards with more information and a better layout.`,
     availability: ['user'],
   },
-  profileCollections: ['mod', 'founder'],
+  profileCollections: ['public'],
   imageSearch: ['dev'],
-  buzz: ['mod'],
+  buzz: ['public'],
   signal: ['user'],
   assistant: {
     toggleable: true,
@@ -66,7 +66,7 @@ const featureFlags = createFeatureFlags({
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
     availability: ['mod', 'founder'],
   },
-  bounties: ['mod'],
+  bounties: ['public'],
 });
 export const featureFlagKeys = Object.keys(featureFlags);
 

@@ -2,8 +2,6 @@ import { createClient } from '@clickhouse/client';
 import {
   ArticleEngagementType,
   BountyEngagementType,
-  BountyMode,
-  BountyType,
   NsfwLevel,
   ReportReason,
   ReportStatus,
@@ -13,8 +11,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { env } from '~/env/server.mjs';
 import { cacheDnsEntries } from '~/server/http/dns-cache';
-import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
-import { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 
 const _installCaching = (() => {
@@ -36,6 +32,10 @@ export const clickhouse = (() => {
         host: env.CLICKHOUSE_HOST,
         username: env.CLICKHOUSE_USERNAME,
         password: env.CLICKHOUSE_PASSWORD,
+        clickhouse_settings: {
+          async_insert: 1,
+          wait_for_async_insert: 0,
+        },
       })
     : null;
 })();
@@ -115,80 +115,26 @@ export type ImageActivityType = 'Create' | 'Delete' | 'DeleteTOS' | 'Tags' | 'Re
 export type QuestionType = 'Create' | 'Delete';
 export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';
-export type BountyCreateActivity = {
-  type: 'Create';
-  data: {
-    id: number;
-    name: string;
-    startsAt: Date;
-    expiresAt: Date;
-    mode: BountyMode;
-    type: BountyType;
-    nsfw: boolean;
-    poi: boolean;
-    minBenefactorUnitAmount: number;
-    entryLimit: number;
-    details?: Partial<BountyDetailsSchema> | null;
-    attachments?: boolean;
-    tags?: boolean;
-  };
-};
-export type BountyUpdateActivity = {
-  type: 'Update';
-  data: {
-    id: number;
-    startsAt: Date;
-    expiresAt: Date;
-    attachments?: boolean;
-    tags?: boolean;
-  };
-};
-export type BountyDeleteActivity = {
-  type: 'Delete';
-  data: { id: number };
-};
-export type BountyExpireActivity = {
-  type: 'Expire';
-  data: { id: number };
-};
-export type BountyActivity =
-  | BountyCreateActivity
-  | BountyUpdateActivity
-  | BountyDeleteActivity
-  | BountyExpireActivity;
-
-export type BountyEntryUpsertActivity = {
-  type: 'Create' | 'Update';
-  data: {
-    id: number;
-    bountyId: number;
-    files?: Array<BountyEntryFileMeta & { fileType?: string }>;
-  };
-};
-export type BountyEntryDeleteActivity = {
-  type: 'Delete';
-  data: { id: number };
-};
-export type BountyEntryAwardActivity = {
-  type: 'Award';
-  data: { bountyId: number; awardedToId: number | null; unitAmount: number; currency: string };
-};
-export type BountyEntryActivity =
-  | BountyEntryUpsertActivity
-  | BountyEntryDeleteActivity
-  | BountyEntryAwardActivity;
-
+export type BountyActivity = 'Create' | 'Update' | 'Delete' | 'Expire' | 'Refund';
+export type BountyEntryActivity = 'Create' | 'Update' | 'Delete' | 'Award';
 export type BountyBenefactorActivity = 'Create';
 
 export type FileActivity = 'Download';
 
-export const EventType = [
+export const ActionType = [
   'AddToBounty_Click',
   'AddToBounty_Confirm',
   'AwardBounty_Click',
   'AwardBounty_Confirm',
+  'Tip_Click',
+  'Tip_Confirm',
+  'TipInteractive_Click',
+  'TipInteractive_Cancel',
+  'NotEnoughFunds',
+  'PurchaseFunds_Cancel',
+  'PurchaseFunds_Confirm',
 ] as const;
-export type EventType = (typeof EventType)[number];
+export type ActionType = (typeof ActionType)[number];
 
 export type TrackRequest = {
   userId: number;
@@ -233,10 +179,6 @@ export class Tracker {
       table: table,
       values: [data],
       format: 'JSONEachRow',
-      query_params: {
-        async_insert: 1,
-        wait_for_async_insert: 1,
-      },
     });
   }
 
@@ -244,8 +186,8 @@ export class Tracker {
     return this.track('views', values);
   }
 
-  public event(values: { type: EventType }) {
-    return this.track('events', values);
+  public action(values: { type: ActionType; details?: any }) {
+    return this.track('actions', values);
   }
 
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
@@ -324,18 +266,23 @@ export class Tracker {
     return this.track('images', values);
   }
 
-  public bounty({ type, data }: BountyActivity) {
-    return this.track('bounties', { type, ...data });
+  public bounty(values: { type: BountyActivity; bountyId: number; userId?: number }) {
+    return this.track('bounties', values);
   }
 
-  public bountyEntry({ type, data }: BountyEntryActivity) {
-    return this.track('bountyEntries', { type, ...data });
+  public bountyEntry(values: {
+    type: BountyEntryActivity;
+    bountyEntryId: number;
+    benefactorId?: number;
+    userId?: number;
+  }) {
+    return this.track('bountyEntries', values);
   }
 
   public bountyBenefactor(values: {
     type: BountyBenefactorActivity;
     bountyId: number;
-    unitAmount: number;
+    userId: number;
   }) {
     return this.track('bountyBenefactors', values);
   }
@@ -381,7 +328,7 @@ export class Tracker {
     return this.track('shares', values);
   }
 
-  public file(values: { type: FileActivity; url: string; entityType: string; entityId: number }) {
+  public file(values: { type: FileActivity; entityType: string; entityId: number }) {
     return this.track('files', values);
   }
 }

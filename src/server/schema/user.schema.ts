@@ -1,4 +1,9 @@
-import { TagEngagementType, ArticleEngagementType, BountyEngagementType } from '@prisma/client';
+import {
+  TagEngagementType,
+  ArticleEngagementType,
+  BountyEngagementType,
+  OnboardingStep,
+} from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
@@ -49,7 +54,7 @@ export const userUpdateSchema = z.object({
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
   tos: z.boolean().optional(),
-  onboarded: z.boolean().optional(),
+  onboardingStep: z.nativeEnum(OnboardingStep).array().optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   badgeId: z.number().nullish(),
@@ -129,3 +134,8 @@ export const reportProhibitedRequestSchema = z.object({
 
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
 export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
+
+export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSchema>;
+export const completeOnboardStepSchema = z.object({
+  step: z.nativeEnum(OnboardingStep).optional(),
+});

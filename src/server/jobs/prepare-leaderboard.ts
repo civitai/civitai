@@ -71,7 +71,13 @@ async function updateLegendsBoardResults() {
             WHEN position <= 3 THEN ${constants.leaderboard.legendScoring.gold}
             WHEN position <= 10 THEN ${constants.leaderboard.legendScoring.silver}
             WHEN position <= 100 THEN ${constants.leaderboard.legendScoring.bronze}
-          END) * 100 score
+          END) * 100 score,
+          jsonb_build_object(
+            'diamond', SUM(IIF(position<=1, 1, 0)),
+            'gold', SUM(IIF(position BETWEEN 2 AND 3, 1, 0)),
+            'silver', SUM(IIF(position BETWEEN 4 AND 10, 1, 0)),
+            'bronze', SUM(IIF(position BETWEEN 11 AND 100, 1, 0))
+          ) metrics
         FROM "LeaderboardResult"
         WHERE date <= now()
           AND position < 100
@@ -79,7 +85,7 @@ async function updateLegendsBoardResults() {
       )
       SELECT
         *,
-        row_number() OVER (PARTITION BY "leaderboardId" ORDER BY score DESC) position
+        cast(row_number() OVER (PARTITION BY "leaderboardId" ORDER BY score DESC) as int) position
       FROM scores;
     `,
   ]);

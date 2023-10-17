@@ -48,7 +48,15 @@ export default withAxiom(
 
       if (isProd) {
         logToAxiom(
-          { name: error.name, code: error.code, message: error.message, stack: error.stack },
+          {
+            name: error.name,
+            code: error.code,
+            message: error.message,
+            stack: error.stack,
+            path,
+            user: ctx?.user?.id,
+            browser: req.headers['user-agent'],
+          },
           'civitai-prod'
         ).then();
       } else {

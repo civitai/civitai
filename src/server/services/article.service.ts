@@ -169,6 +169,7 @@ export const getArticles = async ({
             [`laughCount${period}`]: true,
             [`cryCount${period}`]: true,
             [`viewCount${period}`]: true,
+            [`tippedAmountCount${period}`]: true,
           },
         },
       },
@@ -198,6 +199,7 @@ export const getArticles = async ({
             laughCount: stats[`laughCount${period}`] as number,
             cryCount: stats[`cryCount${period}`] as number,
             viewCount: stats[`viewCount${period}`] as number,
+            tippedAmountCount: stats[`tippedAmountCount${period}`] as number,
           }
         : undefined,
     }));

@@ -11,6 +11,8 @@ export enum TransactionType {
   Refund = 7,
   Bounty = 8,
   BountyEntry = 9,
+  Training = 10,
+  ChargeBack = 11,
 }
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
@@ -23,7 +25,8 @@ export type GetUserBuzzAccountResponse = z.infer<typeof getUserBuzzAccountRespon
 export const getUserBuzzAccountResponse = z.object({
   // This is the user id
   id: z.number(),
-  balance: z.number(),
+  balance: z.number().nullable(),
+  lifetimeBalance: z.number().nullable(),
 });
 
 export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactionsSchema>;
@@ -43,7 +46,13 @@ export const getUserBuzzTransactionsResponse = z.object({
   transactions: z
     .object({
       date: z.coerce.date(),
-      type: z.string().transform((value) => TransactionType[value as keyof typeof TransactionType]),
+      type: z
+        .any()
+        .transform((value) =>
+          parseInt(value)
+            ? TransactionType.Tip
+            : TransactionType[value as keyof typeof TransactionType]
+        ),
       fromAccountId: z.coerce.number(),
       toAccountId: z.coerce.number(),
       amount: z.coerce.number(),
@@ -54,11 +63,40 @@ export const getUserBuzzTransactionsResponse = z.object({
 });
 
 export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInput>;
-export const createBuzzTransactionInput = z.object({
-  // To user id (0 is central bank)
-  toAccountId: z.number().min(0),
-  type: z.nativeEnum(TransactionType),
+export const createBuzzTransactionInput = z
+  .object({
+    // To user id (0 is central bank)
+    toAccountId: z.number().optional(),
+    type: z.nativeEnum(TransactionType),
+    amount: z.number().min(1),
+    description: z.string().trim().nonempty().nullish(),
+    details: z.object({}).passthrough().nullish(),
+    entityId: z.number().optional(),
+    entityType: z.string().optional(),
+    externalTransactionId: z.string().optional(),
+  })
+  .refine(
+    (data) => {
+      if (
+        data.type === TransactionType.Tip &&
+        ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
+      )
+        return false;
+
+      return true;
+    },
+    {
+      message: 'Please provide both the entityId and entityType',
+      params: ['entityId', 'entityType'],
+    }
+  );
+
+export type CompleteStripeBuzzPurchaseTransactionInput = z.infer<
+  typeof completeStripeBuzzPurchaseTransactionInput
+>;
+
+export const completeStripeBuzzPurchaseTransactionInput = z.object({
   amount: z.number().min(1),
-  description: z.string().trim().nonempty().nullish(),
+  stripePaymentIntentId: z.string(),
   details: z.object({}).passthrough().nullish(),
 });

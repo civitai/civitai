@@ -78,6 +78,20 @@ export function numberWithCommas(value: number | string | undefined) {
     : '';
 }
 
+export function formatPriceForDisplay(value: number | undefined, currency?: Currency) {
+  if (currency === Currency.BUZZ) {
+    return numberWithCommas(value);
+  }
+
+  if (!value) {
+    return `0.00`;
+  }
+
+  const [intPart, decimalPart] = (value / 100).toFixed(2).split('.');
+
+  return `${numberWithCommas(intPart)}.${decimalPart}`;
+}
+
 export function isNumeric(value?: unknown) {
   return !isNaN(Number(value));
 }

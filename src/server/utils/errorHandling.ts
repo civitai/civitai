@@ -134,12 +134,22 @@ export function throwInsufficientFundsError(message: string | null = null, error
   });
 }
 
-export function handleTrackError(e: Error) {
-  const error = new Error('Failed to track clickhouse event: ' + e.message, { cause: e });
+export function handleLogError(e: Error) {
+  const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)
     logToAxiom(
       { name: error.name, message: error.message, stack: error.stack, cause: error.cause },
       'civitai-prod'
     ).catch();
   else console.error(error);
+}
+
+export function withRetries<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  return fn().catch((error: Error) => {
+    if (retries > 0) {
+      return withRetries(fn, retries - 1);
+    } else {
+      throw error;
+    }
+  });
 }

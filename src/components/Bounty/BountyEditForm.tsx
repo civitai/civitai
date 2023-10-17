@@ -45,6 +45,7 @@ export function BountyEditForm({ bounty }: Props) {
     ...bounty,
     id: bounty.id,
     description: bounty.description,
+    // TODO.bounty: fix date issue
     startsAt: bounty.startsAt,
     expiresAt: bounty.expiresAt,
     files: bounty.files?.map((file) => ({ ...file, metadata: file.metadata as MixedObject })) ?? [],

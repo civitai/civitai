@@ -43,11 +43,13 @@ import { CollectionType, NsfwLevel } from '@prisma/client';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
+import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
   const { image, isLoading, active, toggleInfo, close, isMod, shareUrl } = useImageDetailContext();
+  const queryUtils = trpc.useContext();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -102,7 +104,13 @@ export function ImageDetail() {
                   linkToProfile
                 />
                 <Group spacing={8} sx={{ [theme.fn.smallerThan('sm')]: { flexGrow: 1 } }} noWrap>
-                  <TipBuzzButton toUserId={image.user.id} size="md" compact />
+                  <TipBuzzButton
+                    toUserId={image.user.id}
+                    entityId={image.id}
+                    entityType="Image"
+                    size="md"
+                    compact
+                  />
                   <FollowUserButton userId={image.user.id} size="md" compact />
                   <CloseButton
                     size="md"
@@ -239,7 +247,9 @@ export function ImageDetail() {
                           heartCount: image.stats?.heartCountAllTime,
                           laughCount: image.stats?.laughCountAllTime,
                           cryCount: image.stats?.cryCountAllTime,
+                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                         }}
+                        targetUserId={image.user.id}
                       />
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Stack>

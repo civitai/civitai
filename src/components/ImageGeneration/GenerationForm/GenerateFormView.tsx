@@ -18,7 +18,7 @@ import {
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconArrowAutofitDown } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { UseFormReturn, DeepPartial } from 'react-hook-form';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -51,15 +51,19 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { calculateGenerationBill } from '../utils/generation.utils';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 export function GenerateFormView({
   form,
   onSubmit,
   onError,
+  loading,
 }: {
   form: UseFormReturn<GenerateFormModel>;
-  onSubmit: (data: GenerateFormModel) => void;
+  onSubmit: (data: GenerateFormModel) => Promise<void>;
   onError?: (error: unknown) => void;
+  loading?: boolean;
 }) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
@@ -91,6 +95,14 @@ export function GenerateFormView({
     }
   };
   // #endregion
+
+  const [baseModel, aspectRatio, steps, quantity] = form.watch([
+    'baseModel',
+    'aspectRatio',
+    'steps',
+    'quantity',
+  ]);
+  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   return (
     <PersistentForm
@@ -294,15 +306,15 @@ export function GenerateFormView({
                     />
                   </Stack>
                 </Card>
-                <Button
-                  type="submit"
+                <BuzzTransactionButton
+                  label="Generate"
                   size="lg"
-                  loading={isSubmitting}
+                  type="submit"
+                  loading={isSubmitting || loading}
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
-                >
-                  Generate
-                </Button>
+                  buzzAmount={totalCost}
+                />
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
                   onClick={() => form.reset()}
@@ -346,7 +358,7 @@ export function GenerateFormView({
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   generationContainer: {},
   generateButtonContainer: {
     width: '100%',

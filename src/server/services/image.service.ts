@@ -220,16 +220,32 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image });
 };
 
-export const ingestImage = async ({ image }: { image: IngestImageInput }): Promise<boolean> => {
+export const ingestImage = async ({
+  image,
+  tx,
+}: {
+  image: IngestImageInput;
+  tx?: Prisma.TransactionClient;
+}): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
   const { url, id, type, width, height } = ingestImageSchema.parse(image);
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
+  const dbClient = tx ?? dbWrite;
 
   if (!isProd && !callbackUrl) {
     console.log('skip ingest');
+    await dbClient.image.update({
+      where: { id },
+      data: {
+        scanRequestedAt,
+        scannedAt: scanRequestedAt,
+        ingestion: ImageIngestionStatus.Scanned,
+      },
+    });
+
     return true;
   }
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
@@ -247,7 +263,7 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
     }),
   });
   if (response.status === 202) {
-    await dbWrite.image.updateMany({
+    await dbClient.image.updateMany({
       where: { id },
       data: { scanRequestedAt },
     });
@@ -264,38 +280,55 @@ export const ingestImage = async ({ image }: { image: IngestImageInput }): Promi
 
 export const ingestImageBulk = async ({
   images,
+  tx,
+  lowPriority = true,
 }: {
   images: IngestImageInput[];
+  tx?: Prisma.TransactionClient;
+  lowPriority?: boolean;
 }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
 
   const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
+  const scanRequestedAt = new Date();
+  const imageIds = images.map(({ id }) => id);
+  const dbClient = tx ?? dbWrite;
+
   if (!isProd && !callbackUrl) {
     console.log('skip ingest');
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: {
+        scanRequestedAt,
+        scannedAt: scanRequestedAt,
+        ingestion: ImageIngestionStatus.Scanned,
+      },
+    });
     return true;
   }
 
-  const scanRequestedAt = new Date();
-  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue-bulk', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(
-      images.map((image) => ({
-        imageId: image.id,
-        imageKey: image.url,
-        type: image.type,
-        width: image.width,
-        height: image.height,
-        scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
-        callbackUrl,
-      }))
-    ),
-  });
+  const response = await fetch(
+    env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        images.map((image) => ({
+          imageId: image.id,
+          imageKey: image.url,
+          type: image.type,
+          width: image.width,
+          height: image.height,
+          scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
+          callbackUrl,
+        }))
+      ),
+    }
+  );
   if (response.status === 202) {
-    const ids = images.map((image) => image.id);
-    await dbWrite.image.updateMany({
-      where: { id: { in: ids } },
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
       data: { scanRequestedAt },
     });
     return true;
@@ -381,6 +414,7 @@ type GetAllImagesRaw = {
   dislikeCount: number;
   heartCount: number;
   commentCount: number;
+  tippedAmountCount: number;
   reactions?: ReviewReactions[];
   cursorId?: bigint;
   type: MediaType;
@@ -746,6 +780,7 @@ export const getAllImages = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -866,6 +901,7 @@ export const getAllImages = async ({
       dislikeCount,
       heartCount,
       commentCount,
+      tippedAmountCount,
       ...i
     }) => ({
       ...i,
@@ -883,6 +919,7 @@ export const getAllImages = async ({
         dislikeCountAllTime: dislikeCount,
         heartCountAllTime: heartCount,
         commentCountAllTime: commentCount,
+        tippedAmountCountAllTime: tippedAmountCount,
       },
       reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
       tags: tagsVar?.filter((x) => x.imageId === i.id),
@@ -940,6 +977,7 @@ export const getImage = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       u.id "userId",
       u.username,
       u.image "userImage",
@@ -975,6 +1013,7 @@ export const getImage = async ({
       dislikeCount,
       heartCount,
       commentCount,
+      tippedAmountCount,
       ...firstRawImage
     },
   ] = rawImages;
@@ -1008,6 +1047,7 @@ export const getImage = async ({
       dislikeCountAllTime: dislikeCount,
       heartCountAllTime: heartCount,
       commentCountAllTime: commentCount,
+      tippedAmountCountAllTime: tippedAmountCount,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };
@@ -1215,6 +1255,7 @@ export const getImagesForPosts = async ({
       dislikeCount: number;
       heartCount: number;
       commentCount: number;
+      tippedAmountCount: number;
       type: MediaType;
       metadata: Prisma.JsonValue;
       reactions?: ReviewReactions[];
@@ -1248,6 +1289,7 @@ export const getImagesForPosts = async ({
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
+      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       (
         SELECT jsonb_agg(reaction)
         FROM "ImageReaction"
@@ -1365,6 +1407,8 @@ type GetImageByCategoryRaw = {
   dislikeCount: number;
   heartCount: number;
   commentCount: number;
+  tippedAmountCount: number;
+  userId?: number;
 };
 export const getImagesByCategory = async ({
   userId,
@@ -1502,12 +1546,14 @@ export const getImagesByCategory = async ({
         u.image AS "userImage",
         i."createdAt",
         p."publishedAt",
+        u.id AS "userId",
         COALESCE(im."cryCount", 0) "cryCount",
         COALESCE(im."laughCount", 0) "laughCount",
         COALESCE(im."likeCount", 0) "likeCount",
         COALESCE(im."dislikeCount", 0) "dislikeCount",
         COALESCE(im."heartCount", 0) "heartCount",
-        COALESCE(im."commentCount", 0) "commentCount"
+        COALESCE(im."commentCount", 0) "commentCount",
+        COALESCE(im."tippedAmountCount", 0) "tippedAmountCount"
       FROM targets t
       JOIN "Image" i ON i.id = t."imageId"
       JOIN "Post" p ON p.id = i."postId"
@@ -1531,6 +1577,7 @@ export const getImagesByCategory = async ({
       .filter((x) => x.tagId === c.id)
       .map((x) => ({
         ...x,
+        userId: x.userId || undefined,
         reactions: userId
           ? reactions
               .filter((r) => r.imageId === x.id)
@@ -1706,27 +1753,16 @@ export const createEntityImages = async ({
   });
 
   const imageRecords = await tx.image.findMany({
-    select: { id: true, ingestion: true, url: true },
+    select: { id: true, url: true, type: true, width: true, height: true },
     where: {
-      url: {
-        in: images.map((i) => i.url),
-      },
+      url: { in: images.map((i) => i.url) },
+      ingestion: ImageIngestionStatus.Pending,
       userId,
     },
   });
 
   const batches = chunk(imageRecords, 50);
-  for (const batch of batches) {
-    await Promise.all(
-      batch.map((image) => {
-        if (image.ingestion === ImageIngestionStatus.Pending) {
-          return ingestImage({ image });
-        }
-
-        return;
-      })
-    );
-  }
+  await Promise.all(batches.map((images) => ingestImageBulk({ images, tx })));
 
   await tx.imageConnection.createMany({
     data: imageRecords.map((image) => ({
@@ -1735,4 +1771,6 @@ export const createEntityImages = async ({
       entityType,
     })),
   });
+
+  return imageRecords;
 };

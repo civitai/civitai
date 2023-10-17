@@ -44,6 +44,7 @@ import {
   IconReload,
   IconPlaylistAdd,
   IconInfoCircle,
+  IconBolt,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -102,6 +103,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { env } from '~/env/client.mjs';
+import {
+  InteractiveTipBuzzButton,
+  useBuzzTippingStore,
+} from '~/components/Buzz/InteractiveTipBuzzButton';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -162,6 +167,7 @@ export default function ModelDetailsV2({
       },
     }
   );
+
   const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
@@ -185,6 +191,7 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
 
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
@@ -569,6 +576,30 @@ export default function ModelDetailsV2({
                       </IconBadge>
                     </LoginRedirect>
                   )}
+                  <InteractiveTipBuzzButton
+                    toUserId={model.user.id}
+                    entityId={model.id}
+                    entityType="Model"
+                  >
+                    <IconBadge
+                      radius="sm"
+                      size="lg"
+                      icon={
+                        <IconBolt
+                          size={18}
+                          color="yellow.7"
+                          style={{ fill: theme.colors.yellow[7] }}
+                        />
+                      }
+                    >
+                      <Text className={classes.modelBadgeText}>
+                        {abbreviateNumber(
+                          (model.rank?.tippedAmountCountAllTime ?? 0) + tippedAmount
+                        )}
+                      </Text>
+                    </IconBadge>
+                  </InteractiveTipBuzzButton>
+
                   {!model.locked && (
                     <ResourceReviewSummary modelId={model.id}>
                       <ResourceReviewSummary.Simple

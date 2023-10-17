@@ -1,6 +1,6 @@
 import { ActionIcon, ActionIconProps, Menu, MenuItemProps, MenuProps } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconEdit, IconTrash } from '@tabler/icons-react';
+import { IconDotsVertical, IconEdit, IconReceiptRefund, IconTrash } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -20,7 +20,7 @@ export function BountyContextMenu({
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === bounty.user?.id || isModerator;
 
-  const { deleteBounty } = useMutateBounty({ bountyId: bounty.id });
+  const { deleteBounty, refundBounty, refunding } = useMutateBounty({ bountyId: bounty.id });
 
   const menuItems: React.ReactElement<MenuItemProps>[] = [
     isOwner || isModerator ? (
@@ -63,6 +63,35 @@ export function BountyContextMenu({
         </Menu.Item>
       </Link>
     ) : null,
+    isModerator && !bounty.complete ? (
+      <Menu.Item
+        key="refund"
+        disabled={refunding}
+        component="button"
+        icon={<IconReceiptRefund size={14} stroke={1.5} />}
+        onClick={() => {
+          openConfirmModal({
+            title: 'Refund bounty',
+            children:
+              'Are you sure that you want to refund this bounty? This action cannot be reverted.',
+            centered: true,
+            closeOnConfirm: false,
+            labels: { cancel: 'No, keep it', confirm: 'Refund bounty' },
+            confirmProps: { color: 'yellow' },
+            onConfirm: async () => {
+              try {
+                await refundBounty();
+                closeAllModals();
+              } catch (error) {
+                // Do nothing since the query event will show an error notification
+              }
+            },
+          });
+        }}
+      >
+        Refund
+      </Menu.Item>
+    ) : null,
     !isOwner || isModerator ? (
       <ReportMenuItem
         key="report"
@@ -101,6 +130,7 @@ type Props = MenuProps & {
   bounty: {
     id: number;
     user: { id: number } | null;
+    complete: boolean;
   };
   buttonProps?: ActionIconProps & { iconSize?: number };
 };

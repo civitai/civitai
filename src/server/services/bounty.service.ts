@@ -1,19 +1,15 @@
-import {
-  BountyEntryMode,
-  Currency,
-  ImageIngestionStatus,
-  MetricTimeframe,
-  Prisma,
-  TagTarget,
-} from '@prisma/client';
+import { BountyEntryMode, Currency, MetricTimeframe, Prisma, TagTarget } from '@prisma/client';
+import { ManipulateType } from 'dayjs';
+import { groupBy } from 'lodash-es';
+import { isProd } from '~/env/other';
+import { bountyRefundedEmail } from '~/server/email/templates';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { createEntityImages } from '~/server/services/image.service';
+import { decreaseDate, startOfDay, toUtc } from '~/utils/date-helpers';
+import { BountySort, BountyStatus } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
-import { updateEntityFiles } from './file.service';
-import {
-  throwBadRequestError,
-  throwInsufficientFundsError,
-  throwNotFoundError,
-} from '../utils/errorHandling';
 import {
   AddBenefactorUnitAmountInputSchema,
   BountyDetailsSchema,
@@ -21,16 +17,15 @@ import {
   GetInfiniteBountySchema,
   UpdateBountyInput,
 } from '../schema/bounty.schema';
-import { imageSelect } from '../selectors/image.selector';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { createEntityImages, ingestImage } from '~/server/services/image.service';
-import { chunk, groupBy } from 'lodash-es';
-import { BountySort, BountyStatus } from '../common/enums';
 import { isNotTag, isTag } from '../schema/tag.schema';
-import { decreaseDate } from '~/utils/date-helpers';
-import { ManipulateType } from 'dayjs';
-import { isProd } from '~/env/other';
+import { imageSelect } from '../selectors/image.selector';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwNotFoundError,
+} from '../utils/errorHandling';
+import { updateEntityFiles } from './file.service';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -120,13 +115,15 @@ export const createBounty = async ({
   tags,
   unitAmount,
   currency,
+  startsAt: incomingStartsAt,
+  expiresAt: incomingExpiresAt,
   ...data
 }: CreateBountyInput & { userId: number }) => {
   const { userId } = data;
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      if (account.balance < unitAmount) {
+      if ((account.balance ?? 0) < unitAmount) {
         throw throwInsufficientFundsError();
       }
       break;
@@ -134,10 +131,15 @@ export const createBounty = async ({
       break;
   }
 
+  const startsAt = startOfDay(toUtc(incomingStartsAt));
+  const expiresAt = startOfDay(toUtc(incomingExpiresAt));
+
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.create({
       data: {
         ...data,
+        startsAt,
+        expiresAt,
         // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
         entryMode: BountyEntryMode.BenefactorsOnly,
         details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
@@ -201,12 +203,25 @@ export const createBounty = async ({
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
 
-export const updateBountyById = async ({ id, files, tags, ...data }: UpdateBountyInput) => {
+export const updateBountyById = async ({
+  id,
+  files,
+  tags,
+  startsAt: incomingStartsAt,
+  expiresAt: incomingExpiresAt,
+  ...data
+}: UpdateBountyInput) => {
+  // Convert dates to UTC for storing
+  const startsAt = startOfDay(toUtc(incomingStartsAt));
+  const expiresAt = startOfDay(toUtc(incomingExpiresAt));
+
   const bounty = await dbWrite.$transaction(async (tx) => {
     const bounty = await tx.bounty.update({
       where: { id },
       data: {
         ...data,
+        startsAt,
+        expiresAt,
         tags: tags
           ? {
               deleteMany: {
@@ -352,7 +367,7 @@ export const addBenefactorUnitAmount = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      if (account.balance < unitAmount) {
+      if ((account.balance ?? 0) < unitAmount) {
         throw throwInsufficientFundsError();
       }
       break;
@@ -417,4 +432,78 @@ export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] 
   );
 
   return groupedImages;
+};
+
+export const refundBounty = async ({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator: boolean }) => {
+  if (!isModerator) {
+    throw throwAuthorizationError();
+  }
+
+  const bounty = await dbRead.bounty.findUniqueOrThrow({
+    where: { id },
+    select: {
+      name: true,
+      id: true,
+      complete: true,
+      refunded: true,
+      userId: true,
+      user: { select: { id: true, email: true } },
+    },
+  });
+
+  const { user } = bounty;
+
+  if (bounty.complete || bounty.refunded) {
+    throw throwBadRequestError('This bounty has already been awarded or refunded');
+  }
+
+  const benefactors = await dbRead.bountyBenefactor.findMany({
+    where: { bountyId: id },
+  });
+
+  if (benefactors.find((b) => b.awardedToId !== null)) {
+    throw throwBadRequestError(
+      'At least one benefactor has awarded an entry. This bounty is not refundable.'
+    );
+  }
+
+  const currency = benefactors.find((b) => b.userId === bounty.userId)?.currency;
+
+  if (!currency) {
+    throw throwBadRequestError('No currency found for bounty');
+  }
+
+  for (const { userId, unitAmount } of benefactors) {
+    if (unitAmount > 0) {
+      switch (currency) {
+        case Currency.BUZZ:
+          await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: userId,
+            amount: unitAmount,
+            type: TransactionType.Refund,
+            description: 'Reason: Bounty refund',
+          });
+
+          break;
+        default: // Do nothing just yet.
+          break;
+      }
+    }
+  }
+
+  if (user) {
+    bountyRefundedEmail.send({
+      bounty,
+      user,
+    });
+  }
+
+  return await dbWrite.bounty.update({
+    where: { id },
+    data: { complete: true, refunded: true },
+  });
 };

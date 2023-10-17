@@ -1,8 +1,8 @@
 import { Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { ModelVersionMonetizationType } from '@prisma/client';
+import { Currency, ModelVersionMonetizationType } from '@prisma/client';
 import { IconCurrencyDollar, IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
-import { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
@@ -32,6 +32,7 @@ import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -416,10 +417,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           min={0}
                           max={100000}
                           sx={{ flexGrow: 1 }}
+                          format="currency"
                           precision={2}
                           step={0.01}
-                          icon={<IconCurrencyDollar size={18} />}
-                          format="currency"
+                          icon={<CurrencyIcon currency={Currency.USD} size={18} />}
                         />
                       )}
                   </>

@@ -3,24 +3,30 @@ import {
   Button,
   Chip,
   CloseButton,
+  createStyles,
   Divider,
   Group,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
+import { Currency } from '@prisma/client';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { z } from 'zod';
-
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputChipGroup, InputNumber, InputTextArea, useForm } from '~/libs/form';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { showErrorNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
-import { openConfirmModal } from '@mantine/modals';
+import { constants } from '~/server/common/constants';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -105,7 +111,7 @@ const schema = z
   .object({
     // Using string here since chip component only works with string values
     amount: z.string(),
-    customAmount: z.number().positive().min(1).optional(),
+    customAmount: z.number().positive().min(100).max(constants.buzz.maxTipAmount).optional(),
     description: z.string().trim().max(100, 'Cannot be longer than 100 characters').optional(),
   })
   .refine((data) => data.amount !== '-1' || data.customAmount, {
@@ -120,33 +126,44 @@ const presets = [
   { label: 'lg', amount: '1000' },
 ];
 
-const { openModal, Modal } = createContextModal<{ toUserId: number }>({
+const { openModal, Modal } = createContextModal<{
+  toUserId: number;
+  entityId?: number;
+  entityType?: string;
+}>({
   name: 'sendTip',
   centered: true,
   radius: 'lg',
   withCloseButton: false,
-  Element: ({ context, props: { toUserId } }) => {
+  Element: ({ context, props: { toUserId, entityId, entityType } }) => {
     const { classes } = useStyles();
     const currentUser = useCurrentUser();
-    const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
-    const queryUtils = trpc.useContext();
 
     const [loading, setLoading] = useState(false);
 
+    const form = useForm({ schema, defaultValues: { amount: presets[0].amount } });
+    const { trackAction } = useTrackEvent();
+
+    const { conditionalPerformTransaction } = useBuzzTransaction({
+      message: (requiredBalance: number) =>
+        `You don't have enough funds to perform this action. Required buzz: ${numberWithCommas(
+          requiredBalance
+        )}. Buy or earn more buzz to perform this action.`,
+      purchaseSuccessMessage: (purchasedBalance) => (
+        <Stack>
+          <Text>Thank you for your purchase!</Text>
+          <Text>
+            We have added <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} />{' '}
+            to your account and your tip has been sent to the desired user.
+          </Text>
+        </Stack>
+      ),
+      performTransactionOnPurchase: true,
+    });
+
     const createBuzzTransactionMutation = trpc.buzz.createTransaction.useMutation({
-      async onSuccess(_, { amount }) {
+      async onSuccess() {
         setLoading(false);
-
-        await queryUtils.buzz.getUserAccount.cancel();
-        queryUtils.buzz.getUserAccount.setData(undefined, (old) =>
-          old
-            ? {
-                ...old,
-                balance: amount <= old.balance ? old.balance - amount : old.balance,
-              }
-            : old
-        );
-
         handleClose();
       },
       onError(error) {
@@ -161,65 +178,33 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
     const handleSubmit = (data: z.infer<typeof schema>) => {
       const { customAmount, description } = data;
       const amount = Number(data.amount);
+      const amountToSend = Number(amount) === -1 ? customAmount ?? 0 : Number(amount);
+      const performTransaction = () => {
+        trackAction({
+          type: 'Tip_Confirm',
+          details: { toUserId, entityType, entityId, amount: amountToSend },
+        }).catch(() => undefined);
 
-      if (amount === -1 && customAmount) {
-        if (customAmount > (currentUser?.balance ?? 0)) {
-          return form.setError(
-            'customAmount',
-            {
-              message: 'You have insufficient funds to tip',
-              type: 'value',
-            },
-            { shouldFocus: true }
-          );
-        }
+        return createBuzzTransactionMutation.mutate({
+          toAccountId: toUserId,
+          type: TransactionType.Tip,
+          amount: amountToSend,
+          description,
+          entityId,
+          entityType,
+        });
+      };
 
-        if (customAmount === currentUser?.balance) {
-          return openConfirmModal({
-            centered: true,
-            title: 'Tip',
-            children: 'You are about to send all your buzz. Are you sure?',
-            labels: { confirm: 'Yes, send all buzz', cancel: 'No, go back' },
-            onConfirm: () => {
-              createBuzzTransactionMutation.mutate({
-                toAccountId: toUserId,
-                type: TransactionType.Tip,
-                amount: customAmount,
-                description,
-              });
-            },
-          });
-        } else {
-          if (amount > (currentUser?.balance ?? 0)) {
-            return form.setError(
-              'amount',
-              {
-                message: 'You have insufficient funds to tip',
-                type: 'value',
-              },
-              { shouldFocus: true }
-            );
-          }
-
-          return createBuzzTransactionMutation.mutate({
-            toAccountId: toUserId,
-            type: TransactionType.Tip,
-            amount,
-            description,
-          });
-        }
-      }
-
-      return createBuzzTransactionMutation.mutate({
-        toAccountId: toUserId,
-        type: TransactionType.Tip,
-        amount: Number(amount),
-        description,
-      });
+      conditionalPerformTransaction(amountToSend, performTransaction);
     };
 
     const sending = loading || createBuzzTransactionMutation.isLoading;
-    const [amount, description] = form.watch(['amount', 'description']);
+    const [amount, description, customAmount] = form.watch([
+      'amount',
+      'description',
+      'customAmount',
+    ]);
+    const amountToSend = Number(amount) === -1 ? customAmount : Number(amount);
 
     return (
       <Stack spacing="md">
@@ -228,13 +213,25 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
             Tip
           </Text>
           <Group spacing="sm" noWrap>
-            <UserBuzz user={currentUser} withTooltip />
-            <Badge radius="xl" color="gray.9" variant="filled" px={12}>
-              <Text size="xs" transform="capitalize" weight={600}>
-                Available Buzz
-              </Text>
+            <Badge
+              radius="xl"
+              variant="filled"
+              h="auto"
+              py={4}
+              px={12}
+              sx={(theme) => ({
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.fn.rgba('#000', 0.31) : theme.colors.gray[0],
+              })}
+            >
+              <Group spacing={4} noWrap>
+                <Text size="xs" color="dimmed" transform="capitalize" weight={600}>
+                  Available Buzz
+                </Text>
+                <UserBuzz user={currentUser} iconSize={16} textSize="sm" withTooltip />
+              </Group>
             </Badge>
-            <CloseButton iconSize={22} onClick={handleClose} />
+            <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
         <Divider mx="-lg" />
@@ -265,13 +262,13 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
             {amount === '-1' && (
               <InputNumber
                 name="customAmount"
-                placeholder="Your tip"
+                placeholder="Your tip. Minimum 100 BUZZ"
                 variant="filled"
-                icon={<IconBolt size={18} fill="currentColor" />}
                 rightSectionWidth="10%"
                 min={1}
-                max={currentUser?.balance}
+                max={constants.buzz.maxTipAmount}
                 disabled={sending}
+                icon={<CurrencyIcon currency="BUZZ" size={16} />}
                 parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
                 formatter={(value) =>
                   value && !Number.isNaN(parseFloat(value))
@@ -299,13 +296,15 @@ const { openModal, Modal } = createContextModal<{ toUserId: number }>({
               >
                 Cancel
               </Button>
-              <Button
+              <BuzzTransactionButton
+                label="Tip"
                 className={classes.submitButton}
+                buzzAmount={amountToSend ?? 0}
+                disabled={(amountToSend ?? 0) === 0}
+                loading={sending}
+                color="yellow.7"
                 type="submit"
-                loading={createBuzzTransactionMutation.isLoading}
-              >
-                Tip this amount
-              </Button>
+              />
             </Group>
           </Stack>
         </Form>

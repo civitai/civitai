@@ -148,13 +148,13 @@ export const AwardBountyAction = ({
       },
     });
 
-  const { trackEvent } = useTrackEvent();
+  const { trackAction } = useTrackEvent();
 
   const onClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    trackEvent({ type: 'AwardBounty_Click' }).catch(() => undefined);
+    trackAction({ type: 'AwardBounty_Click' }).catch(() => undefined);
 
     if (!benefactorItem) {
       return;
@@ -201,7 +201,7 @@ export const AwardBountyAction = ({
       confirmProps: { color: 'yellow.7', rightIcon: <IconAward size={20} /> },
       onConfirm: () => {
         awardBountyEntryMutation({ id: bountyEntryId });
-        trackEvent({ type: 'AwardBounty_Confirm' }).catch(() => undefined);
+        trackAction({ type: 'AwardBounty_Confirm' }).catch(() => undefined);
       },
     });
   };

@@ -637,6 +637,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           children:
             'You have not provided any captions for your images. This can produce an inflexible model. We will also attempt to generate sample images, but they may not be what you are looking for. Are you sure you want to continue?',
           labels: { cancel: 'Cancel', confirm: 'Continue' },
+          centered: true,
           onConfirm: handleNextAfterCheck,
         });
       } else {

@@ -16,7 +16,7 @@ import { useEffect } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { enterFall, jelloVerical } from '~/libs/animations';
+import { enterFall, jelloVertical } from '~/libs/animations';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function PaymentSuccess() {
@@ -51,7 +51,7 @@ export default function PaymentSuccess() {
           <Center
             sx={{
               // animation: `${jelloVerical} 2s 1s ease-in-out`,
-              animationName: `${enterFall}, ${jelloVerical}`,
+              animationName: `${enterFall}, ${jelloVertical}`,
               animationDuration: `1.5s, 2s`,
               animationDelay: `0s, 1.5s`,
               animationIterationCount: '1, 1',

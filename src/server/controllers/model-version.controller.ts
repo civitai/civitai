@@ -1,4 +1,4 @@
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus, ModelVersionMonetizationType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { BaseModel, BaseModelType } from '~/server/common/constants';
 
@@ -28,6 +28,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -109,7 +110,6 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       },
     });
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
-    console.log(version.monetization?.unitAmount);
 
     return {
       ...version,

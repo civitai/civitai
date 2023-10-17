@@ -10,7 +10,6 @@ import {
   Code,
 } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
-import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
@@ -18,15 +17,15 @@ import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { loginRedirectReasons, LoginRedirectReason } from '~/utils/login-helpers';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { trpc } from '~/utils/trpc';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { QS } from '~/utils/qs';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 export default function Login({ providers }: Props) {
   const router = useRouter();
@@ -40,7 +39,7 @@ export default function Login({ providers }: Props) {
     reason: LoginRedirectReason;
   };
   const { code } = useReferralsContext();
-  const { data: referrer, isLoading: referrerLoading } = trpc.user.userByReferralCode.useQuery(
+  const { data: referrer } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: code as string },
     { enabled: !!code }
   );
@@ -71,11 +70,14 @@ export default function Login({ providers }: Props) {
                 <Text color="dimmed" size="sm">
                   You have been referred by
                 </Text>
-                <CreatorCard user={referrer} />
+                <CreatorCard user={referrer} withActions={false} />
                 <Text size="sm">
                   By signing up with the referral code <Code>{code}</Code> both you and the user who
-                  referred you will be awarded buzz. This code will be automatically applied during
-                  your username selection process.
+                  referred you will be awarded{' '}
+                  <Text span inline>
+                    <CurrencyBadge currency={Currency.BUZZ} unitAmount={500} />
+                  </Text>
+                  . This code will be automatically applied during your username selection process.
                 </Text>
               </Stack>
             </Paper>

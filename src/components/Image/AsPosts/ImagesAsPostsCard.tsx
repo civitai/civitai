@@ -192,6 +192,7 @@ export function ImagesAsPostsCard({
                             }}
                             readonly={!safe}
                             className={classes.reactions}
+                            targetUserId={image.user.id}
                           />
                           {!image.hideMeta && image.meta && (
                             <ImageMetaPopover
@@ -289,6 +290,7 @@ export function ImagesAsPostsCard({
                                   }}
                                   readonly={!safe}
                                   className={classes.reactions}
+                                  targetUserId={image.user.id}
                                 />
                                 {!image.hideMeta && image.meta && (
                                   <ImageMetaPopover

@@ -27,7 +27,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import React from 'react';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
@@ -60,6 +60,10 @@ import { z } from 'zod';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useBuzzTransaction } from '../Buzz/buzz.utils';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -175,7 +179,7 @@ export function BountyCreateForm() {
       minBenefactorUnitAmount: constants.bounties.minCreateAmount,
       entryLimit: 1,
       files: [],
-      expiresAt: dayjs().add(7, 'day').toDate(),
+      expiresAt: dayjs().add(7, 'day').endOf('day').toDate(),
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
     },
@@ -206,28 +210,57 @@ export function BountyCreateForm() {
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
   const nsfwPoi = form.watch(['nsfw', 'poi']);
-  const [creating, setCreating] = useState(false);
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
     BountyType.LoraCreation,
     BountyType.EmbedCreation,
   ].some((t) => t === type);
 
+  const { conditionalPerformTransaction } = useBuzzTransaction({
+    message: (requiredBalance) =>
+      `You don't have enough funds to create this bounty. Required Buzz: ${numberWithCommas(
+        requiredBalance
+      )}. Buy or earn more buzz to perform this action.`,
+    performTransactionOnPurchase: false,
+    purchaseSuccessMessage: (purchasedBalance) => (
+      <Stack>
+        <Text>Thank you for your purchase!</Text>
+        <Text>
+          We have added <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} /> to
+          your account. You can now continue the bounty creation process.
+        </Text>
+      </Stack>
+    ),
+  });
+
   const { createBounty, creating: creatingBounty } = useMutateBounty();
 
-  const handleSubmit = async ({ ...data }: z.infer<typeof formSchema>) => {
+  const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     const filteredImages = imageFiles
       .filter((file) => file.status === 'success')
       .map(({ id, url, ...file }) => ({ ...file, url: id }));
 
-    try {
-      const result = await createBounty({ ...data, images: filteredImages });
-      await router.push(`/bounties/${result.id}`);
-      clearStorage();
-    } catch (error) {
-      // Do nothing since the query event will show an error notification
+    const performTransaction = async () => {
+      try {
+        const result = await createBounty({
+          ...data,
+          images: filteredImages,
+        });
+        await router.push(`/bounties/${result.id}`);
+        clearStorage();
+      } catch (error) {
+        // Do nothing since the query event will show an error notification
+      }
+    };
+
+    if (currency === Currency.BUZZ) {
+      conditionalPerformTransaction(data.unitAmount, performTransaction);
+    } else {
+      performTransaction();
     }
   };
+
+  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -426,7 +459,7 @@ export function BountyCreateForm() {
                     label="Bounty Amount"
                     placeholder="How much are you willing to reward for this bounty"
                     min={constants.bounties.minCreateAmount}
-                    max={100000}
+                    max={constants.bounties.maxCreateAmount}
                     step={100}
                     icon={<CurrencyIcon currency="BUZZ" size={16} />}
                     format={currency !== Currency.BUZZ ? 'currency' : undefined}
@@ -560,7 +593,7 @@ export function BountyCreateForm() {
                   </Stack>
                 }
               />
-              {nsfwPoi.every((item) => item === true) && (
+              {hasPoiInNsfw && (
                 <>
                   <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
                     <Text>
@@ -582,14 +615,20 @@ export function BountyCreateForm() {
               </Button>
             )}
           </NavigateBack>
-          <Button
-            loading={creatingBounty && !creating}
-            onClick={() => setCreating(false)}
-            type="submit"
-            disabled={nsfwPoi.every((i) => i)}
-          >
-            Save
-          </Button>
+          {currency === Currency.BUZZ ? (
+            <BuzzTransactionButton
+              loading={creatingBounty}
+              type="submit"
+              disabled={hasPoiInNsfw}
+              label="Save"
+              buzzAmount={unitAmount}
+              color="yellow.7"
+            />
+          ) : (
+            <Button loading={creatingBounty} type="submit" disabled={hasPoiInNsfw}>
+              Save
+            </Button>
+          )}
         </Group>
       </Stack>
     </Form>

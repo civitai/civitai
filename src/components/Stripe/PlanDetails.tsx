@@ -2,6 +2,8 @@ import { Stack, Title, Text, Center, createStyles } from '@mantine/core';
 import { IconCirclePlus, IconClock } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { CurrencyBadge } from '../Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 type SubscriptionCardProps = {
   name: string;
@@ -52,29 +54,18 @@ const meta: PlanMeta[] = [
         icon: <IconClock size={benefitIconSize} />,
         iconColor: 'yellow',
       },
-      {
-        content: (
-          <Text>
-            Early access to{' '}
-            <Text
-              component="a"
-              variant="link"
-              href="https://sharing.clickup.com/8459928/b/h/6-900500453357-2/56d60e52b842e83"
-              target="_blank"
-              rel="nofollow"
-            >
-              new features
-            </Text>
-          </Text>
-        ),
-      },
+      { content: 'Early access to new features' },
       { content: 'Unique Supporter Tier badge' },
       { content: 'Unique nameplate color' },
       { content: 'Unique Discord role' },
       {
-        content: 'More coming soon!',
-        icon: <IconCirclePlus size={benefitIconSize} />,
-        iconColor: 'blue',
+        content: (
+          <Text>
+            <Text span>
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={5000} /> each month
+            </Text>
+          </Text>
+        ),
       },
     ],
   },

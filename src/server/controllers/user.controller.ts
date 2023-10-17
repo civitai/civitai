@@ -1,53 +1,74 @@
-import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
-
-import { Context } from '~/server/createContext';
 import {
+  CosmeticType,
+  ModelEngagementType,
+  ModelVersionEngagementType,
+  OnboardingStep,
+} from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
+import { Context } from '~/server/createContext';
+import { dbWrite } from '~/server/db/client';
+import { redis } from '~/server/redis/client';
+import {
+  collectedContentReward,
+  encouragementReward,
+  goodContentReward,
+  imagePostedToModelReward,
+  userReferredReward,
+} from '~/server/rewards';
+import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import {
+  BatchBlockTagsSchema,
+  CompleteOnboardingStepInput,
+  DeleteUserInput,
+  GetAllUsersInput,
+  GetByUsernameSchema,
+  GetUserByUsernameSchema,
+  GetUserCosmeticsSchema,
+  GetUserTagsSchema,
+  ReportProhibitedRequestInput,
+  ToggleBlockedTagSchema,
+  ToggleFollowUserSchema,
+  ToggleModelEngagementInput,
+  ToggleUserArticleEngagementsInput,
+  ToggleUserBountyEngagementsInput,
+  UserByReferralCodeSchema,
+  UserUpdateInput,
+} from '~/server/schema/user.schema';
+import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
+import {
+  acceptTOS,
+  createUserReferral,
+  deleteUser,
   getCreators,
+  getUserById,
   getUserByUsername,
+  getUserCosmetics,
   getUserCreator,
-  getUserEngagedModels,
   getUserEngagedModelVersions,
+  getUserEngagedModels,
   getUserTags,
   getUserUnreadNotificationsCount,
+  getUsers,
+  isUsernamePermitted,
+  toggleBan,
   toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
-  toggleModelHide,
   toggleModelFavorite,
-  getUserCosmetics,
-  acceptTOS,
-  completeOnboarding,
-  isUsernamePermitted,
+  toggleModelHide,
   toggleUserArticleEngagement,
-  updateLeaderboardRank,
-  toggleBan,
   toggleUserBountyEngagement,
+  updateLeaderboardRank,
+  updateOnboardingSteps,
+  updateUserById,
   userByReferralCode,
-  createUserReferral,
 } from '~/server/services/user.service';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
-  GetAllUsersInput,
-  UserUpdateInput,
-  GetUserByUsernameSchema,
-  ToggleFollowUserSchema,
-  GetByUsernameSchema,
-  DeleteUserInput,
-  ToggleBlockedTagSchema,
-  GetUserTagsSchema,
-  BatchBlockTagsSchema,
-  ToggleModelEngagementInput,
-  GetUserCosmeticsSchema,
-  ToggleUserArticleEngagementsInput,
-  ToggleUserBountyEngagementsInput,
-  ReportProhibitedRequestInput,
-  UserByReferralCodeSchema,
-} from '~/server/schema/user.schema';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { deleteUser, getUserById, getUsers, updateUserById } from '~/server/services/user.service';
-import {
-  handleTrackError,
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -55,14 +76,10 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { isUUID } from '~/utils/string-helpers';
-import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
-import { dbWrite } from '~/server/db/client';
-import { cancelSubscription } from '~/server/services/stripe.service';
-import { redis } from '~/server/redis/client';
-import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { getUserBuzzBonusAmount } from '../common/user-helpers';
+import { TransactionType } from '../schema/buzz.schema';
+import { createBuzzTransaction } from '../services/buzz.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -191,11 +208,45 @@ export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> 
   }
 };
 
-export const completeOnboardingHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+const temp_onboardingOrder: OnboardingStep[] = [OnboardingStep.Moderation, OnboardingStep.Buzz];
+export const completeOnboardingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CompleteOnboardingStepInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const { id } = ctx.user;
-    await completeOnboarding({ id });
+    const user = await dbWrite.user.findUnique({
+      where: { id },
+      select: { onboardingSteps: true },
+    });
+
+    if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    if (!input.step) {
+      input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
+    }
+
+    const steps = !input.step ? [] : user.onboardingSteps.filter((step) => step !== input.step);
+    const updatedUser = await updateOnboardingSteps({ id, steps });
+
+    // There are no more onboarding steps, so we can reward the user
+    if (updatedUser.onboardingSteps.length === 0) {
+      await createBuzzTransaction({
+        fromAccountId: 0,
+        toAccountId: updatedUser.id,
+        amount: getUserBuzzBonusAmount(ctx.user),
+        description: 'Onboarding bonus',
+        type: TransactionType.Reward,
+        externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
+      }).catch(handleLogError);
+    }
+
+    return updatedUser;
   } catch (e) {
+    if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
 };
@@ -824,7 +875,7 @@ export const toggleBountyEngagementHandler = async ({
         ...input,
         type: on ? input.type : `Delete${input.type}`,
       })
-      .catch(handleTrackError);
+      .catch(handleLogError);
 
     return on;
   } catch (error) {
@@ -881,6 +932,22 @@ export const reportProhibitedRequestHandler = async ({
 export const userByReferralCodeHandler = async ({ input }: { input: UserByReferralCodeSchema }) => {
   try {
     return await userByReferralCode(input);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const rewardDetails = await Promise.all([
+      encouragementReward.getUserRewardDetails(ctx.user.id),
+      goodContentReward.getUserRewardDetails(ctx.user.id),
+      collectedContentReward.getUserRewardDetails(ctx.user.id),
+      imagePostedToModelReward.getUserRewardDetails(ctx.user.id),
+      userReferredReward.getUserRewardDetails(ctx.user.id),
+    ]);
+
+    return rewardDetails;
   } catch (error) {
     throw throwDbError(error);
   }

@@ -15,6 +15,7 @@ export function splitUppercase(value: string) {
     .trim()
     .split(/([A-Z][a-z]+|[0-9]+)/)
     .map((word) => word.trim())
+    .filter(Boolean)
     .join(' ');
 }
 

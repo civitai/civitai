@@ -44,6 +44,7 @@ import { constants } from '~/server/common/constants';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
+import { collectedContentReward } from '~/server/rewards';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -176,7 +177,7 @@ export const getCollectionByIdHandler = async ({
   }
 };
 
-export const saveItemHandler = ({
+export const saveItemHandler = async ({
   ctx,
   input,
 }: {
@@ -184,11 +185,22 @@ export const saveItemHandler = ({
   input: AddCollectionItemInput;
 }) => {
   const { user } = ctx;
-
   try {
-    return saveItemInCollections({
+    const status = await saveItemInCollections({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
     });
+    if (status === 'added' && input.type) {
+      const entityId = [input.articleId, input.modelId, input.postId, input.imageId].find(
+        isDefined
+      );
+      if (entityId) {
+        await collectedContentReward.apply({
+          collectorId: user.id,
+          entityType: input.type,
+          entityId,
+        });
+      }
+    }
   } catch (error) {
     throw throwDbError(error);
   }

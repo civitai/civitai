@@ -34,6 +34,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
+import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -64,6 +65,8 @@ export const jobs: Job[] = [
   updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
+  processRewards,
+  rewardsDailyReset,
   ...bountyJobs,
 ];
 

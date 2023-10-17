@@ -33,7 +33,6 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
-
 import { NoContent } from '~/components/NoContent/NoContent';
 import { constants } from '~/server/common/constants';
 import {
@@ -45,6 +44,7 @@ import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
+import { calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
@@ -120,9 +120,7 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
 
 const modelsLimit = 10;
 
-const minsWait = 5 * 60 * 1000;
-const minsPerEpoch = 1 * 60 * 1000;
-const minsPerEpochSDXL = 5 * 60 * 1000;
+const minsWait = 10;
 
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
@@ -244,16 +242,19 @@ export default function UserTrainingModels() {
                 const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
                 const epochsDone = thisFileMetadata?.trainingResults?.epochs?.length || 0;
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
-                const baseModel = thisTrainingDetails?.baseModel;
 
-                // nb: so yeah...this estimate can be better.
+                const baseModel = thisTrainingDetails?.baseModel;
+                const { networkDim, networkAlpha, targetSteps } = thisTrainingDetails?.params || {};
+
+                // would love to use .every(isDefined) here but TS isn't smart enough
+                const etaMins =
+                  !!networkDim && !!networkAlpha && !!targetSteps && !!baseModel
+                    ? calcEta(networkDim, networkAlpha, targetSteps, baseModel)
+                    : undefined;
+                // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =
-                  !!startTime && !!numEpochs
-                    ? new Date(
-                        new Date(startTime).getTime() +
-                          minsWait +
-                          numEpochs * (baseModel === 'sdxl' ? minsPerEpochSDXL : minsPerEpoch)
-                      )
+                  !!startTime && !!etaMins
+                    ? new Date(new Date(startTime).getTime() + (minsWait + etaMins) * 60 * 1000)
                     : undefined;
                 const etaStr = isProcessing
                   ? !!eta
@@ -476,7 +477,7 @@ export default function UserTrainingModels() {
                                   'gray'
                                 }
                               >
-                                <Group spacing={6}>
+                                <Group spacing={6} noWrap>
                                   {splitUppercase(
                                     thisModelVersion.trainingStatus === TrainingStatus.InReview
                                       ? 'Ready'

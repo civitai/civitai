@@ -23,11 +23,11 @@ import {
 } from '@mantine/core';
 import { useClickOutside, useDisclosure } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
+import { Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
   IconCircleDashed,
-  IconClockBolt,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -39,6 +39,7 @@ import {
   IconPhotoUp,
   IconPlaylistAdd,
   IconPlus,
+  IconProgressBolt,
   IconSearch,
   IconSettings,
   IconSun,
@@ -51,9 +52,20 @@ import {
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { Fragment, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  ReactElement,
+  ReactNode,
+  RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useHomeSelection } from '~/components/HomeContentToggle/FullHomeContentToggle';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -65,9 +77,12 @@ import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { deleteCookies } from '~/utils/cookies-helpers';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
+import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { UserBuzz } from '../User/UserBuzz';
 
 const HEADER_HEIGHT = 70;
@@ -190,7 +205,7 @@ const useStyles = createStyles((theme) => ({
 }));
 
 type MenuLink = {
-  label: React.ReactNode;
+  label: ReactNode;
   href: string;
   redirectReason?: LoginRedirectReason;
   visible?: boolean;
@@ -220,6 +235,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const router = useRouter();
   const features = useFeatureFlags();
+  const isMobile = useIsMobile();
 
   const [burgerOpened, { open: openBurger, close: closeBurger }] = useDisclosure(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
@@ -250,7 +266,10 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         label: (
           <Group align="center" spacing="xs">
             <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            Train a model
+            <Text span inline>
+              Train a model
+            </Text>
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
           </Group>
         ),
         rel: 'nofollow',
@@ -286,7 +305,8 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         label: (
           <Group align="center" spacing="xs">
             <IconMoneybag stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
-            Create a bounty
+            <Text>Create a bounty</Text>
+            <CurrencyIcon currency={Currency.BUZZ} size={16} />
           </Group>
         ),
         rel: 'nofollow',
@@ -358,8 +378,18 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         ),
       },
       {
+        href: '/user/buzz-dashboard',
+        visible: !!currentUser && features.buzz,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconProgressBolt stroke={1.5} color={theme.colors.yellow[7]} />
+            Buzz dashboard
+          </Group>
+        ),
+      },
+      {
         href: '',
-        label: <Divider />,
+        label: <Divider my={4} />,
       },
       {
         href: '/leaderboard/overall',
@@ -397,16 +427,6 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           <Group align="center" spacing="xs">
             <IconHistory stroke={1.5} />
             Download history
-          </Group>
-        ),
-      },
-      {
-        href: '/user/transactions',
-        visible: !!features.buzz,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconClockBolt stroke={1.5} />
-            Buzz transactions
           </Group>
         ),
       },
@@ -509,7 +529,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
 
   const BuzzMenuItem = useCallback(
     ({
-      textSize = 'xs',
+      textSize = 'md',
       withAbbreviation = true,
       ...groupProps
     }: GroupProps & {
@@ -520,49 +540,57 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
       if (!currentUser) return null;
 
       return (
-        <Group
-          p="sm"
-          position="apart"
-          mx={-4}
-          mt={-4}
-          sx={(theme) => ({
-            backgroundColor:
-              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
-          })}
-          noWrap
-          {...groupProps}
-        >
-          <Group spacing={4} noWrap>
-            <UserBuzz
-              iconSize={16}
-              user={currentUser}
-              textSize={textSize}
-              withAbbreviation={withAbbreviation}
-              withTooltip
-            />
-          </Group>
-          {/* TODO.buzz: Replace this with button below when buying is available */}
-          <Paper radius="xl" py={4} px={12}>
-            <Text size="xs" weight={600}>
-              Available Buzz
-            </Text>
-          </Paper>
-          {/* TODO.buzz: Once buying is available, uncomment this block */}
-          {/* <Button
-            variant="white"
-            radius="xl"
-            size={buttonSize}
-            px={12}
-            onClick={() => openBuyBuzzModal({})}
-            compact
+        <Link href="/user/buzz-dashboard">
+          <Group
+            p="sm"
+            position="apart"
+            mx={-4}
+            mt={-4}
+            mb={4}
+            sx={(theme) => ({
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
+              cursor: 'pointer',
+            })}
+            onClick={() => setUserMenuOpened(false)}
+            noWrap
+            {...groupProps}
           >
-            Buy More Buzz
-          </Button> */}
-        </Group>
+            <Group spacing={4} noWrap>
+              <UserBuzz
+                iconSize={16}
+                user={currentUser}
+                textSize={textSize}
+                withAbbreviation={withAbbreviation}
+                withTooltip={withAbbreviation}
+              />
+            </Group>
+            <Button
+              variant="white"
+              radius="xl"
+              size="xs"
+              px={12}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openBuyBuzzModal({}, { fullScreen: isMobile });
+              }}
+              compact
+            >
+              Buy Buzz
+            </Button>
+          </Group>
+        </Link>
       );
     },
-    [currentUser, features.buzz]
+    [currentUser, features.buzz, isMobile]
   );
+
+  const handleSignOut = async () => {
+    // Removes referral cookies on sign out
+    deleteCookies(['ref_code', 'ref_source']);
+    await signOut();
+  };
 
   return (
     <Header ref={ref} height={HEADER_HEIGHT} fixed zIndex={200}>
@@ -678,6 +706,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               opened={userMenuOpened}
               position="bottom-end"
               transition="pop-top-right"
+              // radius="lg"
               onClose={() => setUserMenuOpened(false)}
             >
               <Menu.Target>
@@ -687,14 +716,14 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 >
                   <Group spacing={8} noWrap>
                     <UserAvatar user={currentUser} size="md" />
-                    {features.buzz && <UserBuzz user={currentUser} />}
+                    {features.buzz && <UserBuzz user={currentUser} pr="sm" />}
                   </Group>
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
-                <BuzzMenuItem />
+                <BuzzMenuItem withAbbreviation={false} />
                 {userMenuItems}
-                <Divider />
+                <Divider my={4} />
                 <Menu.Item
                   closeMenuOnClick={false}
                   icon={<IconPalette stroke={1.5} />}
@@ -721,7 +750,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                     </Menu.Item>
                     <Menu.Item
                       icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                      onClick={() => signOut()}
+                      onClick={handleSignOut}
                     >
                       Logout
                     </Menu.Item>
@@ -814,7 +843,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   );
 }
 
-type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement };
+type Props = { renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement };
 export type RenderSearchComponentProps = {
   onSearchDone: () => void;
   isMobile: boolean;

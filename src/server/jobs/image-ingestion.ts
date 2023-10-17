@@ -18,7 +18,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
           },
           ingestion: ImageIngestionStatus.Pending,
         },
-        { scanRequestedAt: null },
+        { scanRequestedAt: null, ingestion: ImageIngestionStatus.Pending },
       ],
     },
     select: {
@@ -35,7 +35,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     return;
   }
 
-  const batches = chunk(images, 1000);
+  const batches = chunk(images, 250);
   for (const batch of batches) {
     await ingestImageBulk({ images: batch });
   }
