@@ -158,6 +158,15 @@ const useStyles = createStyles((theme) => ({
       maxWidth: '100% !important',
     },
   },
+  stickySidebar: {
+    position: 'sticky',
+    top: `calc(var(--mantine-header-height) + ${theme.spacing.md}px)`,
+
+    [theme.fn.smallerThan('md')]: {
+      position: 'relative',
+      top: 0,
+    },
+  },
 }));
 
 export function BountyCreateForm() {
@@ -273,8 +282,6 @@ export function BountyCreateForm() {
 
   const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
 
-  console.log({ expiresAt: dayjs.utc(expiresAt).local().startOf('date').toISOString() });
-
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack spacing={32}>
@@ -361,7 +368,7 @@ export function BountyCreateForm() {
                     breakpoints={[
                       { minWidth: 'xs', cols: 1 },
                       { minWidth: 'sm', cols: 3 },
-                      { minWidth: 'md', cols: 4 },
+                      { minWidth: 'md', cols: imageFiles.length > 3 ? 4 : imageFiles.length },
                     ]}
                   >
                     {imageFiles
@@ -449,7 +456,7 @@ export function BountyCreateForm() {
                       <DaysFromNow date={stripTime(expiresAt)} inUtc />
                     </Text>
                     . All times are in{' '}
-                    <Text span color="red.5">
+                    <Text weight="bold" color="red.5" span>
                       UTC
                     </Text>
                     .
@@ -552,7 +559,7 @@ export function BountyCreateForm() {
             </Stack>
           </Grid.Col>
           <Grid.Col xs={12} md={4}>
-            <Stack>
+            <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
                 <Stack spacing="xl">

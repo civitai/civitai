@@ -8,7 +8,6 @@ import {
 } from '@prisma/client';
 import { ManipulateType } from 'dayjs';
 import { groupBy } from 'lodash-es';
-import { isProd } from '~/env/other';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
@@ -23,6 +22,9 @@ import {
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
+  UpsertBountyInput,
+  createBountyInputSchema,
+  updateBountyInputSchema,
 } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
@@ -142,71 +144,74 @@ export const createBounty = async ({
   const startsAt = startOfDay(toUtc(incomingStartsAt));
   const expiresAt = startOfDay(toUtc(incomingExpiresAt));
 
-  const bounty = await dbWrite.$transaction(async (tx) => {
-    const bounty = await tx.bounty.create({
-      data: {
-        ...data,
-        startsAt,
-        expiresAt,
-        // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
-        entryMode: BountyEntryMode.BenefactorsOnly,
-        details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
-        tags: tags
-          ? {
-              create: tags.map((tag) => {
-                const name = tag.name.toLowerCase().trim();
-                return {
-                  tag: {
-                    connectOrCreate: {
-                      where: { name },
-                      create: { name, target: [TagTarget.Bounty] },
+  const bounty = await dbWrite.$transaction(
+    async (tx) => {
+      const bounty = await tx.bounty.create({
+        data: {
+          ...data,
+          startsAt,
+          expiresAt,
+          // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
+          entryMode: BountyEntryMode.BenefactorsOnly,
+          details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
+          tags: tags
+            ? {
+                create: tags.map((tag) => {
+                  const name = tag.name.toLowerCase().trim();
+                  return {
+                    tag: {
+                      connectOrCreate: {
+                        where: { name },
+                        create: { name, target: [TagTarget.Bounty] },
+                      },
                     },
-                  },
-                };
-              }),
-            }
-          : undefined,
-      },
-    });
-
-    await tx.bountyBenefactor.create({
-      data: {
-        userId,
-        bountyId: bounty.id,
-        unitAmount,
-        currency,
-      },
-    });
-
-    if (files) {
-      await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
-    }
-
-    if (images) {
-      await createEntityImages({
-        images,
-        tx,
-        userId,
-        entityId: bounty.id,
-        entityType: 'Bounty',
+                  };
+                }),
+              }
+            : undefined,
+        },
       });
-    }
 
-    switch (currency) {
-      case Currency.BUZZ:
-        await createBuzzTransaction({
-          fromAccountId: userId,
-          toAccountId: 0,
-          amount: unitAmount,
-          type: TransactionType.Bounty,
+      await tx.bountyBenefactor.create({
+        data: {
+          userId,
+          bountyId: bounty.id,
+          unitAmount,
+          currency,
+        },
+      });
+
+      if (files) {
+        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
+      }
+
+      if (images) {
+        await createEntityImages({
+          images,
+          tx,
+          userId,
+          entityId: bounty.id,
+          entityType: 'Bounty',
         });
-        break;
-      default: // Do no checks
-        break;
-    }
+      }
 
-    return bounty;
-  });
+      switch (currency) {
+        case Currency.BUZZ:
+          await createBuzzTransaction({
+            fromAccountId: userId,
+            toAccountId: 0,
+            amount: unitAmount,
+            type: TransactionType.Bounty,
+          });
+          break;
+        default: // Do no checks
+          break;
+      }
+
+      return bounty;
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
 
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
@@ -215,6 +220,7 @@ export const updateBountyById = async ({
   id,
   files,
   tags,
+  details,
   startsAt: incomingStartsAt,
   expiresAt: incomingExpiresAt,
   ...data
@@ -223,49 +229,67 @@ export const updateBountyById = async ({
   const startsAt = startOfDay(toUtc(incomingStartsAt));
   const expiresAt = startOfDay(toUtc(incomingExpiresAt));
 
-  const bounty = await dbWrite.$transaction(async (tx) => {
-    const bounty = await tx.bounty.update({
-      where: { id },
-      data: {
-        ...data,
-        startsAt,
-        expiresAt,
-        tags: tags
-          ? {
-              deleteMany: {
-                tagId: {
-                  notIn: tags.filter(isTag).map((x) => x.id),
-                },
-              },
-              connectOrCreate: tags.filter(isTag).map((tag) => ({
-                where: { tagId_bountyId: { tagId: tag.id, bountyId: id } },
-                create: { tagId: tag.id },
-              })),
-              create: tags.filter(isNotTag).map((tag) => {
-                const name = tag.name.toLowerCase().trim();
-                return {
-                  tag: {
-                    connectOrCreate: {
-                      where: { name },
-                      create: { name, target: [TagTarget.Bounty] },
-                    },
+  const bounty = await dbWrite.$transaction(
+    async (tx) => {
+      const bounty = await tx.bounty.update({
+        where: { id },
+        data: {
+          ...data,
+          startsAt,
+          expiresAt,
+          details: (details as Prisma.JsonObject) ?? Prisma.JsonNull,
+          tags: tags
+            ? {
+                deleteMany: {
+                  tagId: {
+                    notIn: tags.filter(isTag).map((x) => x.id),
                   },
-                };
-              }),
-            }
-          : undefined,
-      },
-    });
-    if (!bounty) return null;
+                },
+                connectOrCreate: tags.filter(isTag).map((tag) => ({
+                  where: { tagId_bountyId: { tagId: tag.id, bountyId: id } },
+                  create: { tagId: tag.id },
+                })),
+                create: tags.filter(isNotTag).map((tag) => {
+                  const name = tag.name.toLowerCase().trim();
+                  return {
+                    tag: {
+                      connectOrCreate: {
+                        where: { name },
+                        create: { name, target: [TagTarget.Bounty] },
+                      },
+                    },
+                  };
+                }),
+              }
+            : undefined,
+        },
+      });
+      if (!bounty) return null;
 
-    if (files) {
-      await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
-    }
+      if (files) {
+        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
+      }
 
-    return bounty;
-  });
+      return bounty;
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
 
   return bounty;
+};
+
+export const upsertBounty = async ({
+  id,
+  userId,
+  ...data
+}: UpsertBountyInput & { userId: number }) => {
+  if (id) {
+    const updateInput = await updateBountyInputSchema.parseAsync({ id, ...data });
+    return updateBountyById(updateInput);
+  } else {
+    const createInput = await createBountyInputSchema.parseAsync({ ...data });
+    return createBounty({ ...createInput, userId });
+  }
 };
 
 export const deleteBountyById = async ({ id }: GetByIdInput) => {

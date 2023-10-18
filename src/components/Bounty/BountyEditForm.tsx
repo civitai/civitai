@@ -120,7 +120,7 @@ export function BountyEditForm({ bounty }: Props) {
                 <DaysFromNow date={stripTime(expiresAt)} inUtc />
               </Text>
               . All times are in{' '}
-              <Text span color="red.5">
+              <Text weight="bold" color="red.5" span>
                 UTC
               </Text>
               .

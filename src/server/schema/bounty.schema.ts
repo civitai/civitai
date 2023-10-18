@@ -64,11 +64,29 @@ export const createBountyInputSchema = z.object({
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
 export const updateBountyInputSchema = createBountyInputSchema
   .pick({
+    name: true,
     description: true,
     tags: true,
     files: true,
+    type: true,
+    details: true,
+    poi: true,
+    nsfw: true,
   })
-  .merge(z.object({ id: z.number(), startsAt: z.date(), expiresAt: z.date() }));
+  .extend({
+    id: z.number(),
+    startsAt: z.date(),
+    expiresAt: z
+      .date()
+      .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+  });
+
+export type UpsertBountyInput = z.infer<typeof upsertBountyInputSchema>;
+export const upsertBountyInputSchema = createBountyInputSchema.extend({
+  id: z.number().optional(),
+  startsAt: z.date(),
+  expiresAt: z.date(),
+});
 
 export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUnitAmountInputSchema>;
 export const addBenefactorUnitAmountInputSchema = z.object({

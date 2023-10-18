@@ -5,6 +5,7 @@ import {
   CreateBountyInput,
   GetInfiniteBountySchema,
   UpdateBountyInput,
+  UpsertBountyInput,
 } from '~/server/schema/bounty.schema';
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -254,6 +255,20 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
     },
   });
 
+  const upsertBountyMutation = trpc.bounty.upsert.useMutation({
+    async onSuccess(result, payload) {
+      if (payload.id) await queryUtils.bounty.getById.invalidate({ id: payload.id });
+      else await toggle({ type: BountyEngagementType.Track, bountyId: result.id });
+      await queryUtils.bounty.getInfinite.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to save bounty',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const refundBountyMutation = trpc.bounty.refund.useMutation({
     async onSuccess() {
       await queryUtils.bounty.getById.invalidate({ id: bountyId });
@@ -312,6 +327,10 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
     return refundBountyMutation.mutateAsync({ id: bountyId });
   };
 
+  const handleUpsertBounty = (data: UpsertBountyInput) => {
+    return upsertBountyMutation.mutateAsync(data);
+  };
+
   return {
     createBounty: handleCreateBounty,
     creating: createBountyMutation.isLoading,
@@ -321,5 +340,7 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
     deleting: deleteBountyMutation.isLoading,
     refundBounty: handleRefundBounty,
     refunding: refundBountyMutation.isLoading,
+    upsertBounty: handleUpsertBounty,
+    upserting: upsertBountyMutation.isLoading,
   };
 };
