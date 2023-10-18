@@ -183,7 +183,13 @@ export const createBounty = async ({
       });
 
       if (files) {
-        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files, ownRights: !!ownRights  });
+        await updateEntityFiles({
+          tx,
+          entityId: bounty.id,
+          entityType: 'Bounty',
+          files,
+          ownRights: !!ownRights,
+        });
       }
 
       if (images) {
@@ -269,7 +275,13 @@ export const updateBountyById = async ({
       if (!bounty) return null;
 
       if (files) {
-        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files, ownRights: !!ownRights });
+        await updateEntityFiles({
+          tx,
+          entityId: bounty.id,
+          entityType: 'Bounty',
+          files,
+          ownRights: !!ownRights,
+        });
       }
 
       return bounty;

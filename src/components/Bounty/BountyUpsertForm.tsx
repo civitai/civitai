@@ -37,6 +37,7 @@ import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
+  InputCheckbox,
   InputDatePicker,
   InputMultiFileUpload,
   InputNumber,
@@ -49,7 +50,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { createBountyInputSchema, upsertBountyInputSchema } from '~/server/schema/bounty.schema';
+import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
@@ -68,7 +69,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { stripTime, toUtc } from '~/utils/date-helpers';
+import { stripTime } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 
@@ -213,6 +214,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         ? dayjs(stripTime(bounty.startsAt)).utcOffset(tzOffset).toDate()
         : new Date(),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
+      ownRights:
+        !!bounty &&
+        bounty.files.length > 0 &&
+        bounty.files.every((f) => f.metadata?.ownRights === true),
     },
     shouldUnregister: false,
   });
@@ -242,6 +247,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const unitAmount = form.watch('unitAmount');
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const expiresAt = form.watch('expiresAt');
+  const files = form.watch('files');
 
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
@@ -642,6 +648,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                     </>
                   )}
                 />
+                {files && files.length > 0 && (
+                  <InputCheckbox name="ownRights" label="I own the rights to these files" />
+                )}
               </Stack>
             </Stack>
           </Grid.Col>
