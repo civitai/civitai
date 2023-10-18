@@ -64,6 +64,8 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
+import { DaysFromNow } from '../Dates/DaysFromNow';
+import { stripTime } from '~/utils/date-helpers';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -91,6 +93,14 @@ const formSchema = createBountyInputSchema
   })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
+  })
+  .refine((data) => data.startsAt < data.expiresAt, {
+    message: 'Start date must be before expiration date',
+    path: ['startsAt'],
+  })
+  .refine((data) => data.expiresAt > data.startsAt, {
+    message: 'Expiration date must be after start date',
+    path: ['expiresAt'],
   });
 
 const useStyles = createStyles((theme) => ({
@@ -210,6 +220,7 @@ export function BountyCreateForm() {
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
   const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const expiresAt = form.watch('expiresAt');
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
     BountyType.LoraCreation,
@@ -261,6 +272,8 @@ export function BountyCreateForm() {
   };
 
   const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
+
+  console.log({ expiresAt: dayjs.utc(expiresAt).local().startOf('date').toISOString() });
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -407,28 +420,41 @@ export function BountyCreateForm() {
                       ))}
                   </SimpleGrid>
                 )}
-                <Group spacing="md" grow>
-                  <InputDatePicker
-                    className={classes.fluid}
-                    name="startsAt"
-                    label="Start Date"
-                    placeholder="Select a start date"
-                    icon={<IconCalendar size={16} />}
-                    withAsterisk
-                    minDate={minStartDate}
-                    maxDate={maxStartDate}
-                  />
-                  <InputDatePicker
-                    className={classes.fluid}
-                    name="expiresAt"
-                    label="Deadline"
-                    placeholder="Select an end date"
-                    icon={<IconCalendarDue size={16} />}
-                    withAsterisk
-                    minDate={minExpiresDate}
-                    maxDate={maxExpiresDate}
-                  />
-                </Group>
+                <Stack>
+                  <Group spacing="md" grow>
+                    <InputDatePicker
+                      className={classes.fluid}
+                      name="startsAt"
+                      label="Start Date"
+                      placeholder="Select a start date"
+                      icon={<IconCalendar size={16} />}
+                      withAsterisk
+                      minDate={minStartDate}
+                      maxDate={maxStartDate}
+                    />
+                    <InputDatePicker
+                      className={classes.fluid}
+                      name="expiresAt"
+                      label="Deadline"
+                      placeholder="Select an end date"
+                      icon={<IconCalendarDue size={16} />}
+                      withAsterisk
+                      minDate={minExpiresDate}
+                      maxDate={maxExpiresDate}
+                    />
+                  </Group>
+                  <Text weight={590}>
+                    With the selected dates, your bounty will expire{' '}
+                    <Text weight="bold" color="red.5" span>
+                      <DaysFromNow date={stripTime(expiresAt)} inUtc />
+                    </Text>
+                    . All times are in{' '}
+                    <Text span color="red.5">
+                      UTC
+                    </Text>
+                    .
+                  </Text>
+                </Stack>
                 <Divider label="Bounty rewards" />
                 {bountyModeEnabled && (
                   <InputRadioGroup
