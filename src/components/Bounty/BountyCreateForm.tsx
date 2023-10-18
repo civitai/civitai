@@ -1,21 +1,21 @@
 import {
+  ActionIcon,
   Button,
+  createStyles,
+  Divider,
+  Grid,
   Group,
+  Input,
+  Paper,
+  Progress,
+  Radio,
+  SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
   Title,
   Tooltip,
   TooltipProps,
-  SimpleGrid,
-  Paper,
-  ActionIcon,
-  Progress,
-  Divider,
-  Input,
-  Radio,
-  createStyles,
-  Grid,
 } from '@mantine/core';
 import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@prisma/client';
 import {
@@ -26,19 +26,29 @@ import {
   IconQuestionMark,
   IconTrash,
 } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
+import { z } from 'zod';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { matureLabel } from '~/components/Post/Edit/EditPostControls';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
+  InputCheckbox,
   InputDatePicker,
   InputMultiFileUpload,
   InputNumber,
-  InputRTE,
   InputRadioGroup,
+  InputRTE,
   InputSegmentedControl,
   InputSelect,
   InputSwitch,
@@ -46,24 +56,15 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { createBountyInputSchema } from '~/server/schema/bounty.schema';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import dayjs from 'dayjs';
-import { getDisplayName } from '~/utils/string-helpers';
 import { constants } from '~/server/common/constants';
-import { z } from 'zod';
-import { getMinMaxDates, useMutateBounty } from './bounty.utils';
-import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { getDisplayName } from '~/utils/string-helpers';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
+import { CurrencyIcon } from '../Currency/CurrencyIcon';
+import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 
@@ -198,6 +199,7 @@ export function BountyCreateForm() {
       minBenefactorUnitAmount: constants.bounties.minCreateAmount,
       entryLimit: 1,
       files: [],
+      ownRights: false,
       expiresAt: dayjs().add(7, 'day').endOf('day').toDate(),
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
@@ -229,6 +231,7 @@ export function BountyCreateForm() {
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
   const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const files = form.watch('files');
   const expiresAt = form.watch('expiresAt');
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
@@ -555,6 +558,9 @@ export function BountyCreateForm() {
                     },
                   }}
                 />
+                {files && files.length > 0 && (
+                  <InputCheckbox name="ownRights" label="I own the rights to these files" mt="xs" />
+                )}
               </Stack>
             </Stack>
           </Grid.Col>

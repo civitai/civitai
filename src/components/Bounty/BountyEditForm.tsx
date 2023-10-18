@@ -1,30 +1,31 @@
 import {
+  ActionIcon,
+  Anchor,
   Button,
+  createStyles,
   Group,
   Stack,
-  Title,
-  ActionIcon,
   Text,
+  Title,
   Tooltip,
-  Anchor,
-  createStyles,
 } from '@mantine/core';
 import { TagTarget } from '@prisma/client';
-import { IconCalendarDue, IconTrash } from '@tabler/icons-react';
+import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import React from 'react';
 import { getMinMaxDates, useMutateBounty } from '~/components/Bounty/bounty.utils';
 import {
   Form,
+  InputCheckbox,
   InputDatePicker,
-  InputRTE,
-  useForm,
   InputMultiFileUpload,
+  InputRTE,
   InputTags,
+  useForm,
 } from '~/libs/form';
 import { UpdateBountyInput, updateBountyInputSchema } from '~/server/schema/bounty.schema';
 import { BountyGetById } from '~/types/router';
 import { BackButton } from '../BackButton/BackButton';
-import { IconCalendar } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 
@@ -61,8 +62,12 @@ export function BountyEditForm({ bounty }: Props) {
     startsAt: bounty.startsAt,
     expiresAt: bounty.expiresAt,
     files: bounty.files?.map((file) => ({ ...file, metadata: file.metadata as MixedObject })) ?? [],
+    ownRights:
+      bounty.files?.length > 0 && bounty.files.every((f) => f.metadata?.ownRights === true),
   };
   const form = useForm({ schema, defaultValues, shouldUnregister: false });
+
+  const files = form.watch('files');
 
   const { updateBounty: update, updating } = useMutateBounty({ bountyId: bounty.id });
 
@@ -160,6 +165,7 @@ export function BountyEditForm({ bounty }: Props) {
                   {file.name}
                 </Text>
               )}
+              {/* TODO we should probably allow users to remove existing files here */}
               {!file.id && (
                 <Tooltip label="Remove">
                   <ActionIcon
@@ -175,6 +181,9 @@ export function BountyEditForm({ bounty }: Props) {
             </>
           )}
         />
+        {files && files.length > 0 && (
+          <InputCheckbox name="ownRights" label="I own the rights to these files" mt="xs" />
+        )}
         <Group position="right">
           <Button type="submit" loading={updating}>
             Save

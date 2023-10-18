@@ -94,4 +94,8 @@ declare global {
   type UploadResult = { url: string; id: string };
 
   type ImageUploadResponse = { id: string; uploadURL: string } | { error: string };
+
+  interface Window {
+    logSignal: (target: string) => void;
+  }
 }

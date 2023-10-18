@@ -222,11 +222,13 @@ export const completeOnboardingHandler = async ({
       where: { id },
       select: { onboardingSteps: true },
     });
+
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     if (!input.step) {
       input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
     }
+
     const steps = !input.step ? [] : user.onboardingSteps.filter((step) => step !== input.step);
     const updatedUser = await updateOnboardingSteps({ id, steps });
 

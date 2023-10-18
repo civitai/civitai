@@ -122,6 +122,7 @@ export const getBountyById = <TSelect extends Prisma.BountySelect>({
 export const createBounty = async ({
   images,
   files,
+  ownRights,
   tags,
   unitAmount,
   currency,
@@ -182,7 +183,7 @@ export const createBounty = async ({
       });
 
       if (files) {
-        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
+        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files, ownRights: !!ownRights  });
       }
 
       if (images) {
@@ -219,6 +220,7 @@ export const createBounty = async ({
 export const updateBountyById = async ({
   id,
   files,
+  ownRights,
   tags,
   details,
   startsAt: incomingStartsAt,
@@ -267,7 +269,7 @@ export const updateBountyById = async ({
       if (!bounty) return null;
 
       if (files) {
-        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files });
+        await updateEntityFiles({ tx, entityId: bounty.id, entityType: 'Bounty', files, ownRights: !!ownRights });
       }
 
       return bounty;

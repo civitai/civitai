@@ -20,6 +20,8 @@ type SignalWorkerReconnected = {
   type: 'connection:reconnected';
 };
 
+type SignalWorkerPong = { type: 'pong' };
+
 type SignalEventReceived<T = unknown> = {
   type: 'event:received';
   target: string;
@@ -32,9 +34,11 @@ export type WorkerOutgoingMessage =
   | SignalConnectionClosed
   | SignalWorkerError
   | SignalWorkerReconnected
-  | SignalEventReceived;
+  | SignalEventReceived
+  | SignalWorkerPong;
 
 export type WorkerIncomingMessage =
   | { type: 'connection:init'; token: string }
   | { type: 'event:register'; target: string }
-  | { type: 'beforeunload' };
+  | { type: 'beforeunload' }
+  | { type: 'ping' };

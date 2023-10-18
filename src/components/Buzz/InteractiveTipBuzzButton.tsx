@@ -32,6 +32,7 @@ type Props = UnstyledButtonProps & {
 };
 
 const CONFIRMATION_THRESHOLD = 100;
+const CLICK_AMOUNT = 10;
 
 /**NOTES**
  Why use zustand?
@@ -164,7 +165,7 @@ export function InteractiveTipBuzzButton({
 
     if (interval.active) {
       interval.stop();
-      const amount = buzzCounter > 0 ? buzzCounter : 10;
+      const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
       const requiresConfirmation = amount >= CONFIRMATION_THRESHOLD;
 
       if (!dismissed && isClick) {
@@ -172,8 +173,8 @@ export function InteractiveTipBuzzButton({
           title: "Looks like you're onto your first tip!",
           message: (
             <Text>
-              To send more than <CurrencyBadge currency={Currency.BUZZ} unitAmount={10} />, hold the
-              button for as long as you like
+              To send more than <CurrencyBadge currency={Currency.BUZZ} unitAmount={CLICK_AMOUNT} />
+              , hold the button for as long as you like
             </Text>
           ),
         });
@@ -255,20 +256,29 @@ export function InteractiveTipBuzzButton({
         {...buttonProps}
         onClick={undefined}
       >
-        <Popover withArrow withinPortal radius="md" opened={interval.active} zIndex={999}>
+        <Popover
+          withArrow
+          withinPortal
+          radius="md"
+          opened={interval.active}
+          zIndex={999}
+          position="top"
+        >
           <Popover.Target>
             <div>{children}</div>
           </Popover.Target>
-          <Popover.Dropdown>
-            <Group spacing={0}>
-              <Text color="yellow.7" weight={500}>
+          <Popover.Dropdown py={4}>
+            <Stack spacing={2}>
+              <Text color="yellow.7" weight={500} size="xs" opacity={0.8}>
                 Tipping
               </Text>
-              <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" />
-              <Text color="yellow.7" weight={500} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                {buzzCounter}
-              </Text>
-            </Group>
+              <Group spacing={0}>
+                <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
+                <Text color="yellow.7" weight={500} sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {buzzCounter}
+                </Text>
+              </Group>
+            </Stack>
           </Popover.Dropdown>
         </Popover>
       </UnstyledButton>

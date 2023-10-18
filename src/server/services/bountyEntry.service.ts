@@ -1,12 +1,12 @@
 import { Currency, Prisma } from '@prisma/client';
-import { GetByIdInput } from '../schema/base.schema';
-import { dbRead, dbWrite } from '../db/client';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { dbRead, dbWrite } from '../db/client';
+import { GetByIdInput } from '../schema/base.schema';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -59,6 +59,7 @@ export const upsertBountyEntry = ({
   id,
   bountyId,
   files,
+  ownRights,
   images,
   description,
   userId,
@@ -75,6 +76,7 @@ export const upsertBountyEntry = ({
           entityId: entry.id,
           entityType: 'BountyEntry',
           files,
+          ownRights: !!ownRights,
         });
       }
 
@@ -99,7 +101,13 @@ export const upsertBountyEntry = ({
       });
 
       if (files) {
-        await updateEntityFiles({ tx, entityId: entry.id, entityType: 'BountyEntry', files });
+        await updateEntityFiles({
+          tx,
+          entityId: entry.id,
+          entityType: 'BountyEntry',
+          files,
+          ownRights: !!ownRights,
+        });
       }
 
       if (images) {
@@ -118,72 +126,77 @@ export const upsertBountyEntry = ({
 };
 
 export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
-  const benefactor = await dbWrite.$transaction(async (tx) => {
-    const entry = await tx.bountyEntry.findUniqueOrThrow({
-      where: { id },
-      select: {
-        id: true,
-        bountyId: true,
-        userId: true,
-        bounty: {
-          select: {
-            complete: true,
+  const benefactor = await dbWrite.$transaction(
+    async (tx) => {
+      const entry = await tx.bountyEntry.findUniqueOrThrow({
+        where: { id },
+        select: {
+          id: true,
+          bountyId: true,
+          userId: true,
+          bounty: {
+            select: {
+              complete: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!entry.userId) {
-      throw throwBadRequestError('Entry has no user.');
-    }
+      if (!entry.userId) {
+        throw throwBadRequestError('Entry has no user.');
+      }
 
-    if (entry.bounty.complete) {
-      throw throwBadRequestError('Bounty is already complete.');
-    }
+      if (entry.bounty.complete) {
+        throw throwBadRequestError('Bounty is already complete.');
+      }
 
-    const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
-      where: {
-        bountyId_userId: {
-          userId,
-          bountyId: entry.bountyId,
+      const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
+        where: {
+          bountyId_userId: {
+            userId,
+            bountyId: entry.bountyId,
+          },
         },
-      },
-    });
+      });
 
-    if (benefactor.awardedToId) {
-      throw throwBadRequestError('Supporters has already awarded an entry.');
-    }
+      if (benefactor.awardedToId) {
+        throw throwBadRequestError('Supporters have already awarded an entry.');
+      }
 
-    const updatedBenefactor = await tx.bountyBenefactor.update({
-      where: {
-        bountyId_userId: {
-          userId,
-          bountyId: entry.bountyId,
+      const updatedBenefactor = await tx.bountyBenefactor.update({
+        where: {
+          bountyId_userId: {
+            userId,
+            bountyId: entry.bountyId,
+          },
         },
-      },
-      data: {
-        awardedToId: entry.id,
-        awardedAt: new Date(),
-      },
-    });
+        data: {
+          awardedToId: entry.id,
+          awardedAt: new Date(),
+        },
+      });
 
-    switch (updatedBenefactor.currency) {
-      case Currency.BUZZ:
-        await createBuzzTransaction({
-          fromAccountId: 0,
-          toAccountId: entry.userId,
-          amount: updatedBenefactor.unitAmount,
-          type: TransactionType.Bounty,
-          description: 'Reason: Bounty entry has been awarded!',
-        });
+      switch (updatedBenefactor.currency) {
+        case Currency.BUZZ:
+          await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: entry.userId,
+            amount: updatedBenefactor.unitAmount,
+            type: TransactionType.Bounty,
+            description: 'Reason: Bounty entry has been awarded!',
+          });
 
-        break;
-      default: // Do no checks
-        break;
-    }
+          break;
+        default: // Do no checks
+          break;
+      }
 
-    return updatedBenefactor;
-  });
+      await tx.bounty.update({ where: { id: entry.bountyId }, data: { complete: true } });
+
+      return updatedBenefactor;
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
 
   // Marks as complete:
   const unawardedBountyBenefactors = await dbRead.bountyBenefactor.findFirst({

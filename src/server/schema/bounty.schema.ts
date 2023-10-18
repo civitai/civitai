@@ -1,13 +1,13 @@
+import { BountyEntryMode, BountyMode, BountyType, Currency, MetricTimeframe } from '@prisma/client';
 import dayjs from 'dayjs';
-import { BountyType, BountyMode, MetricTimeframe, Currency, BountyEntryMode } from '@prisma/client';
 import { z } from 'zod';
-import { baseFileSchema } from './file.schema';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { tagSchema } from './tag.schema';
-import { infiniteQuerySchema } from './base.schema';
-import { BountySort, BountyStatus } from '../common/enums';
-import { imageSchema } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
+import { imageSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { BountySort, BountyStatus } from '../common/enums';
+import { infiniteQuerySchema } from './base.schema';
+import { baseFileSchema } from './file.schema';
+import { tagSchema } from './tag.schema';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -57,6 +57,7 @@ export const createBountyInputSchema = z.object({
   tags: z.array(tagSchema).optional(),
   nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
+  ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
   images: z.array(imageSchema).min(1, 'At least one example image must be uploaded'),
 });
@@ -72,6 +73,7 @@ export const updateBountyInputSchema = createBountyInputSchema
     details: true,
     poi: true,
     nsfw: true,
+    ownRights: true,
   })
   .extend({
     id: z.number(),

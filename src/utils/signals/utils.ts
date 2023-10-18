@@ -1,4 +1,4 @@
-export class Deferred<T, E = unknown> {
+export class Deferred<T = void, E = unknown> {
   promise: Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void = () => null;
   reject: (reason?: E) => void = () => null;
@@ -45,3 +45,24 @@ export class EventEmitter<T extends Record<string, unknown>> {
     this.callbacks = {} as EventsDictionary<T>;
   }
 }
+
+type OptionalIfUndefined<T> = undefined extends T ? [param?: T] : [param: T];
+
+export const subscribable = <T>(args: T) => {
+  const emitter = new EventEmitter<Record<'change', T>>();
+  let data = args;
+
+  const subscribe = (fn: (args: T) => void) => emitter.on('change', fn);
+
+  const set = (args: T) => {
+    data = args;
+    emitter.emit('change', data);
+  };
+
+  const update = (fn: (state: T) => T) => {
+    data = fn(data);
+    emitter.emit('change', data);
+  };
+
+  return { subscribe, set, update };
+};
