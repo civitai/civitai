@@ -68,7 +68,6 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
       if (!data || loadingRef.current) {
         return;
       }
-      console.log('create');
       loadingRef.current = true;
       createSignalWorker({
         token: data.accessToken,
@@ -92,9 +91,6 @@ function RealSignalProvider({ children }: { children: React.ReactNode }) {
             createWorker();
           }, 5000);
         },
-        // onPing: (status) => {
-        //   if (status !== 'available') createWorker();
-        // },
         onError: (message) =>
           console.error({ type: 'SignalsProvider :: signal service error', message }),
       }).then((worker) => {
