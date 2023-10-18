@@ -1,4 +1,4 @@
-import React, { ChangeEvent, ReactElement, useRef, useState, forwardRef } from 'react';
+import React, { ChangeEvent, forwardRef, ReactElement, useRef, useState } from 'react';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -9,7 +9,7 @@ type FileInputProps = {
 };
 
 // eslint-disable-next-line react/display-name
-const FileInput = forwardRef<HTMLInputElement, FileInputProps>(
+const CivFileInput = forwardRef<HTMLInputElement, FileInputProps>(
   ({ onChange, ...restOfProps }, forwardedRef) => {
     const handleChange = (event: ChangeEvent<HTMLInputElement>): void => {
       const files = Array.from(event.target?.files ?? []);
@@ -259,7 +259,14 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       }
 
       // Complete the multipart upload
-      await completeUpload();
+      const resp = await completeUpload();
+      // this can happen with a 0-byte file, among other things
+      if (!resp.ok) {
+        updateFile({ status: 'error', file: undefined });
+        await abortUpload();
+        return { url: null, bucket, key };
+      }
+
       updateFile({ status: 'success' });
 
       const url = urls[0].url.split('?')[0];
@@ -268,7 +275,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
   };
 
   return {
-    FileInput: (props: any) => <FileInput {...props} ref={ref} style={{ display: 'none' }} />, //eslint-disable-line
+    FileInput: (props: any) => <CivFileInput {...props} ref={ref} style={{ display: 'none' }} />, //eslint-disable-line
     openFileDialog,
     uploadToS3,
     files,

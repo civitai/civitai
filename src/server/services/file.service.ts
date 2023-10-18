@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
-import { dbRead } from '../db/client';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
-import { isDefined } from '~/utils/type-guards';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
+import { isDefined } from '~/utils/type-guards';
+import { dbRead } from '../db/client';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -25,21 +25,24 @@ export const updateEntityFiles = async ({
   entityId,
   entityType,
   files,
+  ownRights,
 }: {
   tx: Prisma.TransactionClient;
   entityId: number;
   entityType: string;
   files: BaseFileSchema[];
+  ownRights: boolean;
 }) => {
   const updatedFiles = files.filter((f) => f.id);
 
   if (updatedFiles.length > 0) {
     await Promise.all(
       updatedFiles.map((file) => {
-        tx.file.update({
+        return tx.file.update({
           where: { id: file.id },
           data: {
             ...file,
+            metadata: { ...(file.metadata ?? {}), ownRights },
           },
         });
       })
@@ -68,6 +71,7 @@ export const updateEntityFiles = async ({
         ...file,
         entityId,
         entityType,
+        metadata: { ...(file.metadata ?? {}), ownRights },
       })),
     });
   }

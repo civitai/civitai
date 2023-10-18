@@ -1,46 +1,46 @@
 import {
+  ActionIcon,
+  Anchor,
   Button,
   Group,
-  Stack,
-  Text,
-  Title,
-  SimpleGrid,
-  Paper,
-  ActionIcon,
-  Progress,
-  Anchor,
-  Tooltip,
-  Switch,
-  Input,
-  ThemeIcon,
   HoverCard,
+  Input,
+  Paper,
+  Progress,
+  SimpleGrid,
+  Stack,
+  Switch,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
 } from '@mantine/core';
+import { BountyEntryMode, BountyType, Currency } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import React, { useState } from 'react';
+import { z } from 'zod';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { Form, InputMultiFileUpload, InputRTE, useForm } from '~/libs/form';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
+import { getBountyCurrency, getMainBountyAmount } from '~/components/Bounty/bounty.utils';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { z } from 'zod';
-import { BountyEntryGetById, BountyGetById } from '~/types/router';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { Form, InputCheckbox, InputMultiFileUpload, InputRTE, useForm } from '~/libs/form';
+import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import {
   BountyEntryFileMeta,
   bountyEntryFileSchema,
   upsertBountyEntryInputSchema,
 } from '~/server/schema/bounty-entry.schema';
-import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { getBountyCurrency, getMainBountyAmount } from '~/components/Bounty/bounty.utils';
-import { BountyEntryMode, BountyType, Currency } from '@prisma/client';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { BountyEntryGetById, BountyGetById } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -110,6 +110,8 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
     },
     shouldUnregister: false,
   });
+
+  const bountyFiles = form.watch('bountyFiles');
 
   const [creating, setCreating] = useState(false);
   const bountyEntryCreateMutation = trpc.bountyEntry.create.useMutation();
@@ -460,11 +462,14 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             withAsterisk
           />
         </Group>
+        {bountyFiles && bountyFiles.length > 0 && (
+          <InputCheckbox name="ownRights" label="I own the rights to these files" mt="xs" />
+        )}
         {openEntry && (
           <NumberInputWrapper
             name="unlockAmount"
             label="Unlock amount"
-            description="Set an specific amount people have to award you before they can download your files. This only affects bounty files, sample files are always unlocked."
+            description="Set a specific amount people have to award you before they can download your files. This only affects bounty files - sample files are always unlocked."
             labelProps={{ size: 'xl' }}
             icon={<CurrencyIcon currency={currency} size={18} />}
             format={currency !== Currency.BUZZ ? 'currency' : undefined}

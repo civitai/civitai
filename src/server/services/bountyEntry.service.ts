@@ -1,12 +1,12 @@
 import { Currency, Prisma } from '@prisma/client';
-import { GetByIdInput } from '../schema/base.schema';
-import { dbRead, dbWrite } from '../db/client';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { dbRead, dbWrite } from '../db/client';
+import { GetByIdInput } from '../schema/base.schema';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -59,6 +59,7 @@ export const upsertBountyEntry = ({
   id,
   bountyId,
   files,
+  ownRights,
   images,
   description,
   userId,
@@ -75,6 +76,7 @@ export const upsertBountyEntry = ({
           entityId: entry.id,
           entityType: 'BountyEntry',
           files,
+          ownRights: !!ownRights,
         });
       }
 
@@ -99,7 +101,13 @@ export const upsertBountyEntry = ({
       });
 
       if (files) {
-        await updateEntityFiles({ tx, entityId: entry.id, entityType: 'BountyEntry', files });
+        await updateEntityFiles({
+          tx,
+          entityId: entry.id,
+          entityType: 'BountyEntry',
+          files,
+          ownRights: !!ownRights,
+        });
       }
 
       if (images) {
