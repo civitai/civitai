@@ -193,31 +193,32 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       await tx.bounty.update({ where: { id: entry.bountyId }, data: { complete: true } });
 
+      // Marks as complete:
+      // Use DB write to ensure data is updated correctly.
+      const unawardedBountyBenefactors = await dbWrite.bountyBenefactor.findFirst({
+        select: { userId: true },
+        where: {
+          awardedToId: null,
+          bountyId: benefactor.bountyId,
+        },
+      });
+
+      if (!unawardedBountyBenefactors) {
+        // Update bounty as completed:
+        await dbWrite.bounty.update({
+          where: {
+            id: benefactor.bountyId,
+          },
+          data: {
+            complete: true,
+          },
+        });
+      }
+
       return updatedBenefactor;
     },
     { maxWait: 10000, timeout: 30000 }
   );
-
-  // Marks as complete:
-  const unawardedBountyBenefactors = await dbRead.bountyBenefactor.findFirst({
-    select: { userId: true },
-    where: {
-      awardedToId: null,
-      bountyId: benefactor.bountyId,
-    },
-  });
-
-  if (!unawardedBountyBenefactors) {
-    // Update bounty as completed:
-    await dbWrite.bounty.update({
-      where: {
-        id: benefactor.bountyId,
-      },
-      data: {
-        complete: true,
-      },
-    });
-  }
 
   return benefactor;
 };
