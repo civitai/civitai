@@ -94,7 +94,9 @@ export const useBuzzTransaction = (opts?: {
   const hasRequiredAmount = (buzzAmount: number) => (currentUser?.balance ?? 0) >= buzzAmount;
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
-    if (!currentUser?.balance || currentUser?.balance < buzzAmount) {
+
+    const hasRequiredAmount = (currentUser?.balance ?? 0) >= buzzAmount;
+    if (!hasRequiredAmount) {
       trackAction({ type: 'NotEnoughFunds', details: { amount: buzzAmount } }).catch(
         () => undefined
       );
