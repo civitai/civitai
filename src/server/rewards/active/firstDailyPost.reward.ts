@@ -1,4 +1,3 @@
-import { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { createBuzzEvent } from '../base.reward';
 
 export const firstDailyPostReward = createBuzzEvent({
@@ -19,7 +18,6 @@ export const firstDailyPostReward = createBuzzEvent({
 });
 
 type PostEvent = {
-  type: ReactionEntityType;
   postId: number;
   posterId: number;
 };
