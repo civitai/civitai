@@ -43,7 +43,7 @@ export const getUserResourceReview = async ({
 };
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {
-  return await dbWrite.resourceReview.findMany({
+  return await dbRead.resourceReview.findMany({
     where: { modelVersionId: { in: resourceIds } },
     select: {
       id: true,
