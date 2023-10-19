@@ -12,7 +12,7 @@ export const applyUserPreferencesModels = <T>({
 }: {
   items: {
     id: number;
-    user: {
+    user?: {
       id: number;
     };
     tags: {
@@ -33,8 +33,10 @@ export const applyUserPreferencesModels = <T>({
 }) => {
   const filtered = items
     .filter((x) => {
-      if (x.user.id === currentUserId) return true;
-      if (hiddenUsers.get(x.user.id)) return false;
+      if (x.user) {
+        if (x.user.id === currentUserId) return true;
+        if (hiddenUsers.get(x.user.id)) return false;
+      }
       if (hiddenModels.get(x.id)) return false;
       for (const tag of x.tags ?? []) if (hiddenTags.get(tag.id)) return false;
       return true;
@@ -76,7 +78,7 @@ export const applyUserPreferencesImages = <T>({
 }: {
   items: {
     id: number;
-    user: {
+    user?: {
       id: number;
     };
     tags: {
@@ -89,8 +91,10 @@ export const applyUserPreferencesImages = <T>({
   currentUserId?: number | null;
 }) => {
   const filtered = items.filter((x) => {
-    if (x.user.id === currentUserId) return true;
-    if (hiddenUsers.get(x.user.id)) return false;
+    if (x.user) {
+      if (x.user.id === currentUserId) return true;
+      if (hiddenUsers.get(x.user.id)) return false;
+    }
     if (hiddenImages.get(x.id)) return false;
     for (const tag of x.tags ?? []) if (hiddenTags.get(tag.id)) return false;
     return true;
@@ -107,7 +111,7 @@ export const applyUserPreferencesArticles = <T>({
 }: {
   items: {
     id: number;
-    user: {
+    user?: {
       id: number;
     };
     tags: {
@@ -119,8 +123,10 @@ export const applyUserPreferencesArticles = <T>({
   currentUserId?: number | null;
 }) => {
   const filtered = items.filter((x) => {
-    if (x.user.id === currentUserId) return true;
-    if (hiddenUsers.get(x.user.id)) return false;
+    if (x.user) {
+      if (x.user.id === currentUserId) return true;
+      if (hiddenUsers.get(x.user.id)) return false;
+    }
     for (const tag of x.tags ?? []) if (hiddenTags.get(tag.id)) return false;
     return true;
   });
