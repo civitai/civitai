@@ -220,10 +220,13 @@ export const completeOnboardingHandler = async ({
     const { id } = ctx.user;
     const user = await dbWrite.user.findUnique({
       where: { id },
-      select: { onboardingSteps: true },
+      select: { onboardingSteps: true, email: true, username: true },
     });
 
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    if (!user?.email) throw throwBadRequestError('User must have an email to complete onboarding');
+    if (!user?.username)
+      throw throwBadRequestError('User must have a username to complete onboarding');
 
     if (!input.step) {
       input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
