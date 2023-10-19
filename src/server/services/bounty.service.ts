@@ -323,7 +323,7 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
 
 export const getBountyImages = async ({ id }: GetByIdInput) => {
   const connections = await dbRead.imageConnection.findMany({
-    where: { entityId: id, entityType: 'Bounty' },
+    where: { entityId: id, entityType: 'Bounty', image: { needsReview: null } },
     select: { image: { select: imageSelect } },
   });
 
@@ -428,7 +428,7 @@ export const getImagesForBounties = async ({ bountyIds }: { bountyIds: number[] 
     where: {
       entityType: 'Bounty',
       entityId: { in: bountyIds },
-      image: { ingestion: isProd ? 'Scanned' : { in: ['Pending', 'Scanned'] } },
+      image: { ingestion: isProd ? 'Scanned' : { in: ['Pending', 'Scanned'] }, needsReview: null },
     },
     select: {
       entityId: true,

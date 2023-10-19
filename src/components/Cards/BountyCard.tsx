@@ -190,6 +190,7 @@ export function BountyCard({ data }: Props) {
                   }
                   color={isTracked ? 'green' : 'dark'}
                   p={0}
+                  className={classes.iconBadge}
                   size="lg"
                   // @ts-ignore: transparent variant does work
                   variant="transparent"
@@ -207,6 +208,7 @@ export function BountyCard({ data }: Props) {
                   color={isFavorite ? 'red' : 'dark'}
                   p={0}
                   size="lg"
+                  className={classes.iconBadge}
                   // @ts-ignore
                   variant="transparent"
                 >
@@ -217,6 +219,7 @@ export function BountyCard({ data }: Props) {
                   color="dark"
                   p={0}
                   size="lg"
+                  className={classes.iconBadge}
                   // @ts-ignore
                   variant="transparent"
                 >
