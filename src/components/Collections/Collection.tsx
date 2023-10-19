@@ -322,6 +322,12 @@ export function Collection({
     (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
     (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
 
+  const isSubmissionPeriod =
+    metadata.submissionStartDate &&
+    metadata.submissionEndDate &&
+    new Date(metadata.submissionStartDate) < new Date() &&
+    new Date(metadata.submissionEndDate) > new Date();
+
   const submissionPeriod =
     metadata.submissionStartDate || metadata.submissionEndDate || metadata.maxItemsPerUser ? (
       <Popover
@@ -476,6 +482,15 @@ export function Collection({
               </AlertWithIcon>
             ) : (
               <>
+                {isSubmissionPeriod && (
+                  <AlertWithIcon icon={<IconAlertCircle />}>
+                    <Text>
+                      This collection is accepting entries until{' '}
+                      {formatDate(metadata.submissionEndDate)}. You will only see your entries until
+                      the subsmission period is over and the voting period starts.
+                    </Text>
+                  </AlertWithIcon>
+                )}
                 {collection && collectionType === CollectionType.Model && (
                   <ModelCollection collection={collection} />
                 )}
