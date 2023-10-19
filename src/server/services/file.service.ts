@@ -52,12 +52,12 @@ export const updateEntityFiles = async ({
   // Delete any files that were removed.
   const deletedFileIds = files.map((x) => x.id).filter(isDefined);
 
-  if (deletedFileIds.length > 0) {
+  if (deletedFileIds.length >= 0) {
     await tx.file.deleteMany({
       where: {
         entityId,
         entityType,
-        id: { notIn: files.map((x) => x.id).filter(isDefined) },
+        id: { notIn: deletedFileIds },
       },
     });
   }

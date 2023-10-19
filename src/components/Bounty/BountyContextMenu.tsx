@@ -19,11 +19,12 @@ export function BountyContextMenu({
   const router = useRouter();
   const isModerator = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === bounty.user?.id || isModerator;
+  const expired = bounty.expiresAt < new Date();
 
   const { deleteBounty, refundBounty, refunding } = useMutateBounty({ bountyId: bounty.id });
 
   const menuItems: React.ReactElement<MenuItemProps>[] = [
-    isOwner || isModerator ? (
+    !expired && (isOwner || isModerator) ? (
       <Menu.Item
         key="delete"
         color="red"
@@ -56,14 +57,14 @@ export function BountyContextMenu({
         Delete
       </Menu.Item>
     ) : null,
-    isOwner || isModerator ? (
+    !expired && (isOwner || isModerator) ? (
       <Link key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
         <Menu.Item component="a" icon={<IconEdit size={14} stroke={1.5} />}>
           Edit
         </Menu.Item>
       </Link>
     ) : null,
-    isModerator && !bounty.complete ? (
+    isModerator && !(bounty.complete || expired) ? (
       <Menu.Item
         key="refund"
         disabled={refunding}
@@ -131,6 +132,7 @@ type Props = MenuProps & {
     id: number;
     user: { id: number } | null;
     complete: boolean;
+    expiresAt: Date;
   };
   buttonProps?: ActionIconProps & { iconSize?: number };
 };

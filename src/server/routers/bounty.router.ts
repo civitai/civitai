@@ -8,6 +8,7 @@ import {
   addBenefactorUnitAmountHandler,
   getBountyBenefactorsHandler,
   refundBountyHandler,
+  upsertBountyHandler,
 } from '../controllers/bounty.controller';
 import { isFlagProtected, middleware, protectedProcedure, publicProcedure, router } from '../trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -17,6 +18,7 @@ import {
   getBountyEntriesInputSchema,
   getInfiniteBountySchema,
   updateBountyInputSchema,
+  upsertBountyInputSchema,
 } from '~/server/schema/bounty.schema';
 import { dbWrite } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -87,6 +89,11 @@ export const bountyRouter = router({
     .use(isFlagProtected('bounties'))
     .use(isOwnerOrModerator)
     .mutation(updateBountyHandler),
+  upsert: protectedProcedure
+    .input(upsertBountyInputSchema)
+    .use(isFlagProtected('bounties'))
+    .use(isOwnerOrModerator)
+    .mutation(upsertBountyHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
