@@ -12,6 +12,7 @@ import { reviewNotifications } from '~/server/notifications/review.notifications
 import { systemNotifications } from '~/server/notifications/system.notifications';
 import { unpublishNotifications } from '~/server/notifications/unpublish.notifications';
 import { userJourneyNotifications } from '~/server/notifications/user-journey.notifications';
+import { collectionNotifications } from '~/server/notifications/collection.notifications';
 
 const notificationProcessors = {
   ...mentionNotifications,
@@ -27,6 +28,7 @@ const notificationProcessors = {
   ...featuredNotifications,
   ...bountyNotifications,
   ...buzzNotifications,
+  ...collectionNotifications,
 };
 
 // Sort notifications by priority and group them by priority

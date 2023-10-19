@@ -68,6 +68,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { isModerator } from '~/server/routers/base.router';
+import { createNotification } from '~/server/services/notification.service';
 
 export type CollectionContributorPermissionFlags = {
   read: boolean;
@@ -1099,8 +1100,9 @@ export const updateCollectionItemsStatus = async ({
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, type: true },
+    select: { id: true, type: true, mode: true, name: true },
   });
+
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
   const { manage, isOwner } = await getUserCollectionPermissionsById({
@@ -1108,6 +1110,7 @@ export const updateCollectionItemsStatus = async ({
     userId,
     isModerator,
   });
+
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
@@ -1115,6 +1118,34 @@ export const updateCollectionItemsStatus = async ({
     where: { id: { in: collectionItemIds }, collectionId },
     data: { status },
   });
+
+  if (collection.mode === CollectionMode.Contest) {
+    const updatedItems = await dbWrite.collectionItem.findMany({
+      where: { id: { in: collectionItemIds }, collectionId },
+    });
+
+    await Promise.all(
+      updatedItems.map(async (item) => {
+        if (!item.addedById) {
+          return;
+        }
+
+        await createNotification({
+          type: 'contest-collection-item-status-change',
+          userId: item.addedById,
+          details: {
+            status,
+            collectionId: collection.id,
+            collectionName: collection.name,
+            imageId: item.imageId,
+            articleId: item.articleId,
+            modelId: item.modelId,
+            postId: item.postId,
+          },
+        });
+      })
+    );
+  }
 
   // Send back the collection to update/invalidate state accordingly
   return collection;
