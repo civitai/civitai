@@ -119,17 +119,19 @@ export default createRoutedContext({
                     label="Add permissions"
                     data={Object.values(collectionWritePrivacyData)}
                   />
-                  <InputSelect
-                    name="mode"
-                    label="Mode"
-                    data={[
-                      ...Object.values(CollectionMode).map((value) => ({
-                        value,
-                        label: getDisplayName(value),
-                      })),
-                    ]}
-                    clearable
-                  />
+                  {data.type === CollectionType.Image && (
+                    <InputSelect
+                      name="mode"
+                      label="Mode"
+                      data={[
+                        ...Object.values(CollectionMode).map((value) => ({
+                          value,
+                          label: getDisplayName(value),
+                        })),
+                      ]}
+                      clearable
+                    />
+                  )}
                   {mode === CollectionMode.Contest && (
                     <>
                       <InputDatePicker

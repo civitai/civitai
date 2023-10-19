@@ -13,7 +13,7 @@ import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvid
 import { applyUserPreferencesCollections } from '~/components/Search/search.utils';
 import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CollectionGetInfinite } from '~/types/router';
+import { CollectionByIdModel, CollectionGetInfinite } from '~/types/router';
 
 const collectionQueryParamSchema = z
   .object({
@@ -196,4 +196,17 @@ export const collectionWritePrivacyData: Record<CollectionWriteConfiguration, Pr
     description:
       'Anyone can add content to this collection, but content needs to be reviewed before it is visible.',
   },
+};
+
+export const isCollectionSubsmissionPeriod = (collection: CollectionByIdModel) => {
+  const metadata = collection?.metadata ?? {};
+
+  if (!metadata.submissionStartDate || !metadata.submissionEndDate) return false;
+
+  return (
+    metadata.submissionStartDate &&
+    metadata.submissionEndDate &&
+    new Date(metadata.submissionStartDate) < new Date() &&
+    new Date(metadata.submissionEndDate) > new Date()
+  );
 };

@@ -61,6 +61,7 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { formatDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { isCollectionSubsmissionPeriod } from '~/components/Collections/collection.utils';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -322,12 +323,6 @@ export function Collection({
     (!metadata.submissionStartDate || new Date(metadata.submissionStartDate) < new Date()) &&
     (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
 
-  const isSubmissionPeriod =
-    metadata.submissionStartDate &&
-    metadata.submissionEndDate &&
-    new Date(metadata.submissionStartDate) < new Date() &&
-    new Date(metadata.submissionEndDate) > new Date();
-
   const submissionPeriod =
     metadata.submissionStartDate || metadata.submissionEndDate || metadata.maxItemsPerUser ? (
       <Popover
@@ -482,12 +477,13 @@ export function Collection({
               </AlertWithIcon>
             ) : (
               <>
-                {isSubmissionPeriod && (
+                {isCollectionSubsmissionPeriod(collection) && (
                   <AlertWithIcon icon={<IconAlertCircle />}>
                     <Text>
                       This collection is accepting entries until{' '}
-                      {formatDate(metadata.submissionEndDate)}. You will only see your entries until
-                      the subsmission period is over and the voting period starts.
+                      {formatDate(metadata.submissionEndDate)}. During the subsmission period, you
+                      will only see your entries, both reviewed and unreviewed. Once the submission
+                      period ends, you will see all entries.
                     </Text>
                   </AlertWithIcon>
                 )}
