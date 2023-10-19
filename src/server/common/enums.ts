@@ -14,6 +14,7 @@ export enum ModelSort {
   MostLiked = 'Most Liked',
   MostDiscussed = 'Most Discussed',
   MostCollected = 'Most Collected',
+  MostTipped = 'Most Tipped',
   Newest = 'Newest',
 }
 
@@ -44,6 +45,7 @@ export enum ImageSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
+  MostTipped = 'Most Tipped',
   Newest = 'Newest',
   Random = 'Random',
 }
@@ -100,6 +102,7 @@ export enum ArticleSort {
   MostReactions = 'Most Reactions',
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
+  MostTipped = 'Most Tipped',
   Newest = 'Newest',
 }
 

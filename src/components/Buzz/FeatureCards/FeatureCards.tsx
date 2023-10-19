@@ -37,7 +37,7 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     key: 'referrals',
     icon: <IconUsers size={32} />,
     title: 'Referrals',
-    description: 'You & your friends can earn more buzz!',
+    description: 'You & your friends can earn more Buzz!',
     btnProps: {
       href: '/user/account#referrals',
       children: 'Invite a friend',
@@ -47,7 +47,7 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     key: 'bounties',
     icon: <IconMoneybag size={32} />,
     title: 'Bounties',
-    description: 'Submit work to a bounty to win buzz',
+    description: 'Submit work to a bounty to win Buzz',
     btnProps: {
       href: '/bounties',
       children: 'Learn more',
@@ -57,7 +57,7 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     key: 'purchase',
     icon: <IconCoin size={32} />,
     title: 'Purchase',
-    description: 'Purchase buzz directly',
+    description: 'Purchase Buzz directly',
     btnProps: {
       href: '/purchase/buzz',
       children: 'Buy now',
@@ -81,8 +81,8 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
   return (
     <Stack spacing={20}>
       <Stack spacing={4}>
-        <Title order={2}>Earning Buzz</Title>
-        <Text>Need some buzz? Here&rsquo;s how you can earn it</Text>
+        <Title order={2}>Earn Buzz</Title>
+        <Text>Need some Buzz? Here&rsquo;s how you can earn it</Text>
       </Stack>
       {asList ? (
         <FeatureList data={earnings} />
@@ -147,7 +147,7 @@ const getSpendings = ({
     key: 'bounties',
     icon: <IconMoneybag size={32} />,
     title: 'Bounties',
-    description: 'Post a bounty and award buzz',
+    description: 'Post a bounty and award Buzz',
     btnProps: {
       href: '/bounties/create',
       children: 'Post a bounty',
@@ -202,8 +202,8 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   return (
     <Stack spacing={20}>
       <Stack spacing={4}>
-        <Title order={2}>Spending Buzz</Title>
-        <Text>Got some buzz? Here&rsquo;s what you can do with it</Text>
+        <Title order={2}>Spend Buzz</Title>
+        <Text>Got some Buzz? Here&rsquo;s what you can do with it</Text>
       </Stack>
       {asList ? (
         <FeatureList data={spendings} />
@@ -245,7 +245,7 @@ export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: Fea
     <Paper withBorder className={classes.featureCard} h="100%">
       <Stack spacing={4} p="md" align="center" h="100%">
         <Center>{icon}</Center>
-        <Text weight={500} size="xl" align="center">
+        <Text weight={500} size="xl" align="center" transform="capitalize">
           {title}
         </Text>
         <Text color="dimmed" align="center">
@@ -267,7 +267,7 @@ export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
       {data.map((item, index) => (
         <List.Item key={index}>
           <Stack spacing={0}>
-            <Text weight={590}>
+            <Text weight={590} transform="capitalize">
               {item.title}
               {item.btnProps.disabled ? ' (Coming Soon)' : ''}
             </Text>

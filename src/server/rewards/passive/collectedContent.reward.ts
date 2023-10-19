@@ -7,9 +7,9 @@ export const collectedContentReward = createBuzzEvent({
   type,
   includeTypes: supported.map((x) => `${type}:${x.toLowerCase()}`),
   description: 'Content that you posted was collected by someone else',
-  triggerDescription: 'For each time a user collects your stuff',
+  triggerDescription: 'For each time a user collects your content',
   tooltip:
-    'When a user loves your content, they can add it to collections of their own.  You will be getting awards for each time this happens.',
+    "When a user loves your content, they can add it to one of their Collections. You'll be rewarded each time this happens.",
   awardAmount: 2,
   caps: [
     {

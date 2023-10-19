@@ -8,7 +8,7 @@ export const userReferredReward = createBuzzEvent({
   onDemand: true,
   triggerDescription: 'For each person you refer',
   tooltip:
-    'In your profile, you can create referral codes to invite users to join the platform. Users created with your referral codes and you will both get 500 buzz upon succesful signup.',
+    "You can create referral codes on your profile page and invite users to join Civitai. When users successfully register a new account with your referral code, you'll both be awarded Buzz.",
   getKey: async (input: userReferredEvent) => {
     return {
       toUserId: input.referrerId,

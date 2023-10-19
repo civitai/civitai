@@ -92,13 +92,13 @@ export default function PurchaseBuzz() {
       <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="xl">
         <Group spacing="xs" noWrap position="center">
           <CurrencyIcon currency={Currency.BUZZ} size={24} />
-          <Title order={2}>Let&rsquo;s get me some BUZZ</Title>
+          <Title order={2}>Buy Buzz now</Title>
         </Group>
       </Alert>
       <Grid gutter={48}>
         <Grid.Col xs={12} md={4}>
           <Stack>
-            <Title order={2}>What can I do with Buzz?</Title>
+            <Title order={2}>Buzz Benefits</Title>
             <BuzzFeatures />
           </Stack>
         </Grid.Col>
