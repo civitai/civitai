@@ -146,10 +146,6 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       isModerator: user?.isModerator,
     });
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
-    const allImagesScanned = images.every((image) => !!image.scannedAt);
-    const isOwner = user?.id === bounty.user?.id || user?.isModerator;
-    if (!allImagesScanned && !isOwner)
-      throw throwAuthorizationError('You are not authorized to view this bounty');
 
     return {
       ...bounty,
