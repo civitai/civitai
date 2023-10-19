@@ -314,23 +314,22 @@ export default function UserBuzzDashboard() {
                 <Loader />
               </Center>
             ) : (
-              rewards.map((reward) => {
+              rewards.map((reward, i) => {
                 const hasAwarded = reward.awarded !== -1;
+                const last = i === rewards.length - 1;
                 const awardedAmountPercent =
                   reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
 
                 return (
                   <Stack key={reward.type} spacing={4}>
-                    <Group position="apart">
-                      <Group noWrap>
-                        <Text>
-                          <CurrencyBadge
-                            w={100}
-                            currency={Currency.BUZZ}
-                            unitAmount={reward.awardAmount}
-                          />{' '}
-                          {reward.triggerDescription ?? reward.description}
-                        </Text>
+                    <Group position="apart" mih={30}>
+                      <Group noWrap spacing="xs">
+                        <CurrencyBadge
+                          w={100}
+                          currency={Currency.BUZZ}
+                          unitAmount={reward.awardAmount}
+                        />
+                        <Text>{reward.triggerDescription ?? reward.description}</Text>
                         {reward.tooltip && (
                           <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
                             <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
@@ -360,7 +359,7 @@ export default function UserBuzzDashboard() {
                         </Group>
                       )}
                     </Group>
-                    <Divider mt="xs" />
+                    {!last && <Divider mt="xs" />}
                   </Stack>
                 );
               })
