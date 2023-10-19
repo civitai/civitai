@@ -4,6 +4,7 @@ import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 import osu from 'node-os-utils';
+import { clickhouse } from '~/server/clickhouse/client';
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
@@ -19,7 +20,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     .then((res) => res === 'PONG')
     .catch(() => false);
 
-  const healthy = writeDbCheck && readDbCheck && redisCheck;
+  const clickhouseCheck =
+    (await clickhouse
+      ?.ping()
+      .then(({ success }) => success)
+      .catch(() => false)) ?? true;
+
+  const healthy = writeDbCheck && readDbCheck && redisCheck && clickhouseCheck;
   // const includeCPUCheck = await redis.get(`system:health-check:include-cpu-check`);
   // let freeCPU: number | undefined;
   // if (includeCPUCheck) {
@@ -34,6 +41,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     writeDb: writeDbCheck,
     readDb: readDbCheck,
     redis: redisCheck,
+    clickhouse: clickhouseCheck,
     // freeCPU,
   });
 });
