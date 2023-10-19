@@ -65,6 +65,8 @@ import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
+import { DaysFromNow } from '../Dates/DaysFromNow';
+import { stripTime } from '~/utils/date-helpers';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -92,6 +94,14 @@ const formSchema = createBountyInputSchema
   })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
+  })
+  .refine((data) => data.startsAt < data.expiresAt, {
+    message: 'Start date must be before expiration date',
+    path: ['startsAt'],
+  })
+  .refine((data) => data.expiresAt > data.startsAt, {
+    message: 'Expiration date must be after start date',
+    path: ['expiresAt'],
   });
 
 const useStyles = createStyles((theme) => ({
@@ -147,6 +157,15 @@ const useStyles = createStyles((theme) => ({
   fluid: {
     [theme.fn.smallerThan('sm')]: {
       maxWidth: '100% !important',
+    },
+  },
+  stickySidebar: {
+    position: 'sticky',
+    top: `calc(var(--mantine-header-height) + ${theme.spacing.md}px)`,
+
+    [theme.fn.smallerThan('md')]: {
+      position: 'relative',
+      top: 0,
     },
   },
 }));
@@ -213,6 +232,7 @@ export function BountyCreateForm() {
   const unitAmount = form.watch('unitAmount');
   const nsfwPoi = form.watch(['nsfw', 'poi']);
   const files = form.watch('files');
+  const expiresAt = form.watch('expiresAt');
   const requireBaseModelSelection = [
     BountyType.ModelCreation,
     BountyType.LoraCreation,
@@ -351,7 +371,7 @@ export function BountyCreateForm() {
                     breakpoints={[
                       { minWidth: 'xs', cols: 1 },
                       { minWidth: 'sm', cols: 3 },
-                      { minWidth: 'md', cols: 4 },
+                      { minWidth: 'md', cols: imageFiles.length > 3 ? 4 : imageFiles.length },
                     ]}
                   >
                     {imageFiles
@@ -410,28 +430,41 @@ export function BountyCreateForm() {
                       ))}
                   </SimpleGrid>
                 )}
-                <Group spacing="md" grow>
-                  <InputDatePicker
-                    className={classes.fluid}
-                    name="startsAt"
-                    label="Start Date"
-                    placeholder="Select a start date"
-                    icon={<IconCalendar size={16} />}
-                    withAsterisk
-                    minDate={minStartDate}
-                    maxDate={maxStartDate}
-                  />
-                  <InputDatePicker
-                    className={classes.fluid}
-                    name="expiresAt"
-                    label="Deadline"
-                    placeholder="Select an end date"
-                    icon={<IconCalendarDue size={16} />}
-                    withAsterisk
-                    minDate={minExpiresDate}
-                    maxDate={maxExpiresDate}
-                  />
-                </Group>
+                <Stack>
+                  <Group spacing="md" grow>
+                    <InputDatePicker
+                      className={classes.fluid}
+                      name="startsAt"
+                      label="Start Date"
+                      placeholder="Select a start date"
+                      icon={<IconCalendar size={16} />}
+                      withAsterisk
+                      minDate={minStartDate}
+                      maxDate={maxStartDate}
+                    />
+                    <InputDatePicker
+                      className={classes.fluid}
+                      name="expiresAt"
+                      label="Deadline"
+                      placeholder="Select an end date"
+                      icon={<IconCalendarDue size={16} />}
+                      withAsterisk
+                      minDate={minExpiresDate}
+                      maxDate={maxExpiresDate}
+                    />
+                  </Group>
+                  <Text weight={590}>
+                    With the selected dates, your bounty will expire{' '}
+                    <Text weight="bold" color="red.5" span>
+                      <DaysFromNow date={stripTime(expiresAt)} inUtc />
+                    </Text>
+                    . All times are in{' '}
+                    <Text weight="bold" color="red.5" span>
+                      UTC
+                    </Text>
+                    .
+                  </Text>
+                </Stack>
                 <Divider label="Bounty rewards" />
                 {bountyModeEnabled && (
                   <InputRadioGroup
@@ -532,7 +565,7 @@ export function BountyCreateForm() {
             </Stack>
           </Grid.Col>
           <Grid.Col xs={12} md={4}>
-            <Stack>
+            <Stack className={classes.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
                 <Stack spacing="xl">

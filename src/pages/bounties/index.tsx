@@ -12,6 +12,8 @@ import { constants } from '~/server/common/constants';
 import { BountyFiltersDropdown } from '~/components/Bounty/Infinite/BountyFiltersDropdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { HomeContentToggle } from '~/components/HomeContentToggle/HomeContentToggle';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -60,6 +62,7 @@ const useStyles = createStyles((theme) => ({
 
 export default function BountiesPage() {
   const { classes } = useStyles();
+  const features = useFeatureFlags();
   const router = useRouter();
   const query = router.query;
   const engagement = constants.bounties.engagementTypes.find(
@@ -93,7 +96,7 @@ export default function BountiesPage() {
               })}
             />
             <Group position="apart" spacing={8}>
-              <FullHomeContentToggle />
+              {features.alternateHome ? <FullHomeContentToggle /> : <HomeContentToggle />}
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 <SortFilter type="bounties" variant="button" />
                 <BountyFiltersDropdown />
