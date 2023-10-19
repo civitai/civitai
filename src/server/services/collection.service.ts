@@ -386,29 +386,12 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        if (metadata.maxItemsPerUser) {
-          // check how many items user has created:
-          const itemCount = await dbRead.collectionItem.count({
-            where: {
-              collectionId,
-              addedById: userId,
-            },
-          });
-
-          if (itemCount > metadata.maxItemsPerUser) {
-            throw throwBadRequestError(
-              `You have reached the maximum number of items in collection ${collection.name}`
-            );
-          }
-        }
-
-        if (
-          metadata.submissionStartDate &&
-          metadata.submissionEndDate &&
-          (metadata.submissionStartDate > new Date() || metadata.submissionEndDate < new Date())
-        ) {
-          throw throwBadRequestError('Collection is not accepting submissions at this time');
-        }
+        await validateContestCollectionEntry({
+          metadata,
+          collectionId,
+          userId,
+          [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
+        });
 
         if (!permission.isContributor && !permission.isOwner) {
           // Person adding content to stuff they don't follow.
@@ -1137,21 +1120,27 @@ export const updateCollectionItemsStatus = async ({
   return collection;
 };
 
-export const bulkSaveItems = async ({
-  input: { userId, collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
-  permissions,
+const validateContestCollectionEntry = async ({
+  collectionId,
+  userId,
+  metadata,
+  articleIds = [],
+  modelIds = [],
+  imageIds = [],
+  postIds = [],
 }: {
-  input: BulkSaveCollectionItemsInput & { userId: number };
-  permissions: CollectionContributorPermissionFlags;
+  collectionId: number;
+  userId: number;
+  metadata?: CollectionMetadataSchema;
+  articleIds?: number[];
+  modelIds?: number[];
+  imageIds?: number[];
+  postIds?: number[];
 }) => {
-  const collection = await dbRead.collection.findUnique({
-    where: { id: collectionId },
-    select: { type: true, metadata: true, name: true },
-  });
+  if (!metadata) {
+    return;
+  }
 
-  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
-
-  const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
   const savedItemsCount =
     (articleIds?.length ?? 0) +
     (modelIds?.length ?? 0) +
@@ -1168,9 +1157,7 @@ export const bulkSaveItems = async ({
     });
 
     if (itemCount + savedItemsCount > metadata.maxItemsPerUser) {
-      throw throwBadRequestError(
-        `You have reached the maximum number of items in collection ${collection.name}`
-      );
+      throw throwBadRequestError(`You have reached the maximum number of items in collection`);
     }
   }
 
@@ -1181,6 +1168,96 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('Collection is not accepting submissions at this time');
   }
 
+  if (metadata.submissionStartDate) {
+    // confirm items were created after the start date
+    if (articleIds.length > 0) {
+      const articles = await dbRead.article.findMany({
+        where: {
+          id: { in: articleIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (articles.length > 0) {
+        throw throwBadRequestError(
+          `Some articles were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+
+    if (modelIds.length > 0) {
+      const models = await dbRead.model.findMany({
+        where: {
+          id: { in: modelIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (models.length > 0) {
+        throw throwBadRequestError(
+          `Some models were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+
+    if (imageIds.length > 0) {
+      const images = await dbRead.image.findMany({
+        where: {
+          id: { in: imageIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (images.length > 0) {
+        throw throwBadRequestError(
+          `Some images were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+
+    if (postIds.length > 0) {
+      const posts = await dbRead.post.findMany({
+        where: {
+          id: { in: postIds },
+          createdAt: { lt: new Date(metadata.submissionStartDate) },
+        },
+      });
+
+      if (posts.length > 0) {
+        throw throwBadRequestError(
+          `Some posts were created before the submission start date. Please only upload items that were created after the submission period started.`
+        );
+      }
+    }
+  }
+};
+
+export const bulkSaveItems = async ({
+  input: { userId, collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
+  permissions,
+}: {
+  input: BulkSaveCollectionItemsInput & { userId: number };
+  permissions: CollectionContributorPermissionFlags;
+}) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { type: true, metadata: true, name: true },
+  });
+
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
+
+  await validateContestCollectionEntry({
+    metadata,
+    collectionId,
+    userId,
+    articleIds,
+    modelIds,
+    imageIds,
+    postIds,
+  });
+
   let data: Prisma.CollectionItemCreateManyInput[] = [];
   if (
     articleIds.length > 0 &&
@@ -1188,7 +1265,14 @@ export const bulkSaveItems = async ({
   ) {
     const existingArticleIds = (
       await dbRead.collectionItem.findMany({
-        select: { articleId: true },
+        select: {
+          articleId: true,
+          article: {
+            select: {
+              createdAt: true,
+            },
+          },
+        },
         where: { articleId: { in: articleIds }, collectionId },
       })
     ).map((item) => item.articleId);
@@ -1204,6 +1288,7 @@ export const bulkSaveItems = async ({
           : CollectionItemStatus.ACCEPTED,
       }));
   }
+
   if (
     modelIds.length > 0 &&
     (collection.type === CollectionType.Model || collection.type === null)

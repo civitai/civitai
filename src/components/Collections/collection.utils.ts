@@ -198,7 +198,11 @@ export const collectionWritePrivacyData: Record<CollectionWriteConfiguration, Pr
   },
 };
 
-export const isCollectionSubsmissionPeriod = (collection: CollectionByIdModel) => {
+export const isCollectionSubsmissionPeriod = (collection?: CollectionByIdModel) => {
+  if (!collection) {
+    return false;
+  }
+
   const metadata = collection?.metadata ?? {};
 
   if (!metadata.submissionStartDate || !metadata.submissionEndDate) return false;

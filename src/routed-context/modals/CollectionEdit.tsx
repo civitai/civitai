@@ -21,12 +21,7 @@ import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/co
 import { trpc } from '~/utils/trpc';
 import { createRoutedContext } from '../create-routed-context';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import {
-  BountyType,
-  CollectionMode,
-  CollectionType,
-  CollectionWriteConfiguration,
-} from '@prisma/client';
+import { CollectionMode, CollectionType } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconCalendar } from '@tabler/icons-react';
@@ -119,7 +114,7 @@ export default createRoutedContext({
                     label="Add permissions"
                     data={Object.values(collectionWritePrivacyData)}
                   />
-                  {data.type === CollectionType.Image && (
+                  {data.collection?.type === CollectionType.Image && (
                     <InputSelect
                       name="mode"
                       label="Mode"
