@@ -13,6 +13,7 @@ export function createBuzzEvent<T>({
   description,
   awardAmount,
   getKey,
+  visible = true,
   ...buzzEvent
 }: ProcessableBuzzEventDefinition<T> | OnEventBuzzEventDefinition<T>) {
   const isOnDemand = 'onDemand' in buzzEvent;
@@ -27,6 +28,7 @@ export function createBuzzEvent<T>({
       type,
       awardAmount,
       description,
+      onDemand: isOnDemand,
       cap:
         'cap' in buzzEvent
           ? buzzEvent.cap
@@ -104,6 +106,10 @@ export function createBuzzEvent<T>({
             forId: event.forId,
             byUserId: event.byUserId,
           },
+          externalTransactionId:
+            event.type === 'userReferred' || event.type === 'refereeCreated'
+              ? `${event.type}:${event.forId}-${event.ip}`
+              : undefined,
         }))
     );
   };
@@ -276,6 +282,7 @@ export function createBuzzEvent<T>({
 
   return {
     types,
+    visible,
     apply,
     process,
     getUserRewardDetails,
@@ -348,6 +355,7 @@ type BuzzEventDefinitionBase<T> = {
   awardAmount: number;
   triggerDescription?: string;
   tooltip?: string;
+  visible?: boolean;
   getKey: (input: T, ctx: GetKeyContext) => Promise<GetKeyOutput | false>;
 };
 

@@ -370,7 +370,7 @@ export default function BountyDetailsPage({
       <Container ref={discussionSectionRef} size="xl" mt={32}>
         <Stack spacing="xl">
           <Group position="apart">
-            <Title order={2} size={28} weight={600}>
+            <Title id="comments" order={2} size={28} weight={600}>
               Discussion
             </Title>
           </Group>

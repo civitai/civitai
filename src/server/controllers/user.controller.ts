@@ -5,18 +5,13 @@ import {
   OnboardingStep,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { orderBy } from 'lodash';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
-import {
-  collectedContentReward,
-  encouragementReward,
-  goodContentReward,
-  imagePostedToModelReward,
-  userReferredReward,
-} from '~/server/rewards';
+import * as rewards from '~/server/rewards';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   BatchBlockTagsSchema,
@@ -220,10 +215,13 @@ export const completeOnboardingHandler = async ({
     const { id } = ctx.user;
     const user = await dbWrite.user.findUnique({
       where: { id },
-      select: { onboardingSteps: true },
+      select: { onboardingSteps: true, email: true, username: true },
     });
 
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
+    if (!user?.email) throw throwBadRequestError('User must have an email to complete onboarding');
+    if (!user?.username)
+      throw throwBadRequestError('User must have a username to complete onboarding');
 
     if (!input.step) {
       input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
@@ -939,15 +937,15 @@ export const userByReferralCodeHandler = async ({ input }: { input: UserByReferr
 
 export const userRewardDetailsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    const rewardDetails = await Promise.all([
-      encouragementReward.getUserRewardDetails(ctx.user.id),
-      goodContentReward.getUserRewardDetails(ctx.user.id),
-      collectedContentReward.getUserRewardDetails(ctx.user.id),
-      imagePostedToModelReward.getUserRewardDetails(ctx.user.id),
-      userReferredReward.getUserRewardDetails(ctx.user.id),
-    ]);
+    // TODO.Optimization: This will make multiple requests to redis, we could probably do it in one and make this faster. This will get slower as we add more Active rewards.
+    const rewardDetails = await Promise.all(
+      Object.values(rewards)
+        .filter((x) => x.visible)
+        .map((x) => x.getUserRewardDetails(ctx.user.id))
+    );
 
-    return rewardDetails;
+    // sort by `onDemand` first
+    return orderBy(rewardDetails, ['onDemand', 'awardAmount'], ['desc', 'asc']);
   } catch (error) {
     throw throwDbError(error);
   }

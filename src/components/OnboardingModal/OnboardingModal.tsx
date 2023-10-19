@@ -16,7 +16,7 @@ import {
   Badge,
   TextInput,
 } from '@mantine/core';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import { Form, InputText, useForm } from '~/libs/form';
@@ -40,7 +40,7 @@ import { Currency, OnboardingStep } from '@prisma/client';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import {
-  checkUserCreateAfterBuzzLaunch,
+  checkUserCreatedAfterBuzzLaunch,
   getUserBuzzBonusAmount,
 } from '~/server/common/user-helpers';
 
@@ -93,7 +93,7 @@ export default function OnboardingModal() {
 
   const onboarded = {
     tos: !!user?.tos,
-    profile: !!user?.username || !!user?.email,
+    profile: !!user?.username && !!user?.email,
     content: !user?.onboardingSteps?.includes(OnboardingStep.Moderation),
     buzz: !user?.onboardingSteps?.includes(OnboardingStep.Buzz),
   };
@@ -111,7 +111,11 @@ export default function OnboardingModal() {
       { enabled: !!username && username.length >= 3 }
     );
   // Confirm user referral code:
-  const { data: referrer, isLoading: referrerLoading } = trpc.user.userByReferralCode.useQuery(
+  const {
+    data: referrer,
+    isLoading: referrerLoading,
+    isRefetching: referrerRefetching,
+  } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: debouncedUserReferralCode as string },
     {
       enabled:
@@ -127,7 +131,7 @@ export default function OnboardingModal() {
   const { mutate: completeStep, isLoading: completeStepLoading } =
     trpc.user.completeOnboardingStep.useMutation({
       async onSuccess() {
-        user?.refresh();
+        await user?.refresh();
         await invalidateModeratedContent(utils);
         // context.closeModal(id);
       },
@@ -144,7 +148,8 @@ export default function OnboardingModal() {
     mutate(
       { ...user, ...values, tos: true },
       {
-        onSuccess: () => {
+        async onSuccess() {
+          await user?.refresh();
           goNext();
         },
       }
@@ -155,6 +160,7 @@ export default function OnboardingModal() {
   const handleAcceptTOS = () => {
     acceptTOS(undefined, {
       async onSuccess() {
+        await user?.refresh();
         goNext();
       },
     });
@@ -169,24 +175,34 @@ export default function OnboardingModal() {
             return;
           }
 
-          if (showReferral && user)
-            mutate({ ...user, userReferralCode: userReferral.code, source: userReferral.source });
+          if (user)
+            mutate({
+              ...user,
+              userReferralCode: showReferral ? userReferral.code : undefined,
+              source: showReferral ? userReferral.source : undefined,
+            });
         },
       }
     );
   };
   const handleCompleteBuzzStep = () => {
+    if (referrerRefetching) return;
     setReferralError('');
 
     const result = referralSchema.safeParse(userReferral);
     if (!result.success)
       return setReferralError(result.error.format().code?._errors[0] ?? 'Invalid value');
-    // if (referrerLoading) return;
 
     handleCompleteStep(OnboardingStep.Buzz);
   };
 
-  const showReferral = !!user && !user.referral && checkUserCreateAfterBuzzLaunch(user);
+  useEffect(() => {
+    if (activeStep === 1 && user) form.reset({ email: user.email, username: user.username });
+    // Don't remove the eslint disable below, it's needed to prevent infinite loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email, user?.username]);
+
+  const showReferral = !!user && !user.referral && checkUserCreatedAfterBuzzLaunch(user);
 
   return (
     <Container size="lg" px={0}>
@@ -199,7 +215,12 @@ export default function OnboardingModal() {
           </Stack>
         </Group>
       </Center>
-      <Stepper active={activeStep} color="green" allowNextStepsSelect={false} classNames={classes}>
+      <Stepper
+        active={activeStep > -1 ? activeStep : 0}
+        color="green"
+        allowNextStepsSelect={false}
+        classNames={classes}
+      >
         <Stepper.Step label="Terms" description="Review our terms">
           <Stack>
             <StepperTitle
@@ -383,7 +404,11 @@ export default function OnboardingModal() {
                   </Text>
                 }
               />
-              <Button size="lg" onClick={handleCompleteBuzzStep} loading={completeStepLoading}>
+              <Button
+                size="lg"
+                onClick={handleCompleteBuzzStep}
+                loading={completeStepLoading || referrerRefetching}
+              >
                 Done
               </Button>
               {showReferral && (
@@ -426,7 +451,7 @@ export default function OnboardingModal() {
                   rightSection={
                     userReferral.code &&
                     userReferral.code.length > constants.referrals.referralCodeMinLength &&
-                    referrerLoading ? (
+                    (referrerLoading || referrerRefetching) ? (
                       <Loader size="sm" mr="xs" />
                     ) : (
                       userReferral.code &&

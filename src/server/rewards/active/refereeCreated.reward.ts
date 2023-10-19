@@ -7,6 +7,7 @@ export const refereeCreatedReward = createBuzzEvent({
   awardAmount: 500,
   onDemand: true,
   cap: 500,
+  visible: false,
   getKey: async (input: RefereeCreatedEvent) => {
     return {
       toUserId: input.refereeId,
