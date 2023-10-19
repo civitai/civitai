@@ -86,12 +86,40 @@ export const getAllUserCollectionsInputSchema = z
   .partial();
 
 export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
-export const collectionMetadataSchema = z.object({
-  endsAt: z.coerce.date().optional(),
-  maxItemsPerUser: z.coerce.number().optional(),
-  submissionStartDate: z.coerce.date().optional(),
-  submissionEndDate: z.coerce.date().optional(),
-});
+export const collectionMetadataSchema = z
+  .object({
+    endsAt: z.coerce.date().nullish(),
+    maxItemsPerUser: z.coerce.number().optional(),
+    submissionStartDate: z.coerce.date().nullish(),
+    submissionEndDate: z.coerce.date().nullish(),
+  })
+  .refine(
+    ({ submissionStartDate, submissionEndDate }) => {
+      if (submissionStartDate && submissionEndDate) {
+        return submissionStartDate < submissionEndDate;
+      }
+
+      return true;
+    },
+    {
+      message: 'Submission start date must be before submission end date.',
+      path: ['submissionStartDate'],
+    }
+  )
+  .refine(
+    ({ submissionStartDate, submissionEndDate }) => {
+      if (submissionStartDate && submissionEndDate) {
+        return true;
+      }
+
+      if (!submissionStartDate && !submissionEndDate) {
+        return true;
+      }
+
+      return false;
+    },
+    { message: 'Either provide both submission values or none.', path: ['submissionStartDate'] }
+  );
 
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
 export const upsertCollectionInput = z

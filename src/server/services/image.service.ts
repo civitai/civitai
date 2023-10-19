@@ -617,9 +617,16 @@ export const getAllImages = async ({
         ct AS (
           SELECT ci."imageId", ci."randomId"
           FROM "CollectionItem" ci
+          Join "Collection" c ON c.id = ci."collectionId" 
           WHERE ci."collectionId" = ${collectionId}
             AND ci."imageId" IS NOT NULL
-            AND (ci."status" = 'ACCEPTED'${Prisma.raw(displayReviewItems)})
+            AND (
+              (
+                ci."status" = 'ACCEPTED'
+                AND ((c.metadata::json->'submissionStartDate') IS NULL))
+              )
+              ${Prisma.raw(displayReviewItems)}
+            )
             ${Prisma.raw(sort === ImageSort.Random ? `AND ci."randomId" IS NOT NULL` : '')}
             ${Prisma.raw(
               useRandomCursor ? `AND ci."randomId" <= (SELECT "randomId" FROM ctcursor)` : ''

@@ -30,6 +30,7 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconCalendar } from '@tabler/icons-react';
+import { showErrorNotification } from '~/utils/notifications';
 
 export default createRoutedContext({
   authGuard: true,
@@ -53,6 +54,7 @@ export default createRoutedContext({
 
     const upsertCollectionMutation = trpc.collection.upsert.useMutation();
     const handleSubmit = (data: UpsertCollectionInput) => {
+      console.log(data);
       upsertCollectionMutation.mutate(
         { ...data, mode: data.mode || null },
         {
