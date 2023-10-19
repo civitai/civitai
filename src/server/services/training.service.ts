@@ -192,7 +192,7 @@ export const createTrainingRequest = async ({
     $type: 'imageResourceTraining',
     // priority: 10,
     callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/image-resource-training?token=${env.WEBHOOK_TOKEN}`,
-    properties: { userId },
+    properties: { userId }, // TODO transaction id
     model: modelMap[baseModel!],
     trainingData: trainingUrl,
     maxRetryAttempt: constants.maxTrainingRetries,
@@ -247,7 +247,7 @@ export const createTrainingRequest = async ({
           ...(fileMetadata.trainingResults || {}),
           history: (fileMetadata.trainingResults?.history || []).concat([
             {
-              jobId: data.jobId as string,
+              jobId: data.jobs?.[0]?.jobId as string,
               jobToken: data.token as string,
               time: new Date().toISOString(),
               status: TrainingStatus.Submitted,
