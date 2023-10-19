@@ -127,6 +127,8 @@ export const AwardBountyAction = ({
         });
 
         await queryUtils.bountyEntry.getFiles.invalidate({ id: bountyEntryId });
+        await queryUtils.bounty.getById.invalidate({ id: bounty.id });
+        await queryUtils.bounty.getInfinite.invalidate();
       },
       onError: async (error, _variables, context) => {
         showErrorNotification({

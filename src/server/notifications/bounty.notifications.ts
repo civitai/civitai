@@ -13,7 +13,7 @@ export const bountyNotifications = createNotificationProcessor({
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT DISTINCT
-          bo."userId",
+          bo."userId" "ownerId",
           jsonb_build_object(
             'bountyId', bb."bountyId",
             'bountyName', b.name,
@@ -32,10 +32,11 @@ export const bountyNotifications = createNotificationProcessor({
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
         CONCAT("userId",':','benefactor-joined',':',"bountyId",':',"benefactorUserId"),
-        "userId",
+        "ownerId" "userId",
         'benefactor-joined' "type",
         details
       FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'benefactor-joined')
       ON CONFLICT("id") DO NOTHING;
     `,
   },
@@ -75,7 +76,7 @@ export const bountyNotifications = createNotificationProcessor({
         ) b
       ), data AS (
         SELECT DISTINCT
-          tu."userId",
+          tu."userId" "ownerId",
           jsonb_build_object(
             'bountyId', b.id,
             'bountyName', b.name,
@@ -89,10 +90,11 @@ export const bountyNotifications = createNotificationProcessor({
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
         CONCAT("userId",':','bounty-ending',':',"bountyId"),
-        "userId",
+        "ownerId" "userId",
         'bounty-ending' "type",
         details
       FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-ending')
       ON CONFLICT("id") DO NOTHING;
     `,
   },
@@ -105,7 +107,7 @@ export const bountyNotifications = createNotificationProcessor({
     prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT DISTINCT
-          be."userId",
+          be."userId" "ownerId",
           jsonb_build_object(
             'bountyEntryId', be.id,
             'bountyId', be."bountyId",
@@ -125,10 +127,11 @@ export const bountyNotifications = createNotificationProcessor({
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
         CONCAT("userId",':','bounty-awarded',':',"bountyId",':',"benefactorUserId"),
-        "userId",
+        "ownerId" "userId",
         'bounty-awarded' "type",
         details
       FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-awarded')
       ON CONFLICT("id") DO NOTHING;
     `,
   },
@@ -155,7 +158,7 @@ export const bountyNotifications = createNotificationProcessor({
         GROUP BY br."bountyEntryId"
       ), data AS (
         SELECT DISTINCT
-          be."userId",
+          be."userId" "ownerId",
           jsonb_build_object(
             'bountyId', be."bountyId",
             'bountyName', b.name,
@@ -172,10 +175,11 @@ export const bountyNotifications = createNotificationProcessor({
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
         CONCAT("userId",':','bounty-reaction-milestone',':',"bountyEntryId",':',milestone),
-        "userId",
+        "ownerId" "userId",
         'bounty-reaction-milestone' "type",
         details
       FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-reaction-milestone')
       ON CONFLICT("id") DO NOTHING;
     `,
   },
@@ -210,7 +214,7 @@ export const bountyNotifications = createNotificationProcessor({
         ) b
       ), data AS (
         SELECT DISTINCT
-          tu."userId",
+          tu."userId" "ownerId",
           JSONB_BUILD_OBJECT(
             'bountyName', b.name,
             'bountyId', b.id,
@@ -227,10 +231,11 @@ export const bountyNotifications = createNotificationProcessor({
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
         CONCAT("userId",':','bounty-entry',':',"bountyEntryId"),
-        "userId",
+        "ownerId" "userId",
         'bounty-entry' "type",
         details
       FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-entry')
       ON CONFLICT("id") DO NOTHING;
     `,
   },

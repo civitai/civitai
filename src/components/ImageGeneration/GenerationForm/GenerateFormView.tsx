@@ -96,13 +96,13 @@ export function GenerateFormView({
   };
   // #endregion
 
-  const [baseModel, aspectRatio, steps, quantity] = form.watch([
-    'baseModel',
-    'aspectRatio',
-    'steps',
-    'quantity',
-  ]);
-  const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
+  // const [baseModel, aspectRatio, steps, quantity] = form.watch([
+  //   'baseModel',
+  //   'aspectRatio',
+  //   'steps',
+  //   'quantity',
+  // ]);
+  // const totalCost = calculateGenerationBill({ baseModel, aspectRatio, steps, quantity });
 
   return (
     <PersistentForm
@@ -306,15 +306,15 @@ export function GenerateFormView({
                     />
                   </Stack>
                 </Card>
-                <BuzzTransactionButton
-                  label="Generate"
-                  size="lg"
+                <Button
                   type="submit"
+                  size="lg"
                   loading={isSubmitting || loading}
                   className={classes.generateButtonButton}
                   disabled={isSDXL && !(currentUser?.isMember || currentUser?.isModerator)}
-                  buzzAmount={totalCost}
-                />
+                >
+                  Generate
+                </Button>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
                   onClick={() => form.reset()}
