@@ -140,7 +140,11 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
-    const images = await getBountyImages({ id: bounty.id });
+    const images = await getBountyImages({
+      id: bounty.id,
+      userId: user?.id,
+      isModerator: user?.isModerator,
+    });
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
     const allImagesScanned = images.every((image) => !!image.scannedAt);
     const isOwner = user?.id === bounty.user?.id || user?.isModerator;

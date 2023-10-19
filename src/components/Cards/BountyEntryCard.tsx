@@ -116,7 +116,10 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                         className={classes.image}
                       />
                     ) : (
-                      <MediaHash {...cover} />
+                      <MediaHash
+                        {...cover}
+                        style={{ position: 'relative', height: 'calc(100% - 60px)' }}
+                      />
                     )
                   ) : (
                     <Text color="dimmed">This bounty has no image</Text>

@@ -41,6 +41,7 @@ import { BountyEntryGetById, BountyGetById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -165,6 +166,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title inline>Submit new entry</Title>
         </Group>
+        {bounty.poi && <PoiAlert size="sm" />}
         <InputRTE
           name="description"
           label="Notes"

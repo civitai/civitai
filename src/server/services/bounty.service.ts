@@ -353,9 +353,23 @@ export const deleteBountyById = async ({ id }: GetByIdInput) => {
   return deletedBounty;
 };
 
-export const getBountyImages = async ({ id }: GetByIdInput) => {
+export const getBountyImages = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
+    ? [{ ingestion: { notIn: [] } }]
+    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
+
+  if (userId) imageOr.push({ userId });
+
   const connections = await dbRead.imageConnection.findMany({
-    where: { entityId: id, entityType: 'Bounty', image: { needsReview: null } },
+    where: {
+      entityId: id,
+      entityType: 'Bounty',
+      image: { OR: imageOr },
+    },
     select: { image: { select: imageSelect } },
   });
 
