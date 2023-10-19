@@ -55,7 +55,6 @@ export const createSignalWorker = async ({
   const unload = () => {
     postMessage({ type: 'beforeunload' });
     emitter.stop();
-    window.removeEventListener('beforeunload', unload);
   };
 
   await deferred.promise;
@@ -73,7 +72,7 @@ export const createSignalWorker = async ({
   }
 
   // fire off an event to remove this port from the worker
-  window.addEventListener('beforeunload', unload, {
+  window.addEventListener('beforeunload', () => unload(), {
     once: true,
   });
 
