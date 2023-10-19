@@ -7,6 +7,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     post: `/posts/${threadParentId}?highlight=${details.commentId}#comments`,
     article: `/articles/${threadParentId}?highlight=${details.commentId}#comments`,
     review: `/reviews/${threadParentId}?highlight=${details.commentId}`,
+    bounty: `/bounties/${threadParentId}?highlight=${details.commentId}#comments`,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
@@ -189,7 +190,7 @@ export const commentNotifications = createNotificationProcessor({
             'version', 2,
             'commentId', c.id,
             'threadId', c."threadId",
-            'threadParentId', COALESCE(t."imageId", t."modelId", t."postId", t."questionId", t."answerId", t."reviewId", t."articleId"),
+            'threadParentId', COALESCE(t."imageId", t."modelId", t."postId", t."questionId", t."answerId", t."reviewId", t."articleId", t."bountyId", t."bountyEntryId"),
             'threadType', CASE
               WHEN t."imageId" IS NOT NULL THEN 'image'
               WHEN t."modelId" IS NOT NULL THEN 'model'
@@ -198,6 +199,8 @@ export const commentNotifications = createNotificationProcessor({
               WHEN t."answerId" IS NOT NULL THEN 'answer'
               WHEN t."reviewId" IS NOT NULL THEN 'review'
               WHEN t."articleId" IS NOT NULL THEN 'article'
+              WHEN t."bountyId" IS NOT NULL THEN 'bounty'
+              WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
               ELSE 'comment'
             END,
             'username', u.username
@@ -209,6 +212,7 @@ export const commentNotifications = createNotificationProcessor({
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
+          AND t."bountyEntryId" IS NULL
       )
       INSERT INTO "Notification"("id", "userId", "type", "details")
       SELECT
@@ -387,6 +391,41 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_article_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-comment');
+    `,
+  },
+  'new-bounty-comment': {
+    displayName: 'New comments on your bounty',
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your bounty: "${details.bountyTitle}"`,
+      url: `/bounties/${details.bountyId}?highlight=${details.commentId}#comments`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_bounty_comment AS (
+        SELECT DISTINCT
+          b."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'bountyId', b.id,
+            'bountyTitle', b.title,
+            'commentId', c.id,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."bountyId" IS NOT NULL
+        JOIN "Bounty" b ON b.id = t."bountyId"
+        WHERE b."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != b."userId"
+      )
+      INSERT INTO "Notification"("id", "userId", "type", "details")
+      SELECT
+        REPLACE(gen_random_uuid()::text, '-', ''),
+        "ownerId"    "userId",
+        'new-bounty-comment' "type",
+        details
+      FROM new_bounty_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');
     `,
   },
 });
